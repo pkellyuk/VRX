@@ -104,10 +104,43 @@ Not yet answered: whether SteamVR *uses* the submitted
 `XrCompositionLayerDepthInfoKHR` at all. The visible 3D comes entirely from the
 warp; an A/B run without the depth chain is still to do.
 
+## M3b — worker-thread model + compute-shader warp (`xrapp4.cpp`)
+
+`xrapp3` stays as the CPU reference; `xrapp4` is the target structure:
+
+- **One device, two queues.** ORT/DirectML submits to an `ml` queue from a worker
+  thread; the OpenXR session and the warp use a `gfx` queue on the render thread.
+  The render thread never waits for the model — it takes the latest *completed*
+  depth through a lock-free triple buffer. Frames are pipelined (3-frame ring of
+  allocators/upload buffers, fence-guarded), with no per-frame CPU wait.
+- **The warp is a compute shader.** A forward warp is a scatter with a z-test,
+  which races per pixel — but rows are independent, so one GPU thread runs one
+  whole row of one eye (`Dispatch(1, H/8, 2)`), the same algorithm as the CPU
+  `WarpEye`. It writes RGBA8/R32F typeless intermediates that are copied into the
+  swapchain images (SteamVR's are `R8G8B8A8_TYPELESS` / `R32_TYPELESS`, so the
+  copies are same-format; a D32 image cannot be a UAV, hence the intermediate).
+- **Verified without a headset:** `--selftest` compares the GPU warp with the CPU
+  reference pixel-for-pixel — 4 cases (truth, model depth, 4x disparity, no-warp),
+  **0 mismatches of 537,824 px** in each. `--debug` (D3D12 debug layer) reports
+  nothing from our code; the only errors are SteamVR's own D3D11-interop
+  `ReflectSharedProperties` messages.
+- **Measured (HMD asleep, so only one frame presented):** render loop 120 fps at
+  ~2 ms CPU/frame while the worker ran the model 58.7 times/s (17 ms) — i.e. the
+  two rates are decoupled. GPU warp of both eyes incl. upload + readback ~2 ms vs
+  5–8 ms CPU warp+pack in xrapp3. **Still to measure with the HMD awake:** drawn
+  fps, depth updates/s and depth age under real compositor load.
+- Spec check that also fixed xrapp3: acquired D3D12 swapchain images are in
+  `RENDER_TARGET` (colour) / `DEPTH_WRITE` (depth) and must be released in that
+  state — not `COMMON`, which xrapp3 had assumed.
+- Still CPU-side by necessity: the model *output* (M1: ORT cannot bind a DML
+  device output here) — 1 MB read back and re-uploaded as a structured buffer,
+  plus min/max normalisation. `--paired` warps the colour frame the depth came
+  from, as an A/B against the default (latest colour + latest completed depth).
+
 ## Remaining M3 work
 
-Items 1, 2, 4 and 5 below are done in `xrapp3.cpp` (CPU implementation). Still
-open: item 3 (worker thread + GPU-only depth/warp path via compute shader), real
+Items 1-5 below are done (`xrapp3.cpp` on the CPU, `xrapp4.cpp` with the worker
+thread and compute-shader warp). Still open: in-headset run of xrapp4, real
 display capture as the input, and temporal smoothing of the per-frame min/max
 normalisation.
 
