@@ -175,6 +175,7 @@ struct Options
     bool doDump = false;
     bool paired = false;
     bool foreground = true;
+    bool boostGpuPriority = true;      // best effort; --normal-gpu-priority disables the experiment
     bool selfTestOnly = false;
     bool debugLayer = false;
     bool smooth = true;
@@ -540,6 +541,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--paired")) { opt->paired = true; continue; }
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
+        if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
         if (!strcmp(a, "--selftest")) { opt->selfTestOnly = true; continue; }
         if (!strcmp(a, "--debug")) { opt->debugLayer = true; continue; }
         if (!strncmp(a, "--test-depth-failures=", 22)) { opt->testDepthFailures = atoi(a + 22); continue; }
@@ -654,10 +656,48 @@ static bool InitD3D(App& app)
 
     if (FAILED(D3D12CreateDevice(app.adapter.Get(), app.minFeatureLevel, IID_PPV_ARGS(&app.device)))) { Log("InitD3D: FAIL D3D12CreateDevice"); return false; }
 
-    D3D12_COMMAND_QUEUE_DESC qd{};
-    qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-    if (FAILED(app.device->CreateCommandQueue(&qd, IID_PPV_ARGS(&app.gfxQueue)))) { Log("InitD3D: FAIL gfx queue"); return false; }
-    if (FAILED(app.device->CreateCommandQueue(&qd, IID_PPV_ARGS(&app.mlQueue)))) { Log("InitD3D: FAIL ml queue"); return false; }
+    // Best-effort scheduling experiment. Keep rendering and inference at the
+    // same queue priority; realtime inference could preempt headset rendering.
+    // Queue HIGH is process-relative. The process class requests the boost
+    // relative to other applications; neither request guarantees throughput.
+    if (app.opt.boostGpuPriority)
+    {
+        typedef LONG(WINAPI* SetGpuClassFn)(HANDLE, int);
+        HMODULE gdi = LoadLibraryW(L"gdi32.dll");
+        SetGpuClassFn setClass = gdi ? (SetGpuClassFn)GetProcAddress(gdi, "D3DKMTSetProcessSchedulingPriorityClass") : nullptr;
+        const int D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH = 4;
+        LONG st = setClass ? setClass(GetCurrentProcess(), D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH) : -1;
+        Log("InitD3D: process GPU scheduling class HIGH -> %s (status 0x%08lX)", st == 0 ? "ok" : "not applied", (unsigned long)st);
+        if (gdi) FreeLibrary(gdi);
+    }
+    else Log("InitD3D: GPU priority boost disabled");
+
+    auto createQueue = [&](const char* name, ComPtr<ID3D12CommandQueue>& queue) {
+        D3D12_COMMAND_QUEUE_DESC qd{};
+        qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+        if (app.opt.boostGpuPriority)
+        {
+            D3D12_FEATURE_DATA_COMMAND_QUEUE_PRIORITY support{};
+            support.CommandListType = qd.Type;
+            support.Priority = D3D12_COMMAND_QUEUE_PRIORITY_HIGH;
+            HRESULT check = app.device->CheckFeatureSupport(D3D12_FEATURE_COMMAND_QUEUE_PRIORITY, &support, sizeof(support));
+            if (SUCCEEDED(check) && support.PriorityForTypeIsSupported)
+            {
+                qd.Priority = D3D12_COMMAND_QUEUE_PRIORITY_HIGH;
+                HRESULT hr = app.device->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue));
+                if (SUCCEEDED(hr)) { Log("InitD3D: %s queue priority HIGH", name); return true; }
+                Log("InitD3D: %s HIGH queue refused (0x%08lX); using NORMAL", name, (unsigned long)hr);
+                queue.Reset();
+            }
+            else Log("InitD3D: %s HIGH queue unsupported (check 0x%08lX); using NORMAL", name, (unsigned long)check);
+        }
+        qd.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+        HRESULT hr = app.device->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue));
+        if (FAILED(hr)) { Log("InitD3D: FAIL %s NORMAL queue (0x%08lX)", name, (unsigned long)hr); return false; }
+        Log("InitD3D: %s queue priority NORMAL", name);
+        return true;
+    };
+    if (!createQueue("gfx", app.gfxQueue) || !createQueue("ml", app.mlQueue)) return false;
     app.gfxQueue->SetName(L"vrx gfx queue");
     app.mlQueue->SetName(L"vrx ml queue");
 
