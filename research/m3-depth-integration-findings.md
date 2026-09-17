@@ -129,6 +129,12 @@ warp; an A/B run without the depth chain is still to do.
   two rates are decoupled. GPU warp of both eyes incl. upload + readback ~2 ms vs
   5–8 ms CPU warp+pack in xrapp3. **Still to measure with the HMD awake:** drawn
   fps, depth updates/s and depth age under real compositor load.
+- **Measured with the HMD awake (PS VR2, 120 Hz, eyeball-confirmed stereo image):**
+  **119.9 fps presented, every frame drawn, 0.13 ms CPU per frame**, while the
+  worker delivered **59.9 depth updates/s** (model 16.3-16.7 ms) with an average
+  depth age of ~10 ms at use. So the display runs at full rate and depth refreshes
+  every second frame - the temporal-reuse design from INVESTIGATION.md, measured.
+  (Static image, so depth lag was not visible; moving content is the next test.)
 - Spec check that also fixed xrapp3: acquired D3D12 swapchain images are in
   `RENDER_TARGET` (colour) / `DEPTH_WRITE` (depth) and must be released in that
   state — not `COMMON`, which xrapp3 had assumed.
