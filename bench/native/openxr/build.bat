@@ -44,7 +44,7 @@ set ORTINC=%ORTPKG%\build\native\include
 set ORTLIB=%ORTPKG%\runtimes\win-x64\native
 
 cl /nologo /std:c++17 /EHsc /O2 /W3 /I"%INC%" /I"%ORTINC%" /Fo"%OUT%\\" /Fe"%OUT%\xrapp3.exe" "%~dp0xrapp3.cpp" ^
-   /link /LIBPATH:"%ORTLIB%" onnxruntime.lib d3d12.lib dxgi.lib dxguid.lib ole32.lib
+   /link /LIBPATH:"%ORTLIB%" onnxruntime.lib d3d12.lib dxgi.lib dxguid.lib ole32.lib windowscodecs.lib
 if errorlevel 1 (
   echo BUILD FAILED ^(xrapp3^)
   exit /b 1

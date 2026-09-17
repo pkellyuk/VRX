@@ -23,6 +23,8 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
+#include <objbase.h>
+#include <wincodec.h>
 
 #define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_D3D12
@@ -163,18 +165,168 @@ static void MakeScene(std::vector<unsigned char>& rgb, double t)
     }
 }
 
+// Ground-truth "nearness" (0 = far, 1 = near) for MakeScene. Flat-coloured
+// rectangles carry no monocular depth cues, so the model's answer for that scene
+// is arbitrary; --truth substitutes this so the warp can be judged on its own.
+static void MakeTruth(std::vector<float>& near01, double t)
+{
+    near01.assign((size_t)W * H, 0.0f);
+    int markerX = (int)((0.5 + 0.35 * sin(t * 0.8)) * (W - 120));
+
+    for (int y = 0; y < H; y++)
+    {
+        for (int x = 0; x < W; x++)
+        {
+            float n = 0.0f;
+            if (x > W * 0.18 && x < W * 0.52 && y > H * 0.22 && y < H * 0.78) n = 0.5f;
+            if (x >= markerX && x < markerX + 120 && y > H * 0.35 && y < H * 0.65) n = 1.0f;
+            near01[(size_t)y * W + x] = n;
+        }
+    }
+}
+
+// Mean nearness inside each region of MakeScene - tells us in the log what the
+// model actually thinks of the synthetic scene.
+static void RegionMeans(const std::vector<float>& near01, double t, float& back, float& panel, float& marker)
+{
+    std::vector<float> truth;
+    MakeTruth(truth, t);
+    double s[3] = { 0, 0, 0 }; size_t n[3] = { 0, 0, 0 };
+    for (size_t i = 0; i < truth.size(); i++)
+    {
+        int k = truth[i] > 0.75f ? 2 : (truth[i] > 0.25f ? 1 : 0);
+        s[k] += near01[i]; n[k]++;
+    }
+    back = n[0] ? (float)(s[0] / n[0]) : 0;
+    panel = n[1] ? (float)(s[1] / n[1]) : 0;
+    marker = n[2] ? (float)(s[2] / n[2]) : 0;
+}
+
+// Load any WIC-decodable image (png/jpg/bmp), scaled to WxH, as packed RGB.
+static bool LoadImageWIC(const wchar_t* path, std::vector<unsigned char>& rgb)
+{
+    if (!path) return false;
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    ComPtr<IWICImagingFactory> wic;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)))) return false;
+    ComPtr<IWICBitmapDecoder> dec;
+    if (FAILED(wic->CreateDecoderFromFilename(path, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec))) return false;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(dec->GetFrame(0, &frame))) return false;
+    ComPtr<IWICBitmapScaler> scaler;
+    if (FAILED(wic->CreateBitmapScaler(&scaler))) return false;
+    if (FAILED(scaler->Initialize(frame.Get(), W, H, WICBitmapInterpolationModeFant))) return false;
+    ComPtr<IWICFormatConverter> conv;
+    if (FAILED(wic->CreateFormatConverter(&conv))) return false;
+    if (FAILED(conv->Initialize(scaler.Get(), GUID_WICPixelFormat24bppRGB, WICBitmapDitherTypeNone,
+                                nullptr, 0.0, WICBitmapPaletteTypeCustom))) return false;
+    rgb.resize((size_t)W * H * 3);
+    return SUCCEEDED(conv->CopyPixels(nullptr, W * 3, (UINT)rgb.size(), rgb.data()));
+}
+
+static void WritePNM(const char* path, const char* magic, const unsigned char* data, size_t bytes)
+{
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "wb") || !f) { printf("dump: cannot write %s\n", path); return; }
+    fprintf(f, "%s\n%d %d\n255\n", magic, W, H);
+    fwrite(data, 1, bytes, f);
+    fclose(f);
+    printf("dump: wrote %s\n", path);
+}
+
+// Forward stereo warp for one eye. Every SOURCE pixel is moved by its OWN
+// disparity and z-tested at the destination, so near content really shifts and
+// occludes what is behind it. (The earlier backward warp looked up disparity at
+// the destination pixel, which merely trims the edges of a flat-coloured object
+// instead of moving it - and lets far content overwrite near content.)
+// Disocclusion holes are filled from the FARTHER neighbour, i.e. background.
+//   eyeOffset : eye's lateral offset in metres (left negative)
+//   outRGBA   : ROW_PITCH bytes per row;  outDepth : ROW_PITCH/4 floats per row,
+//               written as 0 = near .. 1 = far
+static void WarpEye(const std::vector<unsigned char>& scene, const std::vector<float>& near01,
+                    float eyeOffset, float focalPx, float scale, float invZNear, float invZFar,
+                    bool doWarp, unsigned char* outRGBA, float* outDepth)
+{
+    std::vector<int> src(W);
+    for (int y = 0; y < H; y++)
+    {
+        const float* nrow = near01.data() + (size_t)y * W;
+        std::fill(src.begin(), src.end(), -1);
+
+        for (int x = 0; x < W; x++)
+        {
+            int dx = x;
+            if (doWarp)
+            {
+                // Content at distance Z sits at -focal*E/Z in the eye's image
+                // relative to the cyclopean image (left eye: shifted right).
+                float invZ = invZFar + nrow[x] * (invZNear - invZFar);
+                dx = x - (int)lroundf(scale * focalPx * eyeOffset * invZ);
+            }
+            if (dx < 0 || dx >= W) continue;
+            if (src[dx] < 0 || nrow[x] > nrow[src[dx]]) src[dx] = x;
+        }
+
+        // hole fill: take the farther of the nearest valid neighbours
+        int lastValid = -1;
+        for (int x = 0; x < W; x++)
+        {
+            if (src[x] >= 0) { lastValid = src[x]; continue; }
+            int r = x + 1;
+            while (r < W && src[r] < 0) r++;
+            int rightValid = r < W ? src[r] : -1;
+            int pick = lastValid;
+            if (pick < 0 || (rightValid >= 0 && nrow[rightValid] < nrow[pick])) pick = rightValid;
+            if (pick < 0) pick = x;
+            for (int h = x; h < r; h++) src[h] = -2 - pick;      // mark as filled, keep lastValid intact
+            x = r - 1;
+        }
+
+        unsigned char* crow = outRGBA + (size_t)y * ROW_PITCH;
+        float* drow = outDepth + (size_t)y * (ROW_PITCH / 4);
+        for (int x = 0; x < W; x++)
+        {
+            int s = src[x] >= 0 ? src[x] : -2 - src[x];
+            size_t si = ((size_t)y * W + s) * 3;
+            crow[x * 4 + 0] = scene[si + 0];
+            crow[x * 4 + 1] = scene[si + 1];
+            crow[x * 4 + 2] = scene[si + 2];
+            crow[x * 4 + 3] = 255;
+            drow[x] = 1.0f - nrow[s];
+        }
+    }
+}
+
 int main(int argc, char** argv)
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
     double runSeconds = 75.0;
     bool doWarp = true;
     float warpScale = 1.0f;
+    bool useTruth = false, doDump = false;
+    std::wstring imagePath;
     for (int i = 1; i < argc; i++)
     {
         if (!strcmp(argv[i], "--no-warp")) { doWarp = false; continue; }
         if (!strncmp(argv[i], "--scale=", 8)) { warpScale = (float)atof(argv[i] + 8); continue; }
         if (!strncmp(argv[i], "--near=", 7)) { continue; }
+        if (!strcmp(argv[i], "--truth")) { useTruth = true; continue; }
+        if (!strcmp(argv[i], "--dump")) { doDump = true; continue; }
+        if (!strncmp(argv[i], "--image=", 8))
+        {
+            std::string p(argv[i] + 8);
+            imagePath.assign(p.begin(), p.end());
+            continue;
+        }
         runSeconds = atof(argv[i]);
+    }
+
+    std::vector<unsigned char> imageRgb;
+    if (!imagePath.empty())
+    {
+        if (!LoadImageWIC(imagePath.c_str(), imageRgb)) { printf("FAIL: cannot load image %ls\n", imagePath.c_str()); return 1; }
+        printf("image: %ls -> %dx%d\n", imagePath.c_str(), W, H);
+        if (useTruth) { printf("note: --truth ignored with --image (no ground truth for a photo)\n"); useTruth = false; }
     }
 
     // ---- ONNX Runtime + DML on a device we create -------------------------
@@ -417,7 +569,70 @@ int main(int argc, char** argv)
 
     std::vector<unsigned char> scene;
     std::vector<float> depth(H * W);
-    std::vector<unsigned char> eyeImg[VIEWS];
+    std::vector<float> near01;
+    float modelBack = 0, modelPanel = 0, modelMarker = 0;
+
+    // scene (packed RGB) -> model -> nearness in [0,1] (0 = far, 1 = near).
+    // The model gives relative disparity-like values, larger = nearer.
+    auto runModel = [&](const std::vector<unsigned char>& rgb, std::vector<float>& outNear) -> bool {
+        if (rgb.size() != (size_t)W * H * 3) { printf("runModel: bad scene size %zu\n", rgb.size()); return false; }
+
+        const float mean[3] = { 0.485f, 0.456f, 0.406f };
+        const float istd[3] = { 1.f / 0.229f, 1.f / 0.224f, 1.f / 0.225f };
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                size_t si = ((size_t)y * W + x) * 3;
+                for (int c = 0; c < 3; c++)
+                {
+                    float v = rgb[si + c] / 255.0f;
+                    modelInMapped[((size_t)c * H + y) * W + x] = (v - mean[c]) * istd[c];
+                }
+            }
+
+        OrtValue* out = nullptr;
+        const char* inName = "pixel_values";
+        const char* outName = "predicted_depth";
+        if (OrtStatus* st = ort->Run(session, nullptr, &inName,
+                                     (const OrtValue* const*)&modelInValue, 1,
+                                     &outName, 1, &out))
+        { Fail("Run", st); return false; }
+        float* dp = nullptr;
+        ort->GetTensorMutableData(out, (void**)&dp);
+        memcpy(depth.data(), dp, depth.size() * sizeof(float));
+        ort->ReleaseValue(out);
+        gpuWait();
+
+        float dmin = depth[0], dmax = depth[0];
+        for (float v : depth) { dmin = std::min(dmin, v); dmax = std::max(dmax, v); }
+        lastDepthMin = dmin; lastDepthMax = dmax;
+        float inv = (dmax - dmin) > 1e-6f ? 1.0f / (dmax - dmin) : 0.0f;
+        outNear.resize(depth.size());
+        for (size_t i = 0; i < depth.size(); i++) outNear[i] = (depth[i] - dmin) * inv;
+        return true;
+    };
+
+    // ---- headset-independent model check ---------------------------------
+    // Runs once before the frame loop so the model's opinion of the input is
+    // in the log (and on disk with --dump) even if the HMD never wakes.
+    {
+        if (imageRgb.empty()) MakeScene(scene, 0.0); else scene = imageRgb;
+        if (!runModel(scene, near01)) return 1;
+        printf("model raw range: %.3f .. %.3f\n", lastDepthMin, lastDepthMax);
+        if (imageRgb.empty())
+        {
+            RegionMeans(near01, 0.0, modelBack, modelPanel, modelMarker);
+            printf("model nearness (0 far..1 near): backdrop %.2f  panel %.2f  marker %.2f   [truth: 0.00 / 0.50 / 1.00]\n",
+                   modelBack, modelPanel, modelMarker);
+        }
+        if (doDump)
+        {
+            std::vector<unsigned char> g(near01.size());
+            for (size_t i = 0; i < g.size(); i++) g[i] = (unsigned char)(near01[i] * 255.0f + 0.5f);
+            WritePNM("xrapp3_scene.ppm", "P6", scene.data(), scene.size());
+            WritePNM("xrapp3_near.pgm", "P5", g.data(), g.size());
+        }
+    }
 
     printf("\nentering frame loop (%.0fs)%s\n", runSeconds, doWarp ? "" : " [warp disabled]");
 
@@ -482,17 +697,56 @@ int main(int argc, char** argv)
             XrResult vr = xrLocateViews_(sessionXr, &vli, &vs, VIEWS, &vc, views.data());
             if (XR_FAILED(vr)) printf("xrLocateViews: %s\n", XRStr(vr));
 
-            float eyeMid = 0.5f * (views[0].pose.position.x + views[1].pose.position.x);
-            float eyeX[VIEWS] = { views[0].pose.position.x - eyeMid,
-                                  views[1].pose.position.x - eyeMid };
-            float fovx = views[0].fov.angleRight - views[0].fov.angleLeft;
-            float focalPx = fovx > 0.01f ? (float)(W * 0.5) / tanf(fovx * 0.5f) : 300.0f;
+            // Eye offset from the measured IPD, not from position.x: position.x
+            // is in the reference space and is only the eye's lateral offset
+            // while the head happens to face -Z.
+            float ex = views[1].pose.position.x - views[0].pose.position.x;
+            float ey = views[1].pose.position.y - views[0].pose.position.y;
+            float ez = views[1].pose.position.z - views[0].pose.position.z;
+            float ipd = sqrtf(ex * ex + ey * ey + ez * ez);
+            float eyeX[VIEWS] = { -0.5f * ipd, 0.5f * ipd };
+
+            // Both eyes are fed the SAME image, so both must declare the SAME
+            // symmetric FOV and the SAME orientation. The runtime's per-eye
+            // FOVs are asymmetric (wider outward) and mirrored between eyes;
+            // declaring them puts the image centre left-of-ahead in the left
+            // eye and right-of-ahead in the right eye - divergent disparity of
+            // several degrees, which cannot be fused. With a shared symmetric
+            // FOV the unwarped image sits at infinity and the warp alone adds
+            // (convergent) disparity. The compositor reprojects the declared
+            // FOV onto the real display, so this is legal.
+            float tanHalfX = 1e9f;
+            for (uint32_t e = 0; e < VIEWS; e++)
+            {
+                tanHalfX = std::min(tanHalfX, tanf(fabsf(views[e].fov.angleLeft)));
+                tanHalfX = std::min(tanHalfX, tanf(fabsf(views[e].fov.angleRight)));
+            }
+            if (!(tanHalfX > 0.01f && tanHalfX < 100.0f)) tanHalfX = 1.0f;
+            float tanHalfY = tanHalfX * (float)H / (float)W;   // square pixels
+            XrFovf sharedFov{ -atanf(tanHalfX), atanf(tanHalfX), atanf(tanHalfY), -atanf(tanHalfY) };
+            float fovx = sharedFov.angleRight - sharedFov.angleLeft;
+            float focalPx = (float)(W * 0.5) / tanHalfX;
+
+            // Shared orientation: nlerp of the two eyes (they differ on canted
+            // displays).
+            XrQuaternionf q0 = views[0].pose.orientation, q1 = views[1].pose.orientation;
+            float qd = q0.x * q1.x + q0.y * q1.y + q0.z * q1.z + q0.w * q1.w;
+            float qs = qd < 0 ? -1.0f : 1.0f;
+            XrQuaternionf sharedRot{ q0.x + qs * q1.x, q0.y + qs * q1.y, q0.z + qs * q1.z, q0.w + qs * q1.w };
+            float qn = sqrtf(sharedRot.x * sharedRot.x + sharedRot.y * sharedRot.y +
+                             sharedRot.z * sharedRot.z + sharedRot.w * sharedRot.w);
+            if (qn > 1e-6f) { sharedRot.x /= qn; sharedRot.y /= qn; sharedRot.z /= qn; sharedRot.w /= qn; }
+            else sharedRot = q0;
 
             static bool printed = false;
             if (!printed)
             {
                 printed = true;
-                printf("view: fov_x %.1f deg   ipd %.1f mm   focal %.1f px\n",
+                for (uint32_t e = 0; e < VIEWS; e++)
+                    printf("runtime fov eye %u: left %.1f  right %.1f  up %.1f  down %.1f deg\n", e,
+                           views[e].fov.angleLeft * 57.2958f, views[e].fov.angleRight * 57.2958f,
+                           views[e].fov.angleUp * 57.2958f, views[e].fov.angleDown * 57.2958f);
+                printf("view (shared symmetric): fov_x %.1f deg   ipd %.1f mm   focal %.1f px\n",
                        fovx * 57.2958f, (eyeX[1] - eyeX[0]) * 1000.0f, focalPx);
                 printf("warp: scale %.2f  (use --scale=N to adjust)\n", warpScale);
             }
@@ -516,92 +770,24 @@ int main(int argc, char** argv)
                 if (ok)
                 {
                     double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-                    MakeScene(scene, t);
-
-                    // --- model input: scene -> normalised NCHW float --------
-                    const float mean[3] = { 0.485f, 0.456f, 0.406f };
-                    const float istd[3] = { 1.f / 0.229f, 1.f / 0.224f, 1.f / 0.225f };
-                    for (int y = 0; y < H; y++)
-                        for (int x = 0; x < W; x++)
-                        {
-                            size_t si = ((size_t)y * W + x) * 3;
-                            for (int c = 0; c < 3; c++)
-                            {
-                                float v = scene[si + c] / 255.0f;
-                                modelInMapped[((size_t)c * H + y) * W + x] = (v - mean[c]) * istd[c];
-                            }
-                        }
+                    if (imageRgb.empty()) MakeScene(scene, t); else scene = imageRgb;
 
                     auto m0 = std::chrono::steady_clock::now();
-                    OrtValue* out = nullptr;
-                    const char* inName = "pixel_values";
-                    const char* outName = "predicted_depth";
-                    if (OrtStatus* st = ort->Run(session, nullptr, &inName,
-                                                 (const OrtValue* const*)&modelInValue, 1,
-                                                 &outName, 1, &out))
-                    { Fail("Run", st); exitLoop = true; }
-                    else
-                    {
-                        float* dp = nullptr;
-                        ort->GetTensorMutableData(out, (void**)&dp);
-                        memcpy(depth.data(), dp, depth.size() * sizeof(float));
-                        ort->ReleaseValue(out);
-                    }
-                    gpuWait();
+                    if (!runModel(scene, near01)) exitLoop = true;
                     auto m1 = std::chrono::steady_clock::now();
                     sumModel += std::chrono::duration<double, std::milli>(m1 - m0).count();
 
-                    // --- normalise depth: model gives relative disparity-like
-                    //     values, larger = nearer. The runtime wants 0 = near.
-                    float dmin = depth[0], dmax = depth[0];
-                    for (float v : depth) { dmin = std::min(dmin, v); dmax = std::max(dmax, v); }
-                    lastDepthMin = dmin; lastDepthMax = dmax;
-                    float inv = (dmax - dmin) > 1e-6f ? 1.0f / (dmax - dmin) : 0.0f;
+                    if (imageRgb.empty()) RegionMeans(near01, t, modelBack, modelPanel, modelMarker);
+                    if (useTruth) MakeTruth(near01, t);
 
-                    // --- stereo warp + staging uploads ----------------------
+                    // --- forward stereo warp of colour AND depth, per eye,
+                    //     straight into the staging buffers ------------------
                     auto w0 = std::chrono::steady_clock::now();
-                    std::vector<float> near01(depth.size());
-                    for (size_t i = 0; i < depth.size(); i++)
-                        near01[i] = (depth[i] - dmin) * inv;      // 0 = far, 1 = near
-
                     for (int e = 0; e < VIEWS; e++)
                     {
-                        unsigned char* dst = colorUpBase + (size_t)e * sliceBytes;
-                        if (!eyeImg[e].empty() || true) eyeImg[e].resize((size_t)ROW_PITCH * H);
-
-                        for (int y = 0; y < H; y++)
-                        {
-                            unsigned char* row = eyeImg[e].data() + (size_t)y * ROW_PITCH;
-                            for (int x = 0; x < W; x++)
-                            {
-                                int sx = x;
-                                if (doWarp)
-                                {
-                                    // Physically-derived disparity: content at
-                                    // distance Z appears offset by focal*E/Z,
-                                    // where E is the eye's *measured* offset.
-                                    float invZ = invZFar + near01[(size_t)y * W + x] * (invZNear - invZFar);
-                                    float shift = warpScale * focalPx * eyeX[e] * invZ;
-                                    sx = x + (int)lroundf(shift);
-                                    sx = std::max(0, std::min(W - 1, sx));
-                                }
-                                size_t si = ((size_t)y * W + sx) * 3;
-                                row[x * 4 + 0] = scene[si + 0];
-                                row[x * 4 + 1] = scene[si + 1];
-                                row[x * 4 + 2] = scene[si + 2];
-                                row[x * 4 + 3] = 255;
-                            }
-                        }
-                        memcpy(dst, eyeImg[e].data(), (size_t)ROW_PITCH * H);
-                    }
-
-                    // depth image: written as 0 = near, 1 = far
-                    for (int e = 0; e < VIEWS; e++)
-                    {
-                        float* dst = depthUpF + ((size_t)e * sliceBytes) / sizeof(float);
-                        for (int y = 0; y < H; y++)
-                            for (int x = 0; x < W; x++)
-                                dst[(size_t)y * (ROW_PITCH / 4) + x] = 1.0f - near01[(size_t)y * W + x];
+                        WarpEye(scene, near01, eyeX[e], focalPx, warpScale, invZNear, invZFar, doWarp,
+                                colorUpBase + (size_t)e * sliceBytes,
+                                depthUpF + ((size_t)e * sliceBytes) / sizeof(float));
                     }
                     auto w1 = std::chrono::steady_clock::now();
                     sumWarp += std::chrono::duration<double, std::milli>(w1 - w0).count();
@@ -668,7 +854,8 @@ int main(int argc, char** argv)
             {
                 pviews[e] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW };
                 pviews[e].pose = views[e].pose;
-                pviews[e].fov = views[e].fov;
+                pviews[e].pose.orientation = sharedRot;
+                pviews[e].fov = sharedFov;
                 pviews[e].subImage.swapchain = colorSc;
                 pviews[e].subImage.imageRect = { {0, 0}, {W, H} };
                 pviews[e].subImage.imageArrayIndex = e;
@@ -701,9 +888,10 @@ int main(int argc, char** argv)
         if (frames % 100 == 0 && drawn > 0)
         {
             double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-            printf("frame %5llu drawn %5llu  %.1f fps | model %.1f ms  warp+pack %.1f ms | depth %.3f..%.3f\n",
+            printf("frame %5llu drawn %5llu  %.1f fps | model %.1f ms  warp+pack %.1f ms | depth %.3f..%.3f | model near: back %.2f panel %.2f marker %.2f%s\n",
                    (unsigned long long)frames, (unsigned long long)drawn, frames / (el > 0 ? el : 1),
-                   sumModel / drawn, sumWarp / drawn, lastDepthMin, lastDepthMax);
+                   sumModel / drawn, sumWarp / drawn, lastDepthMin, lastDepthMax,
+                   modelBack, modelPanel, modelMarker, useTruth ? " [warp uses TRUTH]" : "");
         }
 
         if (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() > runSeconds)
