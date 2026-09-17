@@ -13,7 +13,9 @@ game or monitor, select **Play in VR**, and return keyboard/mouse focus to the
 game. Sensible defaults should make most sessions need no further adjustment.
 Touch/motion-controller controls, hand tracking, and VR interaction conversion
 are outside the initial scope. Head tracking positions the virtual screen; it
-should not drive the game's camera or replace mouse aiming by default.
+should not drive the game's camera or replace mouse aiming by default. The screen
+must stay in place by default; `=` resets it in front of the player. Head-following
+view is optional. A future UI should expose this choice and configurable bindings.
 
 The intended experience is a stereoscopic game on a comfortable virtual screen.
 AI depth estimates relative scene structure from one image; it does not recover
@@ -31,21 +33,28 @@ helpers in [`xr_common.h`](bench/native/openxr/xr_common.h). Earlier executables
 are development milestones, not separate product entry points.
 
 Evidence comes from the checked-in research notes and the current working tree,
-including the recent mirror-fill changes. The code review compiled and linked
-xrapp5 successfully; it did not repeat the hardware measurements below.
+including the recent mirror-fill, source-ownership, and playback-recovery changes. The initial code
+review compiled and linked xrapp5. Subsequent ownership tests, GPU shader tests,
+and a short live-capture smoke test are recorded in
+[the source-ownership findings](research/m5-source-ownership-findings.md) and
+[playback-recovery findings](research/m6-playback-recovery-findings.md); these
+do not replace headset-awake gameplay validation.
 
 | Capability | State and practical limit |
 |---|---|
-| Desktop and window capture | Implemented using Windows.Graphics.Capture; primary monitor, monitor index, or window-title selection. Live desktop video has been seen in stereo on PS VR2 through SteamVR. |
+| Desktop and window capture | Windows.Graphics.Capture; primary monitor, monitor index, window title, or exact executable filename (`--exe=helldivers2.exe`). Title searches exclude terminals and VRX; missing or ambiguous matches fail instead of selecting another source. HWND, PID, executable and UTF-8 title are logged; `--check-source` verifies selection without VR. Resized content is fitted with aspect-preserving black bars. Live resize/closure validation remains pending. |
 | AI depth | Depth Anything V2 Small, fixed 686×392 input, ONNX Runtime DirectML 1.24.4. The model has fp16 weights with float input/output. |
 | Capture → model input | GPU-resident capture texture, resizing/filtering, and normalization. No CPU image readback on this path. |
 | Depth output | Approximately 1 MB is read back to the CPU, normalized and dilated, then uploaded. The complete pipeline is **not** zero-copy. |
 | Stereo rendering | Per-eye forward warp, foreground occlusion handling, and GPU hole filling. Colour output preserves source aspect and is capped at 1920 pixels wide; depth remains 686×392. |
-| Frame pacing | Separate capture, inference, and render work; latest colour plus latest completed depth by default. `--paired` is an experimental comparison mode, not yet safe against source-ring reuse. |
+| Frame pacing | Separate capture, inference, and render work; latest colour plus latest completed depth by default. Source references and completion fences now prevent premature texture reuse, including `--paired` and eye dumps. Headset-awake gameplay validation remains open. |
+| Playback recovery | Invalid tracking suppresses projection submission. Missing, failed, stale, or differently sized source-layout depth falls back to flat viewing. The worker makes up to three consecutive attempts before remaining in flat mode; restarting playback retries. Capture closure/errors stop playback with an error status. |
 | Depth stability | Percentile range normalization with time smoothing and scene-cut detection. Per-pixel temporal stabilization is not implemented. |
 | Edge quality | Mirror fill and horizontal foreground-depth dilation implemented; current dilation default is 2 depth pixels. Eye-dump and CPU/GPU comparison results are documented; headset revalidation remains open. |
 | Runtime depth submission | Off by default. The tested SteamVR setup showed no visible use of submitted depth; the stereo warp supplies the 3D effect. Other runtimes remain unvalidated. |
-| User experience | Command-line prototype with a default 75-second run, diagnostic switches, and machine-specific paths. No finished launcher, persistent game profiles, or keyboard shortcut interface. |
+| Screen placement | Fixed screen in LOCAL space by default. Desktop sliders and a draggable top view now control independent width/distance and height/horizontal offsets relative to the last recenter. Fixed/follow-head mode changes live. Native anchor/control tests pass; the desktop-to-headset adjustment workflow still needs a worn-headset test. |
+| Controller-free startup | SteamVR-only dashboard-close request after one second of visible playback. A connection-close bug is fixed; the user subsequently confirmed not needing to close the menu manually. The desktop adds a dismiss button, configurable key (default F8), and per-game automatic-dismiss toggle. No recurring suppression or global SteamVR setting changes. |
+| User experience | Initial WPF/.NET 10 desktop UI: `Open-VRX.cmd`, running-process/window selection, Attach/Play and Stop, live controls, configurable single-key recenter/menu bindings, and profiles keyed by executable full path. No VR controls are drawn. UI sessions run until stopped, unlike timed CLI benchmarks. Startup now retains the verified capture item before XR initialization, fixing failure at a duplicate window lookup; startup errors persist and expand Session details. An eight-second run with the desktop attachment arguments captured Helldivers 2, produced depth, entered the render loop and exited successfully; the headset was not visible. Build, off-screen UI rendering, profile and native-control tests pass; live desktop-driven headset validation and distributable packaging remain open. |
 | Game compatibility | No systematic game, graphics-API, fullscreen, anti-cheat, GPU-vendor, or headset compatibility matrix yet. Desktop video success does not establish broad game support. |
 
 ### What the performance evidence actually establishes
@@ -59,6 +68,7 @@ xrapp5 successfully; it did not repeat the hardware measurements below.
 | xrapp4, static image, headset awake at 120 Hz | 119.9 presented/drawn fps; 59.9 depth updates/s; model 16.3–16.7 ms | Demonstrates asynchronous rendering with depth reuse on the tested setup. |
 | xrapp5, 3840×2160 desktop, headset asleep | Capture 60 fps; worker about 54 runs/s; render loop 120 fps | A loop-rate result, not proof of 120 drawn frames/s during gameplay. |
 | xrapp5, live desktop video, headset worn | Stereo effect visually confirmed | End-to-end visual feasibility; sustained game-load timing remains unmeasured. |
+| xrapp5, first headset-on Helldivers 2 test, 60 seconds | 7,107 frames drawn, 118.4 fps; 621 depth updates, 10.3/s; approximately 39 captured frames/s | User reported the 3D picture looked great, but requested fixed screen/recenter and controller-free dashboard dismissal. Two brief stale-depth flat fallbacks; a matched game baseline remains pending. See [M7](research/m7-helldivers2-headset-test.md). |
 
 Sources: [M1 native inference](research/m1-native-dml-findings.md),
 [M3 rendering and runtime depth](research/m3-depth-integration-findings.md), and
@@ -95,7 +105,10 @@ Depth worker: D3D12 / DirectML queue         Render: D3D12 / OpenXR queue
 
 The model and OpenXR renderer share one D3D12 device with separate queues. The
 capture device uses the same adapter. Depth buffers use a triple-buffer handoff;
-source textures currently use an eight-slot ring without reader ownership.
+source textures use an eight-slot ring protected by frame references and separate
+producer, graphics-reader, and model-reader completion values. A frame stays
+pinned while retained by a depth slot. When no safe slot is available, capture
+drops incoming frames instead of waiting or overwriting a reader's texture.
 
 Keep **Windows capture + DirectML + OpenXR** as the baseline while measuring its
 compatibility. The game's graphics API should not require a matching inference
@@ -117,15 +130,16 @@ be read alongside the later M3 corrections.
 
 ## Fixes before expanding the feature set
 
-These are open findings from source review, not newly reproduced hardware
-failures. Function names below refer to xrapp5 unless stated otherwise.
+These findings came from source review, not reproduced visual failures. Status
+is noted where implementation and validation have begun. Function names below
+refer to xrapp5 unless stated otherwise.
 
 | Priority | Fix | Acceptance check |
 |---|---|---|
-| P0 | **Protect source textures from reuse.** `CaptureMain` and `RecordCpuSource` advance the ring without waiting for readers. Introduce frame IDs, explicit ownership, and GPU completion fences for both readers. Retain paired colour until its final use; drop incoming frames when no safe slot is available. | Artificially delay inference and rendering beyond a full ring rotation. No texture is overwritten while referenced, no paired frame changes identity, and shutdown does not deadlock. |
-| P1 | **Handle tracking and frame errors.** `RunFrameLoop` continues after failed `xrLocateViews` and does not inspect view validity. Check results, view count, validity flags, and swapchain acquire/wait/release state. | Tracking loss submits no invalid projection; pause/resume and session loss follow valid OpenXR call order. |
-| P1 | **Handle resize and capture lifetime.** `CaptureMain` only copies the top-left region after resizing. Rebuild or safely rescale source resources, clear unused regions, and handle minimize, window closure, display changes, and capture exceptions. | Shrink/grow a game window, change resolution, minimize, close, and reopen it without stale borders, crashes, or manual process termination. |
-| P1 | **Propagate worker failures and depth age.** `WorkerMain` currently logs failure and exits while rendering continues with old depth. Publish health and source timestamps; fall back to flat viewing when changing content lacks usable depth, and offer retry. A static unchanged source should not expire merely because no new depth is needed. | Inject inference/capture failure and a slow worker. The app reports the fault, avoids indefinitely applying stale depth to new frames, and recovers or exits with an error. |
+| P0 — implemented; gameplay validation pending | **Protect source textures from reuse.** `source_ring.h` now provides frame identity, retained references, and completion tracking for the producer and both GPU readers. Capture, synthetic input, inference, rendering, and eye dumps use it. Ring exhaustion drops incoming frames. | Standalone tests pass for stalled timelines, ring exhaustion, pairing across 10,000 publications, and concurrent readers. Full native build and shader tests pass. An eight-second live capture run exits cleanly; only one frame was drawn with the headset not visible. Stress and sustained rendering with the headset awake remain required. |
+| P1 — implemented; headset validation pending | **Handle tracking and frame errors.** Check locate result, stereo view count, and position/orientation validity before using poses. Submit zero layers when invalid. Release only successfully waited swapchain images; propagate frame/session errors. | Standalone tests cover invalid/restored tracking and acquire/wait/release errors, including positive timeout results. Physical tracking loss and runtime restart still need headset testing. |
+| P1 — implemented in part | **Handle resize and capture lifetime.** Recreate the capture pool, discard the clipped transition frame, fit new content into fixed shared textures, and clear bars. Layout generations prevent applying pre-resize depth. Zero-sized frames are skipped; capture closure and exceptions stop playback cleanly. | Actual D3D11 pixel tests pass for shrinking, growing, changed aspect, and cleared borders. Live window minimize/restore, resize, and closure tests remain. Automatic source reopening/display reconnection is not implemented. |
+| P1 — implemented; gameplay validation pending | **Propagate worker failures and depth age.** Health and source timestamps now gate stereo. Changing content falls back to flat when depth lags by more than 250 ms; the unchanged source remains valid. Failed inference retries, then stays flat with a non-success exit status if unrecovered. | Injected startup failure, retry/recovery, and exhausted retry tests pass through the runtime. The 250 ms threshold is provisional and needs fast-motion gameplay tuning. A GPU/driver hang inside inference is not covered by this recovery path. |
 | P1 | **Remove unnecessary runtime requirements.** `InitXrInstance` requests the depth extension even when depth submission is disabled and prefers a Steam installation path for the loader. Use a packaged standard loader, the active runtime, and capability-based extension/format selection. | Start on a compatible runtime without the optional depth extension or the assumed Steam directory; unsupported required capabilities receive a clear explanation. |
 | P1 | **Make setup reproducible.** Resolve models relative to the installation or explicit configuration; pin dependencies and provide a repeatable build/package process. Validate model tensor names, shapes, types, and finite depth values before consuming them. | Build/run from another directory or Windows account with no edits to source paths. Missing or incompatible assets fail clearly. |
 | P2 | **Tighten resource and error ownership.** Check ignored API results, release ORT resources and allocation wrappers, bound failed GPU waits, and make partial initialization safe to clean up. | Repeated start/stop and injected initialization/device failures do not leak resources, hang, or report false success. |
@@ -137,8 +151,27 @@ render/upload resources to become reusable.
 
 ## Proposed first-release features
 
-These are proposals, not current capabilities. Keep the main interface small;
-put experimental and diagnostic options behind an advanced panel.
+The first desktop implementation now covers game/window selection, Start/Stop,
+screen placement, strength, stereo toggle, two configurable shortcuts, and per-executable
+profiles. Remaining work below includes broader validation and product polish.
+Keep diagnostic options out of the main interface. At the user's request, the
+experimental foreground refinement has an explicitly labelled, default-on checkbox.
+It spends bounded extra inference on a crop around a persistent nearby region,
+aligns local depth to the same frame's global depth, and rejects stale/inconsistent
+results. It does not yet track pixel motion or reconstruct occluded background;
+visual benefit and overhead in Helldivers 2 still require an on/off headset test.
+CPU tracking/fusion/budget tests, profile migration/opt-out tests, cropped GPU
+preprocessing and model-inference checks pass. Live settings off/on and Stop
+were verified with the synthetic source; this is not a gameplay quality result.
+The first Helldivers 2 refinement test produced no noticeable improvement for
+the user. Its log recorded 32 accepted refinements during roughly two minutes of
+visible playback, with depth commonly updating 10–12 times/s against 40–50 captured
+frames/s. Refinements are replaced by subsequent full-scene estimates; detail is
+not carried forward with motion. A separate default-off desktop frame-matching
+comparison now exposes paired colour/depth live and saves per executable. The
+next headset test should compare its off/on states with extra foreground passes
+off in both, checking outline quality as well as added delay and reduced motion
+smoothness before choosing motion alignment versus further depth-edge work.
 
 1. **One simple launcher.** Show running windows and monitors with recognizable
    names, remember the last source, and provide Play/Stop. Detect missing runtime,
@@ -151,21 +184,24 @@ put experimental and diagnostic options behind an advanced panel.
    be needed. Handle Alt-Tab and restoring game focus predictably.
 3. **A comfortable virtual screen.** Start with a stable screen anchored in the
    user's space, adjustable size/distance, recenter, and conservative 3D strength.
-   Keep the current head-following presentation as an optional mode. Spatial
-   screen placement requires new rendering work; `--freeze-pose` is a diagnostic,
-   not a finished implementation. Head tracking must not steer the game camera.
+   Fixed/follow-head placement and live size/distance/offset controls are now
+   implemented; worn-headset validation of the desktop controls remains.
+   `--freeze-pose` remains a separate diagnostic. Head tracking must not steer the game camera.
 4. **Instant flat-view fallback.** A toggle should remove stereo disparity for
    menus, troublesome scenes, or user preference without restarting the session.
-   Flat viewing should also work when AI initialization fails; today model setup
-   is a prerequisite even for `--no-warp`.
+   Runtime depth failure now falls back to flat viewing automatically. Flat viewing
+   should also work when AI initialization fails; model setup remains a prerequisite
+   even for `--no-warp`.
 5. **Minimal quality controls.** Expose 3D strength plus Auto/Performance/Quality
    only after presets are measured. Keep rendering responsive by limiting depth
    update rate and dropping obsolete work; do not queue every captured frame.
    Reduce depth workload under contention before reducing headset presentation
    rate. Add model-size variants only with validated quality and tensor geometry.
 6. **Remember settings per game.** Persist source, screen placement, strength,
-   quality, and shortcuts with a reset-to-defaults option. Prefer process identity
-   plus user confirmation over the current first matching window-title substring.
+   quality, and shortcuts with a reset-to-defaults option. Desktop profiles now
+   persist every exposed playback control by executable full path, including the
+   preferred window title. Attachment verifies the chosen PID, HWND and path;
+   unavailable or ambiguous sources must not silently select another window.
 7. **Make cursor and HUD behavior usable.** Offer cursor inclusion/exclusion and
    check for duplicate cursors. Test aiming reticles, subtitles, minimaps, and text
    menus explicitly. Begin with lower strength and the flat toggle; a manual HUD
@@ -180,6 +216,17 @@ put experimental and diagnostic options behind an advanced panel.
 The first supported configuration should be the existing Windows, RTX 3090,
 PS VR2, and SteamVR setup. Expand the supported list only after tests, while
 retaining DirectML as the baseline for investigating AMD and Intel support.
+
+**First game selected by the user: Helldivers 2.** A 60-second headset-on run
+completed with all frames drawn, but depth refreshed at only about 10 Hz under
+load. Overall visual feedback was positive. Fixed screen/recenter and automatic
+startup dashboard dismissal are the immediate usability changes; detailed input,
+comfort, and matched performance tests remain pending. This is not yet a full
+compatibility pass. See [M7](research/m7-helldivers2-headset-test.md).
+Continue with ordinary window/monitor capture in
+borderless mode, preserving the game's keyboard/mouse input. Check launch and
+focus, aiming and rapid turns, HUD/reticle readability, menus, Alt-Tab, and sustained
+GPU load. Do not introduce game injection or assume anti-cheat compatibility.
 
 | Area | Required coverage |
 |---|---|
@@ -217,6 +264,11 @@ baselines; the existing evidence does not justify a universal fps guarantee.
 
 ## Delivery order and later investigations
 
+Second-GPU inference is deferred by user preference. Both an RTX 3090 (24 GB)
+and RTX 3060 (12 GB) were detected, but the user observed about 70% GPU use in
+Helldivers 2's starting area and preferred simplicity. This is not a full-mission
+GPU budget measurement; revisit only if gameplay evidence justifies the work.
+
 **Milestone 1 — reliable prototype:** fix source ownership, tracking, resize,
 failure propagation, and setup. Extend tests and collect one real gameplay
 baseline with the headset awake. Exit when the lifecycle and ring-stress checks
@@ -247,6 +299,13 @@ setup complexity. Touch/motion-controller support remains outside initial scope.
 
 ## Evidence and code map
 
+- [Desktop UI](desktop/README.md): WPF launcher, executable profiles, live-control
+  protocol, build instructions, test commands, and remaining headset validation.
+
+- [Stationary screen and startup](research/m8-screen-and-startup.md): fixed-screen
+  default, keyboard recenter, optional head-following, and the SteamVR-specific
+  best-effort dashboard-close adapter. Follow-up headset verification is pending.
+
 - [M1 native inference](research/m1-native-dml-findings.md): verified timings,
   GPU input, unsuccessful output-binding experiments, and model graph analysis.
 - [M2 OpenXR bootstrap](research/m2-openxr-findings.md): the tested runtime,
@@ -260,6 +319,17 @@ setup complexity. Touch/motion-controller support remains outside initial scope.
   later measurements and this status document supersede early assumptions.
 - [xrapp5.cpp](bench/native/openxr/xrapp5.cpp): current application;
   [xr_common.h](bench/native/openxr/xr_common.h): CPU reference and shared helpers.
+- [Source-ownership findings](research/m5-source-ownership-findings.md): first
+  reliability fix, test results, and remaining hardware validation.
+- [Playback-recovery findings](research/m6-playback-recovery-findings.md): tracking,
+  resize, depth fallback/retries, test evidence, and remaining lifecycle work.
+- [First Helldivers 2 headset test](research/m7-helldivers2-headset-test.md):
+  visible-rendering measurements, slow depth updates under load, and pending feedback.
+- [test-playback.bat](bench/native/openxr/test-playback.bat): tracking/swapchain
+  tests, depth-age policy, and D3D11 resize pixel checks without a headset.
+- [source_ring.h](bench/native/openxr/source_ring.h) and
+  [test-source-ring.bat](bench/native/openxr/test-source-ring.bat): frame ownership
+  and standalone regression/stress tests, independent of OpenXR and the model.
 - [build.bat](bench/native/openxr/build.bat): current machine-specific native build.
 - [bench_depth.py](bench/bench_depth.py), [native probes](bench/native/dmlgpu/dmlgpu.cpp),
   and [fixed-shape exporter](bench/make_fixed_shape.py): investigation tools.

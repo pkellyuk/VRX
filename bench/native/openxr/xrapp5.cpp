@@ -19,7 +19,8 @@
 //   comes back (M1: ORT cannot bind a DML device output from this API surface).
 // * Source textures are ALLOW_SIMULTANEOUS_ACCESS: one writer, many readers across
 //   queues/devices, no resource barriers. Cross-queue ordering is by fence
-//   (ID3D12CommandQueue::Wait), never by stalling a CPU thread.
+//   (ID3D12CommandQueue::Wait). CPU frame references and reader-completion fences
+//   prevent reuse; incoming frames are dropped if the source ring is full.
 // * Colour is presented at up to 1920 px wide; depth stays at the model's 686x392.
 // * Depth normalisation is robust (0.5 / 99.5 percentiles, not min/max) and
 //   smoothed over time, so one bright outlier or a changing scene does not make the
@@ -31,19 +32,27 @@
 // usage: xrapp5 [seconds] [source] [options]
 //   source:  --capture            primary monitor (default if no other source given)
 //            --monitor=N          Nth monitor (0-based, EnumDisplayMonitors order)
-//            --window=TEXT        first visible top-level window whose title contains TEXT
+//            --window=TEXT        unique visible non-terminal window with matching title
+//            --exe=NAME.exe       unique visible window owned by this executable
+//            --check-source       report selected window and exit without starting VR
 //            --image=PATH         still image
 //            --synthetic          the moving test scene (with --truth: ground-truth depth)
 //   options: --scale=N --no-warp --paired --no-smooth --tau=SECONDS
+//            --no-foreground       disable experimental foreground crop passes
 //            --fill=mirror|stretch  disocclusion fill (default mirror, see FillHole)
 //            --dilate=N             widen foreground depth by N depth px (default 2)
 //            --dump                 write the depth map and BOTH eyes as warped by the GPU,
 //                                   for each fill mode, at the presented resolution
 //            --selftest --debug --dump --submit-depth --freeze-pose --ab=N --depth-lie
+//            --test-depth-failures=N  diagnostic: fail the first N depth attempts
+//            --head-locked          follow your head (default fixed screen; '=' recenters)
+//            --keep-dashboard       skip the SteamVR startup dashboard-close request
+//   keys:    '=' recenter; F8 dismiss SteamVR dashboard (keys also reach the game)
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include "steamvr_dashboard.h"
 #include <unknwn.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Capture.h>
@@ -84,6 +93,13 @@
 using Microsoft::WRL::ComPtr;
 
 #include "xr_common.h"
+#include "source_ring.h"
+#include "capture_scaler.h"
+#include "xr_frame_guard.h"
+#include "screen_anchor.h"
+#include "capture_window.h"
+#include "desktop_control.h"
+#include "foreground_refinement.h"
 
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wdx = winrt::Windows::Graphics::DirectX;
@@ -121,12 +137,18 @@ struct Options
     SourceKind source = SourceKind::Capture;
     int monitorIndex = -1;              // -1 = primary
     std::wstring windowTitle;
+    std::wstring executable;
+    bool checkSource = false;
+    std::wstring controlPath, executablePath;
+    DWORD capturePid = 0;
+    HWND captureHwnd = nullptr;
     std::wstring imagePath;
     bool doWarp = true;
     float warpScale = 1.0f;
     bool useTruth = false;
     bool doDump = false;
     bool paired = false;
+    bool foreground = true;
     bool selfTestOnly = false;
     bool debugLayer = false;
     bool smooth = true;
@@ -135,14 +157,19 @@ struct Options
     double smoothTau = 0.4;             // seconds
     bool submitDepth = false;           // SteamVR ignores it (measured) - opt-in only
     bool freezePose = false;
+    bool headLocked = false;           // default: fixed screen; '=' recenters
+    bool keepDashboard = false;
     bool depthLie = false;
     double abSeconds = 0.0;
+    int testDepthFailures = 0;          // diagnostic: inject initial inference failures
 };
 
 static const int SLOTS = 3;
 static const int SLOT_FRESH = 4;        // flag bit in readySlot
 static const int RING = 3;              // in-flight render frames
-static const int SRC_RING = 8;          // source textures (one writer, readers lag by a few frames at most)
+static const int SRC_RING = 8;          // source textures; references and GPU fences guard reuse
+using SourceFrames = SourceRing<SRC_RING>;
+using SourceRef = SourceFrames::ReadRef;
 static const int MAX_COLOR_W = 1920;
 static const uint32_t VIEWS = 2;
 static const float DEPTH_NEAR_Z = 0.10f, DEPTH_FAR_Z = 30.0f;
@@ -152,22 +179,12 @@ struct DepthSlot
 {
     ComPtr<ID3D12Resource> nearUp;      // UPLOAD heap, float[W*H], 0 = far .. 1 = near
     float* nearMapped = nullptr;
-    int srcIndex = -1;                  // the source texture the depth was computed from
+    SourceRef source;                  // retains the exact colour frame paired with this depth
     double sceneTime = 0;
     double completeTime = 0;
     double modelMs = 0;
     float lo = 0, hi = 0;               // normalisation range actually used
     float back = 0, panel = 0, marker = 0;
-};
-
-// The newest source frame. Readers make their queue Wait() on (fence, value).
-struct SourcePub
-{
-    int index = -1;
-    ID3D12Fence* fence = nullptr;
-    UINT64 value = 0;
-    double time = 0;
-    uint64_t seq = 0;
 };
 
 struct WarpConstants                    // must match cbuffer C in kWarpHlsl
@@ -184,6 +201,7 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
 {
     uint32_t dw, dh, taps, exactLoad;
+    float cropX = 0, cropY = 0, cropSize = 1, padding = 0;
 };
 
 // Everything the warp writes to, at one colour resolution.
@@ -210,6 +228,11 @@ struct Capture
     ComPtr<ID3D11DeviceContext4> ctx4;
     ComPtr<ID3D11Fence> fence11;
     ComPtr<ID3D11Texture2D> tex11[SRC_RING];
+    ComPtr<ID3D11RenderTargetView> rtv11[SRC_RING];
+    CaptureScaler scaler;
+    winrt::event_token closedToken{};
+    bool closedRegistered = false;
+    std::atomic<bool> closed{ false };
     wgc::GraphicsCaptureItem item{ nullptr };
     wgc::Direct3D11CaptureFramePool pool{ nullptr };
     wgc::GraphicsCaptureSession session{ nullptr };
@@ -256,9 +279,8 @@ struct App
     ComPtr<ID3D12Resource> srcUp[RING];                  // CPU sources only
     unsigned char* srcUpMapped[RING] = {};
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT srcFootprint{};
-    int srcNext = 0;
-    std::mutex pubMutex;
-    SourcePub pub;
+    SourceFrames sources;
+    std::atomic<uint64_t> sourceDrops{ 0 };
     std::vector<unsigned char> imageRgb;
     ComPtr<ID3D12Fence> captureFence;                    // shared with D3D11
     UINT64 captureFenceVal = 0;
@@ -271,6 +293,12 @@ struct App
     ComPtr<ID3D12Resource> modelIn;                      // DEFAULT heap, written by the prep shader
     std::vector<float> rawDepth;
     RangeSmoother smoother;
+    ForegroundTracker foregroundTracker;
+    ForegroundBudget foregroundBudget;
+    std::atomic<bool> foregroundEnabled{ true };
+    unsigned foregroundAttempts = 0, foregroundAccepted = 0;
+    double foregroundLogTime = 0;
+    uint64_t foregroundLayout = 0;
 
     // shaders
     ComPtr<ID3D12RootSignature> warpRootSig, prepRootSig;
@@ -289,8 +317,13 @@ struct App
     UINT64 slotFence = 0;
 
     std::thread worker;
+    std::thread dashboardWorker;
+    std::atomic<bool> dashboardBusy{ false };
+    bool steamVrRuntime = false;
     std::atomic<bool> stop{ false };
     std::atomic<uint64_t> depthPublished{ 0 };
+    std::atomic<bool> depthHealthy{ false };
+    int testDepthFailuresLeft = 0;      // main until worker starts, then worker only
 };
 
 // descriptor heap layout
@@ -299,6 +332,19 @@ static const UINT DESC_MAIN_TABLE = SRC_RING;            // 4
 static const UINT DESC_TEST_SRC = SRC_RING + 4;          // 1
 static const UINT DESC_TEST_TABLE = SRC_RING + 5;        // 4
 static const UINT DESC_COUNT = SRC_RING + 9;
+
+static ID3D12Fence* SourceFence(App& app)
+{
+    return app.opt.source == SourceKind::Capture ? app.captureFence.Get() : app.fence.Get();
+}
+
+static SourceFrames::WriteRef ReserveSource(App& app)
+{
+    auto frame = app.sources.Reserve(SourceFence(app)->GetCompletedValue(),
+        app.fence->GetCompletedValue(), app.mlFence->GetCompletedValue());
+    if (!frame) app.sourceDrops++;
+    return frame;
+}
 
 // ------------------------------------------------------------ d3d helpers
 static void WaitFence(App& app, UINT64 value)
@@ -441,7 +487,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
 {
     if (!argv || !opt) return false;
 
-    auto widen = [](const char* s) { std::string p(s); return std::wstring(p.begin(), p.end()); };
+    auto widen = [](const char* s) { return std::wstring(winrt::to_hstring(s)); };
     for (int i = 1; i < argc; i++)
     {
         const char* a = argv[i];
@@ -449,6 +495,16 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--capture")) { opt->source = SourceKind::Capture; continue; }
         if (!strncmp(a, "--monitor=", 10)) { opt->source = SourceKind::Capture; opt->monitorIndex = atoi(a + 10); continue; }
         if (!strncmp(a, "--window=", 9)) { opt->source = SourceKind::Capture; opt->windowTitle = widen(a + 9); continue; }
+        if (!strncmp(a, "--exe=", 6))
+        {
+            if (!a[6]) { Log("ParseArgs: --exe requires an executable filename"); return false; }
+            opt->source = SourceKind::Capture; opt->executable = widen(a + 6); continue;
+        }
+        if (!strcmp(a, "--check-source")) { opt->checkSource = true; continue; }
+        if (!strncmp(a, "--control=", 10)) { opt->controlPath = widen(a + 10); continue; }
+        if (!strncmp(a, "--exe-path=", 11)) { opt->executablePath = widen(a + 11); continue; }
+        if (!strncmp(a, "--pid=", 6)) { opt->capturePid = strtoul(a + 6, nullptr, 10); if (!opt->capturePid) return false; continue; }
+        if (!strncmp(a, "--hwnd=", 7)) { opt->captureHwnd = (HWND)(uintptr_t)strtoull(a + 7, nullptr, 0); if (!opt->captureHwnd) return false; continue; }
         if (!strncmp(a, "--image=", 8)) { opt->source = SourceKind::Image; opt->imagePath = widen(a + 8); continue; }
         if (!strcmp(a, "--synthetic")) { opt->source = SourceKind::Synthetic; continue; }
         if (!strcmp(a, "--no-warp")) { opt->doWarp = false; continue; }
@@ -456,8 +512,10 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--truth")) { opt->useTruth = true; continue; }
         if (!strcmp(a, "--dump")) { opt->doDump = true; continue; }
         if (!strcmp(a, "--paired")) { opt->paired = true; continue; }
+        if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--selftest")) { opt->selfTestOnly = true; continue; }
         if (!strcmp(a, "--debug")) { opt->debugLayer = true; continue; }
+        if (!strncmp(a, "--test-depth-failures=", 22)) { opt->testDepthFailures = atoi(a + 22); continue; }
         if (!strcmp(a, "--no-smooth")) { opt->smooth = false; continue; }
         if (!strcmp(a, "--fill=mirror")) { opt->fillMode = FILL_MIRROR; continue; }
         if (!strcmp(a, "--fill=stretch")) { opt->fillMode = FILL_STRETCH; continue; }
@@ -465,14 +523,27 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strncmp(a, "--tau=", 6)) { opt->smoothTau = atof(a + 6); continue; }
         if (!strcmp(a, "--submit-depth")) { opt->submitDepth = true; continue; }
         if (!strcmp(a, "--freeze-pose")) { opt->freezePose = true; continue; }
+        if (!strcmp(a, "--head-locked")) { opt->headLocked = true; continue; }
+        if (!strcmp(a, "--keep-dashboard")) { opt->keepDashboard = true; continue; }
         if (!strcmp(a, "--depth-lie")) { opt->depthLie = true; continue; }
         if (!strncmp(a, "--ab=", 5)) { opt->abSeconds = atof(a + 5); continue; }
         if (a[0] == '-') { Log("ParseArgs: unknown option %s", a); return false; }
         opt->runSeconds = atof(a);
     }
     if (opt->dilate < 0 || opt->dilate > 16) { Log("ParseArgs: --dilate must be 0..16"); return false; }
+    if (opt->executable.find_first_of(L"\\/") != std::wstring::npos)
+    { Log("ParseArgs: --exe takes a filename, for example helldivers2.exe"); return false; }
+    if (opt->checkSource && (opt->source != SourceKind::Capture || (opt->windowTitle.empty() && opt->executable.empty())))
+    { Log("ParseArgs: --check-source requires --exe or --window"); return false; }
+    if (opt->testDepthFailures < 0 || opt->testDepthFailures > 10) { Log("ParseArgs: --test-depth-failures must be 0..10"); return false; }
     if (opt->abSeconds < 0.0 || opt->smoothTau <= 0.0) { Log("ParseArgs: --ab must be >= 0 and --tau > 0"); return false; }
     if ((opt->abSeconds > 0.0 || opt->depthLie) && !opt->submitDepth) { Log("ParseArgs: --ab / --depth-lie imply --submit-depth"); opt->submitDepth = true; }
+    if (opt->submitDepth || opt->freezePose)
+    {
+        Log("ParseArgs: projection diagnostics imply --head-locked");
+        opt->headLocked = true;
+    }
+    Log("ParseArgs: screen %s; '=' recenters the fixed screen", opt->headLocked ? "head-following" : "fixed in room");
     if (opt->useTruth && opt->source != SourceKind::Synthetic) { Log("ParseArgs: --truth only applies to --synthetic, ignored"); opt->useTruth = false; }
 
     Log("ParseArgs: source %s (monitor %d, window '%ls', image '%ls') seconds %.0f",
@@ -510,6 +581,16 @@ static bool InitXrInstance(App& app)
     XrResult r = xrCreateInstance_(&ci, &app.instance);
     if (XR_FAILED(r)) { Log("InitXrInstance: FAIL xrCreateInstance %s (is SteamVR running?)", XRStr(r)); return false; }
     if (!ResolveFns(app.instance)) { Log("InitXrInstance: FAIL resolving functions"); return false; }
+    PFN_xrGetInstanceProperties getProperties = nullptr;
+    if (XR_SUCCEEDED(g_getProc(app.instance, "xrGetInstanceProperties", (PFN_xrVoidFunction*)&getProperties)) && getProperties)
+    {
+        XrInstanceProperties properties{ XR_TYPE_INSTANCE_PROPERTIES };
+        if (XR_SUCCEEDED(getProperties(app.instance, &properties)))
+        {
+            app.steamVrRuntime = strstr(properties.runtimeName, "SteamVR") != nullptr;
+            Log("InitXrInstance: runtime %s", properties.runtimeName);
+        }
+    }
 
     XrSystemGetInfo sgi{ XR_TYPE_SYSTEM_GET_INFO };
     sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
@@ -623,44 +704,41 @@ static BOOL CALLBACK MonitorEnumProc(HMONITOR mon, HDC, LPRECT, LPARAM lp)
     return TRUE;
 }
 
-struct WindowFind { std::wstring needle; HWND found = nullptr; std::wstring title; };
-
-static BOOL CALLBACK WindowEnumProc(HWND hwnd, LPARAM lp)
+static HWND FindCaptureWindow(const Options& opt)
 {
-    WindowFind* wf = (WindowFind*)lp;
-    if (!wf) return FALSE;
-    if (!IsWindowVisible(hwnd)) return TRUE;
-
-    wchar_t title[512] = {};
-    if (GetWindowTextW(hwnd, title, 511) <= 0) return TRUE;
-    std::wstring t(title), lt(t), ln(wf->needle);
-    for (auto& c : lt) c = (wchar_t)towlower(c);
-    for (auto& c : ln) c = (wchar_t)towlower(c);
-    if (lt.find(ln) == std::wstring::npos) return TRUE;
-
-    wf->found = hwnd;
-    wf->title = t;
-    return FALSE;
+    CaptureWindowSearch search;
+    search.title = opt.windowTitle; search.executable = opt.executable;
+    search.pid = opt.capturePid; search.hwnd = opt.captureHwnd; search.fullPath = opt.executablePath;
+    if (!EnumWindows(EnumerateCaptureWindow, reinterpret_cast<LPARAM>(&search)))
+    { Log("Capture selection: window enumeration failed (%lu)", GetLastError()); return nullptr; }
+    for (const auto& match : search.matches)
+        Log("Capture selection: HWND %p PID %lu exe '%s' title '%s'", (void*)match.hwnd,
+            match.pid, winrt::to_string(match.executable).c_str(), winrt::to_string(match.title).c_str());
+    if (search.matches.size() != 1)
+    {
+        Log("Capture selection: expected one game window, found %zu for exe '%s', title '%s'. Open the game or narrow --exe/--window; not capturing another source.",
+            search.matches.size(), winrt::to_string(opt.executable).c_str(), winrt::to_string(opt.windowTitle).c_str());
+        return nullptr;
+    }
+    return search.matches.front().hwnd;
 }
 
-// Creates the capture item + D3D11 side, and sets app.srcW/srcH/srcFormat.
-static bool InitCaptureItem(App& app)
+// Pin the verified source before XR startup can change desktop focus/visibility.
+// Retain the capture item, not just an HWND which Windows could later reuse.
+static bool SelectCaptureItem(App& app)
 {
-    Log("InitCaptureItem: enter");
     Capture& c = app.cap;
+    if (c.item) return !c.closed.load();
 
     if (!wgc::GraphicsCaptureSession::IsSupported()) { Log("InitCaptureItem: FAIL Windows.Graphics.Capture not supported on this OS"); return false; }
 
     auto interop = winrt::get_activation_factory<wgc::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
     HRESULT hr = E_FAIL;
-    if (!app.opt.windowTitle.empty())
+    if (!app.opt.windowTitle.empty() || !app.opt.executable.empty())
     {
-        WindowFind wf;
-        wf.needle = app.opt.windowTitle;
-        EnumWindows(WindowEnumProc, (LPARAM)&wf);
-        if (!wf.found) { Log("InitCaptureItem: FAIL no visible window with '%ls' in its title", app.opt.windowTitle.c_str()); return false; }
-        Log("InitCaptureItem: window '%ls'", wf.title.c_str());
-        hr = interop->CreateForWindow(wf.found, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(c.item));
+        const HWND hwnd = FindCaptureWindow(app.opt);
+        if (!hwnd) return false;
+        hr = interop->CreateForWindow(hwnd, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(c.item));
     }
     else
     {
@@ -676,6 +754,18 @@ static bool InitCaptureItem(App& app)
         hr = interop->CreateForMonitor(mon, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(c.item));
     }
     if (FAILED(hr) || !c.item) { Log("InitCaptureItem: FAIL create capture item 0x%08X", (unsigned)hr); return false; }
+    c.closedToken = c.item.Closed([&c](auto&&, auto&&) { c.closed = true; });
+    c.closedRegistered = true;
+    Log("Capture selection: retained capture item for startup");
+    return true;
+}
+
+// Initializes the D3D11 side using the already selected capture item.
+static bool InitCaptureItem(App& app)
+{
+    Log("InitCaptureItem: enter");
+    Capture& c = app.cap;
+    if (!SelectCaptureItem(app)) { Log("InitCaptureItem: FAIL source unavailable or closed during startup"); return false; }
 
     auto size = c.item.Size();
     if (size.Width <= 0 || size.Height <= 0) { Log("InitCaptureItem: FAIL item size %dx%d", size.Width, size.Height); return false; }
@@ -686,7 +776,7 @@ static bool InitCaptureItem(App& app)
     // D3D11 device on the SAME adapter (shared handles do not cross adapters)
     D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_1;
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-    hr = D3D11CreateDevice(app.adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, flags, &fl, 1, D3D11_SDK_VERSION, &c.dev, nullptr, &c.ctx);
+    HRESULT hr = D3D11CreateDevice(app.adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, flags, &fl, 1, D3D11_SDK_VERSION, &c.dev, nullptr, &c.ctx);
     if (FAILED(hr)) { Log("InitCaptureItem: FAIL D3D11CreateDevice 0x%08X", (unsigned)hr); return false; }
     if (FAILED(c.ctx.As(&c.ctx4))) { Log("InitCaptureItem: FAIL ID3D11DeviceContext4 (fence support)"); return false; }
 
@@ -719,7 +809,10 @@ static bool StartCapture(App& app)
         hr = dev1->OpenSharedResource1(h, IID_PPV_ARGS(&c.tex11[i]));
         CloseHandle(h);
         if (FAILED(hr)) { Log("StartCapture: FAIL OpenSharedResource1(tex %d) 0x%08X", i, (unsigned)hr); return false; }
+        if (FAILED(c.dev->CreateRenderTargetView(c.tex11[i].Get(), nullptr, &c.rtv11[i])))
+        { Log("StartCapture: FAIL capture render target %d", i); return false; }
     }
+    if (FAILED(c.scaler.Init(c.dev.Get()))) { Log("StartCapture: FAIL resize shaders"); return false; }
 
     if (FAILED(app.device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&app.captureFence)))) { Log("StartCapture: FAIL shared fence"); return false; }
     HANDLE fh = nullptr;
@@ -747,51 +840,66 @@ static void CaptureMain(App* app)
     Log("CaptureMain: enter");
 
     Capture& c = app->cap;
-    int next = 0;
     int poolW = app->srcW, poolH = app->srcH;
+    uint64_t layout = 0;
+    bool apartmentInitialized = false;
+    try
+    {
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    apartmentInitialized = true;
     while (!app->stop.load())
     {
-        wgc::Direct3D11CaptureFrame frame{ nullptr };
-        try { frame = c.pool.TryGetNextFrame(); }
-        catch (const winrt::hresult_error& e) { Log("CaptureMain: TryGetNextFrame failed 0x%08X", (unsigned)e.code().value); break; }
+        if (c.closed.load()) { Log("CaptureMain: source closed; stopping playback"); app->stop = true; break; }
+        auto frame = c.pool.TryGetNextFrame();
         if (!frame) { Sleep(1); continue; }
 
         auto cs = frame.ContentSize();
-        auto access = frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
-        ComPtr<ID3D11Texture2D> tex;
-        if (FAILED(access->GetInterface(IID_PPV_ARGS(&tex))) || !tex) { Log("CaptureMain: frame has no texture"); continue; }
-
-        // The ring keeps its initial size; a resized window is copied top-left.
-        D3D11_TEXTURE2D_DESC td{};
-        tex->GetDesc(&td);
-        D3D11_BOX box{ 0, 0, 0, (UINT)std::min<int>({ (int)td.Width, cs.Width, app->srcW }), (UINT)std::min<int>({ (int)td.Height, cs.Height, app->srcH }), 1 };
-        c.ctx->CopySubresourceRegion(c.tex11[next].Get(), 0, 0, 0, 0, tex.Get(), 0, &box);
-        UINT64 v = ++app->captureFenceVal;
-        c.ctx4->Signal(c.fence11.Get(), v);
-        c.ctx->Flush();
-
-        {
-            std::lock_guard<std::mutex> lock(app->pubMutex);
-            app->pub.index = next;
-            app->pub.fence = app->captureFence.Get();
-            app->pub.value = v;
-            app->pub.time = NowSeconds();
-            app->pub.seq++;
-        }
-        c.frames++;
-        next = (next + 1) % SRC_RING;
-
+        if (cs.Width <= 0 || cs.Height <= 0) { Sleep(10); continue; }
         if (cs.Width != poolW || cs.Height != poolH)
         {
-            Log("CaptureMain: content size changed %dx%d -> %dx%d, recreating frame pool", poolW, poolH, cs.Width, cs.Height);
-            poolW = cs.Width; poolH = cs.Height;
+            Log("CaptureMain: resize %dx%d -> %dx%d; fitting into %dx%d", poolW, poolH,
+                cs.Width, cs.Height, app->srcW, app->srcH);
             frame = nullptr;
             c.pool.Recreate(c.rtDevice, wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, cs);
+            poolW = cs.Width; poolH = cs.Height;
+            ++layout;
+            continue; // the old pool's surface may be clipped; wait for the new size
         }
-    }
+        auto access = frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
+        ComPtr<ID3D11Texture2D> tex;
+        winrt::check_hresult(access->GetInterface(IID_PPV_ARGS(&tex)));
+        if (!tex) winrt::throw_hresult(E_POINTER);
 
-    try { if (c.session) c.session.Close(); if (c.pool) c.pool.Close(); }
+        auto source = ReserveSource(*app);
+        if (source)
+        {
+            winrt::check_hresult(c.scaler.Copy(c.dev.Get(), c.ctx.Get(), tex.Get(), cs.Width, cs.Height,
+                c.tex11[source->index].Get(), c.rtv11[source->index].Get(), app->srcW, app->srcH));
+            UINT64 v = ++app->captureFenceVal;
+            if (FAILED(c.ctx4->Signal(c.fence11.Get(), v)))
+            {
+                Log("CaptureMain: source fence signal failed, stopping");
+                app->stop = true;
+                break;
+            }
+            c.ctx->Flush();
+            source->layout = layout;
+            app->sources.Publish(source, v, NowSeconds());
+            c.frames++;
+        }
+
+    }
+    }
+    catch (const winrt::hresult_error& e) { Log("CaptureMain: failure 0x%08X; stopping playback", (unsigned)e.code().value); app->stop = true; }
+    catch (const std::exception& e) { Log("CaptureMain: %s; stopping playback", e.what()); app->stop = true; }
+    catch (...) { Log("CaptureMain: unexpected failure; stopping playback"); app->stop = true; }
+
+    try {
+        if (c.closedRegistered) { c.item.Closed(c.closedToken); c.closedRegistered = false; }
+        if (c.session) c.session.Close(); if (c.pool) c.pool.Close();
+    }
     catch (const winrt::hresult_error&) {}
+    if (apartmentInitialized) winrt::uninit_apartment();
     Log("CaptureMain: exit after %llu frames", (unsigned long long)c.frames.load());
 }
 
@@ -848,42 +956,25 @@ static bool InitSource(App& app)
 }
 
 // CPU picture -> the next source-ring texture, on the gfx queue. Records only;
-// the caller submits, then calls PublishSource with the resulting fence value.
-static int RecordCpuSource(App& app, const std::vector<unsigned char>& rgb, int ringSlot)
+// the caller submits, then calls sources.Publish with the resulting fence value.
+static SourceFrames::WriteRef RecordCpuSource(App& app, const std::vector<unsigned char>& rgb, int ringSlot)
 {
-    if (ringSlot < 0 || ringSlot >= RING) return -1;
-    if (rgb.size() != (size_t)app.srcW * app.srcH * 3) { Log("RecordCpuSource: bad picture size %zu", rgb.size()); return -1; }
+    if (ringSlot < 0 || ringSlot >= RING) return {};
+    if (rgb.size() != (size_t)app.srcW * app.srcH * 3) { Log("RecordCpuSource: bad picture size %zu", rgb.size()); return {}; }
+
+    auto frame = ReserveSource(app);
+    if (!frame) return {};
 
     PackRgba(rgb, app.srcW, app.srcH, app.srcUpMapped[ringSlot] + app.srcFootprint.Offset, app.srcFootprint.Footprint.RowPitch);
-    int k = app.srcNext;
-    app.srcNext = (app.srcNext + 1) % SRC_RING;
 
     D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
-    dst.pResource = app.srcTex[k].Get();
+    dst.pResource = app.srcTex[frame->index].Get();
     dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     src.pResource = app.srcUp[ringSlot].Get();
     src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     src.PlacedFootprint = app.srcFootprint;
     app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);   // simultaneous-access: no barriers
-    return k;
-}
-
-static void PublishSource(App& app, int index, ID3D12Fence* fence, UINT64 value, double time)
-{
-    if (index < 0 || !fence) return;
-
-    std::lock_guard<std::mutex> lock(app.pubMutex);
-    app.pub.index = index;
-    app.pub.fence = fence;
-    app.pub.value = value;
-    app.pub.time = time;
-    app.pub.seq++;
-}
-
-static SourcePub LatestSource(App& app)
-{
-    std::lock_guard<std::mutex> lock(app.pubMutex);
-    return app.pub;
+    return frame;
 }
 
 // ---------------------------------------------------------------- shaders
@@ -951,7 +1042,7 @@ void main(uint3 id : SV_DispatchThreadID)
     // scatter: every source pixel moves by its own disparity; nearer wins
     [loop] for (x = 0; x < iw; x++)
     {
-        float n = NearAt(x, (int)y);
+        float n = (doWarp != 0 || writeDepth != 0) ? NearAt(x, (int)y) : 0.0;
         int dx = x;
         if (doWarp != 0)
         {
@@ -1051,6 +1142,7 @@ static const char* kPrepHlsl = R"HLSL(
 cbuffer C : register(b0)
 {
     uint DW; uint DH; uint taps; uint exactLoad;
+    float cropX; float cropY; float cropSize; float padding;
 };
 
 Texture2D<float4>         scene   : register(t0);
@@ -1075,7 +1167,7 @@ void main(uint3 id : SV_DispatchThreadID)
             {
                 float2 uv = float2(((float)id.x + ((float)i + 0.5) / (float)taps) / (float)DW,
                                    ((float)id.y + ((float)j + 0.5) / (float)taps) / (float)DH);
-                v += scene.SampleLevel(samp, uv, 0).rgb;
+                v += scene.SampleLevel(samp, float2(cropX, cropY) + uv * cropSize, 0).rgb;
             }
         }
         v /= (float)(taps * taps);
@@ -1339,14 +1431,16 @@ static bool InitModel(App& app)
 // GPU-side ordering only: the queue waits for the source's fence, and ORT's own
 // submissions to the same queue follow it. Returns the ml fence value signalled
 // after the dispatch (callers other than the self-test need not wait on it).
-static UINT64 SubmitPrep(App& app, UINT srcDescIndex, int srcW, int srcH, ID3D12Fence* srcFence, UINT64 srcValue)
+static UINT64 SubmitPrep(App& app, UINT srcDescIndex, int srcW, int srcH, ID3D12Fence* srcFence, UINT64 srcValue,
+    const DepthCrop& crop = {})
 {
     if (srcW <= 0 || srcH <= 0) return 0;
 
     PrepConstants pc{};
     pc.dw = W; pc.dh = H;
-    pc.exactLoad = (srcW == W && srcH == H) ? 1u : 0u;
-    pc.taps = (uint32_t)std::min(4, std::max(1, (srcW + W - 1) / W));
+    pc.exactLoad = (srcW == W && srcH == H && crop.size == 1 && crop.x == 0 && crop.y == 0) ? 1u : 0u;
+    pc.cropX = crop.x; pc.cropY = crop.y; pc.cropSize = crop.size;
+    pc.taps = (uint32_t)std::clamp(int(std::ceil(srcW * crop.size / W)), 1, 4);
 
     app.mlCmdAlloc->Reset();
     app.mlCmdList->Reset(app.mlCmdAlloc.Get(), nullptr);
@@ -1391,14 +1485,31 @@ static bool RunModelRaw(App& app)
     const char* inName = "pixel_values";
     const char* outName = "predicted_depth";
     if (OrtStatus* st = ort->Run(app.ortSession, nullptr, &inName, (const OrtValue* const*)&app.modelInValue, 1, &outName, 1, &out))
-    { Fail("Run", st); return false; }
+    { Fail("Run", st); ort->ReleaseStatus(st); return false; }
 
     // The output is a CPU tensor, so ORT has already synchronised with the GPU.
+    OrtTensorTypeAndShapeInfo* info = nullptr;
+    if (OrtStatus* st = ort->GetTensorTypeAndShape(out, &info))
+    { Fail("GetTensorTypeAndShape", st); ort->ReleaseStatus(st); ort->ReleaseValue(out); return false; }
+    ONNXTensorElementDataType type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    size_t count = 0;
+    OrtStatus* metadataError = ort->GetTensorElementType(info, &type);
+    if (!metadataError) metadataError = ort->GetTensorShapeElementCount(info, &count);
+    ort->ReleaseTensorTypeAndShapeInfo(info);
+    if (metadataError || type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || count != app.rawDepth.size())
+    {
+        if (metadataError) { Fail("depth metadata", metadataError); ort->ReleaseStatus(metadataError); }
+        else Log("RunModelRaw: incompatible depth output (type %d, elements %zu)", (int)type, count);
+        ort->ReleaseValue(out); return false;
+    }
     float* dp = nullptr;
-    ort->GetTensorMutableData(out, (void**)&dp);
+    if (OrtStatus* st = ort->GetTensorMutableData(out, (void**)&dp))
+    { Fail("GetTensorMutableData", st); ort->ReleaseStatus(st); ort->ReleaseValue(out); return false; }
     if (!dp) { ort->ReleaseValue(out); Log("RunModelRaw: null output"); return false; }
     memcpy(app.rawDepth.data(), dp, app.rawDepth.size() * sizeof(float));
     ort->ReleaseValue(out);
+    for (float v : app.rawDepth)
+        if (!std::isfinite(v)) { Log("RunModelRaw: non-finite depth output"); return false; }
     return true;
 }
 
@@ -1420,7 +1531,7 @@ static void SmoothRange(RangeSmoother& rs, const std::vector<float>& raw, double
     const int BINS = 1024;
     uint32_t hist[BINS] = {};
     const float k = (float)(BINS - 1) / (dmax - dmin);
-    for (float v : raw) hist[(int)((v - dmin) * k)]++;
+    for (float v : raw) hist[std::clamp((int)((v - dmin) * k), 0, BINS - 1)]++;
 
     const size_t loCount = (size_t)(raw.size() * 0.005), hiCount = (size_t)(raw.size() * 0.995);
     size_t acc = 0;
@@ -1468,12 +1579,34 @@ static bool InitSlots(App& app)
 
 // Source frame -> prep -> model -> normalise -> publish. Called by the main thread
 // once before the worker starts, then only by the worker.
-static bool ComputeAndPublish(App& app, const SourcePub& src, std::vector<float>& nearScratch)
+static void PublishDepth(App& app, const SourceRef& src, const std::vector<float>& depth,
+    float lo, float hi, double modelMs)
 {
-    if (src.index < 0) return false;
+    auto preparedDepth = depth;
+    DepthSlot& s = app.slots[app.writeSlot];
+    if (app.opt.source == SourceKind::Synthetic) RegionMeans(preparedDepth, src->time, s.back, s.panel, s.marker);
+    if (app.opt.useTruth) MakeTruth(preparedDepth, src->time);
+    DilateNearHorizontal(preparedDepth, W, H, app.opt.dilate);
+    memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
+    s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
+    s.lo = lo; s.hi = hi; s.completeTime = NowSeconds();
+    app.writeSlot = app.readySlot.exchange(app.writeSlot | SLOT_FRESH) & (SLOT_FRESH - 1);
+    app.depthPublished++; app.depthHealthy = true;
+}
+
+static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>& nearScratch)
+{
+    if (!src) return false;
+    if (app.testDepthFailuresLeft > 0)
+    {
+        --app.testDepthFailuresLeft;
+        Log("ComputeAndPublish: injected depth failure (%d remaining)", app.testDepthFailuresLeft);
+        return false;
+    }
 
     auto m0 = std::chrono::steady_clock::now();
-    SubmitPrep(app, DESC_SRC0 + (UINT)src.index, app.srcW, app.srcH, src.fence, src.value);
+    UINT64 prepDone = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
+    app.sources.MarkRead(src, SourceFrames::Reader::Model, prepDone);
     if (!RunModelRaw(app)) return false;
     double modelMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - m0).count();
 
@@ -1484,20 +1617,38 @@ static bool ComputeAndPublish(App& app, const SourcePub& src, std::vector<float>
     for (size_t i = 0; i < nearScratch.size(); i++)
         nearScratch[i] = std::min(1.0f, std::max(0.0f, (app.rawDepth[i] - lo) * inv));
 
-    DepthSlot& s = app.slots[app.writeSlot];
-    if (app.opt.source == SourceKind::Synthetic) RegionMeans(nearScratch, src.time, s.back, s.panel, s.marker);
-    if (app.opt.useTruth) MakeTruth(nearScratch, src.time);
-    DilateNearHorizontal(nearScratch, W, H, app.opt.dilate);
-
-    memcpy(s.nearMapped, nearScratch.data(), nearScratch.size() * sizeof(float));
-    s.srcIndex = src.index;
-    s.sceneTime = src.time;
-    s.modelMs = modelMs;
-    s.lo = lo; s.hi = hi;
-    s.completeTime = NowSeconds();
-
-    app.writeSlot = app.readySlot.exchange(app.writeSlot | SLOT_FRESH) & (SLOT_FRESH - 1);
-    app.depthPublished++;
+    // Make global depth available immediately; an optional crop must never hold
+    // back this result or mutate a slot the render thread may be reading.
+    PublishDepth(app, src, nearScratch, lo, hi, modelMs);
+    if (!app.foregroundEnabled.load() || app.opt.useTruth)
+    { app.foregroundTracker.Reset(); return true; }
+    DepthCrop crop;
+    if (app.foregroundLayout != src->layout)
+    { app.foregroundTracker.Reset(); app.foregroundLayout = src->layout; }
+    const double now = NowSeconds();
+    const bool persistent = app.foregroundTracker.Update(nearScratch, W, H, src->time, crop);
+    if (!persistent || app.stop.load() || !app.foregroundBudget.CanRun(now, (now-src->time)*1000, modelMs)) return true;
+    const double begin = NowSeconds();
+    ++app.foregroundAttempts;
+    prepDone = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value, crop);
+    app.sources.MarkRead(src, SourceFrames::Reader::Model, prepDone);
+    const bool good = RunModelRaw(app);
+    // A failed optional pass must still retire GPU prep before the next dispatch.
+    WaitMlFence(app, app.mlFenceVal);
+    const double costMs = (NowSeconds()-begin)*1000;
+    app.foregroundBudget.Complete(NowSeconds(), costMs);
+    if (good && app.foregroundEnabled.load() && !app.stop.load() && (NowSeconds()-src->time)<.20 &&
+        FuseForeground(nearScratch, app.rawDepth, W, H, crop))
+    {
+        PublishDepth(app, src, nearScratch, lo, hi, modelMs+costMs);
+        ++app.foregroundAccepted;
+    }
+    if (NowSeconds()>=app.foregroundLogTime)
+    {
+        Log("Foreground refinement: %u accepted / %u attempts; last crop %.2f %.2f size %.2f, extra %.1f ms",
+            app.foregroundAccepted, app.foregroundAttempts, crop.x, crop.y, crop.size, costMs);
+        app.foregroundLogTime=NowSeconds()+5;
+    }
     return true;
 }
 
@@ -1509,18 +1660,39 @@ static void WorkerMain(App* app)
 
     std::vector<float> nearScratch;
     uint64_t runs = 0, lastSeq = 0;
+    int failures = 0;
+    try
+    {
     while (!app->stop.load())
     {
-        SourcePub src = LatestSource(*app);
+        SourceRef src = app->sources.Latest();
         // A captured desktop that is not changing delivers no new frames - do not
         // burn the GPU recomputing identical depth. (Image/synthetic keep running:
         // they double as the throughput benchmark.)
-        if (app->opt.source == SourceKind::Capture && src.seq == lastSeq) { Sleep(2); continue; }
-        lastSeq = src.seq;
-
-        if (!ComputeAndPublish(*app, src, nearScratch)) { Log("WorkerMain: model failed, stopping"); break; }
+        if (!src || (app->opt.source == SourceKind::Capture && src->seq == lastSeq)) { Sleep(2); continue; }
+        if (!ComputeAndPublish(*app, src, nearScratch))
+        {
+            app->depthHealthy = false;
+            app->smoother.have = false;
+            app->foregroundTracker.Reset();
+            ++failures;
+            Log("WorkerMain: depth failed (%d/3); flat viewing%s", failures,
+                failures < 3 ? ", retrying in 1 second" : ", restart playback to retry");
+            if (failures >= 3) break;
+            // Run may have failed after queuing prep; do not reset its allocator
+            // until that dispatch is complete, including on retry of a static frame.
+            WaitMlFence(*app, app->mlFenceVal);
+            for (int i = 0; i < 50 && !app->stop.load(); ++i) Sleep(20);
+            continue;
+        }
+        if (failures) Log("WorkerMain: depth recovered");
+        failures = 0;
+        lastSeq = src->seq;
         runs++;
     }
+    }
+    catch (const std::exception& e) { app->depthHealthy = false; Log("WorkerMain: %s; flat viewing", e.what()); }
+    catch (...) { app->depthHealthy = false; Log("WorkerMain: unexpected failure; flat viewing"); }
     Log("WorkerMain: exit after %llu runs", (unsigned long long)runs);
 }
 
@@ -1684,7 +1856,7 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
             for (int x = 0; x < W; x++)
             {
                 if (memcmp(grow + x * 4, rrow + x * 4, 4) != 0) badColor++;
-                if (fabsf(gdrow[x] - rdrow[x]) > 1e-5f) badDepth++;
+                if (c.writeDepth && fabsf(gdrow[x] - rdrow[x]) > 1e-5f) badDepth++;
             }
         }
     }
@@ -1699,12 +1871,12 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
 }
 
 // GPU model-input prep vs the CPU preprocessing, for a WxH source (exact path).
-static bool SelfTestPrep(App& app, const std::vector<unsigned char>& scene)
+static bool SelfTestPrep(App& app, const std::vector<unsigned char>& scene, const DepthCrop& crop = {})
 {
-    Log("SelfTestPrep: enter");
+    Log("SelfTestPrep: enter (crop %.2f %.2f size %.2f)", crop.x, crop.y, crop.size);
     if (!UploadTestSource(app, scene)) return false;
 
-    UINT64 v = SubmitPrep(app, DESC_TEST_SRC, W, H, nullptr, 0);
+    UINT64 v = SubmitPrep(app, DESC_TEST_SRC, W, H, nullptr, 0, crop);
     WaitMlFence(app, v);
 
     const UINT64 bytes = (UINT64)3 * W * H * sizeof(float);
@@ -1724,16 +1896,20 @@ static bool SelfTestPrep(App& app, const std::vector<unsigned char>& scene)
     const float istd[3] = { 1.f / 0.229f, 1.f / 0.224f, 1.f / 0.225f };
     size_t bad = 0;
     float worst = 0;
+    const bool cropped = crop.size != 1;
+    std::vector<float> channel(W*H);
     for (int c = 0; c < 3; c++)
     {
+        for (size_t i=0; i<channel.size(); ++i) channel[i]=scene[i*3+c]/255.f;
         for (int y = 0; y < H; y++)
         {
             for (int x = 0; x < W; x++)
             {
-                float ref = (scene[((size_t)y * W + x) * 3 + c] / 255.0f - mean[c]) * istd[c];
+                float pixel = cropped ? SampleDepth(channel,W,H,crop.x+(x+.5f)/W*crop.size,crop.y+(y+.5f)/H*crop.size) : channel[y*W+x];
+                float ref = (pixel - mean[c]) * istd[c];
                 float d = fabsf(gp[((size_t)c * H + y) * W + x] - ref);
                 worst = std::max(worst, d);
-                if (d > 1e-5f) bad++;
+                if (d > (cropped ? .012f : 1e-5f)) bad++;
             }
         }
     }
@@ -1742,6 +1918,28 @@ static bool SelfTestPrep(App& app, const std::vector<unsigned char>& scene)
     bool ok = bad == 0;
     Log("SelfTestPrep: exit %s - %zu of %zu values differ from the CPU preprocessing (worst |diff| %.2e)", ok ? "PASS" : "FAIL", bad, (size_t)3 * W * H, worst);
     return ok;
+}
+
+// Exercise actual model inference on both full and cropped GPU input without
+// relying on headset visibility. Alignment may legitimately reject this fixture.
+static bool SelfTestForegroundModel(App& app)
+{
+    std::vector<unsigned char> scene;
+    MakeScene(scene, 1.0);
+    if (!UploadTestSource(app, scene)) return false;
+    SubmitPrep(app, DESC_TEST_SRC, W, H, nullptr, 0);
+    if (!RunModelRaw(app)) return false;
+    auto base = app.rawDepth;
+    const auto range = std::minmax_element(base.begin(), base.end());
+    const float lo=*range.first, span=*range.second-lo;
+    if (span<1e-6f) return false;
+    for (auto& v:base) v=(v-lo)/span;
+    const DepthCrop crop{.15f,.15f,.65f};
+    SubmitPrep(app, DESC_TEST_SRC, W, H, nullptr, 0, crop);
+    if (!RunModelRaw(app)) return false;
+    const bool fused=FuseForeground(base,app.rawDepth,W,H,crop);
+    Log("SelfTestForegroundModel: PASS full/crop inference finite; alignment %s", fused ? "accepted" : "safely rejected");
+    return true;
 }
 
 static bool SelfTest(App& app)
@@ -1768,6 +1966,7 @@ static bool SelfTest(App& app)
             ramp[(size_t)y * W + x] = 0.5f + 0.5f * sinf(x * 0.021f) * cosf(y * 0.017f);
 
     bool ok = SelfTestPrep(app, synth);
+    ok = SelfTestPrep(app, synth, DepthCrop{.17f,.23f,.5f}) && ok;
     c.mirrorTol = MIRROR_TOL;
     for (uint32_t mode : { (uint32_t)FILL_STRETCH, (uint32_t)FILL_MIRROR })
     {
@@ -1780,6 +1979,13 @@ static bool SelfTest(App& app)
         snprintf(name, sizeof(name), "%s synthetic+ramp", mn);
         ok = SelfTestWarp(app, name, synth, ramp, m) && ok;
 
+        WarpConstants anchored = m;
+        anchored.invZNear -= 1.0f / ScreenAnchor::distance;
+        anchored.invZFar -= 1.0f / ScreenAnchor::distance;
+        anchored.writeDepth = 0;
+        snprintf(name, sizeof(name), "%s anchored stereo", mn);
+        ok = SelfTestWarp(app, name, synth, ramp, anchored) && ok;
+
         // large disparity: wide holes, so the mirror walks far and meets its guard
         WarpConstants big = m;
         big.scaleFocal *= 4.0f;
@@ -1791,6 +1997,9 @@ static bool SelfTest(App& app)
     WarpConstants off = c;
     off.doWarp = 0;
     ok = SelfTestWarp(app, "no-warp", synth, truth, off) && ok;
+    off.writeDepth = 0;
+    std::vector<float> invalidDepth((size_t)W * H, std::numeric_limits<float>::quiet_NaN());
+    ok = SelfTestWarp(app, "flat-fallback-invalid-depth", synth, invalidDepth, off) && ok;
 
     Log("SelfTest: exit %s", ok ? "ALL PASS" : "FAILED");
     return ok;
@@ -1803,7 +2012,9 @@ static void RunFrameLoop(App& app)
         app.opt.paired ? " [paired colour+depth]" : " [latest colour + latest completed depth]");
 
     XrSessionState state = XR_SESSION_STATE_UNKNOWN;
-    bool running = false, exitLoop = false, haveDepth = false, printedView = false;
+    bool running = false, exitLoop = false, printedView = false;
+    bool trackingWasValid = true, wasStereo = false;
+    uint64_t invalidTrackingFrames = 0;
     double loopStart = NowSeconds(), lastReport = loopStart;
     uint64_t frames = 0, drawn = 0, depthUpdates = 0;
     uint64_t repFrames = 0, repDrawn = 0, repDepth = 0, lastCapFrames = 0;
@@ -1815,14 +2026,59 @@ static void RunFrameLoop(App& app)
 
     const double period = app.opt.abSeconds > 0.0 ? app.opt.abSeconds : 6.0;
     double firstDrawTime = -1.0;
+    double dashboardVisibleSince = -1.0;
+    bool dashboardStartupAttempted = false, dashboardCloseRequested = false;
+    bool dashboardKeyWasDown = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
     long long lastPhase = -1;
     bool depthOn = useDepthSc;
     XrPosef frozenPose[VIEWS] = {};
+    ScreenAnchor screen;
+    // Poll without taking keyboard focus or consuming game input. Held keys
+    // trigger once; a request survives temporary tracking loss.
+    const SHORT equalsMapping = VkKeyScanW(L'=');
+    int recenterKey = equalsMapping == -1 ? VK_OEM_PLUS : LOBYTE(equalsMapping);
+    int menuKey = VK_F8;
+    DesktopSettings desktop;
+    unsigned lastRecenter = 0, lastMenu = 0;
+    double nextControlRead = 0;
+    screen.keyWasDown = (GetAsyncKeyState(recenterKey) & 0x8000) != 0;
 
-    while (!exitLoop)
+    while (!exitLoop && !app.stop.load())
     {
+        if (!app.opt.controlPath.empty() && NowSeconds() >= nextControlRead)
+        {
+            nextControlRead = NowSeconds() + .1;
+            DesktopSettings next;
+            if (ReadDesktopSettings(app.opt.controlPath, next))
+            {
+                if (next.stop) { Log("Desktop requested stop"); break; }
+                if (next.width != desktop.width || next.distance != desktop.distance || next.height != desktop.height ||
+                    next.horizontal != desktop.horizontal || next.strength != desktop.strength || next.follow != desktop.follow || next.stereo != desktop.stereo)
+                    Log("Desktop settings applied: width %.2f distance %.2f height %.2f horizontal %.2f strength %.2f follow %d stereo %d",
+                        next.width, next.distance, next.height, next.horizontal, next.strength, next.follow, next.stereo);
+                if (next.recenter != lastRecenter) screen.pending = true;
+                if (next.menu != lastMenu) dashboardCloseRequested = true;
+                if (recenterKey != next.recenterKey) screen.keyWasDown = (GetAsyncKeyState(next.recenterKey) & 0x8000) != 0;
+                if (menuKey != next.menuKey) dashboardKeyWasDown = (GetAsyncKeyState(next.menuKey) & 0x8000) != 0;
+                desktop = next; lastRecenter = next.recenter; lastMenu = next.menu;
+                recenterKey = next.recenterKey; menuKey = next.menuKey;
+                app.opt.warpScale = next.strength; app.opt.doWarp = next.stereo != 0;
+                app.opt.keepDashboard = next.autoDismiss == 0;
+                if (app.opt.paired != (next.paired != 0))
+                    Log("Frame matching: %s", next.paired ? "enabled (matching colour and depth; added delay)" : "disabled (latest colour)");
+                app.opt.paired = next.paired != 0;
+                const bool foreground = next.foreground != 0 && next.stereo != 0;
+                if (app.foregroundEnabled.exchange(foreground) != foreground)
+                    Log("Foreground refinement: %s", foreground ? "enabled" : "disabled");
+            }
+        }
+        screen.Key((GetAsyncKeyState(recenterKey) & 0x8000) != 0);
+        const bool dashboardKeyDown = (GetAsyncKeyState(menuKey) & 0x8000) != 0;
+        if (dashboardKeyDown && !dashboardKeyWasDown) dashboardCloseRequested = true;
+        dashboardKeyWasDown = dashboardKeyDown;
         XrEventDataBuffer ev{ XR_TYPE_EVENT_DATA_BUFFER };
-        while (xrPollEvent_(app.instance, &ev) == XR_SUCCESS)
+        XrResult pollResult = XR_SUCCESS;
+        while ((pollResult = xrPollEvent_(app.instance, &ev)) == XR_SUCCESS)
         {
             if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
             {
@@ -1837,26 +2093,34 @@ static void RunFrameLoop(App& app)
                     bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
                     running = XR_SUCCEEDED(xrBeginSession_(app.session, &bi));
                     Log("RunFrameLoop: xrBeginSession %s", running ? "OK" : "failed");
+                    if (!running) { app.stop = true; exitLoop = true; }
                 }
-                else if (state == XR_SESSION_STATE_STOPPING) { xrEndSession_(app.session); running = false; }
-                else if (state == XR_SESSION_STATE_EXITING || state == XR_SESSION_STATE_LOSS_PENDING) exitLoop = true;
+                else if (state == XR_SESSION_STATE_STOPPING)
+                {
+                    if (XR_FAILED(xrEndSession_(app.session))) { app.stop = true; exitLoop = true; }
+                    running = false;
+                }
+                else if (state == XR_SESSION_STATE_EXITING) exitLoop = true;
+                else if (state == XR_SESSION_STATE_LOSS_PENDING) { app.stop = true; exitLoop = true; }
             }
             ev = { XR_TYPE_EVENT_DATA_BUFFER };
         }
+        if (XR_FAILED(pollResult)) { Log("RunFrameLoop: event polling failed %s", XRStr(pollResult)); app.stop = true; exitLoop = true; }
         if (exitLoop) break;
         if (!running)
         {
             Sleep(10);
-            if (NowSeconds() - loopStart > app.opt.runSeconds) exitLoop = true;
+            if (app.opt.runSeconds > 0 && NowSeconds() - loopStart > app.opt.runSeconds) exitLoop = true;
             continue;
         }
 
         XrFrameState fs{ XR_TYPE_FRAME_STATE };
-        if (XR_FAILED(xrWaitFrame_(app.session, nullptr, &fs))) { Log("RunFrameLoop: xrWaitFrame failed"); break; }
-        xrBeginFrame_(app.session, nullptr);
+        if (XR_FAILED(xrWaitFrame_(app.session, nullptr, &fs))) { Log("RunFrameLoop: xrWaitFrame failed"); app.stop = true; break; }
+        if (XR_FAILED(xrBeginFrame_(app.session, nullptr))) { Log("RunFrameLoop: xrBeginFrame failed"); app.stop = true; break; }
         frames++; repFrames++;
 
-        const XrCompositionLayerBaseHeader* layers[1] = { nullptr };
+        const XrCompositionLayerBaseHeader* layers[VIEWS] = {};
+        XrCompositionLayerQuad quads[VIEWS] = {};
         XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
         XrCompositionLayerProjectionView pviews[VIEWS];
         XrCompositionLayerDepthInfoKHR dinfo[VIEWS];
@@ -1873,7 +2137,15 @@ static void RunFrameLoop(App& app)
             uint32_t vc = VIEWS;
             XrView views[VIEWS] = { { XR_TYPE_VIEW }, { XR_TYPE_VIEW } };
             XrResult vr = xrLocateViews_(app.session, &vli, &vs, VIEWS, &vc, views);
-            if (XR_FAILED(vr)) Log("RunFrameLoop: xrLocateViews %s", XRStr(vr));
+            const bool validTracking = ValidStereoViews(vr, vc, vs.viewStateFlags);
+            if (validTracking != trackingWasValid)
+                Log("RunFrameLoop: tracking %s (locate %s, views %u, flags %llu)",
+                    validTracking ? "restored" : "unavailable; submitting empty frames", XRStr(vr), vc,
+                    (unsigned long long)vs.viewStateFlags);
+            trackingWasValid = validTracking;
+            if (!validTracking) ++invalidTrackingFrames;
+            if (validTracking)
+            {
 
             float ex = views[1].pose.position.x - views[0].pose.position.x;
             float ey = views[1].pose.position.y - views[0].pose.position.y;
@@ -1901,6 +2173,18 @@ static void RunFrameLoop(App& app)
             if (qn > 1e-6f) { sharedRot.x /= qn; sharedRot.y /= qn; sharedRot.z /= qn; sharedRot.w /= qn; }
             else sharedRot = q0;
 
+            if (!app.opt.headLocked)
+            {
+                if (!app.opt.controlPath.empty() && desktop.follow) screen.pending = true;
+                if (screen.Place(views[0].pose, views[1].pose, sharedRot, tanHalfX,
+                    float(target.ch) / target.cw) && !desktop.follow)
+                    Log("RunFrameLoop: screen recentered using the current headset direction");
+                if (!app.opt.controlPath.empty()) screen.Adjust(desktop.width, desktop.distance,
+                    desktop.height, desktop.horizontal, float(target.ch) / target.cw);
+                // Keep size and disparity calibration stable after placement.
+                focalPx = target.cw * (app.opt.controlPath.empty() ? ScreenAnchor::distance : desktop.distance) / screen.size.width;
+            }
+
             if (!printedView)
             {
                 printedView = true;
@@ -1921,14 +2205,13 @@ static void RunFrameLoop(App& app)
                         app.opt.freezePose ? ", pose re-captured and frozen" : "");
             }
 
-            uint32_t cIdx = 0, dIdx = 0;
-            XrSwapchainImageAcquireInfo ai{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
-            bool gotColor = XR_SUCCEEDED(xrAcquireImage_(app.colorSc, &ai, &cIdx));
-            bool gotDepth = useDepthSc && XR_SUCCEEDED(xrAcquireImage_(app.depthSc, &ai, &dIdx));
-            XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
-            wi.timeout = XR_INFINITE_DURATION;
-            bool ok = gotColor && (gotDepth || !useDepthSc) && XR_SUCCEEDED(xrWaitImage_(app.colorSc, &wi));
-            if (ok && useDepthSc) ok = XR_SUCCEEDED(xrWaitImage_(app.depthSc, &wi));
+            XrReadyImage colorImage, depthImage;
+            bool ok = colorImage.Acquire(app.colorSc, xrAcquireImage_, xrWaitImage_);
+            if (ok && useDepthSc) ok = depthImage.Acquire(app.depthSc, xrAcquireImage_, xrWaitImage_);
+            if (!ok) { Log("RunFrameLoop: swapchain acquire/wait failed (%d, %d)",
+                (int)colorImage.result, (int)depthImage.result); app.stop = true; }
+            const uint32_t cIdx = colorImage.index, dIdx = depthImage.index;
+            bool drewSource = false, stereo = false;
 
             if (ok)
             {
@@ -1938,15 +2221,15 @@ static void RunFrameLoop(App& app)
                 app.cmdList->Reset(app.cmdAlloc[ring].Get(), nullptr);
 
                 // --- latest source frame
-                int newSrc = -1;
+                SourceFrames::WriteRef newSrc;
                 double t = NowSeconds();
                 if (app.opt.source == SourceKind::Synthetic)
                 {
                     MakeScene(scene, t);
                     newSrc = RecordCpuSource(app, scene, ring);
+                    if (newSrc) newSrc->time = t;
                 }
-                SourcePub latest = LatestSource(app);
-                int srcIndex = newSrc >= 0 ? newSrc : latest.index;
+                SourceRef source = newSrc ? SourceRef(newSrc) : app.sources.Latest();
 
                 // --- latest COMPLETED depth
                 bool tookSlot = false;
@@ -1956,50 +2239,67 @@ static void RunFrameLoop(App& app)
                     app.readSlot = app.readySlot.exchange(app.readSlot) & (SLOT_FRESH - 1);
                     cur = &app.slots[app.readSlot];
                     RecordUploadNear(app, cur->nearUp.Get());
-                    tookSlot = true; haveDepth = true;
+                    tookSlot = true;
                     depthUpdates++; repDepth++;
                 }
-                if (app.opt.paired && cur && cur->srcIndex >= 0) srcIndex = cur->srcIndex;
+                stereo = app.opt.doWarp && source && cur && cur->source &&
+                    source->layout == cur->source->layout &&
+                    UsableDepth(app.depthHealthy.load(), source->seq, source->time,
+                        cur->source->seq, cur->source->time);
+                if (stereo != wasStereo)
+                    Log("RunFrameLoop: %s", stereo ? "stereo depth available" : "flat viewing (depth unavailable or stale)");
+                wasStereo = stereo;
+                if (app.opt.paired && stereo) source = cur->source;
 
-                if (haveDepth && srcIndex >= 0)
+                if (source)
                 {
                     // a captured frame comes from another device: make the gfx queue
                     // wait for it on the GPU timeline (no CPU stall)
-                    if (newSrc < 0 && latest.fence && latest.fence != app.fence.Get() && srcIndex == latest.index)
-                        app.gfxQueue->Wait(latest.fence, latest.value);
+                    if (SourceFence(app) != app.fence.Get())
+                        app.gfxQueue->Wait(SourceFence(app), source->value);
 
                     WarpConstants c{};
                     c.cw = (uint32_t)target.cw; c.ch = (uint32_t)target.ch; c.dw = W; c.dh = H;
-                    c.doWarp = app.opt.doWarp ? 1u : 0u;
+                    c.doWarp = stereo ? 1u : 0u;
                     c.scaleFocal = app.opt.warpScale * focalPx;
                     c.invZNear = 1.0f / 1.2f;
                     c.invZFar = 1.0f / 12.0f;
+                    if (!app.opt.headLocked)
+                    {
+                        // The compositor already supplies the screen-plane
+                        // disparity. Warp only the depth relative to that plane.
+                        const float screenDistance = app.opt.controlPath.empty() ? ScreenAnchor::distance : desktop.distance;
+                        c.invZNear -= 1.0f / screenDistance;
+                        c.invZFar -= 1.0f / screenDistance;
+                    }
                     c.eye0 = -0.5f * ipd; c.eye1 = 0.5f * ipd;
                     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
                     c.indicator = (app.opt.abSeconds > 0.0) ? (depthOn ? 1u : 2u) : 0u;
                     c.depthLie = app.opt.depthLie ? 1u : 0u;
-                    c.writeDepth = useDepthSc ? 1u : 0u;
+                    c.writeDepth = useDepthSc && stereo ? 1u : 0u;
                     c.exactLoad = (app.srcW == target.cw && app.srcH == target.ch) ? 1u : 0u;
                     c.fillMode = (uint32_t)app.opt.fillMode;
                     c.mirrorTol = MIRROR_TOL;
-                    RecordWarp(app, target, DESC_SRC0 + (UINT)srcIndex, c);
+                    RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c);
                     RecordCopyToSwapchain(app, target, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
                     RecordWarpOutputsBackToUav(app, target);
+                    drewSource = true;
                 }
                 app.cmdList->Close();
                 UINT64 fv = SubmitAndSignal(app);
+                if (drewSource) app.sources.MarkRead(source, SourceFrames::Reader::Graphics, fv);
                 app.frameFence[ring] = fv;
                 if (tookSlot) app.slotFence = fv;
-                if (newSrc >= 0) PublishSource(app, newSrc, app.fence.Get(), fv, t);
+                if (newSrc) app.sources.Publish(newSrc, fv, t);
 
-                drawn++; repDrawn++;
+                if (drewSource) { drawn++; repDrawn++; }
                 if (cur) repAgeMs += (NowSeconds() - cur->completeTime) * 1000.0;
             }
-            XrSwapchainImageReleaseInfo ri{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-            if (gotColor) xrReleaseImage_(app.colorSc, &ri);
-            if (gotDepth) xrReleaseImage_(app.depthSc, &ri);
+            const bool releasedColor = colorImage.Release(xrReleaseImage_);
+            const bool releasedDepth = depthImage.Release(xrReleaseImage_);
+            if (!releasedColor || !releasedDepth) { Log("RunFrameLoop: swapchain release failed"); ok = false; app.stop = true; }
 
-            if (ok && haveDepth)
+            if (ok && drewSource)
             {
                 for (uint32_t e = 0; e < VIEWS; e++)
                 {
@@ -2020,23 +2320,70 @@ static void RunFrameLoop(App& app)
                     dinfo[e].maxDepth = 1.0f;
                     dinfo[e].nearZ = DEPTH_NEAR_Z;
                     dinfo[e].farZ = DEPTH_FAR_Z;
-                    pviews[e].next = depthOn ? &dinfo[e] : nullptr;
+                    pviews[e].next = depthOn && stereo ? &dinfo[e] : nullptr;
                 }
                 proj.space = app.space;
                 proj.viewCount = VIEWS;
                 proj.views = pviews;
                 layers[0] = (XrCompositionLayerBaseHeader*)&proj;
+                if (!app.opt.headLocked)
+                {
+                    for (uint32_t e = 0; e < VIEWS; ++e)
+                    {
+                        quads[e] = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+                        quads[e].space = app.space;
+                        quads[e].eyeVisibility = e == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
+                        quads[e].subImage = pviews[e].subImage;
+                        quads[e].pose = screen.pose;
+                        quads[e].size = screen.size;
+                        layers[e] = (const XrCompositionLayerBaseHeader*)&quads[e];
+                    }
+                }
             }
             repCpuMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c0).count();
+            } // valid tracking; otherwise xrEndFrame below submits zero layers
         }
 
         XrFrameEndInfo fei{ XR_TYPE_FRAME_END_INFO };
         fei.displayTime = fs.predictedDisplayTime;
         fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-        fei.layerCount = layers[0] ? 1 : 0;
+        fei.layerCount = layers[0] ? (app.opt.headLocked ? 1u : VIEWS) : 0u;
         fei.layers = layers;
         XrResult er = xrEndFrame_(app.session, &fei);
-        if (XR_FAILED(er)) Log("RunFrameLoop: xrEndFrame %s", XRStr(er));
+        if (XR_FAILED(er)) { Log("RunFrameLoop: xrEndFrame %s", XRStr(er)); app.stop = true; }
+        // SteamVR can create its startup dashboard AFTER the first frame.
+        // Allow one second of visible playback before the single dismissal.
+        // Never fight menus opened later; network work stays off this thread.
+        const bool visiblePicture = XR_SUCCEEDED(er) && fei.layerCount &&
+            (state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED);
+        if (!visiblePicture) dashboardVisibleSince = -1.0;
+        else if (dashboardVisibleSince < 0.0) dashboardVisibleSince = NowSeconds();
+        const bool startupCloseDue = visiblePicture && NowSeconds() - dashboardVisibleSince >= 1.0 &&
+            !app.opt.keepDashboard && !dashboardStartupAttempted;
+        if (dashboardCloseRequested && !app.steamVrRuntime)
+        {
+            Log("SteamVR dashboard: F8 only applies to the SteamVR runtime");
+            dashboardCloseRequested = false;
+        }
+        if (app.steamVrRuntime && (startupCloseDue || dashboardCloseRequested) && !app.dashboardBusy.load())
+        {
+            // A finished worker remains joinable. Reap it before an explicit
+            // later key press starts a new request; never block the frame loop
+            // on an in-flight network operation.
+            if (app.dashboardWorker.joinable()) app.dashboardWorker.join();
+            const bool fromKey = dashboardCloseRequested;
+            dashboardCloseRequested = false;
+            dashboardStartupAttempted = true;
+            app.dashboardBusy = true;
+            app.dashboardWorker = std::thread([&app, fromKey] {
+                g_threadName = "menu";
+                const DWORD result = RequestSteamVrDashboardClose();
+                if (result == ERROR_SUCCESS)
+                    Log("SteamVR dashboard: %s close request sent and connection closed cleanly (visual confirmation required)", fromKey ? "F8" : "startup");
+                else Log("SteamVR dashboard: close unavailable (Windows error %lu); playback continues", result);
+                app.dashboardBusy = false;
+            });
+        }
 
         double now = NowSeconds();
         if (now - lastReport >= 2.0)
@@ -2054,10 +2401,11 @@ static void RunFrameLoop(App& app)
             lastReport = now; repFrames = repDrawn = repDepth = 0; repCpuMs = repAgeMs = 0;
             lastCapFrames = capFrames;
         }
-        if (now - loopStart > app.opt.runSeconds) exitLoop = true;
+        if (app.opt.runSeconds > 0 && now - loopStart > app.opt.runSeconds) exitLoop = true;
     }
 
     double el = NowSeconds() - loopStart;
+    Log("RunFrameLoop: skipped %llu frames for invalid tracking", (unsigned long long)invalidTrackingFrames);
     Log("RunFrameLoop: exit - frames %llu (%.1f fps) drawn %llu (%.1f fps) depth updates %llu (%.1f /s), worker published %llu, captured %llu",
         (unsigned long long)frames, frames / (el > 0 ? el : 1), (unsigned long long)drawn, drawn / (el > 0 ? el : 1),
         (unsigned long long)depthUpdates, depthUpdates / (el > 0 ? el : 1), (unsigned long long)app.depthPublished.load(),
@@ -2094,7 +2442,8 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     Log("DumpEyes: enter (fill %s)", tag);
 
     const DepthSlot& slot = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
-    if (slot.srcIndex < 0) { Log("DumpEyes: FAIL no published depth"); return false; }
+    SourceRef source = slot.source;
+    if (!source) { Log("DumpEyes: FAIL no published depth"); return false; }
     WarpTarget& t = app.mainTarget;
     ID3D12Device* dev = app.device.Get();
 
@@ -2121,7 +2470,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     app.cmdAlloc[0]->Reset();
     app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
     RecordUploadNear(app, slot.nearUp.Get());
-    RecordWarp(app, t, DESC_SRC0 + (UINT)slot.srcIndex, c);
+    RecordWarp(app, t, DESC_SRC0 + (UINT)source->index, c);
     for (UINT e = 0; e < VIEWS; e++)
     {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
@@ -2133,9 +2482,10 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     }
     RecordWarpOutputsBackToUav(app, t);
     app.cmdList->Close();
-    SourcePub latest = LatestSource(app);
-    if (latest.fence && latest.fence != app.fence.Get()) app.gfxQueue->Wait(latest.fence, latest.value);
-    WaitFence(app, SubmitAndSignal(app));
+    if (SourceFence(app) != app.fence.Get()) app.gfxQueue->Wait(SourceFence(app), source->value);
+    UINT64 fv = SubmitAndSignal(app);
+    app.sources.MarkRead(source, SourceFrames::Reader::Graphics, fv);
+    WaitFence(app, fv);
 
     unsigned char* cp = nullptr;
     if (FAILED(crb->Map(0, nullptr, (void**)&cp)) || !cp) { Log("DumpEyes: FAIL map readback"); return false; }
@@ -2163,8 +2513,8 @@ static bool FirstSourceFrame(App& app)
     {
         app.cap.thread = std::thread(CaptureMain, &app);
         const double deadline = NowSeconds() + 5.0;
-        while (LatestSource(app).index < 0 && NowSeconds() < deadline) Sleep(5);
-        if (LatestSource(app).index < 0) { Log("FirstSourceFrame: FAIL no captured frame within 5 s"); return false; }
+        while (!app.sources.Latest() && !app.stop.load() && NowSeconds() < deadline) Sleep(5);
+        if (!app.sources.Latest()) { Log("FirstSourceFrame: FAIL no captured frame within 5 s"); return false; }
         Log("FirstSourceFrame: exit ok (first captured frame arrived)");
         return true;
     }
@@ -2173,23 +2523,31 @@ static bool FirstSourceFrame(App& app)
     if (app.opt.source == SourceKind::Image) first = app.imageRgb; else MakeScene(first, 0.0);
     app.cmdAlloc[0]->Reset();
     app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
-    int k = RecordCpuSource(app, first, 0);
+    auto source = RecordCpuSource(app, first, 0);
     app.cmdList->Close();
-    if (k < 0) return false;
+    if (!source) return false;
     UINT64 fv = SubmitAndSignal(app);
     WaitFence(app, fv);
-    PublishSource(app, k, app.fence.Get(), fv, 0.0);
-    Log("FirstSourceFrame: exit ok (source texture %d)", k);
+    app.sources.Publish(source, fv, 0.0);
+    Log("FirstSourceFrame: exit ok (source texture %d)", source->index);
     return true;
 }
 
 static void Shutdown(App& app)
 {
+    if (app.dashboardWorker.joinable()) app.dashboardWorker.join();
     Log("Shutdown: enter");
     app.stop = true;
     if (app.worker.joinable()) app.worker.join();
     if (app.cap.thread.joinable()) app.cap.thread.join();
     WaitFence(app, app.fenceVal);
+    if (app.mlFence && app.mlFenceVal) WaitMlFence(app, app.mlFenceVal);
+    // Capture may have started before its polling thread was created.
+    try {
+        if (app.cap.closedRegistered) { app.cap.item.Closed(app.cap.closedToken); app.cap.closedRegistered = false; }
+        if (app.cap.session) app.cap.session.Close();
+        if (app.cap.pool) app.cap.pool.Close();
+    } catch (const winrt::hresult_error&) {}
 
     DumpDebugMessages(app);
 
@@ -2201,21 +2559,40 @@ static void Shutdown(App& app)
     if (app.instance) xrDestroyInstance_(app.instance);
     if (app.fenceEvent) CloseHandle(app.fenceEvent);
     if (app.mlFenceEvent) CloseHandle(app.mlFenceEvent);
-    Log("Shutdown: exit");
+    Log("Shutdown: exit (source frames dropped under backpressure: %llu)",
+        (unsigned long long)app.sourceDrops.load());
 }
 
-int main(int argc, char** argv)
+int wmain(int argc, wchar_t** wideArgv)
 {
+    std::vector<std::string> arguments;
+    std::vector<char*> argv;
+    for (int i = 0; i < argc; ++i) arguments.push_back(winrt::to_string(wideArgv[i]));
+    for (auto& arg : arguments) argv.push_back(arg.data());
     setvbuf(stdout, nullptr, _IONBF, 0);
     g_t0 = std::chrono::steady_clock::now();
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
     static App app;
-    if (!ParseArgs(argc, argv, &app.opt)) return 1;
+    if (!ParseArgs(argc, argv.data(), &app.opt)) return 1;
+    app.testDepthFailuresLeft = app.opt.testDepthFailures;
+    app.foregroundEnabled = app.opt.foreground && app.opt.doWarp;
 
     int rc = 1;
+    try
+    {
+    if (app.opt.checkSource) return FindCaptureWindow(app.opt) ? 0 : 1;
+    if (!app.opt.controlPath.empty())
+    {
+        DesktopSettings initial;
+        if (!ReadDesktopSettings(app.opt.controlPath, initial) || app.opt.headLocked)
+        { Log("Desktop control: invalid settings or incompatible projection diagnostic"); return 1; }
+        app.foregroundEnabled = initial.foreground != 0 && initial.stereo != 0;
+        app.opt.paired = initial.paired != 0;
+    }
     do
     {
+        if (app.opt.source == SourceKind::Capture && !SelectCaptureItem(app)) break;
         if (!InitXrInstance(app)) break;
         if (!InitD3D(app)) break;
         if (!InitModel(app)) break;
@@ -2225,7 +2602,7 @@ int main(int argc, char** argv)
         if (!InitShaders(app)) break;
 
         if (!SelfTest(app)) { Log("main: GPU shaders do not match the CPU reference - not presenting"); break; }
-        if (app.opt.selfTestOnly) { rc = 0; break; }
+        if (app.opt.selfTestOnly) { if (SelfTestForegroundModel(app)) rc = 0; break; }
 
         if (!FirstSourceFrame(app)) break;
 
@@ -2233,15 +2610,21 @@ int main(int argc, char** argv)
         // its first frame and the log shows the model's numbers even if the HMD
         // never wakes.
         std::vector<float> firstNear;
-        if (!ComputeAndPublish(app, LatestSource(app), firstNear)) break;
+        if (ComputeAndPublish(app, app.sources.Latest(), firstNear))
         {
             const DepthSlot& s = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
             Log("main: first depth in %.1f ms (includes warm-up), range %.3f..%.3f", s.modelMs, s.lo, s.hi);
             if (app.opt.source == SourceKind::Synthetic)
                 Log("main: model nearness (0 far..1 near): backdrop %.2f panel %.2f marker %.2f  [truth 0.00 / 0.50 / 1.00]", s.back, s.panel, s.marker);
         }
+        else
+        {
+            Log("main: initial depth failed; starting flat playback and worker retries");
+            if (app.mlFenceVal) WaitMlFence(app, app.mlFenceVal);
+        }
         if (app.opt.doDump)
         {
+            if (!app.depthHealthy.load()) { Log("main: cannot dump eyes without valid depth"); break; }
             std::vector<unsigned char> g(firstNear.size());
             for (size_t i = 0; i < g.size(); i++) g[i] = (unsigned char)(firstNear[i] * 255.0f + 0.5f);
             WritePNM("xrapp5_near.pgm", "P5", g.data(), g.size());
@@ -2251,8 +2634,12 @@ int main(int argc, char** argv)
 
         app.worker = std::thread(WorkerMain, &app);
         RunFrameLoop(app);
-        rc = 0;
+        rc = app.stop.load() || !app.depthHealthy.load() ? 1 : 0;
     } while (false);
+    }
+    catch (const winrt::hresult_error& e) { Log("main: failure 0x%08X", (unsigned)e.code().value); }
+    catch (const std::exception& e) { Log("main: %s", e.what()); }
+    catch (...) { Log("main: unexpected failure"); }
 
     Shutdown(app);
     return rc;

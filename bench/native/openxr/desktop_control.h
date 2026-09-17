@@ -1,0 +1,48 @@
+#pragma once
+#include <windows.h>
+#include <cmath>
+#include <sstream>
+#include <string>
+
+// Versioned, complete snapshots written atomically by the desktop application.
+// Only the render thread reads/applies settings; the inference worker is unchanged.
+struct DesktopSettings
+{
+    float width = 5.7f, distance = 3, height = 0, horizontal = 0, strength = 1;
+    int follow = 0, stereo = 1, autoDismiss = 1, recenterKey = VK_OEM_PLUS, menuKey = VK_F8;
+    unsigned recenter = 0, menu = 0;
+    int stop = 0;
+    int foreground = 0; // v1 launchers retain their original behaviour
+    int paired = 0;
+};
+
+inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& result)
+{
+    std::istringstream input(text);
+    DesktopSettings s;
+    std::string magic, tail; int version = 0;
+    if (!(input >> magic >> version >> s.width >> s.distance >> s.height >> s.horizontal >> s.strength
+        >> s.follow >> s.stereo >> s.autoDismiss >> s.recenterKey >> s.menuKey >> s.recenter >> s.menu >> s.stop)) return false;
+    if (version >= 2 && !(input >> s.foreground)) return false;
+    if (version >= 3 && !(input >> s.paired)) return false;
+    if (input >> tail) return false;
+    auto between = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
+    if (magic != "VRX" || version < 1 || version > 3 || !between(s.width, 1, 10) || !between(s.distance, 1, 8) ||
+        !between(s.height, -2, 2) || !between(s.horizontal, -3, 3) || !between(s.strength, 0, 2) ||
+        s.follow < 0 || s.follow > 1 || s.stereo < 0 || s.stereo > 1 || s.autoDismiss < 0 || s.autoDismiss > 1 ||
+        s.stop < 0 || s.stop > 1 || s.foreground < 0 || s.foreground > 1 || s.paired < 0 || s.paired > 1 || s.recenterKey < 1 || s.recenterKey > 254 ||
+        s.menuKey < 1 || s.menuKey > 254 || s.recenterKey == s.menuKey) return false;
+    result = s;
+    return true;
+}
+
+inline bool ReadDesktopSettings(const std::wstring& path, DesktopSettings& result)
+{
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    char data[2048]; DWORD length = 0;
+    const bool ok = ReadFile(file, data, sizeof(data), &length, nullptr) && length < sizeof(data);
+    CloseHandle(file);
+    return ok && ParseDesktopSettings(std::string(data, length), result);
+}

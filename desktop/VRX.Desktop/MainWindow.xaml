@@ -1,0 +1,72 @@
+<Window x:Class="VRX.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="VRX — Desktop setup" Icon="Assets/vrx.ico" Width="1080" Height="900" MinWidth="930" MinHeight="720" Background="#101827" Foreground="#E8EEF8" FontFamily="Segoe UI" FontSize="14" Closing="WindowClosing">
+ <Grid Margin="26">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <Grid Margin="0,0,0,22">
+   <StackPanel><TextBlock Text="VRX" FontSize="32" FontWeight="Bold"/><TextBlock Text="Choose a game. Set up your screen." Foreground="#A5B4CC" Margin="0,3,0,0"/></StackPanel>
+   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+    <Button x:Name="StartButton" Content="Attach / Play" Click="StartClick" IsEnabled="False" Background="#76DCC6" FontWeight="SemiBold"/>
+    <Button x:Name="StopButton" Content="Stop VR" Click="StopClick" IsEnabled="False"/>
+   </StackPanel>
+  </Grid>
+  <Grid Grid.Row="1">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="320"/><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <Border Background="#192438" CornerRadius="12" Padding="18">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+     <DockPanel><TextBlock Text="Running applications" FontSize="19" FontWeight="SemiBold" VerticalAlignment="Center"/><Button x:Name="RefreshButton" Content="↻" ToolTip="Refresh running applications" DockPanel.Dock="Right" HorizontalAlignment="Right" Click="RefreshClick" Margin="12,0,0,0"/></DockPanel>
+     <CheckBox Grid.Row="1" x:Name="ShowAll" Content="Show all processes" Checked="ShowAllChanged" Unchecked="ShowAllChanged"/>
+     <ListBox Grid.Row="2" x:Name="AppList" Background="#111B2B" Foreground="#E8EEF8" BorderThickness="0" SelectionChanged="AppSelected" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+      <ListBox.ItemTemplate><DataTemplate><Grid Margin="4,7"><Grid.ColumnDefinitions><ColumnDefinition Width="32"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+       <Image Source="{Binding Icon}" Width="24" Height="24" VerticalAlignment="Top"/>
+       <StackPanel Grid.Column="1"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Description}" FontSize="11" Foreground="#9EAFC7"/></StackPanel>
+      </Grid></DataTemplate></ListBox.ItemTemplate>
+     </ListBox>
+     <StackPanel Grid.Row="3" Margin="0,16,0,0"><TextBlock Text="Window to capture" Margin="0,0,0,6"/><ComboBox x:Name="WindowList" SelectionChanged="WindowSelected"/>
+      <TextBlock x:Name="PathLabel" Text="Choose an application to get started." FontSize="11" Foreground="#9EAFC7" TextWrapping="Wrap" Margin="0,10,0,0"/>
+     </StackPanel>
+     <TextBlock Grid.Row="4" Text="Settings are saved separately for each executable. Start SteamVR before playing." TextWrapping="Wrap" Foreground="#9EAFC7" FontSize="12" Margin="0,18,0,0"/>
+    </Grid>
+   </Border>
+   <Border Grid.Column="2" Background="#192438" CornerRadius="12" Padding="22">
+    <ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto"><StackPanel x:Name="SettingsPanel" IsEnabled="False">
+     <TextBlock Text="Screen placement" FontSize="21" FontWeight="SemiBold"/>
+     <TextBlock Text="Changes apply live. Position is relative to your last recenter." Foreground="#9EAFC7" TextWrapping="Wrap" Margin="0,5,0,12"/>
+     <Border Background="#101B2C" CornerRadius="8" Margin="0,0,0,12">
+      <Canvas x:Name="Preview" Height="168" ClipToBounds="True" MouseLeftButtonDown="PreviewDown" MouseMove="PreviewMove" MouseLeftButtonUp="PreviewUp" ToolTip="Drag the screen to change horizontal position and distance">
+       <Line X1="270" X2="270" Y1="12" Y2="145" Stroke="#324761" StrokeDashArray="3,3"/>
+       <Ellipse Canvas.Left="261" Canvas.Top="142" Width="18" Height="18" Fill="#76DCC6"/>
+       <Line x:Name="ScreenLine" X1="210" X2="330" Y1="86" Y2="86" Stroke="#A5BEFF" StrokeThickness="6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+       <TextBlock Text="TOP VIEW · drag the screen" Canvas.Left="12" Canvas.Top="10" FontSize="10" Foreground="#8297B7"/>
+      </Canvas>
+     </Border>
+     <DockPanel><TextBlock Text="Screen width"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" Text="{Binding ElementName=WidthSlider, Path=Value, StringFormat={}{0:F2} m}"/></DockPanel>
+     <Slider x:Name="WidthSlider" Minimum="1" Maximum="10" Value="5.7" ValueChanged="SettingsChanged"/>
+     <DockPanel><TextBlock Text="Distance"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" Text="{Binding ElementName=DistanceSlider, Path=Value, StringFormat={}{0:F2} m}"/></DockPanel>
+     <Slider x:Name="DistanceSlider" Minimum="1" Maximum="8" Value="3" ValueChanged="SettingsChanged"/>
+     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="20"/><ColumnDefinition/></Grid.ColumnDefinitions>
+      <StackPanel><TextBlock Text="Height offset"/><TextBlock Text="{Binding ElementName=HeightSlider, Path=Value, StringFormat={}{0:F2} m}" Foreground="#9EAFC7"/><Slider x:Name="HeightSlider" Minimum="-2" Maximum="2" Value="0" ValueChanged="SettingsChanged"/></StackPanel>
+      <StackPanel Grid.Column="2"><TextBlock Text="Left / right offset"/><TextBlock Text="{Binding ElementName=HorizontalSlider, Path=Value, StringFormat={}{0:F2} m}" Foreground="#9EAFC7"/><Slider x:Name="HorizontalSlider" Minimum="-3" Maximum="3" Value="0" ValueChanged="SettingsChanged"/></StackPanel>
+     </Grid>
+     <CheckBox x:Name="FollowCheck" Content="Screen follows my head" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+     <DockPanel Margin="0,12,0,0"><TextBlock Text="3D strength" FontSize="18" FontWeight="SemiBold"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" Text="{Binding ElementName=StrengthSlider, Path=Value, StringFormat={}{0:F2}}"/></DockPanel>
+     <Slider x:Name="StrengthSlider" Minimum="0" Maximum="2" Value="1" ValueChanged="SettingsChanged"/>
+     <CheckBox x:Name="StereoCheck" Content="Enable stereo 3D" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+     <CheckBox x:Name="ForegroundCheck" Content="Extra foreground depth passes (experimental)" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="Gives persistent nearby regions an extra detail pass when time allows. Uses more GPU time; improvement varies by scene. Toggle during playback to compare."/>
+     <CheckBox x:Name="PairedCheck" Content="Match game frames to depth (comparison)" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="Shows each depth estimate with the game frame it came from. May improve moving outlines, but adds delay and makes game motion update at the depth rate. Applies live; saved per game."/>
+     <TextBlock Text="Frame matching adds delay and can make motion less smooth." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="20,0,0,5"/>
+     <CheckBox x:Name="DismissCheck" Content="Dismiss SteamVR menu when playback starts" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+     <TextBlock Text="Keyboard shortcuts" FontSize="18" FontWeight="SemiBold" Margin="0,12,0,10"/>
+     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="20"/><ColumnDefinition/></Grid.ColumnDefinitions>
+      <StackPanel><TextBlock Text="Recenter" Margin="0,0,0,5"/><ComboBox x:Name="RecenterKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
+      <StackPanel Grid.Column="2"><TextBlock Text="Dismiss SteamVR menu" Margin="0,0,0,5"/><ComboBox x:Name="MenuKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
+     </Grid>
+     <TextBlock Text="Shortcuts work during VR playback and also reach the game. Choose keys that do not conflict with your game controls." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,14"/>
+     <WrapPanel><Button x:Name="RecenterButton" Content="Recenter now" Click="RecenterClick" IsEnabled="False"/><Button x:Name="DismissButton" Content="Dismiss menu" Click="DismissClick" IsEnabled="False"/><Button Content="Reset this profile" Click="ResetClick"/></WrapPanel>
+    </StackPanel></ScrollViewer>
+   </Border>
+  </Grid>
+  <StackPanel Grid.Row="2" Margin="0,15,0,0"><TextBlock x:Name="Status" Text="Ready · desktop controls only" TextWrapping="Wrap"/>
+   <Expander x:Name="SessionDetails" Header="Session details" Foreground="#A5B4CC" Margin="0,5,0,0"><TextBox x:Name="LogBox" Height="90" IsReadOnly="True" Background="#101827" Foreground="#A5B4CC" BorderThickness="0" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"/></Expander>
+  </StackPanel>
+ </Grid>
+</Window>
