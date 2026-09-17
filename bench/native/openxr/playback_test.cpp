@@ -1,0 +1,287 @@
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include "capture_scaler.h"
+#include "xr_frame_guard.h"
+#include "screen_anchor.h"
+#include "capture_window.h"
+#include "desktop_control.h"
+#include "foreground_refinement.h"
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
+#include <vector>
+
+static void Check(bool ok, const char* message)
+{
+    if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::abort(); }
+}
+static void Hr(HRESULT hr) { Check(SUCCEEDED(hr), "D3D11 operation"); }
+
+static int acquired = 0, waited = 0, released = 0;
+static XrResult acquireResult = XR_SUCCESS, waitResult = XR_SUCCESS, releaseResult = XR_SUCCESS;
+static XrResult XRAPI_CALL Acquire(XrSwapchain, const XrSwapchainImageAcquireInfo*, uint32_t* index)
+{ ++acquired; *index = 7; return acquireResult; }
+static XrResult XRAPI_CALL Wait(XrSwapchain, const XrSwapchainImageWaitInfo*)
+{ ++waited; return waitResult; }
+static XrResult XRAPI_CALL Release(XrSwapchain, const XrSwapchainImageReleaseInfo*)
+{ ++released; return releaseResult; }
+
+static void TestTrackingAndSwapchains()
+{
+    const auto flags = XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT;
+    Check(ValidStereoViews(XR_SUCCESS, 2, flags), "valid stereo tracking");
+    Check(!ValidStereoViews(XR_ERROR_RUNTIME_FAILURE, 2, flags), "failed locate");
+    Check(!ValidStereoViews(XR_SUCCESS, 1, flags), "missing eye");
+    Check(!ValidStereoViews(XR_SUCCESS, 2, XR_VIEW_STATE_POSITION_VALID_BIT), "invalid orientation");
+    Check(!ValidStereoViews(XR_SUCCESS, 2, XR_VIEW_STATE_ORIENTATION_VALID_BIT), "invalid position");
+    Check(ValidStereoViews(XR_SUCCESS, 2, flags), "tracking can recover");
+    XrReadyImage image;
+    Check(image.Acquire(XR_NULL_HANDLE, Acquire, Wait) && image.index == 7, "acquire and wait");
+    Check(image.Release(Release), "release ready image");
+    Check(image.Release(Release) && released == 1, "release exactly once");
+    acquireResult = XR_ERROR_RUNTIME_FAILURE;
+    XrReadyImage failedAcquire;
+    Check(!failedAcquire.Acquire(XR_NULL_HANDLE, Acquire, Wait), "acquire failure");
+    failedAcquire.Release(Release);
+    Check(waited == 1 && released == 1, "failed acquire must not wait or release");
+    acquireResult = XR_SUCCESS;
+    for (auto result : { XR_TIMEOUT_EXPIRED, XR_ERROR_RUNTIME_FAILURE })
+    {
+        waitResult = result;
+        XrReadyImage failedWait;
+        Check(!failedWait.Acquire(XR_NULL_HANDLE, Acquire, Wait), "timeout/error is not ready");
+        failedWait.Release(Release);
+        Check(released == 1, "unwaited image must not be released");
+    }
+    waitResult = XR_SUCCESS; releaseResult = XR_ERROR_RUNTIME_FAILURE;
+    XrReadyImage failedRelease;
+    Check(failedRelease.Acquire(XR_NULL_HANDLE, Acquire, Wait), "ready before release error");
+    Check(!failedRelease.Release(Release), "release failure must propagate");
+}
+
+static void TestDepthPolicy()
+{
+    Check(UsableDepth(true, 1, 5000, 1, 1), "unchanged source does not expire");
+    Check(UsableDepth(true, 10, 2.1, 9, 2.0), "short source lag may reuse depth");
+    Check(!UsableDepth(true, 10, 2.5, 9, 2.0), "changing source with stale depth falls back");
+    Check(!UsableDepth(false, 1, 1, 1, 1), "worker failure overrides even static pairing");
+    Check(!UsableDepth(true, 1, 1, 0, 0), "missing depth falls back");
+    Check(!UsableDepth(true, 2, std::numeric_limits<double>::quiet_NaN(), 1, 1), "invalid timestamp");
+    Check(UsableDepth(true, 20, 3.0, 20, 3.0), "fresh depth restores stereo");
+    Check(FitCapture(0, 0, 64, 48).width == 0, "minimized source has no valid rectangle");
+}
+
+static void TestCaptureResizePixels()
+{
+    using Microsoft::WRL::ComPtr;
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    Hr(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context));
+    CaptureScaler scaler;
+    Hr(scaler.Init(device.Get()));
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = 64; td.Height = 48; td.MipLevels = td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> target, readback;
+    ComPtr<ID3D11RenderTargetView> rtv;
+    Hr(device->CreateTexture2D(&td, nullptr, &target));
+    Hr(device->CreateRenderTargetView(target.Get(), nullptr, &rtv));
+    td.Usage = D3D11_USAGE_STAGING; td.BindFlags = 0; td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    Hr(device->CreateTexture2D(&td, nullptr, &readback));
+    const uint32_t colors[4] = { 0xFF0000FF, 0xFF00FF00, 0xFFFF0000, 0xFFFFFFFF };
+    struct Size { int w, h; };
+    // Reuse one output across shrink/grow/aspect changes to expose stale pixels.
+    for (auto size : { Size{64,48}, Size{32,24}, Size{96,24}, Size{12,48}, Size{96,72}, Size{64,48} })
+    {
+        std::vector<uint32_t> pixels(size_t(size.w) * size.h);
+        for (int y = 0; y < size.h; ++y)
+            for (int x = 0; x < size.w; ++x)
+                pixels[size_t(y) * size.w + x] = colors[(y >= size.h / 2 ? 2 : 0) + (x >= size.w / 2 ? 1 : 0)];
+        D3D11_TEXTURE2D_DESC sd = td;
+        sd.Width = UINT(size.w); sd.Height = UINT(size.h);
+        sd.Usage = D3D11_USAGE_DEFAULT; sd.CPUAccessFlags = 0;
+        D3D11_SUBRESOURCE_DATA data{ pixels.data(), UINT(size.w * 4), 0 };
+        ComPtr<ID3D11Texture2D> input;
+        Hr(device->CreateTexture2D(&sd, &data, &input));
+        Hr(scaler.Copy(device.Get(), context.Get(), input.Get(), size.w, size.h,
+            target.Get(), rtv.Get(), 64, 48));
+        context->CopyResource(readback.Get(), target.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        Hr(context->Map(readback.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+        auto pixel = [&](int x, int y) { return reinterpret_cast<const uint32_t*>(
+            static_cast<const unsigned char*>(mapped.pData) + y * mapped.RowPitch)[x]; };
+        auto rect = FitCapture(size.w, size.h, 64, 48);
+        for (int q = 0; q < 4; ++q)
+        {
+            int x = int(rect.x + rect.width * (q % 2 ? 0.75f : 0.25f));
+            int y = int(rect.y + rect.height * (q / 2 ? 0.75f : 0.25f));
+            Check(pixel(x, y) == colors[q], "resized capture must retain all quadrants and orientation");
+        }
+        if (rect.x > 1) Check(pixel(0, 24) == 0xFF000000 && pixel(63, 24) == 0xFF000000, "side bars cleared");
+        if (rect.y > 1) Check(pixel(32, 0) == 0xFF000000 && pixel(32, 47) == 0xFF000000, "top/bottom bars cleared");
+        context->Unmap(readback.Get(), 0);
+        Check(scaler.Copy(device.Get(), context.Get(), input.Get(), size.w + 1, size.h,
+            target.Get(), rtv.Get(), 64, 48) == E_INVALIDARG, "reject clipped frame after pool resize");
+    }
+}
+
+static void TestScreenAnchor()
+{
+    ScreenAnchor screen;
+    XrPosef left{{0,0,0,1}, {-.032f,1.6f,0}}, right = left;
+    right.position.x = .032f;
+    Check(screen.Place(left, right, left.orientation, 1, .5625f), "first valid view places screen");
+    Check(std::abs(screen.pose.position.z + 3) < .0001f && screen.pose.position.x == 0,
+        "screen centered three metres ahead of eye midpoint");
+    Check(screen.size.width == 6 && screen.size.height == 3.375f, "screen aspect and angular size");
+    left.position.x += 1; right.position.x += 1;
+    XrQuaternionf turn{0, std::sqrt(.5f), 0, std::sqrt(.5f)};
+    Check(!screen.Place(left, right, turn, .5f, 1), "movement does not reposition or resize screen");
+    Check(screen.pose.position.x == 0 && screen.size.width == 6, "anchor persists");
+    screen.Key(true);
+    Check(screen.pending, "recenter waits until valid tracking is supplied");
+    Check(screen.Place(left, right, turn, 1, .5625f), "key recenters");
+    Check(std::abs(screen.pose.position.x + 2) < .0001f && std::abs(screen.pose.position.z) < .0001f,
+        "recenter follows rotated forward direction and translated head");
+    screen.Key(true);
+    Check(!screen.pending, "held key does not repeatedly recenter");
+    screen.Key(false); screen.Key(true);
+    Check(screen.pending, "released then pressed key recenters again");
+    // Texture warp plus the physical quad must reproduce the original central
+    // viewing disparity at strength 1, without counting the screen plane twice.
+    for (float z : {1.2f, 3.f, 12.f})
+    {
+        const float plane = 362.f * .064f / ScreenAnchor::distance;
+        const float warp = 362.f * .064f * (1/z - 1/ScreenAnchor::distance);
+        Check(std::abs(plane + warp - 362.f * .064f / z) < .00001f, "stereo plane compensation");
+    }
+}
+
+static void TestCaptureSelection()
+{
+    CaptureWindow window;
+    window.pid = 42;
+    window.executable = L"helldivers2.exe";
+    window.title = L"HELLDIVERS 2";
+    window.windowClass = L"GameWindow";
+    Check(MatchesCaptureWindow(window, L"", L"HELLDIVERS2.EXE", 7), "executable match ignores case");
+    Check(!MatchesCaptureWindow(window, L"", L"helldivers.exe", 7), "executable name must match exactly");
+    Check(!MatchesCaptureWindow(window, L"", L"helldivers2.exe", 42), "exclude our own process");
+    Check(!MatchesCaptureWindow(window, L"wrong title", L"helldivers2.exe", 7), "both filters must match");
+    window.title.clear();
+    Check(MatchesCaptureWindow(window, L"", L"helldivers2.exe", 7), "executable selection works without title");
+    window.title = L"cmd.exe - xrapp5 1800 --window=HELLDIVERS";
+    window.executable = L"conhost.exe";
+    window.windowClass = L"ConsoleWindowClass";
+    Check(!MatchesCaptureWindow(window, L"HELLDIVERS", L"", 7), "command line title cannot select console");
+    window.executable.clear(); // Limited process query can fail; class still excludes the console.
+    Check(!MatchesCaptureWindow(window, L"HELLDIVERS", L"", 7), "console excluded even without process query");
+    window.executable = L"WindowsTerminal.exe";
+    window.windowClass = L"CASCADIA_HOSTING_WINDOW_CLASS";
+    Check(!MatchesCaptureWindow(window, L"HELLDIVERS", L"", 7), "exclude Windows Terminal");
+    window.executable = L"some-launcher.exe"; window.windowClass = L"OtherWindow";
+    Check(!MatchesCaptureWindow(window, L"", L"helldivers2.exe", 7), "title spoof cannot pass executable filter");
+}
+
+static void TestDesktopControl()
+{
+    DesktopSettings settings;
+    Check(ParseDesktopSettings("VRX 1 6.25 3.5 0.2 0.4 0.8 0 1 1 187 120 4 7 0", settings), "valid complete desktop snapshot");
+    Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7, "snapshot values and command sequence");
+    Check(!ParseDesktopSettings("VRX 1 6.25 3.5", settings), "partial snapshot rejected");
+    Check(!ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 0 0 0", settings), "unknown version rejected");
+    Check(settings.foreground == 0, "v1 keeps foreground refinement off");
+    Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1", settings) && settings.foreground == 1, "v2 enables foreground refinement");
+    Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 0", settings) && settings.foreground == 0, "v2 disables foreground refinement");
+    Check(!ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0", settings), "v2 missing feature flag rejected");
+    Check(!ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 2", settings), "v2 invalid feature flag rejected");
+    Check(settings.paired == 0, "older snapshots leave frame matching off");
+    Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 1", settings) && settings.paired == 1, "v3 enables matching");
+    Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1", settings) && settings.paired == 1, "partial v3 rejected without changing settings");
+    Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
+    Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
+    Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
+    Check(!ParseDesktopSettings("VRX 1 6.25 3 0 0 1 0 1 1 120 120 0 0 0", settings), "conflicting shortcuts rejected");
+    Check(!ParseDesktopSettings("VRX 1 nan 3 0 0 1 0 1 1 187 120 0 0 0", settings), "nonfinite value rejected");
+    ScreenAnchor screen;
+    XrPosef left{{0,0,0,1},{-.03f,1.6f,0}}, right{{0,0,0,1},{.03f,1.6f,0}};
+    screen.Place(left, right, left.orientation, 1, .5f);
+    screen.Adjust(4, 5, .5f, 1, .5f);
+    Check(screen.pose.position.x == 1 && std::abs(screen.pose.position.y - 2.1f) < .00001f && screen.pose.position.z == -5,
+        "live offsets use recentered origin");
+    left.position.x = 8; right.position.x = 8;
+    screen.Place(left, right, left.orientation, 1, .5f);
+    screen.Adjust(6, 4, 0, 0, .5f);
+    Check(screen.pose.position.x == 0 && screen.size.width == 6 && screen.size.height == 3, "slider preserves stationary origin after player movement");
+}
+
+static void TestForegroundRefinement()
+{
+    constexpr int w=196, h=112;
+    std::vector<float> depth(w*h,.1f);
+    for (int y=35; y<80; ++y) for (int x=50; x<88; ++x) depth[y*w+x]=.85f;
+    ForegroundTracker tracker; DepthCrop crop;
+    Check(!tracker.Update(depth,w,h,1,crop), "foreground requires persistence");
+    Check(!tracker.Update(depth,w,h,1.15,crop), "foreground not acquired early");
+    Check(tracker.Update(depth,w,h,1.3,crop), "persistent foreground gets crop");
+    Check(crop.size<1 && crop.x>=0 && crop.y>=0 && crop.x+crop.size<=1 && crop.y+crop.size<=1, "crop is magnified and bounded");
+    auto blank=std::vector<float>(w*h,.1f);
+    Check(!tracker.Update(blank,w,h,1.4,crop), "disappearance clears foreground");
+    Check(!tracker.Update(depth,w,h,1.5,crop), "reappearance must reacquire");
+    Check(!tracker.Update(std::vector<float>(w*h,.9f),w,h,1.6,crop), "full screen near field is not a useful crop");
+    tracker.Reset();
+    Check(!tracker.Update(depth,w,h,2,crop), "explicit reset clears persistence");
+    tracker.Update(depth,w,h,2.15,crop);
+    Check(!tracker.Update(depth,w,h,3,crop), "long capture gap clears persistence");
+    ForegroundBudget budget;
+    Check(budget.CanRun(1,50,50) && !budget.CanRun(1,150,50), "crop budget rejects predicted stale result");
+    budget.Complete(1,.050*1000);
+    Check(!budget.CanRun(1.1,20,50) && budget.CanRun(1.3,20,50), "crop budget bounds extra inference frequency");
+    budget.Complete(2,100);
+    Check(!budget.CanRun(2.3,20,50) && budget.CanRun(2.5,20,50), "costlier crops have longer cooldown");
+    const DepthCrop testCrop{.1f,.1f,.7f};
+    std::vector<float> base(w*h), local(w*h);
+    for (int y=0; y<h; ++y) for (int x=0; x<w; ++x)
+    {
+        base[y*w+x]=.1f+.8f*(x+.5f)/w;
+        local[y*w+x]=3.f*(.1f+.8f*(testCrop.x+(x+.5f)/w*testCrop.size))+2.f;
+    }
+    const auto original=base;
+    Check(FuseForeground(base,local,w,h,testCrop), "relative crop scale/offset aligns to global depth");
+    for (size_t i=0;i<base.size();++i) Check(std::abs(base[i]-original[i])<.001f, "scale alignment preserves an agreeing scene");
+    for (int y=45;y<55;++y) for (int x=135;x<145;++x) local[y*w+x]+=.2f;
+    Check(FuseForeground(base,local,w,h,testCrop), "consistent crop may add localized detail");
+    bool changed=false;
+    for (size_t i=0;i<base.size();++i)
+    {
+        changed |= std::abs(base[i]-original[i])>.001f;
+        Check(std::isfinite(base[i]) && base[i]>=0 && base[i]<=1 && std::abs(base[i]-original[i])<=.098f, "refinement changes bounded");
+        if (original[i]<.35f) Check(base[i]==original[i], "far background remains unchanged");
+    }
+    Check(changed, "extra pass actually changes foreground detail");
+    base=original;
+    Check(!FuseForeground(base,std::vector<float>(w*h,1),w,h,testCrop) && base==original, "flat unalignable crop keeps base depth");
+    local[0]=std::numeric_limits<float>::quiet_NaN();
+    Check(!FuseForeground(base,local,w,h,testCrop) && base==original, "invalid crop does not corrupt base depth");
+}
+
+int main(int argc, char** argv)
+{
+    TestForegroundRefinement();
+    TestDesktopControl();
+    if (argc > 1)
+    {
+        const std::string path(argv[1]); DesktopSettings settings;
+        Check(ReadDesktopSettings(std::wstring(path.begin(), path.end()), settings), "read C# emitted snapshot");
+        Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7 && settings.menuKey == 120 && settings.foreground == 1 && settings.paired == 1,
+            "C# to native control contract");
+    }
+    TestCaptureSelection();
+    TestScreenAnchor();
+    TestTrackingAndSwapchains();
+    TestDepthPolicy();
+    TestCaptureResizePixels();
+    std::puts("PASS: game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars");
+}

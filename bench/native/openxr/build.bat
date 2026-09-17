@@ -10,6 +10,8 @@ call "%VCVARS%" >nul
 
 set INC=%~dp0include
 set OUT=%~dp0out
+set APP5_NAME=xrapp5
+if "%~1"=="--desktop" set APP5_NAME=xrplayer
 if not exist "%OUT%" mkdir "%OUT%"
 
 echo === include: %INC%
@@ -61,7 +63,7 @@ if errorlevel 1 (
 
 echo.
 echo === building xrapp5 (desktop capture + GPU-resident model input + colour-res warp) ===
-cl /nologo /std:c++20 /EHsc /O2 /W3 /I"%INC%" /I"%ORTINC%" /Fo"%OUT%\\" /Fe"%OUT%\xrapp5.exe" "%~dp0xrapp5.cpp" ^
+cl /nologo /std:c++20 /EHsc /O2 /W3 /I"%INC%" /I"%ORTINC%" /Fo"%OUT%\\" /Fe"%OUT%\%APP5_NAME%.exe" "%~dp0xrapp5.cpp" ^
    /link /LIBPATH:"%ORTLIB%" onnxruntime.lib d3d12.lib d3d11.lib dxgi.lib dxguid.lib d3dcompiler.lib ole32.lib windowscodecs.lib windowsapp.lib user32.lib
 if errorlevel 1 (
   echo BUILD FAILED ^(xrapp5^)

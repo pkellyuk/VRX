@@ -16,6 +16,7 @@ bench/models/
 [Bb]in/
 [Oo]bj/
 bench/native/**/out/
+desktop/out/
 *.obj
 *.exe
 *.pdb
