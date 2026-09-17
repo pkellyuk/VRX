@@ -38,9 +38,16 @@ try {
     Copy-Item "$ortPackage\ThirdPartyNotices.txt" "$licenses\ONNXRuntime-ThirdPartyNotices.txt"
     Copy-Item "$dmlPackage\LICENSE.txt" "$licenses\DirectML-LICENSE.txt"
     Copy-Item "$dmlPackage\ThirdPartyNotices.txt" "$licenses\DirectML-ThirdPartyNotices.txt"
-    $dotnetRoot = Split-Path (Get-Command dotnet).Source
-    Copy-Item "$dotnetRoot\LICENSE.txt" "$licenses\DotNet-LICENSE.txt"
-    Copy-Item "$dotnetRoot\ThirdPartyNotices.txt" "$licenses\DotNet-ThirdPartyNotices.txt"
+    $runtimeConfig = Get-Content "$payload\VRX.Desktop.runtimeconfig.json" -Raw | ConvertFrom-Json
+    foreach ($framework in $runtimeConfig.runtimeOptions.includedFrameworks) {
+        $runtimePackage = Join-Path $packages ($framework.name.ToLowerInvariant() + '.runtime.win-x64\' + $framework.version)
+        $runtimeLicense = Get-ChildItem -LiteralPath $runtimePackage -File | Where-Object Name -match '^LICENSE(\.TXT)?$' | Select-Object -First 1
+        if (!$runtimeLicense) { throw "Runtime license missing: $runtimePackage" }
+        Copy-Item -LiteralPath $runtimeLicense.FullName -Destination "$licenses\$($framework.name)-LICENSE.txt"
+        Get-ChildItem -LiteralPath $runtimePackage -File | Where-Object Name -match '^THIRD-PARTY-NOTICES\.TXT$' | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination "$licenses\$($framework.name)-ThirdPartyNotices.txt"
+        }
+    }
     Copy-Item release/README.txt,release/THIRD-PARTY-NOTICES.txt $payload
     $commit = & git rev-parse HEAD
     $dirty = & git status --porcelain

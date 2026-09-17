@@ -23,7 +23,9 @@ See licenses/OpenXR-LICENSE.txt. SteamVR itself is not bundled.
 Microsoft .NET desktop runtime (self-contained dotnet publish)
 https://github.com/dotnet/runtime
 https://github.com/dotnet/wpf
-See licenses/DotNet-LICENSE.txt and DotNet-ThirdPartyNotices.txt.
+See licenses/Microsoft.NETCore.App-LICENSE.txt,
+Microsoft.NETCore.App-ThirdPartyNotices.txt and
+Microsoft.WindowsDesktop.App-LICENSE.txt, copied from the exact runtime packages.
 
 Microsoft Visual C++ x64 runtime redistribution files
 App-local runtime DLLs copied from the Visual Studio redistributable directory.
