@@ -1,0 +1,130 @@
+[
+  {
+    "name": ".clang-format",
+    "path": "onnxruntime/core/providers/dml/.clang-format",
+    "sha": "432228074739a7c4470368494fd1c9e5312a6884",
+    "size": 171,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/.clang-format?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/.clang-format",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/432228074739a7c4470368494fd1c9e5312a6884",
+    "download_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/main/onnxruntime/core/providers/dml/.clang-format",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/.clang-format?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/432228074739a7c4470368494fd1c9e5312a6884",
+      "html": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/.clang-format"
+    }
+  },
+  {
+    "name": "DmlExecutionProvider",
+    "path": "onnxruntime/core/providers/dml/DmlExecutionProvider",
+    "sha": "fba7c6e51a7bd19fc69595d607e343d9df89b570",
+    "size": 0,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/DmlExecutionProvider?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/DmlExecutionProvider",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/fba7c6e51a7bd19fc69595d607e343d9df89b570",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/DmlExecutionProvider?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/fba7c6e51a7bd19fc69595d607e343d9df89b570",
+      "html": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/DmlExecutionProvider"
+    }
+  },
+  {
+    "name": "GraphTransformers",
+    "path": "onnxruntime/core/providers/dml/GraphTransformers",
+    "sha": "e5406b613bd3ac6ff1d19f63a6a35f03a18ba952",
+    "size": 0,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/GraphTransformers?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/GraphTransformers",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/e5406b613bd3ac6ff1d19f63a6a35f03a18ba952",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/GraphTransformers?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/e5406b613bd3ac6ff1d19f63a6a35f03a18ba952",
+      "html": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/GraphTransformers"
+    }
+  },
+  {
+    "name": "OperatorAuthorHelper",
+    "path": "onnxruntime/core/providers/dml/OperatorAuthorHelper",
+    "sha": "8bfbfa66598692da335d1ac08a0e7b50d1952e90",
+    "size": 0,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/OperatorAuthorHelper?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/OperatorAuthorHelper",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/8bfbfa66598692da335d1ac08a0e7b50d1952e90",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/OperatorAuthorHelper?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/8bfbfa66598692da335d1ac08a0e7b50d1952e90",
+      "html": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/OperatorAuthorHelper"
+    }
+  },
+  {
+    "name": "dml_provider_factory.cc",
+    "path": "onnxruntime/core/providers/dml/dml_provider_factory.cc",
+    "sha": "c0ddc44d0ca57f5f127b3d1a238d40cf28badefd",
+    "size": 29555,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/dml_provider_factory.cc?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/dml_provider_factory.cc",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/c0ddc44d0ca57f5f127b3d1a238d40cf28badefd",
+    "download_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/main/onnxruntime/core/providers/dml/dml_provider_factory.cc",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/dml_provider_factory.cc?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/c0ddc44d0ca57f5f127b3d1a238d40cf28badefd",
+      "html": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/dml_provider_factory.cc"
+    }
+  },
+  {
+    "name": "dml_provider_factory_creator.h",
+    "path": "onnxruntime/core/providers/dml/dml_provider_factory_creator.h",
+    "sha": "0a1bd81b151a826b44f07378088453e29656e665",
+    "size": 1837,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/dml_provider_factory_creator.h?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/dml_provider_factory_creator.h",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/0a1bd81b151a826b44f07378088453e29656e665",
+    "download_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/main/onnxruntime/core/providers/dml/dml_provider_factory_creator.h",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/dml_provider_factory_creator.h?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/0a1bd81b151a826b44f07378088453e29656e665",
+      "html": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/dml_provider_factory_creator.h"
+    }
+  },
+  {
+    "name": "dml_session_options_config_keys.h",
+    "path": "onnxruntime/core/providers/dml/dml_session_options_config_keys.h",
+    "sha": "8cad03c5e85b457e7b7c84764ffe48b52f0f8572",
+    "size": 1387,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/dml_session_options_config_keys.h?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/dml_session_options_config_keys.h",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/8cad03c5e85b457e7b7c84764ffe48b52f0f8572",
+    "download_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/main/onnxruntime/core/providers/dml/dml_session_options_config_keys.h",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/dml_session_options_config_keys.h?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/8cad03c5e85b457e7b7c84764ffe48b52f0f8572",
+      "html": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/dml_session_options_config_keys.h"
+    }
+  },
+  {
+    "name": "symbols.txt",
+    "path": "onnxruntime/core/providers/dml/symbols.txt",
+    "sha": "404557cb9e9fdf3110a7302ba8182a91db133f4f",
+    "size": 91,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/symbols.txt?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/symbols.txt",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/404557cb9e9fdf3110a7302ba8182a91db133f4f",
+    "download_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/main/onnxruntime/core/providers/dml/symbols.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/symbols.txt?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/blobs/404557cb9e9fdf3110a7302ba8182a91db133f4f",
+      "html": "https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/providers/dml/symbols.txt"
+    }
+  }
+]

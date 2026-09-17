@@ -1,0 +1,34 @@
+[
+  {
+    "name": "inc",
+    "path": "onnxruntime/core/providers/dml/DmlExecutionProvider/inc",
+    "sha": "c43f741831a5bd94c1c382d429ef8a7dfeb8a171",
+    "size": 0,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/DmlExecutionProvider/inc?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/DmlExecutionProvider/inc",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/c43f741831a5bd94c1c382d429ef8a7dfeb8a171",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/DmlExecutionProvider/inc?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/c43f741831a5bd94c1c382d429ef8a7dfeb8a171",
+      "html": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/DmlExecutionProvider/inc"
+    }
+  },
+  {
+    "name": "src",
+    "path": "onnxruntime/core/providers/dml/DmlExecutionProvider/src",
+    "sha": "5aad0a33ea6f67edbbaffb13171dc472abf5355d",
+    "size": 0,
+    "url": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/DmlExecutionProvider/src?ref=main",
+    "html_url": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/DmlExecutionProvider/src",
+    "git_url": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/5aad0a33ea6f67edbbaffb13171dc472abf5355d",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/microsoft/onnxruntime/contents/onnxruntime/core/providers/dml/DmlExecutionProvider/src?ref=main",
+      "git": "https://api.github.com/repos/microsoft/onnxruntime/git/trees/5aad0a33ea6f67edbbaffb13171dc472abf5355d",
+      "html": "https://github.com/microsoft/onnxruntime/tree/main/onnxruntime/core/providers/dml/DmlExecutionProvider/src"
+    }
+  }
+]
