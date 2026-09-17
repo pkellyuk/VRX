@@ -3,6 +3,12 @@
 Date: 2026-09-17
 Probe: `bench/native/openxr/xrapp5.cpp` (builds as C++20: C++/WinRT needs `<coroutine>`)
 
+## Result — live 3D desktop video in the headset (eyeball-confirmed)
+
+`xrapp5 120` capturing the primary monitor while playing YouTube in a browser:
+the video is seen in stereo 3D on the PS VR2, live. This is the end-to-end goal of
+the project — arbitrary 2D screen content turned into 3D in real time — working.
+
 ## What xrapp5 is
 
 xrapp4's structure (worker-thread model, compute-shader warp, pipelined 120 fps
