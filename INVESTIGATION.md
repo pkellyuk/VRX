@@ -1,10 +1,9 @@
 ﻿# VRX — Investigation: real-time AI depth estimation of the VR display via OpenXR
 
-Status: proof of concept working — `bench/native/openxr/xrapp3.cpp` turns a 2D
-image into fused stereo 3D in the headset using the model's depth (eyeball-
-confirmed, see `research/m3-depth-integration-findings.md`). Still CPU-bound
-(synchronous model, CPU warp); worker thread, compute-shader warp and real
-display capture are the remaining work.
+Status: working end to end — `bench/native/openxr/xrapp5.cpp` captures the live
+desktop (e.g. YouTube in a browser), estimates depth with Depth-Anything-V2 on the
+GPU, and presents it as stereo 3D in the headset at 120 fps (eyeball-confirmed).
+See `research/m3-depth-integration-findings.md` and `research/m4-capture-findings.md`.
 Date: 2026-09-17
 
 ## The question
