@@ -12,9 +12,10 @@ public sealed class EngineSession
     public event Action<int>? Exited;
     public static string RepositoryRoot()
     {
+        if (File.Exists(Path.Combine(AppContext.BaseDirectory, "engine", "xrplayer.exe"))) return AppContext.BaseDirectory;
         for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
             if (File.Exists(Path.Combine(dir.FullName, "bench", "native", "openxr", "xrapp5.cpp"))) return dir.FullName;
-        throw new DirectoryNotFoundException("Keep the desktop application inside the VRX project folder.");
+        throw new DirectoryNotFoundException("VRX renderer is missing. Reinstall VRX or build the project.");
     }
     public void Update(Profile profile, bool reset = false, bool dismiss = false, bool stop = false)
     {
@@ -35,7 +36,8 @@ public sealed class EngineSession
         if (!string.Equals(RunningApps.ProcessPath(app.Pid), app.FullPath, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The selected process has closed or changed. Refresh the list.");
         string root = RepositoryRoot();
-        string engine = Path.Combine(root, "bench", "native", "openxr", "out", "xrplayer.exe");
+        string engine = Path.Combine(root, "engine", "xrplayer.exe");
+        if (!File.Exists(engine)) engine = Path.Combine(root, "bench", "native", "openxr", "out", "xrplayer.exe");
         if (!File.Exists(engine)) throw new FileNotFoundException("Build the desktop renderer first using bench/native/openxr/build.bat --desktop.");
         string sessionRoot = Path.Combine(dataRoot, "sessions", Guid.NewGuid().ToString("N"));
         control = Path.Combine(sessionRoot, "control.txt"); recenter = menu = 0;

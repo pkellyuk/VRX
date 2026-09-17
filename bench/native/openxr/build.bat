@@ -10,6 +10,7 @@ call "%VCVARS%" >nul
 
 set INC=%~dp0include
 set OUT=%~dp0out
+if defined VRX_NATIVE_OUT set "OUT=%VRX_NATIVE_OUT%"
 set APP5_NAME=xrapp5
 if "%~1"=="--desktop" set APP5_NAME=xrplayer
 if not exist "%OUT%" mkdir "%OUT%"

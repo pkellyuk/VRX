@@ -85,6 +85,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -114,6 +115,30 @@ static double NowSeconds()
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - g_t0).count();
 }
 
+static std::filesystem::path ExecutableDirectory()
+{
+    wchar_t path[32768]{};
+    const DWORD count = GetModuleFileNameW(nullptr, path, DWORD(std::size(path)));
+    if (!count || count >= std::size(path)) throw std::runtime_error("Cannot locate renderer executable");
+    return std::filesystem::path(path).parent_path();
+}
+
+static std::filesystem::path ModelPath()
+{
+    const auto directory = ExecutableDirectory();
+    const auto packaged = directory / L"models" / L"model_fixed_686x392.onnx";
+    if (std::filesystem::is_regular_file(packaged)) return packaged;
+    for (auto parent = directory; !parent.empty();)
+    {
+        const auto candidate = parent / L"bench" / L"models" / L"model_fixed_686x392.onnx";
+        if (std::filesystem::is_regular_file(candidate)) return candidate;
+        const auto next = parent.parent_path();
+        if (next == parent) break;
+        parent = next;
+    }
+    throw std::runtime_error("Depth model missing. Reinstall VRX or restore engine/models/model_fixed_686x392.onnx.");
+}
+
 static void Log(const char* fmt, ...)
 {
     if (!fmt) return;
@@ -139,6 +164,7 @@ struct Options
     std::wstring windowTitle;
     std::wstring executable;
     bool checkSource = false;
+    bool checkPackage = false;
     std::wstring controlPath, executablePath;
     DWORD capturePid = 0;
     HWND captureHwnd = nullptr;
@@ -512,6 +538,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--truth")) { opt->useTruth = true; continue; }
         if (!strcmp(a, "--dump")) { opt->doDump = true; continue; }
         if (!strcmp(a, "--paired")) { opt->paired = true; continue; }
+        if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--selftest")) { opt->selfTestOnly = true; continue; }
         if (!strcmp(a, "--debug")) { opt->debugLayer = true; continue; }
@@ -561,9 +588,7 @@ static bool InitXrInstance(App& app)
 {
     Log("InitXrInstance: enter");
 
-    HMODULE loader = LoadLibraryW(
-        L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\SteamVR\\bin\\win64\\openxr_loader.dll");
-    if (!loader) loader = LoadLibraryW(L"openxr_loader.dll");
+    HMODULE loader = LoadLibraryW((ExecutableDirectory() / L"openxr_loader.dll").c_str());
     if (!loader) { Log("InitXrInstance: FAIL openxr_loader.dll not found"); return false; }
 
     g_getProc = (PFN_xrGetInstanceProcAddr)GetProcAddress(loader, "xrGetInstanceProcAddr");
@@ -1403,7 +1428,8 @@ static bool InitModel(App& app)
     if (FAILED(createDmlDevice(app.device.Get(), DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&dmlDevice)))) { Log("InitModel: FAIL DMLCreateDevice"); return false; }
     if (OrtStatus* st = dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, dmlDevice.Get(), app.mlQueue.Get())) { Fail("AppendExecutionProvider_DML1", st); return false; }
 
-    std::wstring modelPath = L"C:\\Users\\paulj\\dev\\VRX\\bench\\models\\model_fixed_686x392.onnx";
+    std::wstring modelPath = ModelPath().wstring();
+    Log("InitModel: loading %s", winrt::to_string(modelPath).c_str());
     if (OrtStatus* st = ort->CreateSession(app.env, modelPath.c_str(), so, &app.ortSession)) { Fail("CreateSession", st); return false; }
 
     const OrtMemoryInfo* inInfos[1] = { nullptr };
@@ -2581,6 +2607,18 @@ int wmain(int argc, wchar_t** wideArgv)
     int rc = 1;
     try
     {
+    if (app.opt.checkPackage)
+    {
+        Log("Package check: model %s", winrt::to_string(ModelPath().wstring()).c_str());
+        for (const auto* name : { L"openxr_loader.dll", L"DirectML.dll" })
+        {
+            HMODULE module = LoadLibraryW((ExecutableDirectory() / name).c_str());
+            if (!module) { Log("Package check: missing dependency (%lu)", GetLastError()); return 1; }
+            FreeLibrary(module);
+        }
+        Log("Package check: PASS (model and native dependencies available; no VR session started)");
+        return 0;
+    }
     if (app.opt.checkSource) return FindCaptureWindow(app.opt) ? 0 : 1;
     if (!app.opt.controlPath.empty())
     {
