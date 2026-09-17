@@ -1,0 +1,38 @@
+﻿# --- Python virtualenvs -------------------------------------------------
+.venv/
+.venv-dml/
+.venv-*/
+**/__pycache__/
+*.pyc
+
+# --- ONNX models --------------------------------------------------------
+# Large (26-48 MB each) and regenerable:
+#   * dynamic export: downloaded from onnx-community/depth-anything-v2-small
+#   * fixed shapes:   bench/make_fixed_shape.py <src> <dst> <height> [width]
+bench/models/
+*.onnx
+
+# --- Build outputs ------------------------------------------------------
+[Bb]in/
+[Oo]bj/
+bench/native/**/out/
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Native runtime libraries copied next to the executables by build.bat
+*.dll
+
+# --- Large downloaded reference material --------------------------------
+# Web copies of specs/docs; re-fetch with refs/fetch.ps1
+refs/*.html
+bench/dml_docs.html
+
+# --- Editor / OS --------------------------------------------------------
+.vs/
+*.user
+Thumbs.db
+desktop.ini
