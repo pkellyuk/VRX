@@ -32,7 +32,12 @@
 //   --debug    enable the D3D12 debug layer and print its messages at exit
 //
 // Does the runtime USE the submitted depth? (XR_KHR_composition_layer_depth)
-//   --no-depth     never chain XrCompositionLayerDepthInfoKHR
+//   RESULT (SteamVR 2.17.9 / PS VR2, --freeze-pose --ab=6 --depth-lie): the picture
+//   behaves identically with and without the depth chain, even with a grossly false
+//   depth - SteamVR IGNORES XR_KHR_composition_layer_depth. So depth submission is
+//   now OFF by default (no depth swapchain, no per-frame depth copy); the stereo
+//   warp is the entire effect. It stays available for runtimes that do use it.
+//   --submit-depth create the depth swapchain and chain XrCompositionLayerDepthInfoKHR
 //   --freeze-pose  submit a STALE view pose (re-captured every period), so the
 //                  compositor has to reproject the layer to the live head pose.
 //                  Rotation-only reprojection keeps the picture rigid, as if at
@@ -116,7 +121,7 @@ struct Options
     bool paired = false;
     bool selfTestOnly = false;
     bool debugLayer = false;
-    bool noDepth = false;
+    bool submitDepth = false;           // SteamVR ignores it (measured) - opt-in only
     bool freezePose = false;
     bool depthLie = false;
     double abSeconds = 0.0;             // 0 = no A/B toggling
@@ -329,7 +334,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--paired")) { opt->paired = true; continue; }
         if (!strcmp(a, "--selftest")) { opt->selfTestOnly = true; continue; }
         if (!strcmp(a, "--debug")) { opt->debugLayer = true; continue; }
-        if (!strcmp(a, "--no-depth")) { opt->noDepth = true; continue; }
+        if (!strcmp(a, "--submit-depth")) { opt->submitDepth = true; continue; }
         if (!strcmp(a, "--freeze-pose")) { opt->freezePose = true; continue; }
         if (!strcmp(a, "--depth-lie")) { opt->depthLie = true; continue; }
         if (!strncmp(a, "--ab=", 5)) { opt->abSeconds = atof(a + 5); continue; }
@@ -343,7 +348,12 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         opt->runSeconds = atof(a);
     }
     if (opt->abSeconds < 0.0) { Log("ParseArgs: --ab must be >= 0"); return false; }
-    Log("ParseArgs: noDepth %d freezePose %d depthLie %d ab %.1fs", (int)opt->noDepth, (int)opt->freezePose,
+    if ((opt->abSeconds > 0.0 || opt->depthLie) && !opt->submitDepth)
+    {
+        Log("ParseArgs: --ab / --depth-lie imply --submit-depth");
+        opt->submitDepth = true;
+    }
+    Log("ParseArgs: submitDepth %d freezePose %d depthLie %d ab %.1fs", (int)opt->submitDepth, (int)opt->freezePose,
         (int)opt->depthLie, opt->abSeconds);
     Log("ParseArgs: seconds %.0f warp %d scale %.2f truth %d paired %d selftest %d debug %d image '%ls'",
         opt->runSeconds, (int)opt->doWarp, opt->warpScale, (int)opt->useTruth, (int)opt->paired,
@@ -674,7 +684,7 @@ static bool InitXrSession(App& app)
     for (auto f : formats) if (f == DXGI_FORMAT_D32_FLOAT) { depthFmt = f; break; }
     Log("InitXrSession: formats colour %lld depth %lld (of %u offered)", (long long)colorFmt, (long long)depthFmt, fmtCount);
     if (!colorFmt) { Log("InitXrSession: FAIL runtime offers no R8G8B8A8 colour format"); return false; }
-    if (!depthFmt) { Log("InitXrSession: FAIL runtime offers no D32_FLOAT depth format"); return false; }
+    if (!depthFmt && app.opt.submitDepth) { Log("InitXrSession: FAIL runtime offers no D32_FLOAT depth format"); return false; }
 
     XrSwapchainCreateInfo sc{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
     sc.sampleCount = 1; sc.width = W; sc.height = H; sc.faceCount = 1;
@@ -685,24 +695,30 @@ static bool InitXrSession(App& app)
     r = xrCreateSwapchain_(app.session, &sc, &app.colorSc);
     if (XR_FAILED(r)) { Log("InitXrSession: FAIL colour swapchain %s", XRStr(r)); return false; }
 
-    sc.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
-    sc.format = depthFmt;
-    r = xrCreateSwapchain_(app.session, &sc, &app.depthSc);
-    if (XR_FAILED(r)) { Log("InitXrSession: FAIL depth swapchain %s", XRStr(r)); return false; }
+    if (app.opt.submitDepth)
+    {
+        sc.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+        sc.format = depthFmt;
+        r = xrCreateSwapchain_(app.session, &sc, &app.depthSc);
+        if (XR_FAILED(r)) { Log("InitXrSession: FAIL depth swapchain %s", XRStr(r)); return false; }
+    }
 
     uint32_t cn = 0, dn = 0;
     xrEnumImages_(app.colorSc, 0, &cn, nullptr);
     app.cimgs.assign(cn, { XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR });
     xrEnumImages_(app.colorSc, cn, &cn, (XrSwapchainImageBaseHeader*)app.cimgs.data());
+    if (cn == 0 || !app.cimgs[0].texture) { Log("InitXrSession: FAIL no colour swapchain images"); return false; }
+    D3D12_RESOURCE_DESC cd = app.cimgs[0].texture->GetDesc();
+    Log("InitXrSession: colour images %u (resource format %d, array %u)", cn, (int)cd.Format, (unsigned)cd.DepthOrArraySize);
+
+    if (!app.opt.submitDepth) { Log("InitXrSession: exit ok (no depth swapchain - depth submission is off)"); return true; }
+
     xrEnumImages_(app.depthSc, 0, &dn, nullptr);
     app.dimgs.assign(dn, { XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR });
     xrEnumImages_(app.depthSc, dn, &dn, (XrSwapchainImageBaseHeader*)app.dimgs.data());
-    if (cn == 0 || dn == 0 || !app.cimgs[0].texture || !app.dimgs[0].texture) { Log("InitXrSession: FAIL no swapchain images"); return false; }
-
-    D3D12_RESOURCE_DESC cd = app.cimgs[0].texture->GetDesc();
+    if (dn == 0 || !app.dimgs[0].texture) { Log("InitXrSession: FAIL no depth swapchain images"); return false; }
     D3D12_RESOURCE_DESC dd = app.dimgs[0].texture->GetDesc();
-    Log("InitXrSession: exit ok, images colour %u (resource format %d, array %u) depth %u (resource format %d, array %u)",
-        cn, (int)cd.Format, (unsigned)cd.DepthOrArraySize, dn, (int)dd.Format, (unsigned)dd.DepthOrArraySize);
+    Log("InitXrSession: exit ok, depth images %u (resource format %d, array %u)", dn, (int)dd.Format, (unsigned)dd.DepthOrArraySize);
     return true;
 }
 
@@ -955,14 +971,14 @@ static void RecordWarpOutputsBackToUav(App& app)
 
 // warp outputs -> the acquired swapchain images. Spec (XR_KHR_D3D12_enable):
 // acquired colour images are in RENDER_TARGET, depth images in DEPTH_WRITE, and
-// must be released in the same state.
+// must be released in the same state. depthImg may be null (depth not submitted).
 static void RecordCopyToSwapchain(App& app, ID3D12Resource* colorImg, ID3D12Resource* depthImg)
 {
-    if (!colorImg || !depthImg) return;
+    if (!colorImg) return;
 
     ID3D12GraphicsCommandList* cl = app.cmdList.Get();
     Transition(cl, colorImg, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
-    Transition(cl, depthImg, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COPY_DEST);
+    if (depthImg) Transition(cl, depthImg, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COPY_DEST);
     for (UINT e = 0; e < VIEWS; e++)
     {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
@@ -973,11 +989,12 @@ static void RecordCopyToSwapchain(App& app, ID3D12Resource* colorImg, ID3D12Reso
 
         dst.pResource = colorImg; src.pResource = app.colorOut.Get();
         cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        if (!depthImg) continue;
         dst.pResource = depthImg; src.pResource = app.depthOut.Get();
         cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
     }
     Transition(cl, colorImg, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    Transition(cl, depthImg, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    if (depthImg) Transition(cl, depthImg, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 }
 
 // --------------------------------------------------------------- self test
@@ -1121,7 +1138,8 @@ static void RunFrameLoop(App& app)
     const double period = app.opt.abSeconds > 0.0 ? app.opt.abSeconds : 6.0;
     double firstDrawTime = -1.0;
     long long lastPhase = -1;
-    bool depthOn = !app.opt.noDepth;
+    const bool useDepthSc = app.opt.submitDepth;
+    bool depthOn = useDepthSc;
     XrPosef frozenPose[VIEWS] = {};
 
     while (!exitLoop)
@@ -1220,7 +1238,7 @@ static void RunFrameLoop(App& app)
             if (phase != lastPhase)
             {
                 lastPhase = phase;
-                if (app.opt.abSeconds > 0.0 && !app.opt.noDepth) depthOn = (phase % 2) == 0;
+                if (app.opt.abSeconds > 0.0) depthOn = (phase % 2) == 0;
                 for (uint32_t e = 0; e < VIEWS; e++) { frozenPose[e] = views[e].pose; frozenPose[e].orientation = sharedRot; }
                 if (app.opt.abSeconds > 0.0 || app.opt.freezePose)
                     Log("RunFrameLoop: phase %lld - depth chain %s%s%s", phase, depthOn ? "ON (green)" : "OFF (red)",
@@ -1230,11 +1248,11 @@ static void RunFrameLoop(App& app)
             uint32_t cIdx = 0, dIdx = 0;
             XrSwapchainImageAcquireInfo ai{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
             bool gotColor = XR_SUCCEEDED(xrAcquireImage_(app.colorSc, &ai, &cIdx));
-            bool gotDepth = XR_SUCCEEDED(xrAcquireImage_(app.depthSc, &ai, &dIdx));
+            bool gotDepth = useDepthSc && XR_SUCCEEDED(xrAcquireImage_(app.depthSc, &ai, &dIdx));
             XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
             wi.timeout = XR_INFINITE_DURATION;
-            bool ok = gotColor && gotDepth &&
-                      XR_SUCCEEDED(xrWaitImage_(app.colorSc, &wi)) && XR_SUCCEEDED(xrWaitImage_(app.depthSc, &wi));
+            bool ok = gotColor && (gotDepth || !useDepthSc) && XR_SUCCEEDED(xrWaitImage_(app.colorSc, &wi));
+            if (ok && useDepthSc) ok = XR_SUCCEEDED(xrWaitImage_(app.depthSc, &wi));
 
             if (ok)
             {
@@ -1284,7 +1302,7 @@ static void RunFrameLoop(App& app)
                     c.indicator = (app.opt.abSeconds > 0.0) ? (depthOn ? 1u : 2u) : 0u;
                     c.depthLie = app.opt.depthLie ? 1u : 0u;
                     RecordWarp(app, c);
-                    RecordCopyToSwapchain(app, app.cimgs[cIdx].texture, app.dimgs[dIdx].texture);
+                    RecordCopyToSwapchain(app, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
                     RecordWarpOutputsBackToUav(app);
                 }
                 app.cmdList->Close();

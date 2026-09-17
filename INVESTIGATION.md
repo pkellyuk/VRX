@@ -221,9 +221,10 @@ Design points:
 2. **Add DA-V2-Tiny** and a 256²/224² sweep to quantify compute headroom.
 3. **Clean-GPU run** (no other workload) for representative absolute numbers.
 4. **Backend A/B:** CUDA EP / TensorRT vs. DML per-run overhead on this GPU.
-5. **Runtime validation:** confirm the target runtime (SteamVR/Oculus/WMR)
-   actually *consumes* the attached depth for reprojection quality on a real
-   headset.
+5. ~~**Runtime validation:** confirm the target runtime actually *consumes* the
+   attached depth.~~ **Done for SteamVR: it does not** (measured, see
+   `research/m3-depth-integration-findings.md`). The stereo warp is the whole
+   effect; depth submission is opt-in. Oculus/WMR untested.
 6. **Per-eye decision:** once (1) lands, choose shared-vs-per-eye depth.
 
 ## Files

@@ -100,9 +100,32 @@ there, each worth remembering:
    `--dump` exist to keep those two questions separate. The pre-loop model check
    prints the model's opinion even if the HMD never wakes.
 
-Not yet answered: whether SteamVR *uses* the submitted
-`XrCompositionLayerDepthInfoKHR` at all. The visible 3D comes entirely from the
-warp; an A/B run without the depth chain is still to do.
+## Result — SteamVR ignores `XR_KHR_composition_layer_depth` (measured)
+
+Attaching and detaching the depth chain on a head-locked picture shows nothing, so
+the experiment forces the compositor's hand (`xrapp4 --freeze-pose --ab=6
+--depth-lie`): the layer is submitted with a deliberately **stale pose**, so the
+compositor must reproject it to the live head pose; the depth chain toggles every
+6 s (green/red block in the picture); and the depth is a gross **lie** (left half
+0.5 m, right half 10 m). A compositor that uses depth would shear the two halves
+apart as the head translates during green phases only.
+
+**Observed (SteamVR 2.17.9, PS VR2): identical behaviour in green and red phases.**
+SteamVR advertises the extension and accepts the chain, but does not use it —
+reprojection is rotation-only either way. Consequences:
+
+- The visible 3D is **entirely** the stereo warp. Depth submission buys nothing on
+  SteamVR, so `xrapp4` now has it **off by default** — no depth swapchain, no
+  per-frame depth copy. `--submit-depth` keeps the path alive for runtimes that do
+  consume depth (e.g. Oculus/WMR positional timewarp) — untested there.
+- This also closes INVESTIGATION.md's "runtime validation" step for SteamVR: the
+  `XR_MSFT_composition_layer_reprojection` route was already unavailable (M2), and
+  the KHR depth layer is a no-op. Head-motion parallax, if wanted, has to be done
+  by us in the warp (re-render from the live pose), not by the compositor.
+- Found on the way: the depth image was written as linear `1 - nearness`, which
+  with nearZ 0.1 / farZ 30 decodes to ~0.1-1 m for nearly every value. It is now a
+  real projective depth, `farZ/(farZ-nearZ) * (1 - nearZ/Z)`, for the same Z the
+  warp uses (CPU reference and shader; self-test still 0 mismatches).
 
 ## M3b — worker-thread model + compute-shader warp (`xrapp4.cpp`)
 
