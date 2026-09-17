@@ -62,9 +62,47 @@ Not addressed: per-pixel temporal flicker of the depth map itself.
 - A static desktop delivers no new frames, so the worker idles (by design). Flat
   windows give flat depth — the model sees a window as a near panel. Video and
   games are where depth is meaningful.
-- Disparity is ~30 px per eye at 1920 wide for the nearest content, so the
-  replicate-background hole fill shows as streaks beside near edges. A better fill
-  (mirror / inpaint) is the next quality step.
+- ~~Streaks beside near edges~~ — fixed, see "Disocclusion fill" below.
 - Ring of 8 source textures is a time-based guarantee (a reader lags the writer by
   a few frames at most), not reference counting.
 - Window capture keeps the initial size; a resized window is copied top-left.
+
+## Disocclusion fill — streaks fixed (mirror fill + foreground depth dilation)
+
+When a near object shifts for one eye it uncovers a strip of background the source
+never contained. At 1920 wide the nearest content moves ~30 px per eye, so these
+holes are up to ~27 px wide beside every near edge (and along the image border).
+
+**Two separate defects, measured on GPU-warped eye dumps** (`xrapp5 --dump`, which
+warps exactly as the frame loop does and writes both eyes for both fill modes):
+
+1. **Streaks** — the original fill repeated the one background pixel beside the
+   hole across its whole width, so every row became a flat band: a blocky streak
+   column next to each near object, and a smeared border. Now **mirror fill**
+   (default, `--fill=mirror`): the hole reflects the background texture outward
+   about its edge (`dest anchor+k <- source anchorSrc -/+ k`), so the texture
+   continues across the seam. A guard stops the reflection pulling in anything
+   nearer than the anchor (another object) by holding the last good pixel
+   (`MIRROR_TOL` = 0.08 nearness). On the test composite (a near panel over a pine
+   forest) the old fill shows an obvious striped band; with mirror the trees and
+   hills continue through it and the fill is hard to find at 1:1.
+2. **Ghost edge lines** — depth is 686 wide and colour 1920, so the model's (soft)
+   depth edge lands a few colour pixels off the colour edge. Foreground-coloured
+   pixels that receive background depth stay behind when the object moves and
+   draw a thin high-contrast line inside the hole. Fix: **dilate the near field
+   horizontally** in the worker before upload (`--dilate=N` depth px, running max).
+   Measured at 4x zoom on both eyes: N=0 clear ghost lines; N=1 still a line at
+   the softest corner; **N=2 clean** apart from a 1-2 px tick (default); N=3 clean.
+   Cost: ~5.6 colour px of background travel with each object — far less visible
+   than a ghost line. Horizontal only, because disparity is horizontal.
+
+Verification: the CPU reference (`FillHole` / `WarpEyeFill` in `xr_common.h`) and
+the shader implement the same fill; the self-test now runs both modes including 4x
+disparity (wide holes that exercise the guard) — 0 colour mismatches in every case.
+xrapp3/xrapp4 keep the stretch fill via the unchanged `WarpEye` (their self-test is
+still 0 mismatches). Not yet re-checked in the headset; the shader's extra work is
+one bilinear depth lookup per hole pixel (~1-2% of pixels).
+
+Remaining visible compromises: the reflection can show as a mirrored pattern in
+strongly structured texture, and hole width varies row to row so the fill has no
+vertical coherence. A 2D inpaint (push-pull) would address both at more cost.

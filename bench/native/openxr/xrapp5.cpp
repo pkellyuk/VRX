@@ -35,6 +35,10 @@
 //            --image=PATH         still image
 //            --synthetic          the moving test scene (with --truth: ground-truth depth)
 //   options: --scale=N --no-warp --paired --no-smooth --tau=SECONDS
+//            --fill=mirror|stretch  disocclusion fill (default mirror, see FillHole)
+//            --dilate=N             widen foreground depth by N depth px (default 2)
+//            --dump                 write the depth map and BOTH eyes as warped by the GPU,
+//                                   for each fill mode, at the presented resolution
 //            --selftest --debug --dump --submit-depth --freeze-pose --ab=N --depth-lie
 
 #define WIN32_LEAN_AND_MEAN
@@ -126,6 +130,8 @@ struct Options
     bool selfTestOnly = false;
     bool debugLayer = false;
     bool smooth = true;
+    int fillMode = FILL_MIRROR;
+    int dilate = 2;                     // depth pixels (~5.6 colour px at 1920); 1 still ghosts at soft corners
     double smoothTau = 0.4;             // seconds
     bool submitDepth = false;           // SteamVR ignores it (measured) - opt-in only
     bool freezePose = false;
@@ -171,6 +177,8 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     float scaleFocal, invZNear, invZFar;
     float eye0, eye1, nearZ, farZ;
     uint32_t indicator, depthLie, writeDepth, exactLoad;
+    uint32_t fillMode;
+    float mirrorTol;
 };
 
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
@@ -451,6 +459,9 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--selftest")) { opt->selfTestOnly = true; continue; }
         if (!strcmp(a, "--debug")) { opt->debugLayer = true; continue; }
         if (!strcmp(a, "--no-smooth")) { opt->smooth = false; continue; }
+        if (!strcmp(a, "--fill=mirror")) { opt->fillMode = FILL_MIRROR; continue; }
+        if (!strcmp(a, "--fill=stretch")) { opt->fillMode = FILL_STRETCH; continue; }
+        if (!strncmp(a, "--dilate=", 9)) { opt->dilate = atoi(a + 9); continue; }
         if (!strncmp(a, "--tau=", 6)) { opt->smoothTau = atof(a + 6); continue; }
         if (!strcmp(a, "--submit-depth")) { opt->submitDepth = true; continue; }
         if (!strcmp(a, "--freeze-pose")) { opt->freezePose = true; continue; }
@@ -459,6 +470,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (a[0] == '-') { Log("ParseArgs: unknown option %s", a); return false; }
         opt->runSeconds = atof(a);
     }
+    if (opt->dilate < 0 || opt->dilate > 16) { Log("ParseArgs: --dilate must be 0..16"); return false; }
     if (opt->abSeconds < 0.0 || opt->smoothTau <= 0.0) { Log("ParseArgs: --ab must be >= 0 and --tau > 0"); return false; }
     if ((opt->abSeconds > 0.0 || opt->depthLie) && !opt->submitDepth) { Log("ParseArgs: --ab / --depth-lie imply --submit-depth"); opt->submitDepth = true; }
     if (opt->useTruth && opt->source != SourceKind::Synthetic) { Log("ParseArgs: --truth only applies to --synthetic, ignored"); opt->useTruth = false; }
@@ -466,6 +478,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
     Log("ParseArgs: source %s (monitor %d, window '%ls', image '%ls') seconds %.0f",
         opt->source == SourceKind::Capture ? "capture" : opt->source == SourceKind::Image ? "image" : "synthetic",
         opt->monitorIndex, opt->windowTitle.c_str(), opt->imagePath.c_str(), opt->runSeconds);
+    Log("ParseArgs: fill %s dilate %d", opt->fillMode == FILL_MIRROR ? "mirror" : "stretch", opt->dilate);
     Log("ParseArgs: warp %d scale %.2f truth %d paired %d smooth %d tau %.2fs submitDepth %d selftest %d debug %d",
         (int)opt->doWarp, opt->warpScale, (int)opt->useTruth, (int)opt->paired, (int)opt->smooth, opt->smoothTau,
         (int)opt->submitDepth, (int)opt->selfTestOnly, (int)opt->debugLayer);
@@ -893,6 +906,8 @@ cbuffer C : register(b0)
     uint  depthLie;
     uint  writeDepth;
     uint  exactLoad;    // source is exactly CW x CH: Load() instead of filtering
+    uint  fillMode;     // 0 stretch, 1 mirror (see FillHole in xr_common.h)
+    float mirrorTol;
 };
 
 Texture2D<float4>        scene    : register(t0);
@@ -956,7 +971,7 @@ void main(uint3 id : SV_DispatchThreadID)
         }
     }
 
-    // hole fill from the FARTHER of the nearest valid neighbours (background)
+    // hole fill from the FARTHER neighbour (background side) - same as FillHole (CPU)
     int lastValid = -1;
     float lastNear = 0;
     x = 0;
@@ -971,14 +986,39 @@ void main(uint3 id : SV_DispatchThreadID)
         float rightNear = 0;
         if (r < iw) { rightValid = (int)scratch[base + r]; rightNear = asfloat(scratch[N + base + r]); }
 
-        int pick = lastValid;
-        float pickNear = lastNear;
-        if (pick < 0 || (rightValid >= 0 && rightNear < pickNear)) { pick = rightValid; pickNear = rightNear; }
-        if (pick < 0) { pick = x; pickNear = NearAt(x, (int)y); }
-        [loop] for (int h = x; h < r; h++)
+        int h;
+        if (lastValid < 0 && rightValid < 0)
         {
-            scratch[base + h] = (uint)pick;
-            scratch[N + base + h] = asuint(pickNear);
+            float xn = NearAt(x, (int)y);
+            [loop] for (h = x; h < r; h++) { scratch[base + h] = (uint)x; scratch[N + base + h] = asuint(xn); }
+        }
+        else
+        {
+            bool useLeft = lastValid >= 0 && !(rightValid >= 0 && rightNear < lastNear);
+            int anchor = useLeft ? lastValid : rightValid;
+            float anchorNear = useLeft ? lastNear : rightNear;
+
+            if (fillMode == 0)
+            {
+                [loop] for (h = x; h < r; h++) { scratch[base + h] = (uint)anchor; scratch[N + base + h] = asuint(anchorNear); }
+            }
+            else
+            {
+                // reflect the background outward from the anchor; hold the last good
+                // pixel if the reflection reaches something nearer than the anchor
+                int good = anchor;
+                float goodNear = anchorNear;
+                int n = r - x;
+                [loop] for (int k = 1; k <= n; k++)
+                {
+                    h = useLeft ? (x - 1 + k) : (r - k);
+                    int cand = clamp(useLeft ? anchor - k : anchor + k, 0, iw - 1);
+                    float cn = NearAt(cand, (int)y);
+                    if (cn <= anchorNear + mirrorTol) { good = cand; goodNear = cn; }
+                    scratch[base + h] = (uint)good;
+                    scratch[N + base + h] = asuint(goodNear);
+                }
+            }
         }
         x = r;      // lastValid/lastNear deliberately unchanged: fills are not sources
     }
@@ -1447,6 +1487,7 @@ static bool ComputeAndPublish(App& app, const SourcePub& src, std::vector<float>
     DepthSlot& s = app.slots[app.writeSlot];
     if (app.opt.source == SourceKind::Synthetic) RegionMeans(nearScratch, src.time, s.back, s.panel, s.marker);
     if (app.opt.useTruth) MakeTruth(nearScratch, src.time);
+    DilateNearHorizontal(nearScratch, W, H, app.opt.dilate);
 
     memcpy(s.nearMapped, nearScratch.data(), nearScratch.size() * sizeof(float));
     s.srcIndex = src.index;
@@ -1584,7 +1625,7 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
 {
     if (!name) return false;
     if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) { Log("SelfTestWarp[%s]: bad input sizes", name); return false; }
-    Log("SelfTestWarp[%s]: enter (doWarp %u scaleFocal %.2f eyes %.4f/%.4f)", name, c.doWarp, c.scaleFocal, c.eye0, c.eye1);
+    Log("SelfTestWarp[%s]: enter (doWarp %u fill %u scaleFocal %.2f eyes %.4f/%.4f)", name, c.doWarp, c.fillMode, c.scaleFocal, c.eye0, c.eye1);
 
     if (!UploadTestSource(app, scene)) return false;
     ID3D12Device* dev = app.device.Get();
@@ -1633,7 +1674,7 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     size_t badColor = 0, badDepth = 0;
     for (UINT e = 0; e < VIEWS; e++)
     {
-        WarpEye(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, refColor.data(), refDepth.data());
+        WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode, refColor.data(), refDepth.data());
         for (int y = 0; y < H; y++)
         {
             const unsigned char* grow = cp + cfp[e].Offset + (size_t)y * cfp[e].Footprint.RowPitch;
@@ -1727,11 +1768,26 @@ static bool SelfTest(App& app)
             ramp[(size_t)y * W + x] = 0.5f + 0.5f * sinf(x * 0.021f) * cosf(y * 0.017f);
 
     bool ok = SelfTestPrep(app, synth);
-    ok = SelfTestWarp(app, "synthetic+truth", synth, truth, c) && ok;
-    ok = SelfTestWarp(app, "synthetic+ramp", synth, ramp, c) && ok;
-    WarpConstants big = c;
-    big.scaleFocal *= 4.0f;
-    ok = SelfTestWarp(app, "synthetic+ramp x4", synth, ramp, big) && ok;
+    c.mirrorTol = MIRROR_TOL;
+    for (uint32_t mode : { (uint32_t)FILL_STRETCH, (uint32_t)FILL_MIRROR })
+    {
+        const char* mn = mode == (uint32_t)FILL_MIRROR ? "mirror" : "stretch";
+        char name[64];
+        WarpConstants m = c;
+        m.fillMode = mode;
+        snprintf(name, sizeof(name), "%s synthetic+truth", mn);
+        ok = SelfTestWarp(app, name, synth, truth, m) && ok;
+        snprintf(name, sizeof(name), "%s synthetic+ramp", mn);
+        ok = SelfTestWarp(app, name, synth, ramp, m) && ok;
+
+        // large disparity: wide holes, so the mirror walks far and meets its guard
+        WarpConstants big = m;
+        big.scaleFocal *= 4.0f;
+        snprintf(name, sizeof(name), "%s synthetic+truth x4", mn);
+        ok = SelfTestWarp(app, name, synth, truth, big) && ok;
+        snprintf(name, sizeof(name), "%s synthetic+ramp x4", mn);
+        ok = SelfTestWarp(app, name, synth, ramp, big) && ok;
+    }
     WarpConstants off = c;
     off.doWarp = 0;
     ok = SelfTestWarp(app, "no-warp", synth, truth, off) && ok;
@@ -1924,6 +1980,8 @@ static void RunFrameLoop(App& app)
                     c.depthLie = app.opt.depthLie ? 1u : 0u;
                     c.writeDepth = useDepthSc ? 1u : 0u;
                     c.exactLoad = (app.srcW == target.cw && app.srcH == target.ch) ? 1u : 0u;
+                    c.fillMode = (uint32_t)app.opt.fillMode;
+                    c.mirrorTol = MIRROR_TOL;
                     RecordWarp(app, target, DESC_SRC0 + (UINT)srcIndex, c);
                     RecordCopyToSwapchain(app, target, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
                     RecordWarpOutputsBackToUav(app, target);
@@ -2004,6 +2062,95 @@ static void RunFrameLoop(App& app)
         (unsigned long long)frames, frames / (el > 0 ? el : 1), (unsigned long long)drawn, drawn / (el > 0 ? el : 1),
         (unsigned long long)depthUpdates, depthUpdates / (el > 0 ? el : 1), (unsigned long long)app.depthPublished.load(),
         (unsigned long long)app.cap.frames.load());
+}
+
+// ------------------------------------------------------------------- dump
+static bool WritePpmRgba(const char* path, const unsigned char* rgba, int w, int h, UINT rowPitch)
+{
+    if (!path || !rgba) return false;
+    if (w <= 0 || h <= 0) return false;
+
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "wb") || !f) { Log("WritePpmRgba: cannot write %s", path); return false; }
+    fprintf(f, "P6\n%d %d\n255\n", w, h);
+    std::vector<unsigned char> row((size_t)w * 3);
+    for (int y = 0; y < h; y++)
+    {
+        const unsigned char* s = rgba + (size_t)y * rowPitch;
+        for (int x = 0; x < w; x++) { row[x * 3] = s[x * 4]; row[x * 3 + 1] = s[x * 4 + 1]; row[x * 3 + 2] = s[x * 4 + 2]; }
+        fwrite(row.data(), 1, row.size(), f);
+    }
+    fclose(f);
+    return true;
+}
+
+// Warps the published depth + source on the GPU exactly as the frame loop does
+// (presented resolution, bilinear depth, given fill mode) and writes both eyes.
+// View parameters are the PS VR2 shared-FOV figures from the M3/M4 logs, since no
+// frame loop is running yet: 86.9 deg horizontal, IPD 71 mm.
+static bool DumpEyes(App& app, int fillMode, const char* tag)
+{
+    if (!tag) return false;
+    Log("DumpEyes: enter (fill %s)", tag);
+
+    const DepthSlot& slot = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
+    if (slot.srcIndex < 0) { Log("DumpEyes: FAIL no published depth"); return false; }
+    WarpTarget& t = app.mainTarget;
+    ID3D12Device* dev = app.device.Get();
+
+    D3D12_RESOURCE_DESC cdesc = t.colorOut->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT cfp[VIEWS];
+    UINT64 cTotal = 0;
+    dev->GetCopyableFootprints(&cdesc, 0, VIEWS, 0, cfp, nullptr, nullptr, &cTotal);
+    ComPtr<ID3D12Resource> crb;
+    if (!MakeBuffer(dev, D3D12_HEAP_TYPE_READBACK, cTotal, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, crb, nullptr)) return false;
+
+    const float tanHalfX = tanf(86.9f * 0.5f * 3.14159265f / 180.0f);
+    WarpConstants c{};
+    c.cw = (uint32_t)t.cw; c.ch = (uint32_t)t.ch; c.dw = W; c.dh = H;
+    c.doWarp = app.opt.doWarp ? 1u : 0u;
+    c.scaleFocal = app.opt.warpScale * (float)(t.cw * 0.5) / tanHalfX;
+    c.invZNear = 1.0f / 1.2f; c.invZFar = 1.0f / 12.0f;
+    c.eye0 = -0.0355f; c.eye1 = 0.0355f;
+    c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
+    c.exactLoad = (app.srcW == t.cw && app.srcH == t.ch) ? 1u : 0u;
+    c.fillMode = (uint32_t)fillMode;
+    c.mirrorTol = MIRROR_TOL;
+
+    WaitFence(app, app.fenceVal);
+    app.cmdAlloc[0]->Reset();
+    app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+    RecordUploadNear(app, slot.nearUp.Get());
+    RecordWarp(app, t, DESC_SRC0 + (UINT)slot.srcIndex, c);
+    for (UINT e = 0; e < VIEWS; e++)
+    {
+        D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        dst.pResource = crb.Get(); dst.PlacedFootprint = cfp[e];
+        src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        src.pResource = t.colorOut.Get(); src.SubresourceIndex = e;
+        app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+    RecordWarpOutputsBackToUav(app, t);
+    app.cmdList->Close();
+    SourcePub latest = LatestSource(app);
+    if (latest.fence && latest.fence != app.fence.Get()) app.gfxQueue->Wait(latest.fence, latest.value);
+    WaitFence(app, SubmitAndSignal(app));
+
+    unsigned char* cp = nullptr;
+    if (FAILED(crb->Map(0, nullptr, (void**)&cp)) || !cp) { Log("DumpEyes: FAIL map readback"); return false; }
+    bool ok = true;
+    for (UINT e = 0; e < VIEWS; e++)
+    {
+        char path[64];
+        snprintf(path, sizeof(path), "xrapp5_eye%u_%s.ppm", e, tag);
+        ok = WritePpmRgba(path, cp + cfp[e].Offset, t.cw, t.ch, cfp[e].Footprint.RowPitch) && ok;
+        Log("DumpEyes: wrote %s (%dx%d)", path, t.cw, t.ch);
+    }
+    crb->Unmap(0, nullptr);
+    Log("DumpEyes: exit %s (focal %.1f px, max disparity per eye %.1f px)", ok ? "ok" : "FAIL",
+        c.scaleFocal, c.scaleFocal * 0.0355f * c.invZNear);
+    return ok;
 }
 
 // ------------------------------------------------------------------- main
@@ -2098,6 +2245,8 @@ int main(int argc, char** argv)
             std::vector<unsigned char> g(firstNear.size());
             for (size_t i = 0; i < g.size(); i++) g[i] = (unsigned char)(firstNear[i] * 255.0f + 0.5f);
             WritePNM("xrapp5_near.pgm", "P5", g.data(), g.size());
+            if (!DumpEyes(app, FILL_STRETCH, "stretch")) break;
+            if (!DumpEyes(app, FILL_MIRROR, "mirror")) break;
         }
 
         app.worker = std::thread(WorkerMain, &app);
