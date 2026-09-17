@@ -229,11 +229,67 @@ static void WritePNM(const char* path, const char* magic, const unsigned char* d
 //   XrCompositionLayerDepthInfoKHR decode it back to the same metres. (Writing
 //   "1 - nearness" linearly, as the first version did, decodes to 0.1-1 m for
 //   almost the whole range - a depth image that contradicts the stereo disparity.)
-static void WarpEye(const std::vector<unsigned char>& scene, const std::vector<float>& near01,
-                    float eyeOffset, float focalPx, float scale, float invZNear, float invZFar,
-                    float nearZ, float farZ,
-                    bool doWarp, unsigned char* outRGBA, float* outDepth)
+// Hole-fill modes for disocclusions (the strip of background a near object uncovers
+// when it shifts). Both fill from the FARTHER neighbour, i.e. the background side.
+//   FILL_STRETCH : repeat that one background pixel across the hole. Cheap, but a
+//                  hole up to ~30 px wide becomes a flat horizontal streak, and if
+//                  the edge pixel is tinted by the foreground the streak is too.
+//   FILL_MIRROR  : reflect the background texture outward about the hole's edge
+//                  (dest anchor+k takes source anchorSrc-/+k), so the hole carries
+//                  real texture that continues across the seam. A guard stops the
+//                  reflection from pulling in anything nearer than the anchor
+//                  (another foreground object): it holds the last good pixel.
+static const int FILL_STRETCH = 0;
+static const int FILL_MIRROR = 1;
+static const float MIRROR_TOL = 0.08f;      // nearness units (0 far .. 1 near)
+
+// Fills dest hole [x, r) of one row. src[] holds scatter results (>= 0) and is
+// written with -2 - source for filled pixels. leftSrc/rightSrc are the sources of
+// dest x-1 and dest r (-1 if outside the row); holes are maximal runs, so both
+// neighbours are scatter hits, never fills.
+static void FillHole(std::vector<int>& src, const float* nrow, int w, int x, int r,
+                     int leftSrc, int rightSrc, int fillMode)
 {
+    if (!nrow) return;
+    if (x < 0 || r > w || x >= r) return;
+
+    if (leftSrc < 0 && rightSrc < 0)
+    {
+        for (int h = x; h < r; h++) src[h] = -2 - x;     // whole row empty: as the original fill
+        return;
+    }
+
+    const bool useLeft = leftSrc >= 0 && !(rightSrc >= 0 && nrow[rightSrc] < nrow[leftSrc]);
+    const int anchor = useLeft ? leftSrc : rightSrc;
+
+    if (fillMode != FILL_MIRROR)
+    {
+        for (int h = x; h < r; h++) src[h] = -2 - anchor;
+        return;
+    }
+
+    // walk outward from the anchor so the guard's "last good" propagates correctly
+    const float anchorNear = nrow[anchor];
+    int good = anchor;
+    const int n = r - x;
+    for (int k = 1; k <= n; k++)
+    {
+        const int h = useLeft ? (x - 1 + k) : (r - k);
+        int cand = useLeft ? anchor - k : anchor + k;
+        cand = cand < 0 ? 0 : (cand >= w ? w - 1 : cand);
+        if (nrow[cand] <= anchorNear + MIRROR_TOL) good = cand;
+        src[h] = -2 - good;
+    }
+}
+
+static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vector<float>& near01,
+                        float eyeOffset, float focalPx, float scale, float invZNear, float invZFar,
+                        float nearZ, float farZ, bool doWarp, int fillMode,
+                        unsigned char* outRGBA, float* outDepth)
+{
+    if (!outRGBA || !outDepth) return;
+    if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) return;
+
     std::vector<int> src(W);
     for (int y = 0; y < H; y++)
     {
@@ -254,7 +310,7 @@ static void WarpEye(const std::vector<unsigned char>& scene, const std::vector<f
             if (src[dx] < 0 || nrow[x] > nrow[src[dx]]) src[dx] = x;
         }
 
-        // hole fill: take the farther of the nearest valid neighbours
+        // holes: maximal runs of unwritten dest pixels
         int lastValid = -1;
         for (int x = 0; x < W; x++)
         {
@@ -262,10 +318,7 @@ static void WarpEye(const std::vector<unsigned char>& scene, const std::vector<f
             int r = x + 1;
             while (r < W && src[r] < 0) r++;
             int rightValid = r < W ? src[r] : -1;
-            int pick = lastValid;
-            if (pick < 0 || (rightValid >= 0 && nrow[rightValid] < nrow[pick])) pick = rightValid;
-            if (pick < 0) pick = x;
-            for (int h = x; h < r; h++) src[h] = -2 - pick;      // mark as filled, keep lastValid intact
+            FillHole(src, nrow, W, x, r, lastValid, rightValid, fillMode);
             x = r - 1;
         }
 
@@ -281,6 +334,43 @@ static void WarpEye(const std::vector<unsigned char>& scene, const std::vector<f
             crow[x * 4 + 3] = 255;
             float invZ = invZFar + nrow[s] * (invZNear - invZFar);
             drow[x] = (farZ / (farZ - nearZ)) * (1.0f - nearZ * invZ);
+        }
+    }
+}
+
+// The original stretch-fill warp (xrapp3 / xrapp4 and their shader).
+static void WarpEye(const std::vector<unsigned char>& scene, const std::vector<float>& near01,
+                    float eyeOffset, float focalPx, float scale, float invZNear, float invZFar,
+                    float nearZ, float farZ,
+                    bool doWarp, unsigned char* outRGBA, float* outDepth)
+{
+    WarpEyeFill(scene, near01, eyeOffset, focalPx, scale, invZNear, invZFar, nearZ, farZ, doWarp,
+                FILL_STRETCH, outRGBA, outDepth);
+}
+
+// Widens the near (foreground) regions horizontally by `radius` depth pixels with
+// a running max. Depth is ~2.8x coarser than colour, so a depth edge lands a few
+// colour pixels off the colour edge; foreground-coloured pixels that receive
+// background depth stay behind when the object shifts and leave a ghost sliver
+// beside the hole. Dilating the near field makes them travel with their object.
+// Horizontal only: disparity is horizontal, so only horizontal misalignment ghosts.
+static void DilateNearHorizontal(std::vector<float>& near01, int w, int h, int radius)
+{
+    if (radius <= 0) return;
+    if (w <= 0 || h <= 0 || near01.size() != (size_t)w * h) return;
+
+    std::vector<float> row(w);
+    for (int y = 0; y < h; y++)
+    {
+        float* p = near01.data() + (size_t)y * w;
+        std::copy(p, p + w, row.begin());
+        for (int x = 0; x < w; x++)
+        {
+            int a = x - radius < 0 ? 0 : x - radius;
+            int b = x + radius >= w ? w - 1 : x + radius;
+            float m = row[a];
+            for (int i = a + 1; i <= b; i++) m = row[i] > m ? row[i] : m;
+            p[x] = m;
         }
     }
 }
