@@ -535,7 +535,7 @@ int main(int argc, char** argv)
                     auto w0 = std::chrono::steady_clock::now();
                     for (int e = 0; e < VIEWS; e++)
                     {
-                        WarpEye(scene, near01, eyeX[e], focalPx, warpScale, invZNear, invZFar, doWarp,
+                        WarpEye(scene, near01, eyeX[e], focalPx, warpScale, invZNear, invZFar, 0.10f, 30.0f, doWarp,
                                 colorUpBase + (size_t)e * sliceBytes,
                                 depthUpF + ((size_t)e * sliceBytes) / sizeof(float));
                     }

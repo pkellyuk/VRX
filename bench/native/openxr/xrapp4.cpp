@@ -30,6 +30,20 @@
 //              colour + latest completed depth, which is the real design.
 //   --selftest run the GPU-vs-CPU warp comparison and exit
 //   --debug    enable the D3D12 debug layer and print its messages at exit
+//
+// Does the runtime USE the submitted depth? (XR_KHR_composition_layer_depth)
+//   --no-depth     never chain XrCompositionLayerDepthInfoKHR
+//   --freeze-pose  submit a STALE view pose (re-captured every period), so the
+//                  compositor has to reproject the layer to the live head pose.
+//                  Rotation-only reprojection keeps the picture rigid, as if at
+//                  infinity; a compositor that uses depth shows parallax inside the
+//                  picture when the head TRANSLATES.
+//   --ab=N         toggle the depth chain every N seconds. A block at the top centre
+//                  of the picture is GREEN while depth is submitted, RED while not.
+//   --depth-lie    submit a false depth: left half 0.5 m, right half 10 m. If depth
+//                  is used, the halves shear apart along the centre line as the head
+//                  translates - unmistakable, unlike subtle true parallax.
+//   typical:  xrapp4 90 --image=... --freeze-pose --ab=6 --depth-lie
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -102,6 +116,10 @@ struct Options
     bool paired = false;
     bool selfTestOnly = false;
     bool debugLayer = false;
+    bool noDepth = false;
+    bool freezePose = false;
+    bool depthLie = false;
+    double abSeconds = 0.0;             // 0 = no A/B toggling
     std::wstring imagePath;
 };
 
@@ -130,7 +148,12 @@ struct WarpConstants                    // must match cbuffer C in the shader
 {
     uint32_t w, h, doWarp;
     float scaleFocal, invZNear, invZFar, eye0, eye1;
+    float nearZ, farZ;                  // the planes declared in XrCompositionLayerDepthInfoKHR
+    uint32_t indicator;                 // 0 none, 1 green block (depth submitted), 2 red block (not)
+    uint32_t depthLie;                  // 1 = write the false half/half depth
 };
+
+static const float DEPTH_NEAR_Z = 0.10f, DEPTH_FAR_Z = 30.0f;
 
 struct App
 {
@@ -306,6 +329,10 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--paired")) { opt->paired = true; continue; }
         if (!strcmp(a, "--selftest")) { opt->selfTestOnly = true; continue; }
         if (!strcmp(a, "--debug")) { opt->debugLayer = true; continue; }
+        if (!strcmp(a, "--no-depth")) { opt->noDepth = true; continue; }
+        if (!strcmp(a, "--freeze-pose")) { opt->freezePose = true; continue; }
+        if (!strcmp(a, "--depth-lie")) { opt->depthLie = true; continue; }
+        if (!strncmp(a, "--ab=", 5)) { opt->abSeconds = atof(a + 5); continue; }
         if (!strncmp(a, "--image=", 8))
         {
             std::string p(a + 8);
@@ -315,6 +342,9 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (a[0] == '-') { Log("ParseArgs: unknown option %s", a); return false; }
         opt->runSeconds = atof(a);
     }
+    if (opt->abSeconds < 0.0) { Log("ParseArgs: --ab must be >= 0"); return false; }
+    Log("ParseArgs: noDepth %d freezePose %d depthLie %d ab %.1fs", (int)opt->noDepth, (int)opt->freezePose,
+        (int)opt->depthLie, opt->abSeconds);
     Log("ParseArgs: seconds %.0f warp %d scale %.2f truth %d paired %d selftest %d debug %d image '%ls'",
         opt->runSeconds, (int)opt->doWarp, opt->warpScale, (int)opt->useTruth, (int)opt->paired,
         (int)opt->selfTestOnly, (int)opt->debugLayer, opt->imagePath.c_str());
@@ -690,12 +720,16 @@ cbuffer C : register(b0)
     float invZFar;
     float eye0;         // eye lateral offsets in metres (left negative)
     float eye1;
+    float nearZ;
+    float farZ;
+    uint  indicator;    // 0 none, 1 green, 2 red
+    uint  depthLie;
 };
 
 Texture2D<float4>        scene    : register(t0);
 StructuredBuffer<float>  nearBuf  : register(t1);   // 0 = far .. 1 = near
 RWTexture2DArray<float4> outColor : register(u0);
-RWTexture2DArray<float>  outDepth : register(u1);   // 0 = near .. 1 = far
+RWTexture2DArray<float>  outDepth : register(u1);   // D3D projective depth for nearZ/farZ
 
 #define MAXW 686
 
@@ -753,8 +787,13 @@ void main(uint3 id : SV_DispatchThreadID)
     [loop] for (x = 0; x < iw; x++)
     {
         int s = (src[x] >= 0) ? src[x] : (-2 - src[x]);
-        outColor[uint3(x, y, e)] = scene.Load(int3(s, y, 0));
-        outDepth[uint3(x, y, e)] = 1.0 - nearBuf[base + s];
+        float4 col = scene.Load(int3(s, y, 0));
+        float invZ = invZFar + nearBuf[base + s] * (invZNear - invZFar);
+        if (depthLie != 0) invZ = (x < iw / 2) ? (1.0 / 0.5) : (1.0 / 10.0);
+        if (indicator != 0 && y >= 8 && y < 32 && x >= iw / 2 - 40 && x < iw / 2 + 40)
+            col = (indicator == 1) ? float4(0, 1, 0, 1) : float4(1, 0, 0, 1);
+        outColor[uint3(x, y, e)] = col;
+        outDepth[uint3(x, y, e)] = (farZ / (farZ - nearZ)) * (1.0 - nearZ * invZ);
     }
 }
 )HLSL";
@@ -1003,7 +1042,7 @@ static bool SelfTestCase(App& app, const char* name, const std::vector<unsigned 
     for (UINT e = 0; e < VIEWS; e++)
     {
         auto c0 = std::chrono::steady_clock::now();
-        WarpEye(scene, near01, eyes[e], c.scaleFocal, warpScale, c.invZNear, c.invZFar, c.doWarp != 0, refColor.data(), refDepth.data());
+        WarpEye(scene, near01, eyes[e], c.scaleFocal, warpScale, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, refColor.data(), refDepth.data());
         cpuMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c0).count();
 
         for (int y = 0; y < H; y++)
@@ -1040,6 +1079,7 @@ static bool SelfTest(App& app, const std::vector<unsigned char>& inputScene, con
     c.scaleFocal = 362.0f;                 // representative: the PS VR2 shared-FOV focal
     c.invZNear = 1.0f / 1.2f; c.invZFar = 1.0f / 12.0f;
     c.eye0 = -0.0355f; c.eye1 = 0.0355f;
+    c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
 
     std::vector<unsigned char> synth;
     std::vector<float> truth;
@@ -1076,6 +1116,13 @@ static void RunFrameLoop(App& app)
     double repCpuMs = 0, repAgeMs = 0;
     std::vector<unsigned char> scene;
     const DepthSlot* cur = nullptr;
+
+    // depth-usage experiment state
+    const double period = app.opt.abSeconds > 0.0 ? app.opt.abSeconds : 6.0;
+    double firstDrawTime = -1.0;
+    long long lastPhase = -1;
+    bool depthOn = !app.opt.noDepth;
+    XrPosef frozenPose[VIEWS] = {};
 
     while (!exitLoop)
     {
@@ -1167,6 +1214,19 @@ static void RunFrameLoop(App& app)
                     (sharedFov.angleRight - sharedFov.angleLeft) * 57.2958f, ipd * 1000.0f, focalPx, app.opt.warpScale);
             }
 
+            // --- depth-usage experiment: phase change => toggle depth / re-capture pose
+            if (firstDrawTime < 0.0) firstDrawTime = NowSeconds();
+            long long phase = (long long)((NowSeconds() - firstDrawTime) / period);
+            if (phase != lastPhase)
+            {
+                lastPhase = phase;
+                if (app.opt.abSeconds > 0.0 && !app.opt.noDepth) depthOn = (phase % 2) == 0;
+                for (uint32_t e = 0; e < VIEWS; e++) { frozenPose[e] = views[e].pose; frozenPose[e].orientation = sharedRot; }
+                if (app.opt.abSeconds > 0.0 || app.opt.freezePose)
+                    Log("RunFrameLoop: phase %lld - depth chain %s%s%s", phase, depthOn ? "ON (green)" : "OFF (red)",
+                        app.opt.freezePose ? ", pose re-captured and frozen" : "", app.opt.depthLie ? ", depth is the half/half LIE" : "");
+            }
+
             uint32_t cIdx = 0, dIdx = 0;
             XrSwapchainImageAcquireInfo ai{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
             bool gotColor = XR_SUCCEEDED(xrAcquireImage_(app.colorSc, &ai, &cIdx));
@@ -1220,6 +1280,9 @@ static void RunFrameLoop(App& app)
                     c.invZNear = 1.0f / 1.2f;      // nearest content ~1.2 m
                     c.invZFar = 1.0f / 12.0f;      // furthest content ~12 m
                     c.eye0 = -0.5f * ipd; c.eye1 = 0.5f * ipd;
+                    c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
+                    c.indicator = (app.opt.abSeconds > 0.0) ? (depthOn ? 1u : 2u) : 0u;
+                    c.depthLie = app.opt.depthLie ? 1u : 0u;
                     RecordWarp(app, c);
                     RecordCopyToSwapchain(app, app.cimgs[cIdx].texture, app.dimgs[dIdx].texture);
                     RecordWarpOutputsBackToUav(app);
@@ -1243,6 +1306,7 @@ static void RunFrameLoop(App& app)
                     pviews[e] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW };
                     pviews[e].pose = views[e].pose;
                     pviews[e].pose.orientation = sharedRot;
+                    if (app.opt.freezePose) pviews[e].pose = frozenPose[e];
                     pviews[e].fov = sharedFov;
                     pviews[e].subImage.swapchain = app.colorSc;
                     pviews[e].subImage.imageRect = { {0, 0}, {W, H} };
@@ -1254,9 +1318,9 @@ static void RunFrameLoop(App& app)
                     dinfo[e].subImage.imageArrayIndex = e;
                     dinfo[e].minDepth = 0.0f;
                     dinfo[e].maxDepth = 1.0f;
-                    dinfo[e].nearZ = 0.10f;
-                    dinfo[e].farZ = 30.0f;
-                    pviews[e].next = &dinfo[e];
+                    dinfo[e].nearZ = DEPTH_NEAR_Z;
+                    dinfo[e].farZ = DEPTH_FAR_Z;
+                    pviews[e].next = depthOn ? &dinfo[e] : nullptr;
                 }
                 proj.space = app.space;
                 proj.viewCount = VIEWS;

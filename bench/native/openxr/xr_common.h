@@ -199,10 +199,15 @@ static void WritePNM(const char* path, const char* magic, const unsigned char* d
 // instead of moving it - and lets far content overwrite near content.)
 // Disocclusion holes are filled from the FARTHER neighbour, i.e. background.
 //   eyeOffset : eye's lateral offset in metres (left negative)
-//   outRGBA   : ROW_PITCH bytes per row;  outDepth : ROW_PITCH/4 floats per row,
-//               written as 0 = near .. 1 = far
+//   outRGBA   : ROW_PITCH bytes per row;  outDepth : ROW_PITCH/4 floats per row.
+//   Depth is written as a real D3D projective depth for the distance the warp
+//   used, d = farZ/(farZ-nearZ) * (1 - nearZ/Z), so that the nearZ/farZ declared in
+//   XrCompositionLayerDepthInfoKHR decode it back to the same metres. (Writing
+//   "1 - nearness" linearly, as the first version did, decodes to 0.1-1 m for
+//   almost the whole range - a depth image that contradicts the stereo disparity.)
 static void WarpEye(const std::vector<unsigned char>& scene, const std::vector<float>& near01,
                     float eyeOffset, float focalPx, float scale, float invZNear, float invZFar,
+                    float nearZ, float farZ,
                     bool doWarp, unsigned char* outRGBA, float* outDepth)
 {
     std::vector<int> src(W);
@@ -250,7 +255,8 @@ static void WarpEye(const std::vector<unsigned char>& scene, const std::vector<f
             crow[x * 4 + 1] = scene[si + 1];
             crow[x * 4 + 2] = scene[si + 2];
             crow[x * 4 + 3] = 255;
-            drow[x] = 1.0f - nrow[s];
+            float invZ = invZFar + nrow[s] * (invZNear - invZFar);
+            drow[x] = (farZ / (farZ - nearZ)) * (1.0f - nearZ * invZ);
         }
     }
 }
