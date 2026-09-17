@@ -1,0 +1,33 @@
+VRX 1.0.0 third-party components
+
+Depth Anything V2 Small, ONNX Community export (Apache-2.0)
+https://github.com/DepthAnything/Depth-Anything-V2
+https://huggingface.co/onnx-community/depth-anything-v2-small
+The supplied FP16-weight ONNX model has been modified to fix input/output shapes
+at 686x392, with ONNX shape inference, using bench/make_fixed_shape.py.
+See licenses/DepthAnything-LICENSE.txt.
+
+ONNX Runtime DirectML 1.24.4 (MIT and bundled third-party notices)
+https://github.com/microsoft/onnxruntime
+See licenses/ONNXRuntime-LICENSE.txt and ONNXRuntime-ThirdPartyNotices.txt.
+
+Microsoft DirectML 1.15.4
+https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4
+See licenses/DirectML-LICENSE.txt and DirectML-ThirdPartyNotices.txt.
+
+OpenXR loader (Khronos Group; Apache-2.0)
+https://github.com/KhronosGroup/OpenXR-SDK
+Loader copied from the installed SteamVR distribution during packaging.
+See licenses/OpenXR-LICENSE.txt. SteamVR itself is not bundled.
+
+Microsoft .NET desktop runtime (self-contained dotnet publish)
+https://github.com/dotnet/runtime
+https://github.com/dotnet/wpf
+See licenses/DotNet-LICENSE.txt and DotNet-ThirdPartyNotices.txt.
+
+Microsoft Visual C++ x64 runtime redistribution files
+App-local runtime DLLs copied from the Visual Studio redistributable directory.
+See https://visualstudio.microsoft.com/license-terms/ for Microsoft terms.
+
+Exact packaged file versions and hashes are recorded in FILES.sha256.txt and
+BUILD.txt. This notice does not change the licenses of those components.

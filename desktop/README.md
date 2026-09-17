@@ -1,5 +1,10 @@
 # VRX desktop application
 
+For the packaged v1 release, install `VRX-Setup-1.0.0.exe` or extract the portable
+ZIP and run `VRX.Desktop.exe`. The .NET runtime, native libraries and depth model
+are bundled. SteamVR/OpenXR and the game remain separate prerequisites. See
+[release instructions](../release/README.txt).
+
 Open `Open-VRX.cmd` in the repository root. Start SteamVR and the game, choose the
 running application and its window, then select **Attach / Play**. Stop any older
 command-line VRX session first. Playback continues until **Stop VR**, source
@@ -70,7 +75,8 @@ dependencies. No third-party desktop UI packages are required.
 
 The UI uses `bench/native/openxr/out/xrplayer.exe`, built from `xrapp5.cpp` with
 `build.bat --desktop`. This keeps an older running `xrapp5.exe` session separate.
-The app must remain inside this repository for model/engine discovery.
+Development builds discover the repository; packaged builds discover the adjacent
+`engine` directory and `engine/models` without depending on the working directory.
 
 ```powershell
 .\desktop\VRX.Desktop\bin\Release\net10.0-windows\VRX.Desktop.exe --smoke-test
