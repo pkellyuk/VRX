@@ -1,6 +1,10 @@
 ﻿# VRX — Investigation: real-time AI depth estimation of the VR display via OpenXR
 
-Status: investigation (no application code yet — benchmark harness only)
+Status: proof of concept working — `bench/native/openxr/xrapp3.cpp` turns a 2D
+image into fused stereo 3D in the headset using the model's depth (eyeball-
+confirmed, see `research/m3-depth-integration-findings.md`). Still CPU-bound
+(synchronous model, CPU warp); worker thread, compute-shader warp and real
+display capture are the remaining work.
 Date: 2026-09-17
 
 ## The question

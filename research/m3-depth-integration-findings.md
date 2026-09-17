@@ -68,7 +68,48 @@ what else the GPU is doing.** The M1 numbers should be read as idle-GPU figures.
 At 60 fps the depth path is viable at 60 Hz per-frame, and at 90 Hz it needs the
 depth on a worker thread with temporal reuse (refreshing roughly 2 frames in 3).
 
+## Result — the 2D->3D effect works in-headset (eyeball-confirmed)
+
+`bench/native/openxr/xrapp3.cpp`, run with
+`xrapp3 60 --image=C:\Windows\Web\Wallpaper\Spotlight\img14.jpg` on a PS VR2 via
+SteamVR: a real photo, depth from the model, fuses into a single 3D image.
+Model 15.9–16.1 ms, CPU warp+pack 5–8 ms. Three bugs had to be fixed to get
+there, each worth remembering:
+
+1. **Same image in both eyes => declare the SAME symmetric FOV and orientation.**
+   The runtime's per-eye FOVs are asymmetric and mirrored (measured: eye 0
+   -61.5/+43.4 deg, eye 1 -43.4/+61.5 deg). Declaring them for a shared image
+   puts the image centre ~9 deg outward in each eye: ~18 deg of *divergent*
+   disparity, unfusable ("left image is too far left"). Fix: both projection
+   views declare one symmetric FOV (smallest half-angle of either eye, vertical
+   from the image aspect so pixels stay square) and one nlerp'd orientation. The
+   compositor reprojects the declared FOV onto the display. Unwarped content then
+   sits at infinity and the warp adds only convergent disparity.
+2. **The stereo warp must be a forward warp with a z-test.** The first version
+   looked up disparity at the *destination* pixel. On a flat-coloured object that
+   only trims one edge instead of moving it, and lets far content overwrite near
+   content — a weak, wrong-looking effect. Now every source pixel moves by its own
+   disparity (`focal * eyeOffset / Z`, eye offset = +-IPD/2 from the measured eye
+   positions), nearer wins, holes are filled from the farther neighbour. The depth
+   image is warped per eye identically.
+3. **Flat synthetic scenes are useless as model input.** For the rectangle test
+   scene the model returned nearness backdrop 0.43 / panel 0.33 / marker 0.44
+   against a truth of 0 / 0.5 / 1 — i.e. arbitrary, because there are no monocular
+   cues. It looked like a sign bug in the warp and was not. `--truth` (ground-truth
+   depth, tests the warp alone), `--image=` (real content, tests the model) and
+   `--dump` exist to keep those two questions separate. The pre-loop model check
+   prints the model's opinion even if the HMD never wakes.
+
+Not yet answered: whether SteamVR *uses* the submitted
+`XrCompositionLayerDepthInfoKHR` at all. The visible 3D comes entirely from the
+warp; an A/B run without the depth chain is still to do.
+
 ## Remaining M3 work
+
+Items 1, 2, 4 and 5 below are done in `xrapp3.cpp` (CPU implementation). Still
+open: item 3 (worker thread + GPU-only depth/warp path via compute shader), real
+display capture as the input, and temporal smoothing of the per-frame min/max
+normalisation.
 
 1. Switch `xrapp` from a quad layer to a **projection layer** with two views, and
    enable `XR_KHR_composition_layer_depth` on the instance.
