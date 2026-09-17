@@ -59,6 +59,15 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo.
+echo === building xrapp5 (desktop capture + GPU-resident model input + colour-res warp) ===
+cl /nologo /std:c++20 /EHsc /O2 /W3 /I"%INC%" /I"%ORTINC%" /Fo"%OUT%\\" /Fe"%OUT%\xrapp5.exe" "%~dp0xrapp5.cpp" ^
+   /link /LIBPATH:"%ORTLIB%" onnxruntime.lib d3d12.lib d3d11.lib dxgi.lib dxguid.lib d3dcompiler.lib ole32.lib windowscodecs.lib windowsapp.lib user32.lib
+if errorlevel 1 (
+  echo BUILD FAILED ^(xrapp5^)
+  exit /b 1
+)
+
 copy /y "%ORTLIB%\onnxruntime.dll" "%OUT%\" >nul
 for /d %%D in ("%USERPROFILE%\.nuget\packages\microsoft.ai.directml\*") do set DMLPKG2=%%D
 if defined DMLPKG2 if exist "!DMLPKG2!\runtimes\win-x64\native\DirectML.dll" copy /y "!DMLPKG2!\runtimes\win-x64\native\DirectML.dll" "%OUT%\" >nul

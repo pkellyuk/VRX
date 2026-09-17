@@ -160,10 +160,13 @@ static void RegionMeans(const std::vector<float>& near01, double t, float& back,
     marker = n[2] ? (float)(s[2] / n[2]) : 0;
 }
 
-// Load any WIC-decodable image (png/jpg/bmp), scaled to WxH, as packed RGB.
-static bool LoadImageWIC(const wchar_t* path, std::vector<unsigned char>& rgb)
+// Load any WIC-decodable image (png/jpg/bmp) as packed RGB.
+//   forceW/forceH > 0 : scale to exactly that size.
+//   otherwise         : keep the aspect ratio, shrink so width <= maxW, even dims.
+static bool LoadImageWICSized(const wchar_t* path, int forceW, int forceH, int maxW,
+                              int* outW, int* outH, std::vector<unsigned char>& rgb)
 {
-    if (!path) return false;
+    if (!path || !outW || !outH) return false;
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     ComPtr<IWICImagingFactory> wic;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)))) return false;
@@ -171,15 +174,36 @@ static bool LoadImageWIC(const wchar_t* path, std::vector<unsigned char>& rgb)
     if (FAILED(wic->CreateDecoderFromFilename(path, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec))) return false;
     ComPtr<IWICBitmapFrameDecode> frame;
     if (FAILED(dec->GetFrame(0, &frame))) return false;
+
+    UINT sw = 0, sh = 0;
+    if (FAILED(frame->GetSize(&sw, &sh)) || sw == 0 || sh == 0) return false;
+    int w = forceW, h = forceH;
+    if (w <= 0 || h <= 0)
+    {
+        if (maxW <= 0) return false;
+        double k = sw > (UINT)maxW ? (double)maxW / sw : 1.0;
+        w = std::max(2, (int)(sw * k + 0.5) & ~1);
+        h = std::max(2, (int)(sh * k + 0.5) & ~1);
+    }
+
     ComPtr<IWICBitmapScaler> scaler;
     if (FAILED(wic->CreateBitmapScaler(&scaler))) return false;
-    if (FAILED(scaler->Initialize(frame.Get(), W, H, WICBitmapInterpolationModeFant))) return false;
+    if (FAILED(scaler->Initialize(frame.Get(), w, h, WICBitmapInterpolationModeFant))) return false;
     ComPtr<IWICFormatConverter> conv;
     if (FAILED(wic->CreateFormatConverter(&conv))) return false;
     if (FAILED(conv->Initialize(scaler.Get(), GUID_WICPixelFormat24bppRGB, WICBitmapDitherTypeNone,
                                 nullptr, 0.0, WICBitmapPaletteTypeCustom))) return false;
-    rgb.resize((size_t)W * H * 3);
-    return SUCCEEDED(conv->CopyPixels(nullptr, W * 3, (UINT)rgb.size(), rgb.data()));
+    rgb.resize((size_t)w * h * 3);
+    if (FAILED(conv->CopyPixels(nullptr, w * 3, (UINT)rgb.size(), rgb.data()))) return false;
+    *outW = w; *outH = h;
+    return true;
+}
+
+// Scaled to the model geometry WxH (xrapp3 / xrapp4).
+static bool LoadImageWIC(const wchar_t* path, std::vector<unsigned char>& rgb)
+{
+    int w = 0, h = 0;
+    return LoadImageWICSized(path, W, H, 0, &w, &h, rgb);
 }
 
 static void WritePNM(const char* path, const char* magic, const unsigned char* data, size_t bytes)
