@@ -6,6 +6,7 @@
 #include "capture_window.h"
 #include "desktop_control.h"
 #include "foreground_refinement.h"
+#include "gpu_choice.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -293,6 +294,35 @@ static void TestCaptureDownscale()
     Check(scaler.Downscale(context.Get(), nullptr, sw, rtv.Get(), dw, dh) == E_INVALIDARG, "downscale rejects a missing picture");
 }
 
+static void TestGpuChoice()
+{
+    // RTX 3090 renders the headset; two identical 3060s; a software adapter.
+    const std::vector<GpuEntry> gpus = {
+        { L"NVIDIA GeForce RTX 3090", 24325, false, true },
+        { L"NVIDIA GeForce RTX 3060", 12115, false, false },
+        { L"NVIDIA GeForce RTX 3060", 12115, false, false },
+        { L"Microsoft Basic Render Driver", 0, true, false },
+    };
+    GpuRequest r;
+    std::wstring why;
+    Check(ParseGpuRequest(L"same", r) && ChooseDepthAdapter(gpus, r, why) == -1, "same: headset GPU");
+    Check(ParseGpuRequest(L"auto", r) && ChooseDepthAdapter(gpus, r, why) == 1, "auto: first largest other GPU");
+    Check(ParseGpuRequest(L"name:NVIDIA GeForce RTX 3060#0", r) && ChooseDepthAdapter(gpus, r, why) == 1, "first of two identical cards");
+    Check(ParseGpuRequest(L"name:NVIDIA GeForce RTX 3060#1", r) && ChooseDepthAdapter(gpus, r, why) == 2, "second of two identical cards");
+    Check(ParseGpuRequest(L"name:nvidia geforce rtx 3060 #1", r) && ChooseDepthAdapter(gpus, r, why) == 2, "names match case- and space-insensitively");
+    Check(ParseGpuRequest(L"name:NVIDIA GeForce RTX 3060#2", r) && ChooseDepthAdapter(gpus, r, why) == -1, "missing third card falls back");
+    Check(ParseGpuRequest(L"name:NVIDIA GeForce RTX 3090#0", r) && ChooseDepthAdapter(gpus, r, why) == -1, "choosing the headset GPU means no offload");
+    Check(ParseGpuRequest(L"name:Microsoft Basic Render Driver#0", r) && ChooseDepthAdapter(gpus, r, why) == -1, "software adapter refused");
+    Check(ParseGpuRequest(L"name:AMD Radeon RX 7900 XTX#0", r) && ChooseDepthAdapter(gpus, r, why) == -1, "card no longer present falls back");
+    Check(ParseGpuRequest(L"2", r) && ChooseDepthAdapter(gpus, r, why) == 2, "index for diagnostics");
+    Check(ParseGpuRequest(L"0", r) && ChooseDepthAdapter(gpus, r, why) == -1, "index of headset GPU: no offload");
+    Check(!ParseGpuRequest(L"name:#0", r) && !ParseGpuRequest(L"name:RTX", r) && !ParseGpuRequest(L"name:RTX#x", r) &&
+        !ParseGpuRequest(L"third", r) && !ParseGpuRequest(L"", r), "malformed requests rejected");
+    Check(NthOfName(gpus, 1) == 0 && NthOfName(gpus, 2) == 1 && NthOfName(gpus, 0) == 0, "identical cards are numbered in order");
+    const std::vector<GpuEntry> single = { { L"NVIDIA GeForce RTX 3090", 24325, false, true } };
+    Check(ParseGpuRequest(L"auto", r) && ChooseDepthAdapter(single, r, why) == -1, "auto with one GPU stays on it");
+}
+
 static void TestScreenAnchor()
 {
     ScreenAnchor screen;
@@ -457,5 +487,6 @@ int main(int argc, char** argv)
     TestClientCrop();
     TestCaptureClientRegion();
     TestCaptureDownscale();
-    std::puts("PASS: game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop, capture downscale");
+    TestGpuChoice();
+    std::puts("PASS: game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop, capture downscale, depth GPU choice");
 }

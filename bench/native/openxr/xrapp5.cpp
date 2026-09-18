@@ -94,6 +94,7 @@
 using Microsoft::WRL::ComPtr;
 
 #include "xr_common.h"
+#include "gpu_choice.h"
 #include "source_ring.h"
 #include "capture_scaler.h"
 #include "xr_frame_guard.h"
@@ -207,9 +208,10 @@ struct Options
     bool paired = false;
     bool foreground = true;
     bool boostGpuPriority = true;      // best effort; --normal-gpu-priority disables the experiment
-    // Which GPU runs the depth model: -1 = the headset GPU (default), -2 = automatic
-    // second GPU (the largest other hardware adapter), N = DXGI adapter index.
-    int depthAdapter = -1;
+    // Which GPU runs the depth model (gpu_choice.h): same (default), auto, a GPU
+    // name + which card of that name, or a DXGI index for diagnostics.
+    GpuRequest depthGpu;
+    bool listGpus = false;              // --list-gpus: print the GPUs for the desktop app and exit
     // Second GPU only. true: the capture thread box-filters each frame to model size
     // and the headset GPU's copy engine sends it across (no depth work waits on its
     // graphics/compute engines). false: model-input prep on the headset GPU.
@@ -642,16 +644,14 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
-        if (!strcmp(a, "--depth-gpu=same")) { opt->depthAdapter = -1; continue; }
         if (!strcmp(a, "--xgpu-transfer=frame")) { opt->frameTransfer = true; continue; }
         if (!strcmp(a, "--xgpu-transfer=prep")) { opt->frameTransfer = false; continue; }
-        if (!strcmp(a, "--depth-gpu=auto")) { opt->depthAdapter = -2; continue; }
+        if (!strcmp(a, "--list-gpus")) { opt->listGpus = true; continue; }
         if (!strncmp(a, "--depth-gpu=", 12))
         {
-            char* end = nullptr;
-            const long index = strtol(a + 12, &end, 10);
-            if (!end || *end || index < 0 || index > 15) { Log("ParseArgs: --depth-gpu must be same, auto or an adapter index 0..15"); return false; }
-            opt->depthAdapter = (int)index;
+            // Arguments arrive as UTF-8 (wmain converts); GPU names may be non-ASCII.
+            if (!ParseGpuRequest(std::wstring(winrt::to_hstring(a + 12)), opt->depthGpu))
+            { Log("ParseArgs: --depth-gpu must be same, auto, an adapter index or name:<GPU name>#<n>"); return false; }
             continue;
         }
         if (!strcmp(a, "--model=zipdepth")) { opt->model = &kZipDepth; continue; }
@@ -695,8 +695,11 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         opt->monitorIndex, opt->windowTitle.c_str(), opt->imagePath.c_str(), opt->runSeconds);
     Log("ParseArgs: fill %s dilate %d vertical %d (-1 = per model)", opt->fillMode == FILL_MIRROR ? "mirror" : "stretch", opt->dilate, opt->dilateV);
     Log("ParseArgs: depth model %s (%dx%d)", opt->model->name, opt->model->inW, opt->model->inH);
-    Log("ParseArgs: depth GPU %s%s", opt->depthAdapter == -1 ? "same as headset" : opt->depthAdapter == -2 ? "auto (second GPU)" : "adapter index",
-        opt->depthAdapter == -1 ? "" : opt->frameTransfer ? ", frames sent by the copy engine" : ", prep on the headset GPU");
+    const auto& g = opt->depthGpu;
+    Log("ParseArgs: depth GPU %s%ls%s%s", g.kind == GpuRequest::Kind::Same ? "same as headset" : g.kind == GpuRequest::Kind::Auto ? "auto (another GPU)" :
+        g.kind == GpuRequest::Kind::Index ? "adapter index" : "named: ", g.kind == GpuRequest::Kind::Named ? g.name.c_str() : L"",
+        g.kind == GpuRequest::Kind::Named ? (g.nth ? " (not the first of that name)" : "") : "",
+        g.kind == GpuRequest::Kind::Same ? "" : opt->frameTransfer ? ", frames sent by the copy engine" : ", prep on the headset GPU");
     Log("ParseArgs: warp %d scale %.2f truth %d paired %d smooth %d tau %.2fs submitDepth %d selftest %d debug %d",
         (int)opt->doWarp, opt->warpScale, (int)opt->useTruth, (int)opt->paired, (int)opt->smooth, opt->smoothTau,
         (int)opt->submitDepth, (int)opt->selfTestOnly, (int)opt->debugLayer);
@@ -754,38 +757,57 @@ static bool InitXrInstance(App& app)
 }
 
 // -------------------------------------------------------------------- d3d
-// Largest-memory hardware adapter other than the headset one, or the requested index.
-static bool PickSecondAdapter(App& app, IDXGIFactory4* fac, ComPtr<IDXGIAdapter1>& out)
+// All adapters in DXGI order, as gpu_choice.h sees them.
+static std::vector<GpuEntry> EnumerateGpus(IDXGIFactory4* fac, const LUID* headsetLuid, std::vector<ComPtr<IDXGIAdapter1>>* adapters)
 {
-    if (!fac) return false;
-    ComPtr<IDXGIAdapter1> best;
-    SIZE_T bestMemory = 0;
+    std::vector<GpuEntry> gpus;
+    if (!fac) return gpus;
     for (UINT i = 0;; ++i)
     {
         ComPtr<IDXGIAdapter1> each;
         if (fac->EnumAdapters1(i, &each) == DXGI_ERROR_NOT_FOUND) break;
         DXGI_ADAPTER_DESC1 d{};
         each->GetDesc1(&d);
-        const bool headset = d.AdapterLuid.LowPart == app.adapterLuid.LowPart && d.AdapterLuid.HighPart == app.adapterLuid.HighPart;
-        const bool software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
-        Log("PickSecondAdapter: adapter %u %ls, %llu MB%s%s", i, d.Description, (unsigned long long)(d.DedicatedVideoMemory >> 20),
-            headset ? " [headset GPU]" : "", software ? " [software]" : "");
-        if (app.opt.depthAdapter >= 0)
-        {
-            if ((int)i != app.opt.depthAdapter) continue;
-            if (headset) { Log("PickSecondAdapter: adapter %u is the headset GPU; nothing to offload", i); return false; }
-            if (software) { Log("PickSecondAdapter: adapter %u is a software adapter; refused", i); return false; }
-            out = each;
-            return true;
-        }
-        if (headset || software || d.DedicatedVideoMemory <= bestMemory) continue;
-        best = each;
-        bestMemory = d.DedicatedVideoMemory;
+        GpuEntry g;
+        g.name = d.Description;
+        g.memoryMB = (unsigned long long)(d.DedicatedVideoMemory >> 20);
+        g.software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+        g.headset = headsetLuid && d.AdapterLuid.LowPart == headsetLuid->LowPart && d.AdapterLuid.HighPart == headsetLuid->HighPart;
+        gpus.push_back(g);
+        if (adapters) adapters->push_back(each);
     }
-    if (app.opt.depthAdapter >= 0) { Log("PickSecondAdapter: no adapter %d", app.opt.depthAdapter); return false; }
-    if (!best) { Log("PickSecondAdapter: no second hardware GPU found"); return false; }
-    out = best;
+    return gpus;
+}
+
+// The adapter the depth request resolves to; false means stay on the headset GPU.
+static bool PickSecondAdapter(App& app, IDXGIFactory4* fac, ComPtr<IDXGIAdapter1>& out)
+{
+    if (!fac) return false;
+    std::vector<ComPtr<IDXGIAdapter1>> adapters;
+    const auto gpus = EnumerateGpus(fac, &app.adapterLuid, &adapters);
+    for (size_t i = 0; i < gpus.size(); ++i)
+        Log("PickSecondAdapter: adapter %zu %ls, %llu MB%s%s", i, gpus[i].name.c_str(), gpus[i].memoryMB,
+            gpus[i].headset ? " [headset GPU]" : "", gpus[i].software ? " [software]" : "");
+    std::wstring reason;
+    const int chosen = ChooseDepthAdapter(gpus, app.opt.depthGpu, reason);
+    if (chosen < 0) { Log("PickSecondAdapter: staying on the headset GPU - %ls", reason.c_str()); return false; }
+    Log("PickSecondAdapter: adapter %d %ls (%ls)", chosen, gpus[size_t(chosen)].name.c_str(), reason.c_str());
+    out = adapters[size_t(chosen)];
     return true;
+}
+
+// --list-gpus: one line per adapter for the desktop app's GPU picker:
+//   GPU|<index>|<nth card with this name>|<dedicated MB>|<software 0/1>|<name>
+// Runs before any VR runtime or model work, so it never starts SteamVR.
+static int ListGpus()
+{
+    ComPtr<IDXGIFactory4> fac;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&fac)))) { printf("GPUERROR|CreateDXGIFactory1 failed\n"); return 1; }
+    const auto gpus = EnumerateGpus(fac.Get(), nullptr, nullptr);
+    for (size_t i = 0; i < gpus.size(); ++i)
+        printf("GPU|%zu|%d|%llu|%d|%s\n", i, NthOfName(gpus, i), gpus[i].memoryMB, gpus[i].software ? 1 : 0,
+            winrt::to_string(gpus[i].name).c_str());
+    return 0;
 }
 
 // Creates the inference device, its queue and the cross-adapter hand-over:
@@ -793,7 +815,7 @@ static bool PickSecondAdapter(App& app, IDXGIFactory4* fac, ComPtr<IDXGIAdapter1
 // one buffer large enough for any model's input, and a cross-adapter fence.
 static bool InitSecondGpu(App& app, IDXGIFactory4* fac)
 {
-    Log("InitSecondGpu: enter (requested %s)", app.opt.depthAdapter == -2 ? "auto" : "adapter index");
+    Log("InitSecondGpu: enter");
     if (!fac || !app.device) return false;
 
     ComPtr<IDXGIAdapter1> adapter;
@@ -966,7 +988,7 @@ static bool InitD3D(App& app)
     app.inferDevice = app.device;
     app.inferQueue = app.mlQueue;
     app.inferName = ad.Description;
-    if (app.opt.depthAdapter != -1 && !InitSecondGpu(app, fac.Get()))
+    if (app.opt.depthGpu.kind != GpuRequest::Kind::Same && !InitSecondGpu(app, fac.Get()))
     {
         ReleaseSecondGpu(app);
         app.inferDevice = app.device;
@@ -3571,6 +3593,7 @@ int wmain(int argc, wchar_t** wideArgv)
 
     static App app;
     if (!ParseArgs(argc, argv.data(), &app.opt)) return 1;
+    if (app.opt.listGpus) return ListGpus();
     app.testDepthFailuresLeft = app.opt.testDepthFailures;
     app.foregroundEnabled = app.opt.foreground && app.opt.doWarp;
 

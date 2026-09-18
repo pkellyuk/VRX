@@ -17,6 +17,14 @@ public sealed class EngineSession
             if (File.Exists(Path.Combine(dir.FullName, "bench", "native", "openxr", "xrapp5.cpp"))) return dir.FullName;
         throw new DirectoryNotFoundException("VRX renderer is missing. Reinstall VRX or build the project.");
     }
+    public static string EnginePath()
+    {
+        string root = RepositoryRoot();
+        string engine = Path.Combine(root, "engine", "xrplayer.exe");
+        if (!File.Exists(engine)) engine = Path.Combine(root, "bench", "native", "openxr", "out", "xrplayer.exe");
+        if (!File.Exists(engine)) throw new FileNotFoundException("Build the desktop renderer first using bench/native/openxr/build.bat --desktop.");
+        return engine;
+    }
     public void Update(Profile profile, bool reset = false, bool dismiss = false, bool stop = false)
     {
         if (reset) recenter++;
@@ -36,9 +44,7 @@ public sealed class EngineSession
         if (!string.Equals(RunningApps.ProcessPath(app.Pid), app.FullPath, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The selected process has closed or changed. Refresh the list.");
         string root = RepositoryRoot();
-        string engine = Path.Combine(root, "engine", "xrplayer.exe");
-        if (!File.Exists(engine)) engine = Path.Combine(root, "bench", "native", "openxr", "out", "xrplayer.exe");
-        if (!File.Exists(engine)) throw new FileNotFoundException("Build the desktop renderer first using bench/native/openxr/build.bat --desktop.");
+        string engine = EnginePath();
         string sessionRoot = Path.Combine(dataRoot, "sessions", Guid.NewGuid().ToString("N"));
         control = Path.Combine(sessionRoot, "control.txt"); recenter = menu = 0;
         Update(profile);
@@ -47,7 +53,7 @@ public sealed class EngineSession
             StandardErrorEncoding = System.Text.Encoding.UTF8 };
         foreach (string arg in new[] { "0", "--exe=" + Path.GetFileName(app.FullPath), "--exe-path=" + app.FullPath,
             "--pid=" + app.Pid, "--hwnd=" + window.Handle.ToInt64(), "--control=" + control }) start.ArgumentList.Add(arg);
-        if (profile.DepthOnSecondGpu) start.ArgumentList.Add("--depth-gpu=auto");
+        if (profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) start.ArgumentList.Add("--depth-gpu=" + profile.DepthGpu);
         var child = new Process { StartInfo = start };
         try
         {
