@@ -45,6 +45,31 @@ static void TestOwnershipAndFences()
     Check(!ring.Reserve(100, 100, UINT64_MAX), "device removal is not model completion");
 }
 
+// The copy-engine hand-over reads the frame on its own timeline: the slot must
+// stay protected until that copy completes, whatever the other timelines say.
+static void TestTransferTimeline()
+{
+    SourceRing<2> ring;
+    auto frame = ring.Reserve(0, 0, 0, 0);
+    Check(bool(frame), "first reservation");
+    const int first = frame->index;
+    ring.Publish(frame, 5, 0);
+    auto read = ring.Latest();
+    frame.reset();
+    ring.MarkRead(read, SourceRing<2>::Reader::Transfer, 40);
+    ring.MarkRead(read, SourceRing<2>::Reader::Transfer, 3);   // earlier value must not shorten protection
+    read.reset();
+    auto next = ring.Reserve(5, 0, 0, 0);                       // the other slot; the first is transfer-protected
+    Check(next && next->index != first, "a fresh slot is available while the copy is pending");
+    ring.Publish(next, 6, 0);                                   // the first frame is no longer the latest
+    next.reset();
+    Check(!ring.Reserve(6, 100, 100, 39), "copy-engine read must complete before reuse");
+    Check(!ring.Reserve(6, 100, 100), "callers without a transfer timeline cannot skip a recorded copy");
+    Check(!ring.Reserve(6, 100, 100, UINT64_MAX), "device removal is not transfer completion");
+    auto reused = ring.Reserve(6, 0, 0, 40);
+    Check(reused && reused->index == first, "slot reusable once the copy completes");
+}
+
 static void TestLongLivedPairedFrame()
 {
     SourceRing<8> ring;
@@ -126,9 +151,10 @@ static void TestConcurrentReaders()
 
 int main()
 {
+    TestTransferTimeline();
     TestOwnershipAndFences();
     TestLongLivedPairedFrame();
     TestGpuBackpressure();
     TestConcurrentReaders();
-    std::puts("PASS: source ownership, three GPU timelines, long-lived pairing, backpressure, concurrent readers");
+    std::puts("PASS: source ownership, four GPU timelines (incl. copy-engine transfer), long-lived pairing, backpressure, concurrent readers");
 }

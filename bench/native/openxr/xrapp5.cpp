@@ -210,6 +210,10 @@ struct Options
     // Which GPU runs the depth model: -1 = the headset GPU (default), -2 = automatic
     // second GPU (the largest other hardware adapter), N = DXGI adapter index.
     int depthAdapter = -1;
+    // Second GPU only. true: the capture thread box-filters each frame to model size
+    // and the headset GPU's copy engine sends it across (no depth work waits on its
+    // graphics/compute engines). false: model-input prep on the headset GPU.
+    bool frameTransfer = true;
     const ModelSpec* model = &kZipDepth;          // default; --model=dav2 selects Depth Anything V2
     bool selfTestOnly = false;
     bool debugLayer = false;
@@ -293,6 +297,11 @@ struct Capture
     ComPtr<ID3D11Fence> fence11;
     ComPtr<ID3D11Texture2D> tex11[SRC_RING];
     ComPtr<ID3D11RenderTargetView> rtv11[SRC_RING];
+    // Second-GPU frame transfer: the source ring as shader input, and a parallel
+    // ring of model-size frames the copy engine sends to the inference GPU.
+    ComPtr<ID3D11ShaderResourceView> srv11[SRC_RING];
+    ComPtr<ID3D11Texture2D> small11[SRC_RING];
+    ComPtr<ID3D11RenderTargetView> smallRtv11[SRC_RING];
     CaptureScaler scaler;
     winrt::event_token closedToken{};
     bool closedRegistered = false;
@@ -386,10 +395,29 @@ struct App
     UINT64 crossBytes = 0;
     ComPtr<ID3D12Fence> crossFence, crossFenceInfer;     // headset GPU signals, inference GPU waits
     UINT64 crossVal = 0;
+
+    // Frame transfer (second GPU, capture source): model-size frames made by the
+    // capture thread, sent by the headset GPU's copy engine, unpacked on the
+    // inference GPU. Crop passes still use the prep path above.
+    bool frameTransfer = false;
+    int xferW = 0, xferH = 0;                            // the largest model input; frames are this size
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT xferFootprint{};  // BGRA8 rows in the shared buffer
+    UINT64 xferBytes = 0;                                // exact frame size: the last row is not padded to the pitch
+    ComPtr<ID3D12Resource> smallTex[SRC_RING];           // headset GPU, shared with the capture device
+    ComPtr<ID3D12CommandQueue> xferQueue;                // headset GPU copy engine
+    ComPtr<ID3D12CommandAllocator> xferAlloc;
+    ComPtr<ID3D12GraphicsCommandList> xferList;
+    ComPtr<ID3D12Fence> xferFence;
+    UINT64 xferFenceVal = 0;
+    HANDLE xferFenceEvent = nullptr;
+    ComPtr<ID3D12Resource> frameLocal;                   // inference GPU: the received frame
+    ComPtr<ID3D12RootSignature> unpackRootSig;           // inference GPU: frame -> model input
+    ComPtr<ID3D12PipelineState> unpackPso;
     std::vector<float> modelOut;        // model output at the model's own size
     struct ResampleTap { int i0, i1; float t; };
     std::vector<ResampleTap> resampleX, resampleY;   // model output -> depth grid, built once
     std::vector<float> rawDepth;        // model output resampled to the W x H depth grid
+    std::vector<double> passMs;         // worker: full-pass latencies (submit to model output on the CPU) since the last summary
     RangeSmoother smoother;
     ForegroundTracker foregroundTracker;
     ForegroundBudget foregroundBudget;
@@ -439,7 +467,8 @@ static ID3D12Fence* SourceFence(App& app)
 static SourceFrames::WriteRef ReserveSource(App& app)
 {
     auto frame = app.sources.Reserve(SourceFence(app)->GetCompletedValue(),
-        app.fence->GetCompletedValue(), app.mlFence->GetCompletedValue());
+        app.fence->GetCompletedValue(), app.mlFence->GetCompletedValue(),
+        app.xferFence ? app.xferFence->GetCompletedValue() : 0);
     if (!frame) app.sourceDrops++;
     return frame;
 }
@@ -614,6 +643,8 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
         if (!strcmp(a, "--depth-gpu=same")) { opt->depthAdapter = -1; continue; }
+        if (!strcmp(a, "--xgpu-transfer=frame")) { opt->frameTransfer = true; continue; }
+        if (!strcmp(a, "--xgpu-transfer=prep")) { opt->frameTransfer = false; continue; }
         if (!strcmp(a, "--depth-gpu=auto")) { opt->depthAdapter = -2; continue; }
         if (!strncmp(a, "--depth-gpu=", 12))
         {
@@ -664,7 +695,8 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         opt->monitorIndex, opt->windowTitle.c_str(), opt->imagePath.c_str(), opt->runSeconds);
     Log("ParseArgs: fill %s dilate %d vertical %d (-1 = per model)", opt->fillMode == FILL_MIRROR ? "mirror" : "stretch", opt->dilate, opt->dilateV);
     Log("ParseArgs: depth model %s (%dx%d)", opt->model->name, opt->model->inW, opt->model->inH);
-    Log("ParseArgs: depth GPU %s", opt->depthAdapter == -1 ? "same as headset" : opt->depthAdapter == -2 ? "auto (second GPU)" : "adapter index");
+    Log("ParseArgs: depth GPU %s%s", opt->depthAdapter == -1 ? "same as headset" : opt->depthAdapter == -2 ? "auto (second GPU)" : "adapter index",
+        opt->depthAdapter == -1 ? "" : opt->frameTransfer ? ", frames sent by the copy engine" : ", prep on the headset GPU");
     Log("ParseArgs: warp %d scale %.2f truth %d paired %d smooth %d tau %.2fs submitDepth %d selftest %d debug %d",
         (int)opt->doWarp, opt->warpScale, (int)opt->useTruth, (int)opt->paired, (int)opt->smooth, opt->smoothTau,
         (int)opt->submitDepth, (int)opt->selfTestOnly, (int)opt->debugLayer);
@@ -841,6 +873,9 @@ static void ReleaseSecondGpu(App& app)
     Log("ReleaseSecondGpu: exit");
 }
 
+static bool InitFrameTransfer(App& app);
+static void ReleaseFrameTransfer(App& app);
+
 static bool InitD3D(App& app)
 {
     Log("InitD3D: enter (debug layer %d)", (int)app.opt.debugLayer);
@@ -939,6 +974,11 @@ static bool InitD3D(App& app)
         app.inferName = ad.Description;
         Log("InitD3D: second-GPU depth unavailable; depth runs on the headset GPU");
     }
+    if (app.secondGpu && app.opt.frameTransfer && !InitFrameTransfer(app))
+    {
+        ReleaseFrameTransfer(app);
+        Log("InitD3D: frame transfer unavailable; the second GPU receives prepared input instead");
+    }
 
     D3D12_DESCRIPTOR_HEAP_DESC hd{};
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -951,16 +991,16 @@ static bool InitD3D(App& app)
     return true;
 }
 
-static void DumpDebugMessages(App& app)
+// Prints warning-or-worse debug-layer messages for one device.
+static void DumpDeviceMessages(ID3D12Device* device, const char* label)
 {
-    if (!app.opt.debugLayer) return;
-    if (!app.device) return;
+    if (!device || !label) return;
 
     ComPtr<ID3D12InfoQueue> iq;
-    if (FAILED(app.device.As(&iq))) { Log("DumpDebugMessages: no info queue"); return; }
+    if (FAILED(device->QueryInterface(IID_PPV_ARGS(&iq)))) { Log("DumpDebugMessages[%s]: no info queue", label); return; }
 
     UINT64 n = iq->GetNumStoredMessages();
-    Log("DumpDebugMessages: %llu stored message(s)", (unsigned long long)n);
+    Log("DumpDebugMessages[%s]: %llu stored message(s)", label, (unsigned long long)n);
     UINT64 shown = 0;
     for (UINT64 i = 0; i < n && shown < 40; i++)
     {
@@ -974,7 +1014,18 @@ static void DumpDebugMessages(App& app)
         Log("  d3d12[%d] %s", (int)m->Severity, m->pDescription ? m->pDescription : "(null)");
         shown++;
     }
-    Log("DumpDebugMessages: %llu warning-or-worse shown", (unsigned long long)shown);
+    Log("DumpDebugMessages[%s]: %llu warning-or-worse shown", label, (unsigned long long)shown);
+}
+
+static void DumpDebugMessages(App& app)
+{
+    if (!app.opt.debugLayer) return;
+    DumpDeviceMessages(app.device.Get(), "headset GPU");
+    if (app.secondGpu && app.inferDevice) DumpDeviceMessages(app.inferDevice.Get(), "second GPU");
+    // A removed device explains itself here rather than failing silently later.
+    if (app.device && FAILED(app.device->GetDeviceRemovedReason())) Log("DumpDebugMessages: headset GPU REMOVED 0x%08lX", (unsigned long)app.device->GetDeviceRemovedReason());
+    if (app.secondGpu && app.inferDevice && FAILED(app.inferDevice->GetDeviceRemovedReason()))
+        Log("DumpDebugMessages: second GPU REMOVED 0x%08lX", (unsigned long)app.inferDevice->GetDeviceRemovedReason());
 }
 
 // ---------------------------------------------------------------- capture
@@ -1109,7 +1160,18 @@ static bool StartCapture(App& app)
         if (FAILED(hr)) { Log("StartCapture: FAIL OpenSharedResource1(tex %d) 0x%08X", i, (unsigned)hr); return false; }
         if (FAILED(c.dev->CreateRenderTargetView(c.tex11[i].Get(), nullptr, &c.rtv11[i])))
         { Log("StartCapture: FAIL capture render target %d", i); return false; }
+        if (!app.frameTransfer) continue;
+        if (FAILED(c.dev->CreateShaderResourceView(c.tex11[i].Get(), nullptr, &c.srv11[i])))
+        { Log("StartCapture: FAIL source view %d", i); return false; }
+        hr = app.device->CreateSharedHandle(app.smallTex[i].Get(), nullptr, GENERIC_ALL, nullptr, &h);
+        if (FAILED(hr)) { Log("StartCapture: FAIL CreateSharedHandle(model-size frame %d) 0x%08X", i, (unsigned)hr); return false; }
+        hr = dev1->OpenSharedResource1(h, IID_PPV_ARGS(&c.small11[i]));
+        CloseHandle(h);
+        if (FAILED(hr)) { Log("StartCapture: FAIL OpenSharedResource1(model-size frame %d) 0x%08X", i, (unsigned)hr); return false; }
+        if (FAILED(c.dev->CreateRenderTargetView(c.small11[i].Get(), nullptr, &c.smallRtv11[i])))
+        { Log("StartCapture: FAIL model-size render target %d", i); return false; }
     }
+    if (app.frameTransfer) Log("StartCapture: capture also makes %dx%d frames for the second GPU", app.xferW, app.xferH);
     if (FAILED(c.scaler.Init(c.dev.Get()))) { Log("StartCapture: FAIL resize shaders"); return false; }
 
     if (FAILED(app.device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&app.captureFence)))) { Log("StartCapture: FAIL shared fence"); return false; }
@@ -1184,6 +1246,11 @@ static void CaptureMain(App* app)
             }
             winrt::check_hresult(c.scaler.Copy(c.dev.Get(), c.ctx.Get(), tex.Get(), cs.Width, cs.Height,
                 c.tex11[source->index].Get(), c.rtv11[source->index].Get(), app->srcW, app->srcH, cropping ? &crop : nullptr));
+            // Second GPU: the model-size frame is made here, in work this GPU is
+            // already doing for the picture, so depth adds no later wait on it.
+            if (app->frameTransfer)
+                winrt::check_hresult(c.scaler.Downscale(c.ctx.Get(), c.srv11[source->index].Get(), app->srcW,
+                    c.smallRtv11[source->index].Get(), app->xferW, app->xferH));
             UINT64 v = ++app->captureFenceVal;
             if (FAILED(c.ctx4->Signal(c.fence11.Get(), v)))
             {
@@ -1243,6 +1310,7 @@ static bool InitSource(App& app)
     for (int i = 0; i < SRC_RING; i++)
     {
         if (!MakeSourceTexture(app, app.srcW, app.srcH, app.srcFormat, shared, app.srcTex[i])) return false;
+        if (app.frameTransfer && shared && !MakeSourceTexture(app, app.xferW, app.xferH, app.srcFormat, true, app.smallTex[i])) return false;
         MakeTextureSrv(app, app.srcTex[i].Get(), app.srcFormat, DESC_SRC0 + i);
     }
 
@@ -1493,6 +1561,141 @@ void main(uint3 id : SV_DispatchThreadID)
     modelIn[2 * plane + p] = o.b;
 }
 )HLSL";
+
+// Inference GPU, frame transfer: received BGRA8 frame (SW x SH rows, `pitch` bytes
+// apart) -> the model's NCHW float input (DW x DH). Bilinear with pixel centres and
+// clamped edges when the sizes differ (same convention as SampleDepth), normalised
+// like kPrepHlsl.
+static const char* kUnpackHlsl = R"HLSL(
+cbuffer C : register(b0)
+{
+    uint SW; uint SH; uint pitch; uint DW;
+    uint DH; uint normalize; uint pad0; uint pad1;
+};
+
+ByteAddressBuffer         frame   : register(t0);
+RWStructuredBuffer<float> modelIn : register(u0);
+
+float3 Fetch(int x, int y)
+{
+    x = clamp(x, 0, (int)SW - 1);
+    y = clamp(y, 0, (int)SH - 1);
+    uint v = frame.Load(y * pitch + x * 4);           // bytes B, G, R, A
+    return float3((v >> 16) & 255, (v >> 8) & 255, v & 255) / 255.0;
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= DW || id.y >= DH) return;
+
+    float3 c;
+    if (SW == DW && SH == DH)
+    {
+        c = Fetch(id.x, id.y);
+    }
+    else
+    {
+        float fx = clamp(((float)id.x + 0.5) * (float)SW / (float)DW - 0.5, 0.0, (float)SW - 1);
+        float fy = clamp(((float)id.y + 0.5) * (float)SH / (float)DH - 0.5, 0.0, (float)SH - 1);
+        int x0 = (int)fx, y0 = (int)fy;
+        float a = fx - x0, b = fy - y0;
+        float3 top = Fetch(x0, y0) * (1 - a) + Fetch(x0 + 1, y0) * a;
+        float3 bot = Fetch(x0, y0 + 1) * (1 - a) + Fetch(x0 + 1, y0 + 1) * a;
+        c = top * (1 - b) + bot * b;
+    }
+
+    const float3 mean = float3(0.485, 0.456, 0.406);
+    const float3 istd = float3(1.0 / 0.229, 1.0 / 0.224, 1.0 / 0.225);
+    float3 o = normalize != 0 ? (c - mean) * istd : c;
+    uint plane = DW * DH;
+    uint p = id.y * DW + id.x;
+    modelIn[p] = o.r;
+    modelIn[plane + p] = o.g;
+    modelIn[2 * plane + p] = o.b;
+}
+)HLSL";
+
+struct UnpackConstants                  // must match cbuffer C in kUnpackHlsl
+{
+    uint32_t sw, sh, pitch, dw, dh, normalize, pad0, pad1;
+};
+
+static bool CompileCs(const char* name, const char* src, ComPtr<ID3DBlob>& out);
+
+// Copy queue, frame buffer and unpack pipeline for the frame-transfer path.
+static bool InitFrameTransfer(App& app)
+{
+    Log("InitFrameTransfer: enter");
+    if (!app.secondGpu || !app.device || !app.inferDevice) return false;
+
+    int w = 0, h = 0;
+    for (const ModelSpec* spec : { &kDepthAnythingV2, &kZipDepth }) { w = std::max(w, spec->inW); h = std::max(h, spec->inH); }
+    app.xferW = w; app.xferH = h;
+
+    D3D12_RESOURCE_DESC td{};
+    td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    td.Width = (UINT64)w; td.Height = (UINT)h; td.DepthOrArraySize = 1; td.MipLevels = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM; td.SampleDesc.Count = 1;
+    UINT64 total = 0;
+    app.device->GetCopyableFootprints(&td, 0, 1, 0, &app.xferFootprint, nullptr, nullptr, &total);
+    if (total > app.crossBytes) { Log("InitFrameTransfer: FAIL %llu-byte frame exceeds the hand-over buffer", (unsigned long long)total); return false; }
+    app.xferBytes = total;
+
+    D3D12_COMMAND_QUEUE_DESC qd{};
+    qd.Type = D3D12_COMMAND_LIST_TYPE_COPY;
+    if (FAILED(app.device->CreateCommandQueue(&qd, IID_PPV_ARGS(&app.xferQueue)))) { Log("InitFrameTransfer: FAIL copy queue"); return false; }
+    app.xferQueue->SetName(L"vrx copy engine (frames to second GPU)");
+    if (FAILED(app.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(&app.xferAlloc)))) { Log("InitFrameTransfer: FAIL allocator"); return false; }
+    if (FAILED(app.device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, app.xferAlloc.Get(), nullptr, IID_PPV_ARGS(&app.xferList))))
+    { Log("InitFrameTransfer: FAIL command list"); return false; }
+    app.xferList->Close();
+    if (FAILED(app.device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&app.xferFence)))) { Log("InitFrameTransfer: FAIL fence"); return false; }
+    app.xferFenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!app.xferFenceEvent) { Log("InitFrameTransfer: FAIL fence event"); return false; }
+
+    if (!MakeBuffer(app.inferDevice.Get(), D3D12_HEAP_TYPE_DEFAULT, total, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COMMON, app.frameLocal, nullptr))
+    { Log("InitFrameTransfer: FAIL frame buffer"); return false; }
+
+    ComPtr<ID3DBlob> cs;
+    if (!CompileCs("unpack.hlsl", kUnpackHlsl, cs)) return false;
+    D3D12_ROOT_PARAMETER params[3]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[0].Constants.ShaderRegister = 0;
+    params[0].Constants.Num32BitValues = sizeof(UnpackConstants) / 4;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    params[1].Descriptor.ShaderRegister = 0;
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    params[2].Descriptor.ShaderRegister = 0;
+    D3D12_ROOT_SIGNATURE_DESC rsd{};
+    rsd.NumParameters = 3;
+    rsd.pParameters = params;
+    ComPtr<ID3DBlob> blob, err;
+    if (FAILED(D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err)))
+    { Log("InitFrameTransfer: FAIL root signature: %s", err ? (const char*)err->GetBufferPointer() : "?"); return false; }
+    if (FAILED(app.inferDevice->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&app.unpackRootSig))))
+    { Log("InitFrameTransfer: FAIL CreateRootSignature"); return false; }
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
+    pd.pRootSignature = app.unpackRootSig.Get();
+    pd.CS = { cs->GetBufferPointer(), cs->GetBufferSize() };
+    if (FAILED(app.inferDevice->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.unpackPso)))) { Log("InitFrameTransfer: FAIL unpack pipeline"); return false; }
+
+    app.frameTransfer = true;
+    Log("InitFrameTransfer: exit ok - %dx%d BGRA frames (%llu KB, row pitch %u) via the copy engine", w, h,
+        (unsigned long long)(total >> 10), app.xferFootprint.Footprint.RowPitch);
+    return true;
+}
+
+static void ReleaseFrameTransfer(App& app)
+{
+    Log("ReleaseFrameTransfer: enter");
+    app.frameTransfer = false;
+    app.unpackPso.Reset(); app.unpackRootSig.Reset(); app.frameLocal.Reset();
+    app.xferList.Reset(); app.xferAlloc.Reset(); app.xferQueue.Reset(); app.xferFence.Reset();
+    if (app.xferFenceEvent) { CloseHandle(app.xferFenceEvent); app.xferFenceEvent = nullptr; }
+    for (auto& t : app.smallTex) t.Reset();
+    Log("ReleaseFrameTransfer: exit");
+}
 
 static bool CompileCs(const char* name, const char* src, ComPtr<ID3DBlob>& out)
 {
@@ -1801,6 +2004,73 @@ static bool LoadModel(App& app)
 // after the dispatch (callers other than the self-test need not wait on it).
 static void WaitInferFence(App& app, UINT64 value);
 
+static void WaitXferFence(App& app, UINT64 value)
+{
+    if (value == 0 || !app.xferFence) return;
+    if (app.xferFence->GetCompletedValue() >= value) return;
+
+    app.xferFence->SetEventOnCompletion(value, app.xferFenceEvent);
+    WaitForSingleObject(app.xferFenceEvent, INFINITE);
+}
+
+// Frame-transfer path: headset GPU copy engine sends the model-size frame `frame`
+// (after `srcFence` reaches `srcValue`), the inference GPU unpacks it into modelIn;
+// ORT's work follows on the inference queue. Returns the copy-engine fence value
+// that marks when `frame` has been read.
+static UINT64 SubmitFrameTransfer(App& app, ID3D12Resource* frame, ID3D12Fence* srcFence, UINT64 srcValue)
+{
+    if (!frame || !app.frameTransfer) return 0;
+    const ModelSpec& spec = *app.opt.model;
+
+    // The shared buffer must be free (previous unpack done) and the copy allocator idle.
+    WaitInferFence(app, app.inferFenceVal);
+    WaitXferFence(app, app.xferFenceVal);
+
+    app.xferAlloc->Reset();
+    app.xferList->Reset(app.xferAlloc.Get(), nullptr);
+    D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+    dst.pResource = app.crossBuf.Get();
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst.PlacedFootprint = app.xferFootprint;
+    src.pResource = frame;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.SubresourceIndex = 0;
+    app.xferList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    app.xferList->Close();
+    if (srcFence) app.xferQueue->Wait(srcFence, srcValue);
+    ID3D12CommandList* lists[] = { app.xferList.Get() };
+    app.xferQueue->ExecuteCommandLists(1, lists);
+    app.xferQueue->Signal(app.xferFence.Get(), ++app.xferFenceVal);
+    app.xferQueue->Signal(app.crossFence.Get(), ++app.crossVal);
+
+    app.inferCmdAlloc->Reset();
+    app.inferCmdList->Reset(app.inferCmdAlloc.Get(), nullptr);
+    ID3D12GraphicsCommandList* il = app.inferCmdList.Get();
+    Transition(il, app.frameLocal.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+    il->CopyBufferRegion(app.frameLocal.Get(), 0, app.crossBufInfer.Get(), 0, app.xferBytes);
+    Transition(il, app.frameLocal.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    UnpackConstants uc{};
+    uc.sw = (uint32_t)app.xferW; uc.sh = (uint32_t)app.xferH; uc.pitch = app.xferFootprint.Footprint.RowPitch;
+    uc.dw = (uint32_t)spec.inW; uc.dh = (uint32_t)spec.inH; uc.normalize = spec.imagenetNorm ? 1u : 0u;
+    il->SetComputeRootSignature(app.unpackRootSig.Get());
+    il->SetPipelineState(app.unpackPso.Get());
+    il->SetComputeRoot32BitConstants(0, sizeof(uc) / 4, &uc, 0);
+    il->SetComputeRootShaderResourceView(1, app.frameLocal->GetGPUVirtualAddress());
+    il->SetComputeRootUnorderedAccessView(2, app.modelIn->GetGPUVirtualAddress());
+    il->Dispatch((spec.inW + 7) / 8, (spec.inH + 7) / 8, 1);
+    D3D12_RESOURCE_BARRIER uav{};
+    uav.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    uav.UAV.pResource = app.modelIn.Get();
+    il->ResourceBarrier(1, &uav);
+    Transition(il, app.frameLocal.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
+    il->Close();
+    app.inferQueue->Wait(app.crossFenceInfer.Get(), app.crossVal);
+    ID3D12CommandList* inferLists[] = { il };
+    app.inferQueue->ExecuteCommandLists(1, inferLists);
+    app.inferQueue->Signal(app.inferFence.Get(), ++app.inferFenceVal);
+    return app.xferFenceVal;
+}
+
 static UINT64 SubmitPrep(App& app, UINT srcDescIndex, int srcW, int srcH, ID3D12Fence* srcFence, UINT64 srcValue,
     const DepthCrop& crop = {})
 {
@@ -1879,9 +2149,12 @@ static void WaitInferFence(App& app, UINT64 value)
 static void WaitMlFence(App& app, UINT64 value);
 
 // All submitted depth GPU work (prep, and on a second GPU the hand-over) complete.
+static void WaitXferFence(App& app, UINT64 value);
+
 static void WaitDepthIdle(App& app)
 {
     if (app.mlFence && app.mlFenceVal) WaitMlFence(app, app.mlFenceVal);
+    WaitXferFence(app, app.xferFenceVal);
     WaitInferFence(app, app.inferFenceVal);
 }
 
@@ -2062,10 +2335,19 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     }
 
     auto m0 = std::chrono::steady_clock::now();
-    UINT64 prepDone = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
-    app.sources.MarkRead(src, SourceFrames::Reader::Model, prepDone);
+    if (app.frameTransfer && app.smallTex[src->index])
+    {
+        const UINT64 sent = SubmitFrameTransfer(app, app.smallTex[src->index].Get(), SourceFence(app), src->value);
+        app.sources.MarkRead(src, SourceFrames::Reader::Transfer, sent);
+    }
+    else
+    {
+        const UINT64 prepDone = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
+        app.sources.MarkRead(src, SourceFrames::Reader::Model, prepDone);
+    }
     if (!RunModelRaw(app)) return false;
     double modelMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - m0).count();
+    app.passMs.push_back(modelMs);                  // worker thread only; summarised by WorkerMain
 
     float lo = 0, hi = 1;
     SmoothRange(app.smoother, app.rawDepth, NowSeconds(), app.opt.smooth, app.opt.smoothTau, &lo, &hi);
@@ -2087,8 +2369,9 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     if (!persistent || app.stop.load() || !app.foregroundBudget.CanRun(now, (now-src->time)*1000, modelMs)) return true;
     const double begin = NowSeconds();
     ++app.foregroundAttempts;
-    prepDone = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value, crop);
-    app.sources.MarkRead(src, SourceFrames::Reader::Model, prepDone);
+    // Crops need the full-resolution frame, so they use the prep path.
+    const UINT64 cropPrepDone = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value, crop);
+    app.sources.MarkRead(src, SourceFrames::Reader::Model, cropPrepDone);
     const bool good = RunModelRaw(app);
     // A failed optional pass must still retire GPU prep before the next dispatch.
     WaitDepthIdle(app);
@@ -2146,6 +2429,7 @@ static void WorkerMain(App* app)
 
     std::vector<float> nearScratch;
     uint64_t runs = 0, lastSeq = 0;
+    double nextSummary = NowSeconds() + 2.0;
     int failures = 0;
     try
     {
@@ -2179,6 +2463,18 @@ static void WorkerMain(App* app)
         failures = 0;
         lastSeq = src->seq;
         runs++;
+        if (NowSeconds() >= nextSummary && !app->passMs.empty())
+        {
+            // Latency per full depth pass: submit (prep or frame send) to the model's
+            // output being on the CPU. Includes any wait for a turn on a busy GPU.
+            auto& v = app->passMs;
+            std::sort(v.begin(), v.end());
+            auto pct = [&](double q) { return v[std::min(v.size() - 1, (size_t)(q * v.size()))]; };
+            Log("Worker: %zu passes in 2 s | pass ms p50 %.1f p95 %.1f max %.1f | %s", v.size(), pct(.5), pct(.95), v.back(),
+                !app->secondGpu ? "one GPU" : app->frameTransfer ? "second GPU, copy-engine frames" : "second GPU, prep on headset GPU");
+            v.clear();
+            nextSummary = NowSeconds() + 2.0;
+        }
     }
     }
     catch (const std::exception& e) { app->depthHealthy = false; Log("WorkerMain: %s; flat viewing", e.what()); }
@@ -2509,6 +2805,91 @@ static bool SelfTestTransfer(App& app, const std::vector<unsigned char>& scene)
     return ok;
 }
 
+// Frame-transfer path end to end: a known BGRA frame on the headset GPU goes
+// through the copy engine, the cross-adapter buffer and the unpack shader; the model
+// input on the inference GPU must match a CPU reference of the same resample and
+// normalisation.
+static bool SelfTestFrameTransfer(App& app)
+{
+    if (!app.frameTransfer) return true;
+    const ModelSpec& spec = *app.opt.model;
+    Log("SelfTestFrameTransfer: enter (%dx%d frame -> %dx%d %s input on %ls)", app.xferW, app.xferH, spec.inW, spec.inH,
+        spec.name, app.inferName.c_str());
+
+    ComPtr<ID3D12Resource> frame;
+    if (!MakeSourceTexture(app, app.xferW, app.xferH, DXGI_FORMAT_B8G8R8A8_UNORM, false, frame)) return false;
+    D3D12_RESOURCE_DESC fd = frame->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+    UINT64 total = 0;
+    app.device->GetCopyableFootprints(&fd, 0, 1, 0, &fp, nullptr, nullptr, &total);
+    ComPtr<ID3D12Resource> up;
+    unsigned char* mapped = nullptr;
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, total, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, up, (void**)&mapped)) return false;
+    std::vector<uint32_t> pixels((size_t)app.xferW * app.xferH);
+    uint32_t seed = 2024;
+    for (auto& p : pixels) { seed = seed * 1664525u + 1013904223u; p = 0xFF000000u | (seed >> 8); }
+    for (int y = 0; y < app.xferH; y++)
+        memcpy(mapped + fp.Offset + (size_t)y * fp.Footprint.RowPitch, pixels.data() + (size_t)y * app.xferW, (size_t)app.xferW * 4);
+
+    WaitFence(app, app.fenceVal);
+    app.cmdAlloc[0]->Reset();
+    app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+    D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+    dst.pResource = frame.Get(); dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.pResource = up.Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; src.PlacedFootprint = fp;
+    app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);   // simultaneous access: back to COMMON afterwards
+    app.cmdList->Close();
+    WaitFence(app, SubmitAndSignal(app));
+
+    const double t0 = NowSeconds();
+    SubmitFrameTransfer(app, frame.Get(), nullptr, 0);
+    WaitDepthIdle(app);
+    const double sendMs = (NowSeconds() - t0) * 1000;
+
+    const UINT64 bytes = (UINT64)3 * spec.inW * spec.inH * sizeof(float);
+    ComPtr<ID3D12Resource> rb;
+    if (!MakeBuffer(app.inferDevice.Get(), D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, rb, nullptr)) return false;
+    app.inferCmdAlloc->Reset();
+    app.inferCmdList->Reset(app.inferCmdAlloc.Get(), nullptr);
+    ID3D12GraphicsCommandList* il = app.inferCmdList.Get();
+    Transition(il, app.modelIn.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    il->CopyBufferRegion(rb.Get(), 0, app.modelIn.Get(), 0, bytes);
+    Transition(il, app.modelIn.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    il->Close();
+    ID3D12CommandList* lists[] = { il };
+    app.inferQueue->ExecuteCommandLists(1, lists);
+    app.inferQueue->Signal(app.inferFence.Get(), ++app.inferFenceVal);
+    WaitInferFence(app, app.inferFenceVal);
+
+    const float* got = nullptr;
+    if (FAILED(rb->Map(0, nullptr, (void**)&got)) || !got) { Log("SelfTestFrameTransfer: FAIL map readback"); return false; }
+    const float mean[3] = { 0.485f, 0.456f, 0.406f };
+    const float istd[3] = { 1.f / 0.229f, 1.f / 0.224f, 1.f / 0.225f };
+    std::vector<float> channel(pixels.size());
+    size_t bad = 0;
+    float worst = 0;
+    for (int c = 0; c < 3; c++)
+    {
+        const int shift = c == 0 ? 16 : c == 1 ? 8 : 0;                  // R, G, B from BGRA
+        for (size_t i = 0; i < pixels.size(); i++) channel[i] = float((pixels[i] >> shift) & 255) / 255.f;
+        for (int y = 0; y < spec.inH; y++)
+            for (int x = 0; x < spec.inW; x++)
+            {
+                const float v = (spec.inW == app.xferW && spec.inH == app.xferH) ? channel[(size_t)y * app.xferW + x]
+                    : SampleDepth(channel, app.xferW, app.xferH, (x + .5f) / spec.inW, (y + .5f) / spec.inH);
+                const float ref = spec.imagenetNorm ? (v - mean[c]) * istd[c] : v;
+                const float d = fabsf(got[((size_t)c * spec.inH + y) * spec.inW + x] - ref);
+                worst = std::max(worst, d);
+                if (d > 2e-4f) bad++;
+            }
+    }
+    rb->Unmap(0, nullptr);
+    const bool ok = bad == 0;
+    Log("SelfTestFrameTransfer: exit %s - %zu of %zu input values differ from the CPU reference (worst %.2e; send + unpack %.2f ms, first run)",
+        ok ? "PASS" : "FAIL", bad, (size_t)3 * spec.inW * spec.inH, worst, sendMs);
+    return ok;
+}
+
 static bool SelfTestResample(App& app)
 {
     const ModelSpec& spec = *app.opt.model;
@@ -2560,6 +2941,7 @@ static bool SelfTest(App& app)
     bool ok = SelfTestPrep(app, synth);
     ok = SelfTestResample(app) && ok;
     ok = SelfTestTransfer(app, synth) && ok;
+    ok = SelfTestFrameTransfer(app) && ok;
     ok = SelfTestPrep(app, synth, DepthCrop{.17f,.23f,.5f}) && ok;
     c.mirrorTol = MIRROR_TOL;
     for (uint32_t mode : { (uint32_t)FILL_STRETCH, (uint32_t)FILL_MIRROR })
@@ -3166,6 +3548,7 @@ static void Shutdown(App& app)
     if (app.instance) xrDestroyInstance_(app.instance);
     if (app.fenceEvent) CloseHandle(app.fenceEvent);
     if (app.mlFenceEvent) CloseHandle(app.mlFenceEvent);
+    if (app.xferQueue || app.xferFenceEvent) ReleaseFrameTransfer(app);
     if (app.secondGpu || app.inferFenceEvent) ReleaseSecondGpu(app);
     Log("Shutdown: exit (source frames dropped under backpressure: %llu)",
         (unsigned long long)app.sourceDrops.load());
