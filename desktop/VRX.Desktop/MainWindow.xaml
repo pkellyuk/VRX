@@ -3,7 +3,7 @@
  <Grid Margin="26">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <Grid Margin="0,0,0,22">
-   <StackPanel><TextBlock Text="VRX" FontSize="32" FontWeight="Bold"/><TextBlock Text="Choose a game. Set up your screen." Foreground="#A5B4CC" Margin="0,3,0,0"/></StackPanel>
+   <StackPanel><StackPanel Orientation="Horizontal"><TextBlock Text="VRX" FontSize="32" FontWeight="Bold"/><TextBlock x:Name="VersionText" FontSize="15" Foreground="#76DCC6" VerticalAlignment="Bottom" Margin="10,0,0,6"/></StackPanel><TextBlock Text="Choose a game. Set up your screen." Foreground="#A5B4CC" Margin="0,3,0,0"/></StackPanel>
    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
     <Button x:Name="StartButton" Content="Attach / Play" Click="StartClick" IsEnabled="False" Background="#76DCC6" FontWeight="SemiBold"/>
     <Button x:Name="StopButton" Content="Stop VR" Click="StopClick" IsEnabled="False"/>
