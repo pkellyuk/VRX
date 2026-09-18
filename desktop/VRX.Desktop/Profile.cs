@@ -22,6 +22,8 @@ public sealed class Profile
     // ZipDepth (default) or Depth Anything V2. Sent in the v4 control snapshot; applies live.
     // Profiles saved before this setting existed load as true.
     public bool FastDepthModel { get; set; } = true;
+    // Run the depth model on a second GPU (engine --depth-gpu=auto); chosen at launch.
+    public bool DepthOnSecondGpu { get; set; }
     public bool AutoDismiss { get; set; } = true;
     public int RecenterKey { get; set; } = 0xBB;
     public int MenuKey { get; set; } = 0x77;

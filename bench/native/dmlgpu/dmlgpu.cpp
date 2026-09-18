@@ -63,12 +63,14 @@ int main(int argc, char** argv)
     int iters  = argc > 5 ? atoi(argv[5]) : 50;
 
     bool ownDevice = false;
+    int adapterIndex = 0;                  // --adapter=N (implies --own-device): which GPU runs the model
     std::string inNameArg = "pixel_values", outNameArg = "predicted_depth";   // DA-V2 defaults
     std::vector<std::pair<std::string, std::string>> cfg;
     for (int i = 6; i < argc; i++)
     {
         std::string a = argv[i];
         if (a == "--own-device") { ownDevice = true; continue; }
+        if (a.rfind("--adapter=", 0) == 0) { adapterIndex = atoi(a.c_str() + 10); ownDevice = true; continue; }
         if (a.rfind("in=", 0) == 0) { inNameArg = a.substr(3); continue; }     // model's input tensor name
         if (a.rfind("out=", 0) == 0) { outNameArg = a.substr(4); continue; }   // model's output tensor name
         size_t eq = a.find('=');
@@ -114,8 +116,15 @@ int main(int argc, char** argv)
 
         ComPtr<IDXGIFactory4> fac;
         if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&fac)))) { printf("FAIL: CreateDXGIFactory1\n"); return 1; }
+        for (UINT i = 0;; ++i)
+        {
+            ComPtr<IDXGIAdapter1> each;
+            if (fac->EnumAdapters1(i, &each) == DXGI_ERROR_NOT_FOUND) break;
+            DXGI_ADAPTER_DESC1 d{}; each->GetDesc1(&d);
+            wprintf(L"adapter %u: %s%s\n", i, d.Description, i == (UINT)adapterIndex ? L"   <- selected" : L"");
+        }
         ComPtr<IDXGIAdapter1> ad;
-        if (FAILED(fac->EnumAdapters1(0, &ad))) { printf("FAIL: EnumAdapters1\n"); return 1; }
+        if (FAILED(fac->EnumAdapters1((UINT)adapterIndex, &ad))) { printf("FAIL: no adapter %d\n", adapterIndex); return 1; }
         { DXGI_ADAPTER_DESC1 d{}; ad->GetDesc1(&d); wprintf(L"device: %s (created here)\n", d.Description); }
 
         if (FAILED(D3D12CreateDevice(ad.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))))

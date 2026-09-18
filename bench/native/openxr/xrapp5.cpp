@@ -207,6 +207,9 @@ struct Options
     bool paired = false;
     bool foreground = true;
     bool boostGpuPriority = true;      // best effort; --normal-gpu-priority disables the experiment
+    // Which GPU runs the depth model: -1 = the headset GPU (default), -2 = automatic
+    // second GPU (the largest other hardware adapter), N = DXGI adapter index.
+    int depthAdapter = -1;
     const ModelSpec* model = &kZipDepth;          // default; --model=dav2 selects Depth Anything V2
     bool selfTestOnly = false;
     bool debugLayer = false;
@@ -361,7 +364,28 @@ struct App
     // Written by the render thread from the desktop control file; the worker
     // compares it with opt.model and reloads between passes (null = no request).
     std::atomic<const ModelSpec*> requestedModel{ nullptr };
-    ComPtr<ID3D12Resource> modelIn;                      // DEFAULT heap, written by the prep shader
+    ComPtr<ID3D12Resource> modelIn;                      // DEFAULT heap on the inference GPU; DirectML reads it
+
+    // Depth inference placement. One GPU: inferDevice == device, inferQueue ==
+    // mlQueue and prepOut == modelIn. Second GPU: the prep shader still runs on the
+    // headset GPU (captured frames live there) and writes prepOut; that is copied
+    // through a cross-adapter shared heap into modelIn on the second GPU, where the
+    // model runs. Only GPU-side fences order the hand-over.
+    bool secondGpu = false;
+    std::wstring inferName;
+    ComPtr<ID3D12Device> inferDevice;
+    ComPtr<ID3D12CommandQueue> inferQueue;
+    ComPtr<ID3D12CommandAllocator> inferCmdAlloc;
+    ComPtr<ID3D12GraphicsCommandList> inferCmdList;
+    ComPtr<ID3D12Fence> inferFence;                      // inference GPU: copy-in completion
+    UINT64 inferFenceVal = 0;
+    HANDLE inferFenceEvent = nullptr;
+    ComPtr<ID3D12Resource> prepOut;                      // headset GPU: what the prep shader writes
+    ComPtr<ID3D12Heap> crossHeap, crossHeapInfer;        // one shared heap, opened on each GPU
+    ComPtr<ID3D12Resource> crossBuf, crossBufInfer;      // the same memory as seen by each GPU
+    UINT64 crossBytes = 0;
+    ComPtr<ID3D12Fence> crossFence, crossFenceInfer;     // headset GPU signals, inference GPU waits
+    UINT64 crossVal = 0;
     std::vector<float> modelOut;        // model output at the model's own size
     struct ResampleTap { int i0, i1; float t; };
     std::vector<ResampleTap> resampleX, resampleY;   // model output -> depth grid, built once
@@ -589,6 +613,16 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
+        if (!strcmp(a, "--depth-gpu=same")) { opt->depthAdapter = -1; continue; }
+        if (!strcmp(a, "--depth-gpu=auto")) { opt->depthAdapter = -2; continue; }
+        if (!strncmp(a, "--depth-gpu=", 12))
+        {
+            char* end = nullptr;
+            const long index = strtol(a + 12, &end, 10);
+            if (!end || *end || index < 0 || index > 15) { Log("ParseArgs: --depth-gpu must be same, auto or an adapter index 0..15"); return false; }
+            opt->depthAdapter = (int)index;
+            continue;
+        }
         if (!strcmp(a, "--model=zipdepth")) { opt->model = &kZipDepth; continue; }
         if (!strcmp(a, "--model=dav2")) { opt->model = &kDepthAnythingV2; continue; }
         if (!strcmp(a, "--selftest")) { opt->selfTestOnly = true; continue; }
@@ -630,6 +664,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         opt->monitorIndex, opt->windowTitle.c_str(), opt->imagePath.c_str(), opt->runSeconds);
     Log("ParseArgs: fill %s dilate %d vertical %d (-1 = per model)", opt->fillMode == FILL_MIRROR ? "mirror" : "stretch", opt->dilate, opt->dilateV);
     Log("ParseArgs: depth model %s (%dx%d)", opt->model->name, opt->model->inW, opt->model->inH);
+    Log("ParseArgs: depth GPU %s", opt->depthAdapter == -1 ? "same as headset" : opt->depthAdapter == -2 ? "auto (second GPU)" : "adapter index");
     Log("ParseArgs: warp %d scale %.2f truth %d paired %d smooth %d tau %.2fs submitDepth %d selftest %d debug %d",
         (int)opt->doWarp, opt->warpScale, (int)opt->useTruth, (int)opt->paired, (int)opt->smooth, opt->smoothTau,
         (int)opt->submitDepth, (int)opt->selfTestOnly, (int)opt->debugLayer);
@@ -687,6 +722,125 @@ static bool InitXrInstance(App& app)
 }
 
 // -------------------------------------------------------------------- d3d
+// Largest-memory hardware adapter other than the headset one, or the requested index.
+static bool PickSecondAdapter(App& app, IDXGIFactory4* fac, ComPtr<IDXGIAdapter1>& out)
+{
+    if (!fac) return false;
+    ComPtr<IDXGIAdapter1> best;
+    SIZE_T bestMemory = 0;
+    for (UINT i = 0;; ++i)
+    {
+        ComPtr<IDXGIAdapter1> each;
+        if (fac->EnumAdapters1(i, &each) == DXGI_ERROR_NOT_FOUND) break;
+        DXGI_ADAPTER_DESC1 d{};
+        each->GetDesc1(&d);
+        const bool headset = d.AdapterLuid.LowPart == app.adapterLuid.LowPart && d.AdapterLuid.HighPart == app.adapterLuid.HighPart;
+        const bool software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+        Log("PickSecondAdapter: adapter %u %ls, %llu MB%s%s", i, d.Description, (unsigned long long)(d.DedicatedVideoMemory >> 20),
+            headset ? " [headset GPU]" : "", software ? " [software]" : "");
+        if (app.opt.depthAdapter >= 0)
+        {
+            if ((int)i != app.opt.depthAdapter) continue;
+            if (headset) { Log("PickSecondAdapter: adapter %u is the headset GPU; nothing to offload", i); return false; }
+            if (software) { Log("PickSecondAdapter: adapter %u is a software adapter; refused", i); return false; }
+            out = each;
+            return true;
+        }
+        if (headset || software || d.DedicatedVideoMemory <= bestMemory) continue;
+        best = each;
+        bestMemory = d.DedicatedVideoMemory;
+    }
+    if (app.opt.depthAdapter >= 0) { Log("PickSecondAdapter: no adapter %d", app.opt.depthAdapter); return false; }
+    if (!best) { Log("PickSecondAdapter: no second hardware GPU found"); return false; }
+    out = best;
+    return true;
+}
+
+// Creates the inference device, its queue and the cross-adapter hand-over:
+// a shared heap (created on the headset GPU, opened on the inference GPU) holding
+// one buffer large enough for any model's input, and a cross-adapter fence.
+static bool InitSecondGpu(App& app, IDXGIFactory4* fac)
+{
+    Log("InitSecondGpu: enter (requested %s)", app.opt.depthAdapter == -2 ? "auto" : "adapter index");
+    if (!fac || !app.device) return false;
+
+    ComPtr<IDXGIAdapter1> adapter;
+    if (!PickSecondAdapter(app, fac, adapter)) return false;
+    DXGI_ADAPTER_DESC1 d{};
+    adapter->GetDesc1(&d);
+    HRESULT hr = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&app.inferDevice));
+    if (FAILED(hr)) { Log("InitSecondGpu: FAIL D3D12CreateDevice on %ls (0x%08lX)", d.Description, (unsigned long)hr); return false; }
+
+    D3D12_COMMAND_QUEUE_DESC qd{};
+    qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    if (FAILED(app.inferDevice->CreateCommandQueue(&qd, IID_PPV_ARGS(&app.inferQueue)))) { Log("InitSecondGpu: FAIL queue"); return false; }
+    app.inferQueue->SetName(L"vrx inference queue (second GPU)");
+    if (FAILED(app.inferDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&app.inferCmdAlloc)))) { Log("InitSecondGpu: FAIL allocator"); return false; }
+    if (FAILED(app.inferDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, app.inferCmdAlloc.Get(), nullptr, IID_PPV_ARGS(&app.inferCmdList))))
+    { Log("InitSecondGpu: FAIL command list"); return false; }
+    app.inferCmdList->Close();
+    if (FAILED(app.inferDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&app.inferFence)))) { Log("InitSecondGpu: FAIL fence"); return false; }
+    app.inferFenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!app.inferFenceEvent) { Log("InitSecondGpu: FAIL fence event"); return false; }
+
+    // Largest input of any model the worker may switch to live.
+    UINT64 largest = 0;
+    for (const ModelSpec* spec : { &kDepthAnythingV2, &kZipDepth })
+        largest = std::max<UINT64>(largest, (UINT64)3 * spec->inW * spec->inH * sizeof(float));
+    const UINT64 align = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+    app.crossBytes = (largest + align - 1) & ~(align - 1);
+
+    D3D12_HEAP_DESC heap{};
+    heap.SizeInBytes = app.crossBytes;
+    heap.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+    heap.Alignment = align;
+    heap.Flags = D3D12_HEAP_FLAG_SHARED | D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER;
+    hr = app.device->CreateHeap(&heap, IID_PPV_ARGS(&app.crossHeap));
+    if (FAILED(hr)) { Log("InitSecondGpu: FAIL cross-adapter heap (0x%08lX)", (unsigned long)hr); return false; }
+    HANDLE handle = nullptr;
+    hr = app.device->CreateSharedHandle(app.crossHeap.Get(), nullptr, GENERIC_ALL, nullptr, &handle);
+    if (FAILED(hr)) { Log("InitSecondGpu: FAIL heap handle (0x%08lX)", (unsigned long)hr); return false; }
+    hr = app.inferDevice->OpenSharedHandle(handle, IID_PPV_ARGS(&app.crossHeapInfer));
+    CloseHandle(handle);
+    if (FAILED(hr)) { Log("InitSecondGpu: FAIL open heap on %ls (0x%08lX)", d.Description, (unsigned long)hr); return false; }
+
+    D3D12_RESOURCE_DESC rd{};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = app.crossBytes; rd.Height = 1; rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER;
+    if (FAILED(app.device->CreatePlacedResource(app.crossHeap.Get(), 0, &rd, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&app.crossBuf))) ||
+        FAILED(app.inferDevice->CreatePlacedResource(app.crossHeapInfer.Get(), 0, &rd, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&app.crossBufInfer))))
+    { Log("InitSecondGpu: FAIL cross-adapter buffer"); return false; }
+
+    hr = app.device->CreateFence(0, D3D12_FENCE_FLAG_SHARED | D3D12_FENCE_FLAG_SHARED_CROSS_ADAPTER, IID_PPV_ARGS(&app.crossFence));
+    if (FAILED(hr)) { Log("InitSecondGpu: FAIL cross-adapter fence (0x%08lX)", (unsigned long)hr); return false; }
+    hr = app.device->CreateSharedHandle(app.crossFence.Get(), nullptr, GENERIC_ALL, nullptr, &handle);
+    if (FAILED(hr)) { Log("InitSecondGpu: FAIL fence handle (0x%08lX)", (unsigned long)hr); return false; }
+    hr = app.inferDevice->OpenSharedHandle(handle, IID_PPV_ARGS(&app.crossFenceInfer));
+    CloseHandle(handle);
+    if (FAILED(hr)) { Log("InitSecondGpu: FAIL open fence on %ls (0x%08lX)", d.Description, (unsigned long)hr); return false; }
+
+    app.inferName = d.Description;
+    app.secondGpu = true;
+    Log("InitSecondGpu: exit ok - depth runs on %ls; %llu KB hand-over buffer in a cross-adapter heap",
+        d.Description, (unsigned long long)(app.crossBytes >> 10));
+    return true;
+}
+
+static void ReleaseSecondGpu(App& app)
+{
+    Log("ReleaseSecondGpu: enter (%s)", app.secondGpu ? "active" : "partial or unused");
+    app.secondGpu = false;
+    app.crossFenceInfer.Reset(); app.crossFence.Reset();
+    app.crossBufInfer.Reset(); app.crossBuf.Reset();
+    app.crossHeapInfer.Reset(); app.crossHeap.Reset();
+    app.inferCmdList.Reset(); app.inferCmdAlloc.Reset();
+    app.inferFence.Reset();
+    if (app.inferFenceEvent) { CloseHandle(app.inferFenceEvent); app.inferFenceEvent = nullptr; }
+    app.inferQueue.Reset(); app.inferDevice.Reset();
+    Log("ReleaseSecondGpu: exit");
+}
+
 static bool InitD3D(App& app)
 {
     Log("InitD3D: enter (debug layer %d)", (int)app.opt.debugLayer);
@@ -771,6 +925,20 @@ static bool InitD3D(App& app)
     app.fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     app.mlFenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!app.fenceEvent || !app.mlFenceEvent) { Log("InitD3D: FAIL fence events"); return false; }
+
+    // Depth inference runs on the headset GPU unless a second GPU was requested and
+    // can be set up completely; any failure there falls back to one GPU.
+    app.inferDevice = app.device;
+    app.inferQueue = app.mlQueue;
+    app.inferName = ad.Description;
+    if (app.opt.depthAdapter != -1 && !InitSecondGpu(app, fac.Get()))
+    {
+        ReleaseSecondGpu(app);
+        app.inferDevice = app.device;
+        app.inferQueue = app.mlQueue;
+        app.inferName = ad.Description;
+        Log("InitD3D: second-GPU depth unavailable; depth runs on the headset GPU");
+    }
 
     D3D12_DESCRIPTOR_HEAP_DESC hd{};
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -1541,7 +1709,8 @@ static bool InitModel(App& app)
     auto createDmlDevice = (HRESULT(WINAPI*)(ID3D12Device*, DML_CREATE_DEVICE_FLAGS, REFIID, void**))
         GetProcAddress(dmllib, "DMLCreateDevice");
     if (!createDmlDevice) { Log("InitModel: FAIL DMLCreateDevice export"); return false; }
-    if (FAILED(createDmlDevice(app.device.Get(), DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&app.dmlDevice)))) { Log("InitModel: FAIL DMLCreateDevice"); return false; }
+    if (FAILED(createDmlDevice(app.inferDevice.Get(), DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&app.dmlDevice)))) { Log("InitModel: FAIL DMLCreateDevice"); return false; }
+    Log("InitModel: DirectML on %ls%s", app.inferName.c_str(), app.secondGpu ? " (second GPU)" : "");
 
     const bool ok = LoadModel(app);
     Log("InitModel: exit %s", ok ? "ok" : "FAIL");
@@ -1561,6 +1730,7 @@ static void ReleaseModel(App& app)
     }
     if (app.ortSession) { ort->ReleaseSession(app.ortSession); app.ortSession = nullptr; }
     app.modelIn.Reset();
+    app.prepOut.Reset();
     Log("ReleaseModel: exit");
 }
 
@@ -1574,7 +1744,7 @@ static bool LoadModel(App& app)
 
     OrtSessionOptions* so = nullptr;
     if (OrtStatus* st = ort->CreateSessionOptions(&so)) { Fail("CreateSessionOptions", st); return false; }
-    if (OrtStatus* st = app.dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, app.dmlDevice.Get(), app.mlQueue.Get()))
+    if (OrtStatus* st = app.dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, app.dmlDevice.Get(), app.inferQueue.Get()))
     { Fail("AppendExecutionProvider_DML1", st); ort->ReleaseSessionOptions(so); return false; }
 
     std::wstring modelPath = ModelPath(spec.file).wstring();
@@ -1591,8 +1761,12 @@ static bool LoadModel(App& app)
     // picture never visits the CPU. (M1: a resource handed to DML needs UAV access.)
     const UINT64 modelBytes = (UINT64)3 * spec.inH * spec.inW * sizeof(float);
     int64_t modelDims[4] = { 1, 3, spec.inH, spec.inW };
-    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, modelBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+    if (!MakeBuffer(app.inferDevice.Get(), D3D12_HEAP_TYPE_DEFAULT, modelBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.modelIn, nullptr)) return false;
+    if (!app.secondGpu) app.prepOut = app.modelIn;
+    else if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, modelBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.prepOut, nullptr)) return false;
+    if (app.secondGpu && modelBytes > app.crossBytes) { Log("LoadModel: FAIL input %llu bytes exceeds the hand-over buffer", (unsigned long long)modelBytes); return false; }
 
     if (OrtStatus* st = app.dmlApi->CreateGPUAllocationFromD3DResource(app.modelIn.Get(), &app.dmlAlloc)) { Fail("CreateGPUAllocationFromD3DResource", st); return false; }
     if (OrtStatus* st = ort->CreateTensorWithDataAsOrtValue(const_cast<OrtMemoryInfo*>(inInfos[0]), app.dmlAlloc, modelBytes,
@@ -1625,6 +1799,8 @@ static bool LoadModel(App& app)
 // GPU-side ordering only: the queue waits for the source's fence, and ORT's own
 // submissions to the same queue follow it. Returns the ml fence value signalled
 // after the dispatch (callers other than the self-test need not wait on it).
+static void WaitInferFence(App& app, UINT64 value);
+
 static UINT64 SubmitPrep(App& app, UINT srcDescIndex, int srcW, int srcH, ID3D12Fence* srcFence, UINT64 srcValue,
     const DepthCrop& crop = {})
 {
@@ -1647,20 +1823,66 @@ static UINT64 SubmitPrep(App& app, UINT srcDescIndex, int srcW, int srcH, ID3D12
     cl->SetPipelineState(app.prepPso.Get());
     cl->SetComputeRoot32BitConstants(0, sizeof(PrepConstants) / 4, &pc, 0);
     cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDescIndex));
-    cl->SetComputeRootUnorderedAccessView(2, app.modelIn->GetGPUVirtualAddress());
+    cl->SetComputeRootUnorderedAccessView(2, app.prepOut->GetGPUVirtualAddress());
     cl->Dispatch((spec.inW + 7) / 8, (spec.inH + 7) / 8, 1);
 
     D3D12_RESOURCE_BARRIER uav{};
     uav.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    uav.UAV.pResource = app.modelIn.Get();
+    uav.UAV.pResource = app.prepOut.Get();
     cl->ResourceBarrier(1, &uav);
+
+    const UINT64 inputBytes = (UINT64)3 * spec.inW * spec.inH * sizeof(float);
+    if (app.secondGpu)
+    {
+        // The previous hand-over must have left the shared buffer before it is
+        // overwritten. Inference runs after it on the same queue and has returned
+        // by now, so this is normally already complete.
+        WaitInferFence(app, app.inferFenceVal);
+        Transition(cl, app.prepOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cl->CopyBufferRegion(app.crossBuf.Get(), 0, app.prepOut.Get(), 0, inputBytes);
+        Transition(cl, app.prepOut.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
     cl->Close();
 
     if (srcFence) app.mlQueue->Wait(srcFence, srcValue);
     ID3D12CommandList* lists[] = { cl };
     app.mlQueue->ExecuteCommandLists(1, lists);
     app.mlQueue->Signal(app.mlFence.Get(), ++app.mlFenceVal);
+    if (!app.secondGpu) return app.mlFenceVal;
+
+    // Inference GPU: wait (on the GPU) for the hand-over, copy it into the model's
+    // input, then ORT's own work follows on the same queue.
+    app.mlQueue->Signal(app.crossFence.Get(), ++app.crossVal);
+    app.inferCmdAlloc->Reset();
+    app.inferCmdList->Reset(app.inferCmdAlloc.Get(), nullptr);
+    ID3D12GraphicsCommandList* il = app.inferCmdList.Get();
+    Transition(il, app.modelIn.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+    il->CopyBufferRegion(app.modelIn.Get(), 0, app.crossBufInfer.Get(), 0, inputBytes);
+    Transition(il, app.modelIn.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    il->Close();
+    app.inferQueue->Wait(app.crossFenceInfer.Get(), app.crossVal);
+    ID3D12CommandList* inferLists[] = { il };
+    app.inferQueue->ExecuteCommandLists(1, inferLists);
+    app.inferQueue->Signal(app.inferFence.Get(), ++app.inferFenceVal);
     return app.mlFenceVal;
+}
+
+static void WaitInferFence(App& app, UINT64 value)
+{
+    if (!app.secondGpu || value == 0 || !app.inferFence) return;
+    if (app.inferFence->GetCompletedValue() >= value) return;
+
+    app.inferFence->SetEventOnCompletion(value, app.inferFenceEvent);
+    WaitForSingleObject(app.inferFenceEvent, INFINITE);
+}
+
+static void WaitMlFence(App& app, UINT64 value);
+
+// All submitted depth GPU work (prep, and on a second GPU the hand-over) complete.
+static void WaitDepthIdle(App& app)
+{
+    if (app.mlFence && app.mlFenceVal) WaitMlFence(app, app.mlFenceVal);
+    WaitInferFence(app, app.inferFenceVal);
 }
 
 static void WaitMlFence(App& app, UINT64 value)
@@ -1869,7 +2091,7 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     app.sources.MarkRead(src, SourceFrames::Reader::Model, prepDone);
     const bool good = RunModelRaw(app);
     // A failed optional pass must still retire GPU prep before the next dispatch.
-    WaitMlFence(app, app.mlFenceVal);
+    WaitDepthIdle(app);
     const double costMs = (NowSeconds()-begin)*1000;
     app.foregroundBudget.Complete(NowSeconds(), costMs);
     if (good && app.foregroundEnabled.load() && !app.stop.load() && (NowSeconds()-src->time)<.20 &&
@@ -1897,7 +2119,7 @@ static bool SwitchModel(App& app, const ModelSpec* next)
     Log("SwitchModel: enter (%s -> %s)", previous ? previous->name : "none", next->name);
     const double t0 = NowSeconds();
 
-    WaitMlFence(app, app.mlFenceVal);        // no prep/inference may still use the old buffers
+    WaitDepthIdle(app);                      // no prep, hand-over or inference may still use the old buffers
     ReleaseModel(app);
     app.opt.model = next;
     bool ok = LoadModel(app);
@@ -1949,7 +2171,7 @@ static void WorkerMain(App* app)
             if (failures >= 3) break;
             // Run may have failed after queuing prep; do not reset its allocator
             // until that dispatch is complete, including on retry of a static frame.
-            WaitMlFence(*app, app->mlFenceVal);
+            WaitDepthIdle(*app);
             for (int i = 0; i < 50 && !app->stop.load(); ++i) Sleep(20);
             continue;
         }
@@ -2155,9 +2377,9 @@ static bool SelfTestPrep(App& app, const std::vector<unsigned char>& scene, cons
     if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, rb, nullptr)) return false;
     app.cmdAlloc[0]->Reset();
     app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
-    Transition(app.cmdList.Get(), app.modelIn.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    app.cmdList->CopyBufferRegion(rb.Get(), 0, app.modelIn.Get(), 0, bytes);
-    Transition(app.cmdList.Get(), app.modelIn.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(app.cmdList.Get(), app.prepOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    app.cmdList->CopyBufferRegion(rb.Get(), 0, app.prepOut.Get(), 0, bytes);
+    Transition(app.cmdList.Get(), app.prepOut.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     app.cmdList->Close();
     WaitFence(app, SubmitAndSignal(app));
 
@@ -2231,6 +2453,62 @@ static bool SelfTestForegroundModel(App& app)
 
 // The table-driven model-output resample vs the reference SampleDepth, on a
 // deterministic non-smooth pattern (a smooth one would hide tap/offset mistakes).
+// Second GPU only: after one prep + hand-over, the model input on the inference
+// GPU must be byte-identical to what the prep shader wrote on the headset GPU.
+static bool SelfTestTransfer(App& app, const std::vector<unsigned char>& scene)
+{
+    if (!app.secondGpu) return true;
+    Log("SelfTestTransfer: enter (%ls)", app.inferName.c_str());
+    if (!UploadTestSource(app, scene)) { Log("SelfTestTransfer: FAIL test source upload"); return false; }
+
+    const ModelSpec& spec = *app.opt.model;
+    const UINT64 bytes = (UINT64)3 * spec.inW * spec.inH * sizeof(float);
+    const double t0 = NowSeconds();
+    SubmitPrep(app, DESC_TEST_SRC, W, H, nullptr, 0);
+    WaitDepthIdle(app);
+    const double handOverMs = (NowSeconds() - t0) * 1000;
+
+    ComPtr<ID3D12Resource> rbPrep, rbModel;
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, rbPrep, nullptr) ||
+        !MakeBuffer(app.inferDevice.Get(), D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, rbModel, nullptr))
+    { Log("SelfTestTransfer: FAIL readback buffers"); return false; }
+
+    app.cmdAlloc[0]->Reset();
+    app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+    Transition(app.cmdList.Get(), app.prepOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    app.cmdList->CopyBufferRegion(rbPrep.Get(), 0, app.prepOut.Get(), 0, bytes);
+    Transition(app.cmdList.Get(), app.prepOut.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    app.cmdList->Close();
+    WaitFence(app, SubmitAndSignal(app));
+
+    app.inferCmdAlloc->Reset();
+    app.inferCmdList->Reset(app.inferCmdAlloc.Get(), nullptr);
+    ID3D12GraphicsCommandList* il = app.inferCmdList.Get();
+    Transition(il, app.modelIn.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    il->CopyBufferRegion(rbModel.Get(), 0, app.modelIn.Get(), 0, bytes);
+    Transition(il, app.modelIn.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    il->Close();
+    ID3D12CommandList* lists[] = { il };
+    app.inferQueue->ExecuteCommandLists(1, lists);
+    app.inferQueue->Signal(app.inferFence.Get(), ++app.inferFenceVal);
+    WaitInferFence(app, app.inferFenceVal);
+
+    const unsigned char* a = nullptr;
+    const unsigned char* b = nullptr;
+    if (FAILED(rbPrep->Map(0, nullptr, (void**)&a)) || FAILED(rbModel->Map(0, nullptr, (void**)&b)) || !a || !b)
+    { Log("SelfTestTransfer: FAIL map readback"); return false; }
+    size_t differ = 0;
+    for (UINT64 i = 0; i < bytes; i += 4)
+        if (memcmp(a + i, b + i, 4) != 0) ++differ;
+    rbPrep->Unmap(0, nullptr);
+    rbModel->Unmap(0, nullptr);
+
+    const bool ok = differ == 0;
+    Log("SelfTestTransfer: exit %s - %zu of %llu input values differ between GPUs (prep + hand-over %.2f ms, first run)",
+        ok ? "PASS" : "FAIL", differ, (unsigned long long)(bytes / 4), handOverMs);
+    return ok;
+}
+
 static bool SelfTestResample(App& app)
 {
     const ModelSpec& spec = *app.opt.model;
@@ -2281,6 +2559,7 @@ static bool SelfTest(App& app)
 
     bool ok = SelfTestPrep(app, synth);
     ok = SelfTestResample(app) && ok;
+    ok = SelfTestTransfer(app, synth) && ok;
     ok = SelfTestPrep(app, synth, DepthCrop{.17f,.23f,.5f}) && ok;
     c.mirrorTol = MIRROR_TOL;
     for (uint32_t mode : { (uint32_t)FILL_STRETCH, (uint32_t)FILL_MIRROR })
@@ -2870,7 +3149,7 @@ static void Shutdown(App& app)
     if (app.worker.joinable()) app.worker.join();
     if (app.cap.thread.joinable()) app.cap.thread.join();
     WaitFence(app, app.fenceVal);
-    if (app.mlFence && app.mlFenceVal) WaitMlFence(app, app.mlFenceVal);
+    WaitDepthIdle(app);
     // Capture may have started before its polling thread was created.
     try {
         if (app.cap.closedRegistered) { app.cap.item.Closed(app.cap.closedToken); app.cap.closedRegistered = false; }
@@ -2887,6 +3166,7 @@ static void Shutdown(App& app)
     if (app.instance) xrDestroyInstance_(app.instance);
     if (app.fenceEvent) CloseHandle(app.fenceEvent);
     if (app.mlFenceEvent) CloseHandle(app.mlFenceEvent);
+    if (app.secondGpu || app.inferFenceEvent) ReleaseSecondGpu(app);
     Log("Shutdown: exit (source frames dropped under backpressure: %llu)",
         (unsigned long long)app.sourceDrops.load());
 }
@@ -2949,7 +3229,9 @@ int wmain(int argc, wchar_t** wideArgv)
         if (!InitModel(app)) break;
         if (!InitSlots(app)) break;
         if (!InitSource(app)) break;
-        if (!InitXrSession(app)) break;
+        // The self-test needs the headset's GPU (from the runtime) but not a VR
+        // session, so it also runs while the headset is asleep or disconnected.
+        if (!app.opt.selfTestOnly && !InitXrSession(app)) break;
         if (!InitShaders(app)) break;
 
         if (!SelfTest(app)) { Log("main: GPU shaders do not match the CPU reference - not presenting"); break; }
@@ -2971,7 +3253,7 @@ int wmain(int argc, wchar_t** wideArgv)
         else
         {
             Log("main: initial depth failed; starting flat playback and worker retries");
-            if (app.mlFenceVal) WaitMlFence(app, app.mlFenceVal);
+            WaitDepthIdle(app);
         }
         if (app.opt.doDump)
         {
