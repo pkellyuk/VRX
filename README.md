@@ -33,6 +33,7 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 - Tested with Helldivers 2, an RTX 3090, PSVR2, and SteamVR. Other combinations need validation.
 - The packaged release includes the desktop runtime, native dependencies, and both depth models.
 - Depth is estimated by [ZipDepth](https://github.com/fabiotosi92/ZipDepth) by default: about 6x less GPU time per estimate than Depth Anything V2 Small (2.0 vs 13.1 ms on an RTX 3090), which keeps depth much closer to the game's frame rate. Untick **Fast depth model — ZipDepth** (per game, applies live) to use Depth Anything V2 instead. Fast motion and foreground edges can still distort.
+- **Run depth on a second GPU** (experimental, per game, applies at Attach / Play) moves the depth model to another graphics card. The capture step makes a small model-size copy of each frame and the game GPU's copy engine sends it across, so depth no longer competes with the game. Measured with the RTX 3090 saturated by other work: ZipDepth 7.7 ms per estimate on an RTX 3060 (vs 19.9 ms on the busy 3090), Depth Anything V2 25.6 ms (vs 120.5 ms). Foreground crop passes still use the game GPU.
 - **Match game frames to depth** improves alignment but adds latency and limits motion to the depth update rate. It defaults off.
 - **Extra foreground depth passes** are experimental and default on; their benefit varies.
 - GPU contention can reduce depth update speed. A steady 60 depth updates per second is not guaranteed.

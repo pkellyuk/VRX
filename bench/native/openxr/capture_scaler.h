@@ -16,6 +16,8 @@ class CaptureScaler
     Ptr<ID3D11PixelShader> ps_;
     Ptr<ID3D11SamplerState> sampler_;
     Ptr<ID3D11RasterizerState> raster_;
+    Ptr<ID3D11PixelShader> boxPs_;           // Downscale: taps x taps box filter
+    Ptr<ID3D11Buffer> boxConstants_;
     int width_ = 0, height_ = 0;
 public:
     HRESULT Init(ID3D11Device* device)
@@ -28,6 +30,17 @@ V VS(uint id : SV_VertexID) {
 }
 Texture2D picture : register(t0); SamplerState linearClamp : register(s0);
 float4 PS(V v) : SV_TARGET { return float4(picture.Sample(linearClamp, v.uv).rgb, 1); }
+cbuffer Box : register(b0) { float2 outSize; uint taps; uint pad; };
+// Same filter as VRX's model-input prep shader (kPrepHlsl): average taps x taps
+// bilinear samples spread evenly over each output pixel.
+float4 BoxPS(V v) : SV_TARGET {
+    float2 px = floor(v.p.xy);
+    float3 sum = 0;
+    [loop] for (uint j = 0; j < taps; j++)
+        [loop] for (uint i = 0; i < taps; i++)
+            sum += picture.SampleLevel(linearClamp, (px + (float2(i, j) + 0.5) / taps) / outSize, 0).rgb;
+    return float4(sum / (taps * taps), 1);
+}
 )";
         Ptr<ID3DBlob> vs, ps, errors;
         HRESULT hr = D3DCompile(shader, std::strlen(shader), "capture-scaler", nullptr, nullptr,
@@ -39,6 +52,15 @@ float4 PS(V v) : SV_TARGET { return float4(picture.Sample(linearClamp, v.uv).rgb
         hr = device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &vs_);
         if (FAILED(hr)) return hr;
         hr = device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &ps_);
+        if (FAILED(hr)) return hr;
+        Ptr<ID3DBlob> box;
+        hr = D3DCompile(shader, std::strlen(shader), "capture-scaler", nullptr, nullptr, "BoxPS", "ps_5_0", 0, 0, &box, &errors);
+        if (FAILED(hr)) return hr;
+        hr = device->CreatePixelShader(box->GetBufferPointer(), box->GetBufferSize(), nullptr, &boxPs_);
+        if (FAILED(hr)) return hr;
+        D3D11_BUFFER_DESC cb{};
+        cb.ByteWidth = 16; cb.Usage = D3D11_USAGE_DEFAULT; cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        hr = device->CreateBuffer(&cb, nullptr, &boxConstants_);
         if (FAILED(hr)) return hr;
         D3D11_SAMPLER_DESC sd{};
         sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -104,6 +126,36 @@ float4 PS(V v) : SV_TARGET { return float4(picture.Sample(linearClamp, v.uv).rgb
         context->Draw(3, 0);
         // Unbind before the next copy and before handing the output to D3D12.
         srv = nullptr; context->PSSetShaderResources(0, 1, &srv);
+        context->OMSetRenderTargets(0, nullptr, nullptr);
+        return S_OK;
+    }
+
+    // Box-filters `picture` (srcW x srcH, all of it) into `rtv` (dstW x dstH):
+    // taps = ceil(srcW / dstW), clamped 1..4, as the model-input prep uses. Used to
+    // hand a model-size frame to a second GPU without extra headset-GPU passes.
+    HRESULT Downscale(ID3D11DeviceContext* context, ID3D11ShaderResourceView* picture, int srcW,
+        ID3D11RenderTargetView* rtv, int dstW, int dstH)
+    {
+        if (!context || !picture || !rtv || srcW <= 0 || dstW <= 0 || dstH <= 0) return E_INVALIDARG;
+        struct { float w, h; unsigned taps, pad; } constants{ float(dstW), float(dstH), 1, 0 };
+        const int taps = (srcW + dstW - 1) / dstW;
+        constants.taps = unsigned(taps < 1 ? 1 : (taps > 4 ? 4 : taps));
+        context->UpdateSubresource(boxConstants_.Get(), 0, nullptr, &constants, 0, 0);
+        D3D11_VIEWPORT vp{ 0, 0, float(dstW), float(dstH), 0, 1 };
+        context->RSSetViewports(1, &vp);
+        context->RSSetState(raster_.Get());
+        context->OMSetRenderTargets(1, &rtv, nullptr);
+        context->IASetInputLayout(nullptr);
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        context->VSSetShader(vs_.Get(), nullptr, 0);
+        context->PSSetShader(boxPs_.Get(), nullptr, 0);
+        auto* cb = boxConstants_.Get(); auto* sampler = sampler_.Get();
+        context->PSSetConstantBuffers(0, 1, &cb);
+        context->PSSetShaderResources(0, 1, &picture);
+        context->PSSetSamplers(0, 1, &sampler);
+        context->Draw(3, 0);
+        ID3D11ShaderResourceView* none = nullptr;
+        context->PSSetShaderResources(0, 1, &none);
         context->OMSetRenderTargets(0, nullptr, nullptr);
         return S_OK;
     }

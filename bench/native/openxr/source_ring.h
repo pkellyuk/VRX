@@ -23,20 +23,21 @@ public:
     };
     using WriteRef = std::shared_ptr<Frame>;
     using ReadRef = std::shared_ptr<const Frame>;
-    enum class Reader { Graphics, Model };
+    // Transfer: a copy-engine read (second-GPU depth hand-over), its own timeline.
+    enum class Reader { Graphics, Model, Transfer };
 
-    WriteRef Reserve(uint64_t producerDone, uint64_t graphicsDone, uint64_t modelDone)
+    WriteRef Reserve(uint64_t producerDone, uint64_t graphicsDone, uint64_t modelDone, uint64_t transferDone = 0)
     {
         // D3D reports device removal as UINT64_MAX, not successful completion.
         constexpr auto removed = std::numeric_limits<uint64_t>::max();
-        if (producerDone == removed || graphicsDone == removed || modelDone == removed) return {};
+        if (producerDone == removed || graphicsDone == removed || modelDone == removed || transferDone == removed) return {};
         std::lock_guard<std::mutex> lock(mutex_);
         for (size_t n = 0; n < Count; ++n)
         {
             const size_t i = (next_ + n) % Count;
             Slot& slot = slots_[i];
             if (!slot.frame.expired() || slot.producer > producerDone ||
-                slot.graphics > graphicsDone || slot.model > modelDone) continue;
+                slot.graphics > graphicsDone || slot.model > modelDone || slot.transfer > transferDone) continue;
             auto frame = std::make_shared<Frame>();
             frame->index = static_cast<int>(i);
             frame->seq = ++sequence_;
@@ -77,7 +78,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         Slot& slot = slots_[frame->index];
         assert(slot.frame.lock() == frame);
-        uint64_t& last = reader == Reader::Graphics ? slot.graphics : slot.model;
+        uint64_t& last = reader == Reader::Graphics ? slot.graphics : reader == Reader::Model ? slot.model : slot.transfer;
         if (value > last) last = value;
     }
 
@@ -85,7 +86,7 @@ private:
     struct Slot
     {
         std::weak_ptr<const Frame> frame;
-        uint64_t producer = 0, graphics = 0, model = 0;
+        uint64_t producer = 0, graphics = 0, model = 0, transfer = 0;
     };
     mutable std::mutex mutex_;
     std::array<Slot, Count> slots_{};

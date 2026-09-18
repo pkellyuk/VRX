@@ -6,6 +6,7 @@
 #include "capture_window.h"
 #include "desktop_control.h"
 #include "foreground_refinement.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -224,6 +225,74 @@ static void TestCaptureClientRegion()
         "region outside the frame rejected");
 }
 
+// The capture thread's model-size box filter vs a CPU reference of the same math
+// (taps x taps bilinear samples per output pixel, clamped edges). GPU bilinear
+// weights are fixed point, so allow 2 levels in 255 per channel.
+static void TestCaptureDownscale()
+{
+    using Microsoft::WRL::ComPtr;
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    Hr(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context));
+    CaptureScaler scaler;
+    Hr(scaler.Init(device.Get()));
+
+    const int sw = 700, sh = 400, dw = 160, dh = 96;          // taps = ceil(700/160) = 5 -> clamped to 4
+    std::vector<uint32_t> src(size_t(sw) * sh);
+    uint32_t seed = 12345;
+    for (auto& p : src) { seed = seed * 1664525u + 1013904223u; p = 0xFF000000u | (seed >> 8); }
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = sw; td.Height = sh; td.MipLevels = td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA data{ src.data(), UINT(sw * 4), 0 };
+    ComPtr<ID3D11Texture2D> input, output, readback;
+    ComPtr<ID3D11ShaderResourceView> srv;
+    ComPtr<ID3D11RenderTargetView> rtv;
+    Hr(device->CreateTexture2D(&td, &data, &input));
+    Hr(device->CreateShaderResourceView(input.Get(), nullptr, &srv));
+    td.Width = dw; td.Height = dh; td.BindFlags = D3D11_BIND_RENDER_TARGET;
+    Hr(device->CreateTexture2D(&td, nullptr, &output));
+    Hr(device->CreateRenderTargetView(output.Get(), nullptr, &rtv));
+    td.Usage = D3D11_USAGE_STAGING; td.BindFlags = 0; td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    Hr(device->CreateTexture2D(&td, nullptr, &readback));
+
+    Hr(scaler.Downscale(context.Get(), srv.Get(), sw, rtv.Get(), dw, dh));
+    context->CopyResource(readback.Get(), output.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    Hr(context->Map(readback.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+
+    auto channel = [&](int x, int y, int c) { return float((src[size_t(y) * sw + x] >> (8 * c)) & 0xFF); };
+    auto bilinear = [&](float u, float v, int c) {
+        const float fx = std::min(std::max(u * sw - .5f, 0.f), float(sw - 1));
+        const float fy = std::min(std::max(v * sh - .5f, 0.f), float(sh - 1));
+        const int x0 = int(fx), y0 = int(fy), x1 = std::min(x0 + 1, sw - 1), y1 = std::min(y0 + 1, sh - 1);
+        const float a = fx - x0, b = fy - y0;
+        return (channel(x0, y0, c) * (1 - a) + channel(x1, y0, c) * a) * (1 - b) + (channel(x0, y1, c) * (1 - a) + channel(x1, y1, c) * a) * b;
+    };
+    const int taps = 4;
+    int worst = 0;
+    for (int y = 0; y < dh; ++y)
+        for (int x = 0; x < dw; ++x)
+        {
+            const uint32_t got = reinterpret_cast<const uint32_t*>(static_cast<const unsigned char*>(mapped.pData) + y * mapped.RowPitch)[x];
+            for (int c = 0; c < 3; ++c)
+            {
+                float sum = 0;
+                for (int j = 0; j < taps; ++j)
+                    for (int i = 0; i < taps; ++i)
+                        sum += bilinear((x + (i + .5f) / taps) / dw, (y + (j + .5f) / taps) / dh, c);
+                const int ref = int(sum / (taps * taps) + .5f);
+                worst = std::max(worst, std::abs(int((got >> (8 * c)) & 0xFF) - ref));
+            }
+        }
+    context->Unmap(readback.Get(), 0);
+    printf("  capture downscale %dx%d -> %dx%d (4x4 taps): worst channel error %d/255\n", sw, sh, dw, dh, worst);
+    Check(worst <= 2, "capture box-filter downscale matches the CPU reference");
+    Check(scaler.Downscale(context.Get(), nullptr, sw, rtv.Get(), dw, dh) == E_INVALIDARG, "downscale rejects a missing picture");
+}
+
 static void TestScreenAnchor()
 {
     ScreenAnchor screen;
@@ -387,5 +456,6 @@ int main(int argc, char** argv)
     TestCaptureResizePixels();
     TestClientCrop();
     TestCaptureClientRegion();
-    std::puts("PASS: game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop");
+    TestCaptureDownscale();
+    std::puts("PASS: game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop, capture downscale");
 }
