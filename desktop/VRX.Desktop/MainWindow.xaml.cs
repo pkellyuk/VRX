@@ -28,6 +28,9 @@ public partial class MainWindow : Window
         store = new(data);
         InitializeComponent();
         ShowGpuChoice(Gpus.Same);
+        // From <Version> in the project file, so the UI always matches the build.
+        VersionText.Text = DisplayVersion();
+        Title = $"VRX {VersionText.Text} — Desktop setup";
         if (smoke)
         {
             ShowActivated = false; ShowInTaskbar = false;
@@ -130,6 +133,14 @@ public partial class MainWindow : Window
         }
         UpdateButtons();
     }
+    // "v1.2" for 1.2.0, "v1.2.3" for a patch release.
+    public static string DisplayVersion()
+    {
+        var v = typeof(MainWindow).Assembly.GetName().Version;
+        if (v == null) return "";
+        return v.Build > 0 ? $"v{v.Major}.{v.Minor}.{v.Build}" : $"v{v.Major}.{v.Minor}";
+    }
+
     private IReadOnlyList<GpuChoice> gpuChoices = Gpus.Parse([]);
 
     // Replaces the Depth GPU list (e.g. once the engine has listed the GPUs), keeping
@@ -349,6 +360,8 @@ public partial class MainWindow : Window
         if (DepthGpuList.SelectedValue as string != "name:Old Card#0" || !((GpuChoice)DepthGpuList.SelectedItem).Label.StartsWith("Not found"))
             throw new Exception("A missing saved GPU must stay selected and be marked not found");
         DepthGpuList.SelectedValue = Gpus.Same;
+        if (VersionText.Text != DisplayVersion() || !VersionText.Text.StartsWith("v1.") || !Title.Contains(VersionText.Text))
+            throw new Exception("Version is not shown in the header and window title");
         var real = Gpus.List();                                    // the engine's --list-gpus on this PC
         File.WriteAllLines(Path.Combine(output, "gpus.txt"), real.Select(g => $"{g.Id} | {g.Label}"));
         if (real.Count < 2 || real[0].Id != Gpus.Same || real[1].Id != Gpus.Auto) throw new Exception("Engine GPU listing failed");
