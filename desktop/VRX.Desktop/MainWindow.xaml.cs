@@ -138,6 +138,7 @@ public partial class MainWindow : Window
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         PairedCheck.IsChecked = p.MatchFrameToDepth;
         FastModelCheck.IsChecked = p.FastDepthModel;
+        SecondGpuCheck.IsChecked = p.DepthOnSecondGpu;
         RecenterKeys.SelectedValue = p.RecenterKey; MenuKeys.SelectedValue = p.MenuKey;
         SettingsPanel.IsEnabled = true;
         loading = false; DrawPreview();
@@ -152,6 +153,7 @@ public partial class MainWindow : Window
             ForegroundRefinement = ForegroundCheck.IsChecked == true,
             MatchFrameToDepth = PairedCheck.IsChecked == true,
             FastDepthModel = FastModelCheck.IsChecked == true,
+            DepthOnSecondGpu = SecondGpuCheck.IsChecked == true,
             AutoDismiss = DismissCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
             MenuKey = (int)(MenuKeys.SelectedValue ?? 0) };
         if (!p.Valid()) throw new InvalidDataException("Choose two different shortcut keys. Changes are not saved until the settings are valid.");
@@ -292,6 +294,10 @@ public partial class MainWindow : Window
         ForegroundCheck.IsChecked = false;
         if (ReadProfile().ForegroundRefinement) throw new Exception("Foreground checkbox not mapped to saved settings");
         if (FastModelCheck.IsChecked != true) throw new Exception("Fast depth model should default on");
+        if (SecondGpuCheck.IsChecked != false) throw new Exception("Second-GPU depth should default off");
+        SecondGpuCheck.IsChecked = true;
+        if (!ReadProfile().DepthOnSecondGpu) throw new Exception("Second-GPU checkbox is not mapped to settings");
+        SecondGpuCheck.IsChecked = false;
         FastModelCheck.IsChecked = false;
         if (ReadProfile().FastDepthModel) throw new Exception("Fast depth model checkbox is not mapped to settings");
         PutProfile(one);

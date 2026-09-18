@@ -47,6 +47,7 @@ public sealed class EngineSession
             StandardErrorEncoding = System.Text.Encoding.UTF8 };
         foreach (string arg in new[] { "0", "--exe=" + Path.GetFileName(app.FullPath), "--exe-path=" + app.FullPath,
             "--pid=" + app.Pid, "--hwnd=" + window.Handle.ToInt64(), "--control=" + control }) start.ArgumentList.Add(arg);
+        if (profile.DepthOnSecondGpu) start.ArgumentList.Add("--depth-gpu=auto");
         var child = new Process { StartInfo = start };
         try
         {
