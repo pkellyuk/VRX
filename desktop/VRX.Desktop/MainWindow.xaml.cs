@@ -27,6 +27,7 @@ public partial class MainWindow : Window
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX");
         store = new(data);
         InitializeComponent();
+        ShowGpuChoice(Gpus.Same);
         if (smoke)
         {
             ShowActivated = false; ShowInTaskbar = false;
@@ -72,7 +73,7 @@ public partial class MainWindow : Window
                     Application.Current.Shutdown(1);
                 }
             }
-            else refreshTimer.Start();
+            else { refreshTimer.Start(); await LoadGpusAsync(); }
         };
     }
     private void RefreshApps()
@@ -129,6 +130,37 @@ public partial class MainWindow : Window
         }
         UpdateButtons();
     }
+    private IReadOnlyList<GpuChoice> gpuChoices = Gpus.Parse([]);
+
+    // Replaces the Depth GPU list (e.g. once the engine has listed the GPUs), keeping
+    // the current selection.
+    private void SetGpuChoices(IReadOnlyList<GpuChoice> choices)
+    {
+        string current = DepthGpuList.SelectedValue as string ?? profile?.DepthGpu ?? Gpus.Same;
+        gpuChoices = choices;
+        ShowGpuChoice(current);
+    }
+
+    // Selects `id`. A saved GPU that is not in this PC gets a "Not found" entry, so the
+    // choice stays visible rather than silently changing.
+    private void ShowGpuChoice(string id)
+    {
+        if (!Gpus.ValidId(id)) id = Gpus.Same;
+        var list = gpuChoices.ToList();
+        if (!list.Any(c => c.Id == id)) list.Add(new GpuChoice(id, "Not found: " + Gpus.NameOf(id) + " (the game's GPU is used)"));
+        bool wasLoading = loading;
+        loading = true;
+        DepthGpuList.ItemsSource = list;
+        DepthGpuList.SelectedValue = id;
+        loading = wasLoading;
+    }
+
+    private async Task LoadGpusAsync()
+    {
+        var list = await Task.Run(Gpus.List);
+        SetGpuChoices(list);
+    }
+
     private void PutProfile(Profile p)
     {
         loading = true;
@@ -138,7 +170,7 @@ public partial class MainWindow : Window
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         PairedCheck.IsChecked = p.MatchFrameToDepth;
         FastModelCheck.IsChecked = p.FastDepthModel;
-        SecondGpuCheck.IsChecked = p.DepthOnSecondGpu;
+        ShowGpuChoice(p.DepthGpu);
         RecenterKeys.SelectedValue = p.RecenterKey; MenuKeys.SelectedValue = p.MenuKey;
         SettingsPanel.IsEnabled = true;
         loading = false; DrawPreview();
@@ -153,7 +185,7 @@ public partial class MainWindow : Window
             ForegroundRefinement = ForegroundCheck.IsChecked == true,
             MatchFrameToDepth = PairedCheck.IsChecked == true,
             FastDepthModel = FastModelCheck.IsChecked == true,
-            DepthOnSecondGpu = SecondGpuCheck.IsChecked == true,
+            DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
             AutoDismiss = DismissCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
             MenuKey = (int)(MenuKeys.SelectedValue ?? 0) };
         if (!p.Valid()) throw new InvalidDataException("Choose two different shortcut keys. Changes are not saved until the settings are valid.");
@@ -273,6 +305,14 @@ public partial class MainWindow : Window
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
             throw new Exception("Fast depth model must default on for old profiles and keep a per-game opt-out");
         if (!store.Load(one.ExecutablePath).ForegroundRefinement) throw new Exception("Old profiles must default foreground refinement on");
+        if (store.Load(one.ExecutablePath).DepthGpu != Gpus.Same) throw new Exception("Profiles without a depth GPU must use the game's GPU");
+        var three = new Profile { ExecutablePath = Path.Combine(output, "three", "game.exe") };
+        store.Save(three);
+        var earlier = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(three.ExecutablePath)))!.AsObject();
+        earlier.Remove("DepthGpu");
+        earlier["DepthOnSecondGpu"] = true;
+        File.WriteAllText(store.FileFor(three.ExecutablePath), earlier.ToJsonString());
+        if (store.Load(three.ExecutablePath).DepthGpu != Gpus.Auto) throw new Exception("The earlier second-GPU checkbox must migrate to automatic");
         if (store.Load(one.ExecutablePath).MatchFrameToDepth || !store.Load(two.ExecutablePath).MatchFrameToDepth)
             throw new Exception("Frame matching default/migration/per-game round-trip failed");
         var conflict = new Profile { RecenterKey = 0x77, MenuKey = 0x77 };
@@ -294,10 +334,25 @@ public partial class MainWindow : Window
         ForegroundCheck.IsChecked = false;
         if (ReadProfile().ForegroundRefinement) throw new Exception("Foreground checkbox not mapped to saved settings");
         if (FastModelCheck.IsChecked != true) throw new Exception("Fast depth model should default on");
-        if (SecondGpuCheck.IsChecked != false) throw new Exception("Second-GPU depth should default off");
-        SecondGpuCheck.IsChecked = true;
-        if (!ReadProfile().DepthOnSecondGpu) throw new Exception("Second-GPU checkbox is not mapped to settings");
-        SecondGpuCheck.IsChecked = false;
+        // GPU list: two identical cards stay distinguishable, software adapters are hidden,
+        // a saved card that is no longer present is shown rather than silently replaced.
+        var gpus = Gpus.Parse(["ParseArgs noise", "GPU|0|0|24325|0|NVIDIA GeForce RTX 3090", "GPU|1|0|12115|0|NVIDIA GeForce RTX 3060",
+            "GPU|2|1|12115|0|NVIDIA GeForce RTX 3060", "GPU|3|0|0|1|Microsoft Basic Render Driver"]);
+        if (gpus.Count != 5 || gpus[3].Id != "name:NVIDIA GeForce RTX 3060#0" || gpus[4].Id != "name:NVIDIA GeForce RTX 3060#1" ||
+            !gpus[4].Label.Contains("card 2") || gpus.Any(g => g.Label.Contains("Basic Render")))
+            throw new Exception("GPU list parsing failed");
+        SetGpuChoices(gpus);
+        if (DepthGpuList.SelectedValue as string != Gpus.Same) throw new Exception("Depth GPU should default to the game's GPU");
+        DepthGpuList.SelectedValue = "name:NVIDIA GeForce RTX 3060#1";
+        if (ReadProfile().DepthGpu != "name:NVIDIA GeForce RTX 3060#1") throw new Exception("Depth GPU list is not mapped to settings");
+        ShowGpuChoice("name:Old Card#0");
+        if (DepthGpuList.SelectedValue as string != "name:Old Card#0" || !((GpuChoice)DepthGpuList.SelectedItem).Label.StartsWith("Not found"))
+            throw new Exception("A missing saved GPU must stay selected and be marked not found");
+        DepthGpuList.SelectedValue = Gpus.Same;
+        var real = Gpus.List();                                    // the engine's --list-gpus on this PC
+        File.WriteAllLines(Path.Combine(output, "gpus.txt"), real.Select(g => $"{g.Id} | {g.Label}"));
+        if (real.Count < 2 || real[0].Id != Gpus.Same || real[1].Id != Gpus.Auto) throw new Exception("Engine GPU listing failed");
+        if (Gpus.ValidId("name:#0") || Gpus.ValidId("3") || !Gpus.ValidId("name:NVIDIA GeForce RTX 3060#1")) throw new Exception("Depth GPU id validation failed");
         FastModelCheck.IsChecked = false;
         if (ReadProfile().FastDepthModel) throw new Exception("Fast depth model checkbox is not mapped to settings");
         PutProfile(one);
