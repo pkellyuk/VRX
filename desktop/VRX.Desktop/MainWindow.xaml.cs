@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -137,6 +137,7 @@ public partial class MainWindow : Window
         FollowCheck.IsChecked = p.Follow; StereoCheck.IsChecked = p.Stereo; DismissCheck.IsChecked = p.AutoDismiss;
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         PairedCheck.IsChecked = p.MatchFrameToDepth;
+        FastModelCheck.IsChecked = p.FastDepthModel;
         RecenterKeys.SelectedValue = p.RecenterKey; MenuKeys.SelectedValue = p.MenuKey;
         SettingsPanel.IsEnabled = true;
         loading = false; DrawPreview();
@@ -150,6 +151,7 @@ public partial class MainWindow : Window
             Strength = StrengthSlider.Value, Follow = FollowCheck.IsChecked == true, Stereo = StereoCheck.IsChecked == true,
             ForegroundRefinement = ForegroundCheck.IsChecked == true,
             MatchFrameToDepth = PairedCheck.IsChecked == true,
+            FastDepthModel = FastModelCheck.IsChecked == true,
             AutoDismiss = DismissCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
             MenuKey = (int)(MenuKeys.SelectedValue ?? 0) };
         if (!p.Valid()) throw new InvalidDataException("Choose two different shortcut keys. Changes are not saved until the settings are valid.");
@@ -255,7 +257,7 @@ public partial class MainWindow : Window
         var observed = RunningApps.List(false);
         File.WriteAllLines(Path.Combine(output, "enumerated-apps.txt"), observed.Select(a => $"{a.Pid} | {a.FullPath} | {string.Join("; ", a.Windows)}"));
         var one = new Profile { ExecutablePath = Path.Combine(output, "one", "game.exe"), Width = 6.25, Distance = 3.5, Height = .2, Horizontal = .4, Strength = .8, MenuKey = 0x78 };
-        var two = new Profile { ExecutablePath = Path.Combine(output, "two", "game.exe"), Width = 4, ForegroundRefinement = false, MatchFrameToDepth = true };
+        var two = new Profile { ExecutablePath = Path.Combine(output, "two", "game.exe"), Width = 4, ForegroundRefinement = false, MatchFrameToDepth = true, FastDepthModel = false };
         store.Save(one); store.Save(two);
         if (store.Load(one.ExecutablePath).Width != 6.25 || store.Load(two.ExecutablePath).Width != 4 || store.FileFor(one.ExecutablePath) == store.FileFor(two.ExecutablePath))
             throw new Exception("Executable profile isolation failed");
@@ -264,7 +266,10 @@ public partial class MainWindow : Window
         var legacy = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(one.ExecutablePath)))!.AsObject();
         legacy.Remove("ForegroundRefinement");
         legacy.Remove("MatchFrameToDepth");
+        legacy.Remove("FastDepthModel");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
+        if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
+            throw new Exception("Fast depth model must default on for old profiles and keep a per-game opt-out");
         if (!store.Load(one.ExecutablePath).ForegroundRefinement) throw new Exception("Old profiles must default foreground refinement on");
         if (store.Load(one.ExecutablePath).MatchFrameToDepth || !store.Load(two.ExecutablePath).MatchFrameToDepth)
             throw new Exception("Frame matching default/migration/per-game round-trip failed");
@@ -272,6 +277,10 @@ public partial class MainWindow : Window
         if (conflict.Valid()) throw new Exception("Shortcut conflict was accepted");
         one.MatchFrameToDepth = true;
         File.WriteAllText(Path.Combine(output, "control-contract.txt"), one.Control(4, 7, false));
+        var original = new Profile { FastDepthModel = false };
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 4 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 1") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0"))
+            throw new Exception("Control snapshot must be v4 and end with the fast-model flag (see desktop_control.h)");
         one.MatchFrameToDepth = false;
         var sample = new RunningApp(1234, "game.exe", one.ExecutablePath, [new GameWindow(42, "Example game window")], null);
         refreshing = true; AppList.ItemsSource = new[] { sample }; AppList.SelectedItem = sample; refreshing = false;
@@ -282,6 +291,9 @@ public partial class MainWindow : Window
         if (!ReadProfile().MatchFrameToDepth) throw new Exception("Frame matching checkbox is not mapped to settings");
         ForegroundCheck.IsChecked = false;
         if (ReadProfile().ForegroundRefinement) throw new Exception("Foreground checkbox not mapped to saved settings");
+        if (FastModelCheck.IsChecked != true) throw new Exception("Fast depth model should default on");
+        FastModelCheck.IsChecked = false;
+        if (ReadProfile().FastDepthModel) throw new Exception("Fast depth model checkbox is not mapped to settings");
         PutProfile(one);
         PathLabel.Text = one.ExecutablePath; Status.Text = "Preview · saved settings are isolated by executable path";
         UpdateButtons();

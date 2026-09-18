@@ -127,6 +127,103 @@ static void TestCaptureResizePixels()
     }
 }
 
+static void TestClientCrop()
+{
+    RECT crop{ -1, -1, -1, -1 };
+    // Windowed game at 150%: 2880x1620 client inside a 2882x1668 frame
+    // (1 px border each side, 47 px title bar + top border).
+    RECT bounds{ 100, 200, 100 + 2882, 200 + 1668 };
+    Check(ClientCropInFrame(bounds, POINT{ 101, 247 }, SIZE{ 2880, 1620 }, 2882, 1668, crop) &&
+        crop.left == 1 && crop.top == 47 && crop.right == 2881 && crop.bottom == 1667, "windowed: frame and title bar cropped");
+    // Borderless / fullscreen: client == frame, nothing cropped.
+    RECT full{ 0, 0, 1920, 1080 };
+    Check(ClientCropInFrame(full, POINT{ 0, 0 }, SIZE{ 1920, 1080 }, 1920, 1080, crop) &&
+        crop.left == 0 && crop.top == 0 && crop.right == 1920 && crop.bottom == 1080, "borderless: whole frame");
+    // Negative desktop coordinates (monitor left of the primary).
+    RECT left{ -2000, -50, -2000 + 802, -50 + 632 };
+    Check(ClientCropInFrame(left, POINT{ -1999, -19 }, SIZE{ 800, 600 }, 802, 632, crop) &&
+        crop.left == 1 && crop.top == 31 && crop.right == 801 && crop.bottom == 631, "negative desktop coordinates");
+    // Frame size disagrees with the bounds (resize or DPI change in flight): no crop.
+    RECT before = crop;
+    Check(!ClientCropInFrame(bounds, POINT{ 101, 247 }, SIZE{ 2880, 1620 }, 1920, 1080, crop) &&
+        crop.left == before.left && crop.bottom == before.bottom, "inconsistent frame: whole frame, crop untouched");
+    // Scaled (DPI-virtualised) coordinates would put the client mostly outside: rejected.
+    // (origin 2600,1600 in a frame ending at 2982,1868: only 382x268 of 1920x1080 visible)
+    Check(!ClientCropInFrame(bounds, POINT{ 2600, 1600 }, SIZE{ 1920, 1080 }, 2882, 1668, crop), "mostly off-frame client rejected");
+    Check(!ClientCropInFrame(bounds, POINT{ 101, 247 }, SIZE{ 0, 0 }, 2882, 1668, crop), "empty client rejected");
+    // DPI-unaware game stretched 150% by Windows: 1 px inset trims the blended edge ring.
+    Check(ClientCropInFrame(bounds, POINT{ 101, 247 }, SIZE{ 2880, 1620 }, 2882, 1668, crop, 1) &&
+        crop.left == 2 && crop.top == 48 && crop.right == 2880 && crop.bottom == 1666, "stretched window: edge ring trimmed");
+    Check(ScaledWindowInset(144, 144) == 0 && ScaledWindowInset(96, 96) == 0, "DPI-aware window: no inset");
+    Check(ScaledWindowInset(96, 144) == 1 && ScaledWindowInset(96, 192) == 1, "150% / 200% stretch: 1 px");
+    Check(ScaledWindowInset(96, 240) == 2 && ScaledWindowInset(96, 480) == 3 && ScaledWindowInset(0, 144) == 0, "larger stretch, clamped");
+    // Client slightly larger than the frame (rounding): clamped, still valid.
+    Check(ClientCropInFrame(full, POINT{ 0, 0 }, SIZE{ 1921, 1081 }, 1920, 1080, crop) &&
+        crop.right == 1920 && crop.bottom == 1080, "client clamped to frame");
+}
+
+// A captured window with a grey 1 px frame and title bar around a four-colour
+// picture: cropping to the client region must leave no frame pixels in the
+// output, on both the exact-size copy and the scaled path.
+static void TestCaptureClientRegion()
+{
+    using Microsoft::WRL::ComPtr;
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    Hr(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context));
+    CaptureScaler scaler;
+    Hr(scaler.Init(device.Get()));
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = 64; td.Height = 48; td.MipLevels = td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> target, readback;
+    ComPtr<ID3D11RenderTargetView> rtv;
+    Hr(device->CreateTexture2D(&td, nullptr, &target));
+    Hr(device->CreateRenderTargetView(target.Get(), nullptr, &rtv));
+    td.Usage = D3D11_USAGE_STAGING; td.BindFlags = 0; td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    Hr(device->CreateTexture2D(&td, nullptr, &readback));
+    const uint32_t frameColour = 0xFF808080;
+    const uint32_t colors[4] = { 0xFF0000FF, 0xFF00FF00, 0xFFFF0000, 0xFFFFFF00 };
+    struct Case { int cw, ch; const char* name; };
+    for (auto c : { Case{ 64, 48, "exact-size client" }, Case{ 32, 24, "scaled client" } })
+    {
+        const int border = 1, title = 9;
+        const int fw = c.cw + 2 * border, fh = c.ch + border + title + border;
+        std::vector<uint32_t> pixels(size_t(fw) * fh, frameColour);
+        for (int y = 0; y < c.ch; ++y)
+            for (int x = 0; x < c.cw; ++x)
+                pixels[size_t(y + border + title) * fw + x + border] = colors[(y >= c.ch / 2 ? 2 : 0) + (x >= c.cw / 2 ? 1 : 0)];
+        D3D11_TEXTURE2D_DESC sd = td;
+        sd.Width = UINT(fw); sd.Height = UINT(fh);
+        sd.Usage = D3D11_USAGE_DEFAULT; sd.CPUAccessFlags = 0;
+        D3D11_SUBRESOURCE_DATA data{ pixels.data(), UINT(fw * 4), 0 };
+        ComPtr<ID3D11Texture2D> input;
+        Hr(device->CreateTexture2D(&sd, &data, &input));
+
+        const RECT region{ border, border + title, border + c.cw, border + title + c.ch };
+        Hr(scaler.Copy(device.Get(), context.Get(), input.Get(), fw, fh, target.Get(), rtv.Get(), 64, 48, &region));
+        context->CopyResource(readback.Get(), target.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        Hr(context->Map(readback.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+        auto pixel = [&](int x, int y) { return reinterpret_cast<const uint32_t*>(
+            static_cast<const unsigned char*>(mapped.pData) + y * mapped.RowPitch)[x]; };
+        int framePixels = 0;
+        for (int y = 0; y < 48; ++y)
+            for (int x = 0; x < 64; ++x)
+                if (pixel(x, y) == frameColour) ++framePixels;
+        Check(framePixels == 0, "client crop leaves no window-frame pixels");
+        Check(pixel(0, 0) == colors[0] && pixel(63, 0) == colors[1] && pixel(0, 47) == colors[2] && pixel(63, 47) == colors[3],
+            "client crop keeps every corner of the game picture");
+        context->Unmap(readback.Get(), 0);
+        printf("  client region (%s): %dx%d frame -> 64x48, 0 frame pixels\n", c.name, fw, fh);
+    }
+    const RECT outside{ 0, 0, 200, 200 };
+    Check(scaler.Copy(device.Get(), context.Get(), target.Get(), 64, 48, target.Get(), rtv.Get(), 64, 48, &outside) == E_INVALIDARG,
+        "region outside the frame rejected");
+}
+
 static void TestScreenAnchor()
 {
     ScreenAnchor screen;
@@ -191,7 +288,7 @@ static void TestDesktopControl()
     Check(ParseDesktopSettings("VRX 1 6.25 3.5 0.2 0.4 0.8 0 1 1 187 120 4 7 0", settings), "valid complete desktop snapshot");
     Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7, "snapshot values and command sequence");
     Check(!ParseDesktopSettings("VRX 1 6.25 3.5", settings), "partial snapshot rejected");
-    Check(!ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 0 0 0", settings), "unknown version rejected");
+    Check(!ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 0 0 0 1 0 0", settings), "unknown version rejected");
     Check(settings.foreground == 0, "v1 keeps foreground refinement off");
     Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1", settings) && settings.foreground == 1, "v2 enables foreground refinement");
     Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 0", settings) && settings.foreground == 0, "v2 disables foreground refinement");
@@ -200,6 +297,11 @@ static void TestDesktopControl()
     Check(settings.paired == 0, "older snapshots leave frame matching off");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 1", settings) && settings.paired == 1, "v3 enables matching");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1", settings) && settings.paired == 1, "partial v3 rejected without changing settings");
+    Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.fastModel == 0, "v3 keeps the default model");
+    Check(ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1", settings) && settings.fastModel == 1, "v4 selects the fast model");
+    Check(ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 0", settings) && settings.fastModel == 0, "v4 selects the default model");
+    Check(!ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings), "v4 missing model flag rejected");
+    Check(!ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 2", settings), "v4 invalid model flag rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -283,5 +385,7 @@ int main(int argc, char** argv)
     TestTrackingAndSwapchains();
     TestDepthPolicy();
     TestCaptureResizePixels();
-    std::puts("PASS: game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars");
+    TestClientCrop();
+    TestCaptureClientRegion();
+    std::puts("PASS: game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop");
 }

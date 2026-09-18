@@ -348,30 +348,65 @@ static void WarpEye(const std::vector<unsigned char>& scene, const std::vector<f
                 FILL_STRETCH, outRGBA, outDepth);
 }
 
-// Widens the near (foreground) regions horizontally by `radius` depth pixels with
-// a running max. Depth is ~2.8x coarser than colour, so a depth edge lands a few
-// colour pixels off the colour edge; foreground-coloured pixels that receive
-// background depth stay behind when the object shifts and leave a ghost sliver
-// beside the hole. Dilating the near field makes them travel with their object.
-// Horizontal only: disparity is horizontal, so only horizontal misalignment ghosts.
-static void DilateNearHorizontal(std::vector<float>& near01, int w, int h, int radius)
+// Widens the near (foreground) regions by rx depth pixels horizontally and ry
+// vertically with a separable running max. Depth is ~2.8x coarser than colour and
+// the model's edges are soft, so a depth edge lands a few colour pixels off the
+// colour edge, and foreground-coloured pixels there receive background depth.
+//  * Left/right edges: those pixels stay behind when the object shifts and leave a
+//    ghost sliver beside the hole.
+//  * Top/bottom edges: whole rows of the object move with the background instead
+//    (outward in each eye when the background is behind the screen plane), so the
+//    object's top edge visibly skews - e.g. the top of a third-person character's
+//    helmet leaning left in the left eye and right in the right eye.
+// Dilating the near field in both directions makes these pixels travel with their
+// object. (An earlier version dilated horizontally only, reasoning that disparity
+// is horizontal; that misses the top/bottom case.)
+static void DilateNear(std::vector<float>& near01, int w, int h, int rx, int ry)
 {
-    if (radius <= 0) return;
+    if (rx <= 0 && ry <= 0) return;
     if (w <= 0 || h <= 0 || near01.size() != (size_t)w * h) return;
 
-    std::vector<float> row(w);
-    for (int y = 0; y < h; y++)
+    if (rx > 0)
     {
-        float* p = near01.data() + (size_t)y * w;
-        std::copy(p, p + w, row.begin());
-        for (int x = 0; x < w; x++)
+        std::vector<float> row(w);
+        for (int y = 0; y < h; y++)
         {
-            int a = x - radius < 0 ? 0 : x - radius;
-            int b = x + radius >= w ? w - 1 : x + radius;
-            float m = row[a];
-            for (int i = a + 1; i <= b; i++) m = row[i] > m ? row[i] : m;
-            p[x] = m;
+            float* p = near01.data() + (size_t)y * w;
+            std::copy(p, p + w, row.begin());
+            for (int x = 0; x < w; x++)
+            {
+                int a = x - rx < 0 ? 0 : x - rx;
+                int b = x + rx >= w ? w - 1 : x + rx;
+                float m = row[a];
+                for (int i = a + 1; i <= b; i++) m = row[i] > m ? row[i] : m;
+                p[x] = m;
+            }
         }
     }
+    if (ry > 0)
+    {
+        const std::vector<float> src = near01;
+        for (int y = 0; y < h; y++)
+        {
+            int a = y - ry < 0 ? 0 : y - ry;
+            int b = y + ry >= h ? h - 1 : y + ry;
+            float* p = near01.data() + (size_t)y * w;
+            for (int x = 0; x < w; x++)
+            {
+                float m = src[(size_t)a * w + x];
+                for (int i = a + 1; i <= b; i++)
+                {
+                    const float v = src[(size_t)i * w + x];
+                    m = v > m ? v : m;
+                }
+                p[x] = m;
+            }
+        }
+    }
+}
+
+static void DilateNearHorizontal(std::vector<float>& near01, int w, int h, int radius)
+{
+    DilateNear(near01, w, h, radius, 0);
 }
 

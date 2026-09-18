@@ -29,7 +29,7 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 - Windows 10 2004 or later / Windows 11, a DirectX 12 GPU, and an active OpenXR runtime.
 - Tested with Helldivers 2, an RTX 3090, PSVR2, and SteamVR. Other combinations need validation.
 - The packaged release includes the desktop runtime, native dependencies, and depth model.
-- Depth is estimated using Depth Anything V2 Small. Fast motion and foreground edges can distort.
+- Depth is estimated by [ZipDepth](https://github.com/fabiotosi92/ZipDepth) by default: about 6x less GPU time per estimate than Depth Anything V2 Small (2.0 vs 13.1 ms on an RTX 3090), which keeps depth much closer to the game's frame rate. Untick **Fast depth model — ZipDepth** (per game, applies live) to use Depth Anything V2 instead. Fast motion and foreground edges can still distort.
 - **Match game frames to depth** improves alignment but adds latency and limits motion to the depth update rate. It defaults off.
 - **Extra foreground depth passes** are experimental and default on; their benefit varies.
 - GPU contention can reduce depth update speed. A steady 60 depth updates per second is not guaranteed.
@@ -44,8 +44,10 @@ Windows SDK, plus the .NET 10 SDK and SteamVR. Adjust `VCVARS` in
 
 Native dependencies must be available in the user NuGet cache:
 `Microsoft.ML.OnnxRuntime.DirectML` 1.24.4 and `Microsoft.AI.DirectML` 1.15.4.
-The model must exist at `bench/models/model_fixed_686x392.onnx`; model files
-are not tracked in Git.
+Both models must exist in `bench/models`; model files are not tracked in Git.
+The default ZipDepth model (`zipdepth_faithful_fp16_672x384.onnx`) is generated
+by `bench/zipdepth_export.py`, whose header lists the one-time setup. The
+Depth Anything V2 model is `model_fixed_686x392.onnx`.
 
 From the repository root in PowerShell, run each build step and confirm it succeeds:
 

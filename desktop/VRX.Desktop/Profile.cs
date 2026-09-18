@@ -19,6 +19,9 @@ public sealed class Profile
     public bool Stereo { get; set; } = true;
     public bool ForegroundRefinement { get; set; } = true;
     public bool MatchFrameToDepth { get; set; }
+    // ZipDepth (default) or Depth Anything V2. Sent in the v4 control snapshot; applies live.
+    // Profiles saved before this setting existed load as true.
+    public bool FastDepthModel { get; set; } = true;
     public bool AutoDismiss { get; set; } = true;
     public int RecenterKey { get; set; } = 0xBB;
     public int MenuKey { get; set; } = 0x77;
@@ -28,7 +31,7 @@ public sealed class Profile
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey;
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 3 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)}\n");
+        $"VRX 4 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)

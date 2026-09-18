@@ -27,6 +27,10 @@ try {
     Copy-Item "$ortPackage\runtimes\win-x64\native\*.dll" $engine
     Copy-Item "$dmlPackage\bin\x64-win\DirectML.dll" $engine
     Copy-Item bench/models/model_fixed_686x392.onnx $models
+    # Default depth model (Depth Anything V2 above is the per-game alternative); generated, not downloaded.
+    $zipDepth = 'bench/models/zipdepth_faithful_fp16_672x384.onnx'
+    if (!(Test-Path $zipDepth)) { throw "$zipDepth missing: see the setup steps at the top of bench/zipdepth_export.py" }
+    Copy-Item $zipDepth $models
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
     $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1

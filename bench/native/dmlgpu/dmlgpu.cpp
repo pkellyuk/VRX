@@ -63,11 +63,14 @@ int main(int argc, char** argv)
     int iters  = argc > 5 ? atoi(argv[5]) : 50;
 
     bool ownDevice = false;
+    std::string inNameArg = "pixel_values", outNameArg = "predicted_depth";   // DA-V2 defaults
     std::vector<std::pair<std::string, std::string>> cfg;
     for (int i = 6; i < argc; i++)
     {
         std::string a = argv[i];
         if (a == "--own-device") { ownDevice = true; continue; }
+        if (a.rfind("in=", 0) == 0) { inNameArg = a.substr(3); continue; }     // model's input tensor name
+        if (a.rfind("out=", 0) == 0) { outNameArg = a.substr(4); continue; }   // model's output tensor name
         size_t eq = a.find('=');
         if (eq != std::string::npos && eq > 0) cfg.push_back({ a.substr(0, eq), a.substr(eq + 1) });
     }
@@ -220,8 +223,8 @@ int main(int argc, char** argv)
 
     printf("input : D3D12 GPU buffer %llu bytes, zero-copy (live)\n", (unsigned long long)inBytes);
 
-    const char* inName  = "pixel_values";
-    const char* outName = "predicted_depth";
+    const char* inName  = inNameArg.c_str();
+    const char* outName = outNameArg.c_str();
 
     OrtValue* lastOut = nullptr;
     auto runOnce = [&]() -> bool {
