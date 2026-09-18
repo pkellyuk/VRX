@@ -7,7 +7,10 @@ are needed. This provides a virtual 3D screen, not native VR camera controls.
 
 ## Get started
 
-Download the installer or portable ZIP from [GitHub Releases](https://github.com/pkellyuk/VRX/releases).
+Download VRX v1.1.0: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.1.0/VRX-Setup-1.1.0.exe)
+or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.1.0/VRX-1.1.0-win-x64.zip)
+([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.1.0); older versions on
+[GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.
 
@@ -28,7 +31,7 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 
 - Windows 10 2004 or later / Windows 11, a DirectX 12 GPU, and an active OpenXR runtime.
 - Tested with Helldivers 2, an RTX 3090, PSVR2, and SteamVR. Other combinations need validation.
-- The packaged release includes the desktop runtime, native dependencies, and depth model.
+- The packaged release includes the desktop runtime, native dependencies, and both depth models.
 - Depth is estimated by [ZipDepth](https://github.com/fabiotosi92/ZipDepth) by default: about 6x less GPU time per estimate than Depth Anything V2 Small (2.0 vs 13.1 ms on an RTX 3090), which keeps depth much closer to the game's frame rate. Untick **Fast depth model — ZipDepth** (per game, applies live) to use Depth Anything V2 instead. Fast motion and foreground edges can still distort.
 - **Match game frames to depth** improves alignment but adds latency and limits motion to the depth update rate. It defaults off.
 - **Extra foreground depth passes** are experimental and default on; their benefit varies.
