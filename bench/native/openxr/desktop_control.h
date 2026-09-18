@@ -5,7 +5,8 @@
 #include <string>
 
 // Versioned, complete snapshots written atomically by the desktop application.
-// Only the render thread reads/applies settings; the inference worker is unchanged.
+// Only the render thread reads/applies settings; the model choice is handed to the
+// inference worker, which reloads the model between passes.
 struct DesktopSettings
 {
     float width = 5.7f, distance = 3, height = 0, horizontal = 0, strength = 1;
@@ -14,6 +15,8 @@ struct DesktopSettings
     int stop = 0;
     int foreground = 0; // v1 launchers retain their original behaviour
     int paired = 0;
+    int fastModel = 0;
+    int version = 0;    // snapshot version, so v1-v3 launchers do not override --model  // v4: 1 = ZipDepth, 0 = Depth Anything V2 (worker reloads live)
 };
 
 inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& result)
@@ -25,12 +28,14 @@ inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& resul
         >> s.follow >> s.stereo >> s.autoDismiss >> s.recenterKey >> s.menuKey >> s.recenter >> s.menu >> s.stop)) return false;
     if (version >= 2 && !(input >> s.foreground)) return false;
     if (version >= 3 && !(input >> s.paired)) return false;
+    if (version >= 4 && !(input >> s.fastModel)) return false;
+    s.version = version;
     if (input >> tail) return false;
     auto between = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
-    if (magic != "VRX" || version < 1 || version > 3 || !between(s.width, 1, 10) || !between(s.distance, 1, 8) ||
+    if (magic != "VRX" || version < 1 || version > 4 || !between(s.width, 1, 10) || !between(s.distance, 1, 8) ||
         !between(s.height, -2, 2) || !between(s.horizontal, -3, 3) || !between(s.strength, 0, 2) ||
         s.follow < 0 || s.follow > 1 || s.stereo < 0 || s.stereo > 1 || s.autoDismiss < 0 || s.autoDismiss > 1 ||
-        s.stop < 0 || s.stop > 1 || s.foreground < 0 || s.foreground > 1 || s.paired < 0 || s.paired > 1 || s.recenterKey < 1 || s.recenterKey > 254 ||
+        s.stop < 0 || s.stop > 1 || s.foreground < 0 || s.foreground > 1 || s.paired < 0 || s.paired > 1 || s.fastModel < 0 || s.fastModel > 1 || s.recenterKey < 1 || s.recenterKey > 254 ||
         s.menuKey < 1 || s.menuKey > 254 || s.recenterKey == s.menuKey) return false;
     result = s;
     return true;

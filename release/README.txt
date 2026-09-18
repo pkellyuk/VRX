@@ -25,7 +25,9 @@ Match game frames to depth defaults off. It gives cleaner moving outlines in
 the tested game, but adds delay and limits game-image motion to the depth rate.
 Neither option guarantees 60 fps. Disable extra foreground passes for comparisons.
 
-This first release uses Depth Anything V2 Small. ZipDepth is not included.
+Depth is estimated by ZipDepth by default: about 6x less GPU time than Depth
+Anything V2 Small, so depth keeps closer to the game. Untick "Fast depth model
+- ZipDepth" (per game, applies live) to use Depth Anything V2 instead.
 Single GPU only; no game injection, motion-controller controls, or in-headset UI.
 SteamVR dashboard dismissal is best-effort. Other games/headsets need validation.
 

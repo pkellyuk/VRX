@@ -7,6 +7,13 @@ The supplied FP16-weight ONNX model has been modified to fix input/output shapes
 at 686x392, with ONNX shape inference, using bench/make_fixed_shape.py.
 See licenses/DepthAnything-LICENSE.txt.
 
+ZipDepth-base (MIT), Fabio Tosi
+https://github.com/fabiotosi92/ZipDepth
+Default depth model. The zipdepth_base.pth checkpoint has been exported to
+a fixed 672x384 ONNX model with FP16 arithmetic and float input/output, keeping
+the original global-context attention pooling, using bench/zipdepth_export.py.
+See licenses/ZipDepth-LICENSE.txt.
+
 ONNX Runtime DirectML 1.24.4 (MIT and bundled third-party notices)
 https://github.com/microsoft/onnxruntime
 See licenses/ONNXRuntime-LICENSE.txt and ONNXRuntime-ThirdPartyNotices.txt.

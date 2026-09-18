@@ -10,7 +10,7 @@ call "%VSROOT%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b 1
 :build
 if not exist "%~dp0out" mkdir "%~dp0out"
-cl /nologo /std:c++17 /EHsc /O2 /W4 /WX /I"%~dp0include" /Fo"%~dp0out\playback_test.obj" /Fe"%~dp0out\playback_test.exe" "%~dp0playback_test.cpp" /link d3d11.lib d3dcompiler.lib
+cl /nologo /std:c++17 /EHsc /O2 /W4 /WX /I"%~dp0include" /Fo"%~dp0out\playback_test.obj" /Fe"%~dp0out\playback_test.exe" "%~dp0playback_test.cpp" /link d3d11.lib d3dcompiler.lib dwmapi.lib user32.lib shcore.lib
 if errorlevel 1 exit /b 1
 "%~dp0out\playback_test.exe"
 exit /b %errorlevel%

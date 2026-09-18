@@ -123,20 +123,51 @@ static std::filesystem::path ExecutableDirectory()
     return std::filesystem::path(path).parent_path();
 }
 
-static std::filesystem::path ModelPath()
+// What the engine needs to know about a depth model. The renderer's depth grid
+// stays W x H (xr_common.h); RunModelRaw resamples each model's output into it, so
+// normalisation, dilation, foreground refinement and the warp are model-agnostic.
+// Both models output relative inverse depth (larger = nearer).
+struct ModelSpec
 {
+    const char* name;
+    const wchar_t* file;
+    const char* inName;
+    const char* outName;
+    int inW, inH;                       // fixed NCHW input size; output is the same size
+    bool imagenetNorm;                  // prep applies ImageNet mean/std (else RGB 0..1)
+    // Foreground widening, in depth-grid pixels, that covers this model's soft edges
+    // (see DilateNear). Measured on GPU-warped eye dumps of a near panel over a
+    // textured scene: the smallest values with no ghost lines at side edges and no
+    // skewed rows at the top edge.
+    int dilateH, dilateV;
+};
+
+// Depth Anything V2 Small, fixed-shape export (bench/make_fixed_shape.py).
+static const ModelSpec kDepthAnythingV2 = { "Depth Anything V2 Small", L"model_fixed_686x392.onnx",
+    "pixel_values", "predicted_depth", 686, 392, true, 2, 2 };
+
+// ZipDepth-base (MIT), faithful FP16 export by bench/zipdepth_export.py. Sides must be
+// multiples of 32; 672x384 keeps the 1.75 aspect. It normalises internally. Measured
+// 2.0 ms vs 13.1 ms for DA-V2 on this DirectML stack (bench/native/dmlgpu probe).
+static const ModelSpec kZipDepth = { "ZipDepth-base", L"zipdepth_faithful_fp16_672x384.onnx",
+    "image", "depth", 672, 384, false, 3, 3 };
+
+static std::filesystem::path ModelPath(const wchar_t* file)
+{
+    if (!file) throw std::runtime_error("No depth model file specified.");
+
     const auto directory = ExecutableDirectory();
-    const auto packaged = directory / L"models" / L"model_fixed_686x392.onnx";
+    const auto packaged = directory / L"models" / file;
     if (std::filesystem::is_regular_file(packaged)) return packaged;
     for (auto parent = directory; !parent.empty();)
     {
-        const auto candidate = parent / L"bench" / L"models" / L"model_fixed_686x392.onnx";
+        const auto candidate = parent / L"bench" / L"models" / file;
         if (std::filesystem::is_regular_file(candidate)) return candidate;
         const auto next = parent.parent_path();
         if (next == parent) break;
         parent = next;
     }
-    throw std::runtime_error("Depth model missing. Reinstall VRX or restore engine/models/model_fixed_686x392.onnx.");
+    throw std::runtime_error("Depth model missing. Reinstall VRX or restore engine/models/" + winrt::to_string(file) + ".");
 }
 
 static void Log(const char* fmt, ...)
@@ -176,11 +207,13 @@ struct Options
     bool paired = false;
     bool foreground = true;
     bool boostGpuPriority = true;      // best effort; --normal-gpu-priority disables the experiment
+    const ModelSpec* model = &kZipDepth;          // default; --model=dav2 selects Depth Anything V2
     bool selfTestOnly = false;
     bool debugLayer = false;
     bool smooth = true;
     int fillMode = FILL_MIRROR;
-    int dilate = 2;                     // depth pixels (~5.6 colour px at 1920); 1 still ghosts at soft corners
+    int dilate = -1;                    // depth pixels; -1 = the model's own value (ModelSpec)
+    int dilateV = -1;                   // vertical depth pixels; -1 = the model's own value
     double smoothTau = 0.4;             // seconds
     bool submitDepth = false;           // SteamVR ignores it (measured) - opt-in only
     bool freezePose = false;
@@ -227,8 +260,9 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
 
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
 {
-    uint32_t dw, dh, taps, exactLoad;
-    float cropX = 0, cropY = 0, cropSize = 1, padding = 0;
+    uint32_t dw, dh, taps, exactLoad;   // dw x dh = the model's input size
+    float cropX = 0, cropY = 0, cropSize = 1;
+    uint32_t normalize = 1;             // 1: ImageNet mean/std, 0: RGB 0..1 (model normalises)
 };
 
 // Everything the warp writes to, at one colour resolution.
@@ -266,6 +300,10 @@ struct Capture
     wdx::Direct3D11::IDirect3DDevice rtDevice{ nullptr };
     std::thread thread;
     std::atomic<uint64_t> frames{ 0 };
+    HWND hwnd = nullptr;                // window capture only; frames are cropped to its client area
+    int frameW = 0, frameH = 0;         // captured frame (pool) size - the whole window; srcW/srcH may be smaller
+    RECT crop{};                        // last client crop applied (for change logging)
+    bool cropping = false;
 };
 
 struct App
@@ -317,8 +355,17 @@ struct App
     OrtEnv* env = nullptr;
     OrtSession* ortSession = nullptr;
     OrtValue* modelInValue = nullptr;
+    const OrtDmlApi* dmlApi = nullptr;
+    ComPtr<IDMLDevice> dmlDevice;
+    void* dmlAlloc = nullptr;           // DML wrapper around modelIn; freed on reload
+    // Written by the render thread from the desktop control file; the worker
+    // compares it with opt.model and reloads between passes (null = no request).
+    std::atomic<const ModelSpec*> requestedModel{ nullptr };
     ComPtr<ID3D12Resource> modelIn;                      // DEFAULT heap, written by the prep shader
-    std::vector<float> rawDepth;
+    std::vector<float> modelOut;        // model output at the model's own size
+    struct ResampleTap { int i0, i1; float t; };
+    std::vector<ResampleTap> resampleX, resampleY;   // model output -> depth grid, built once
+    std::vector<float> rawDepth;        // model output resampled to the W x H depth grid
     RangeSmoother smoother;
     ForegroundTracker foregroundTracker;
     ForegroundBudget foregroundBudget;
@@ -542,6 +589,8 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
+        if (!strcmp(a, "--model=zipdepth")) { opt->model = &kZipDepth; continue; }
+        if (!strcmp(a, "--model=dav2")) { opt->model = &kDepthAnythingV2; continue; }
         if (!strcmp(a, "--selftest")) { opt->selfTestOnly = true; continue; }
         if (!strcmp(a, "--debug")) { opt->debugLayer = true; continue; }
         if (!strncmp(a, "--test-depth-failures=", 22)) { opt->testDepthFailures = atoi(a + 22); continue; }
@@ -549,6 +598,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--fill=mirror")) { opt->fillMode = FILL_MIRROR; continue; }
         if (!strcmp(a, "--fill=stretch")) { opt->fillMode = FILL_STRETCH; continue; }
         if (!strncmp(a, "--dilate=", 9)) { opt->dilate = atoi(a + 9); continue; }
+        if (!strncmp(a, "--dilate-v=", 11)) { opt->dilateV = atoi(a + 11); continue; }
         if (!strncmp(a, "--tau=", 6)) { opt->smoothTau = atof(a + 6); continue; }
         if (!strcmp(a, "--submit-depth")) { opt->submitDepth = true; continue; }
         if (!strcmp(a, "--freeze-pose")) { opt->freezePose = true; continue; }
@@ -559,7 +609,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (a[0] == '-') { Log("ParseArgs: unknown option %s", a); return false; }
         opt->runSeconds = atof(a);
     }
-    if (opt->dilate < 0 || opt->dilate > 16) { Log("ParseArgs: --dilate must be 0..16"); return false; }
+    if (opt->dilate < -1 || opt->dilate > 16 || opt->dilateV < -1 || opt->dilateV > 16) { Log("ParseArgs: --dilate and --dilate-v must be 0..16"); return false; }
     if (opt->executable.find_first_of(L"\\/") != std::wstring::npos)
     { Log("ParseArgs: --exe takes a filename, for example helldivers2.exe"); return false; }
     if (opt->checkSource && (opt->source != SourceKind::Capture || (opt->windowTitle.empty() && opt->executable.empty())))
@@ -578,7 +628,8 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
     Log("ParseArgs: source %s (monitor %d, window '%ls', image '%ls') seconds %.0f",
         opt->source == SourceKind::Capture ? "capture" : opt->source == SourceKind::Image ? "image" : "synthetic",
         opt->monitorIndex, opt->windowTitle.c_str(), opt->imagePath.c_str(), opt->runSeconds);
-    Log("ParseArgs: fill %s dilate %d", opt->fillMode == FILL_MIRROR ? "mirror" : "stretch", opt->dilate);
+    Log("ParseArgs: fill %s dilate %d vertical %d (-1 = per model)", opt->fillMode == FILL_MIRROR ? "mirror" : "stretch", opt->dilate, opt->dilateV);
+    Log("ParseArgs: depth model %s (%dx%d)", opt->model->name, opt->model->inW, opt->model->inH);
     Log("ParseArgs: warp %d scale %.2f truth %d paired %d smooth %d tau %.2fs submitDepth %d selftest %d debug %d",
         (int)opt->doWarp, opt->warpScale, (int)opt->useTruth, (int)opt->paired, (int)opt->smooth, opt->smoothTau,
         (int)opt->submitDepth, (int)opt->selfTestOnly, (int)opt->debugLayer);
@@ -804,6 +855,7 @@ static bool SelectCaptureItem(App& app)
         const HWND hwnd = FindCaptureWindow(app.opt);
         if (!hwnd) return false;
         hr = interop->CreateForWindow(hwnd, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(c.item));
+        c.hwnd = hwnd;
     }
     else
     {
@@ -836,6 +888,19 @@ static bool InitCaptureItem(App& app)
     if (size.Width <= 0 || size.Height <= 0) { Log("InitCaptureItem: FAIL item size %dx%d", size.Width, size.Height); return false; }
     app.srcW = size.Width;
     app.srcH = size.Height;
+    c.frameW = size.Width;
+    c.frameH = size.Height;
+    RECT crop{};
+    if (c.hwnd && QueryClientCrop(c.hwnd, size.Width, size.Height, crop))
+    {
+        // Present the game's client area only: a windowed game's frame includes a
+        // 1 px border (a light line round the screen in the headset) and title bar.
+        app.srcW = crop.right - crop.left;
+        app.srcH = crop.bottom - crop.top;
+        Log("InitCaptureItem: window %dx%d, client area %dx%d at (%ld,%ld) - frame and title bar excluded",
+            size.Width, size.Height, app.srcW, app.srcH, crop.left, crop.top);
+    }
+    else if (c.hwnd) Log("InitCaptureItem: client area unavailable; capturing the whole window %dx%d", size.Width, size.Height);
     app.srcFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
 
     // D3D11 device on the SAME adapter (shared handles do not cross adapters)
@@ -887,7 +952,7 @@ static bool StartCapture(App& app)
     CloseHandle(fh);
     if (FAILED(hr)) { Log("StartCapture: FAIL OpenSharedFence 0x%08X", (unsigned)hr); return false; }
 
-    winrt::Windows::Graphics::SizeInt32 size{ app.srcW, app.srcH };
+    winrt::Windows::Graphics::SizeInt32 size{ c.frameW, c.frameH };   // whole window, not the cropped source
     c.pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(c.rtDevice, wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
     c.session = c.pool.CreateCaptureSession(c.item);
     try { c.session.IsBorderRequired(false); }
@@ -905,7 +970,7 @@ static void CaptureMain(App* app)
     Log("CaptureMain: enter");
 
     Capture& c = app->cap;
-    int poolW = app->srcW, poolH = app->srcH;
+    int poolW = c.frameW, poolH = c.frameH;
     uint64_t layout = 0;
     bool apartmentInitialized = false;
     try
@@ -938,8 +1003,19 @@ static void CaptureMain(App* app)
         auto source = ReserveSource(*app);
         if (source)
         {
+            // Window capture: crop every frame to the client area (it moves if the
+            // window is restyled, resized or changes DPI). Whole frame if unknown.
+            RECT crop{};
+            const bool cropping = c.hwnd && QueryClientCrop(c.hwnd, cs.Width, cs.Height, crop);
+            if (cropping != c.cropping || (cropping && !EqualRect(&crop, &c.crop)))
+            {
+                if (cropping) Log("CaptureMain: client area %ldx%ld at (%ld,%ld) of %dx%d frame", crop.right - crop.left,
+                    crop.bottom - crop.top, crop.left, crop.top, cs.Width, cs.Height);
+                else if (c.hwnd) Log("CaptureMain: client area unavailable; using the whole %dx%d frame", cs.Width, cs.Height);
+                c.cropping = cropping; c.crop = crop;
+            }
             winrt::check_hresult(c.scaler.Copy(c.dev.Get(), c.ctx.Get(), tex.Get(), cs.Width, cs.Height,
-                c.tex11[source->index].Get(), c.rtv11[source->index].Get(), app->srcW, app->srcH));
+                c.tex11[source->index].Get(), c.rtv11[source->index].Get(), app->srcW, app->srcH, cropping ? &crop : nullptr));
             UINT64 v = ++app->captureFenceVal;
             if (FAILED(c.ctx4->Signal(c.fence11.Get(), v)))
             {
@@ -1202,12 +1278,13 @@ void main(uint3 id : SV_DispatchThreadID)
 )HLSL";
 
 // Source texture (any size, RGBA or BGRA view) -> the model's input tensor:
-// NCHW float, ImageNet-normalised, box-filtered down with taps x taps bilinear taps.
+// NCHW float at the model's input size, box-filtered down with taps x taps bilinear
+// taps, ImageNet-normalised unless the model normalises internally.
 static const char* kPrepHlsl = R"HLSL(
 cbuffer C : register(b0)
 {
     uint DW; uint DH; uint taps; uint exactLoad;
-    float cropX; float cropY; float cropSize; float padding;
+    float cropX; float cropY; float cropSize; uint normalize;
 };
 
 Texture2D<float4>         scene   : register(t0);
@@ -1240,7 +1317,7 @@ void main(uint3 id : SV_DispatchThreadID)
 
     const float3 mean = float3(0.485, 0.456, 0.406);
     const float3 istd = float3(1.0 / 0.229, 1.0 / 0.224, 1.0 / 0.225);
-    float3 o = (v - mean) * istd;
+    float3 o = normalize != 0 ? (v - mean) * istd : v;
     uint plane = DW * DH;
     uint p = id.y * DW + id.x;
     modelIn[p] = o.r;
@@ -1444,52 +1521,103 @@ static void RecordCopyToSwapchain(App& app, WarpTarget& t, ID3D12Resource* color
 }
 
 // ------------------------------------------------------------------ model
+static bool LoadModel(App& app);
+
+// One-time ONNX Runtime + DirectML setup. The model itself is loaded by LoadModel,
+// which the worker can call again to switch models during playback.
 static bool InitModel(App& app)
 {
     Log("InitModel: enter");
 
     ort = OrtGetApiBase()->GetApi(ORT_API_VERSION);
     if (!ort) { Log("InitModel: FAIL no OrtApi"); return false; }
-    const OrtDmlApi* dmlApi = nullptr;
-    if (OrtStatus* st = ort->GetExecutionProviderApi("DML", ORT_API_VERSION, (const void**)&dmlApi)) { Fail("GetExecutionProviderApi(DML)", st); return false; }
-    if (!dmlApi) { Log("InitModel: FAIL null OrtDmlApi"); return false; }
+    if (OrtStatus* st = ort->GetExecutionProviderApi("DML", ORT_API_VERSION, (const void**)&app.dmlApi)) { Fail("GetExecutionProviderApi(DML)", st); return false; }
+    if (!app.dmlApi) { Log("InitModel: FAIL null OrtDmlApi"); return false; }
 
     ort->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "xrapp5", &app.env);
-    OrtSessionOptions* so = nullptr;
-    ort->CreateSessionOptions(&so);
 
     HMODULE dmllib = LoadLibraryW(L"DirectML.dll");
     if (!dmllib) { Log("InitModel: FAIL DirectML.dll"); return false; }
     auto createDmlDevice = (HRESULT(WINAPI*)(ID3D12Device*, DML_CREATE_DEVICE_FLAGS, REFIID, void**))
         GetProcAddress(dmllib, "DMLCreateDevice");
     if (!createDmlDevice) { Log("InitModel: FAIL DMLCreateDevice export"); return false; }
+    if (FAILED(createDmlDevice(app.device.Get(), DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&app.dmlDevice)))) { Log("InitModel: FAIL DMLCreateDevice"); return false; }
 
-    ComPtr<IDMLDevice> dmlDevice;
-    if (FAILED(createDmlDevice(app.device.Get(), DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&dmlDevice)))) { Log("InitModel: FAIL DMLCreateDevice"); return false; }
-    if (OrtStatus* st = dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, dmlDevice.Get(), app.mlQueue.Get())) { Fail("AppendExecutionProvider_DML1", st); return false; }
+    const bool ok = LoadModel(app);
+    Log("InitModel: exit %s", ok ? "ok" : "FAIL");
+    return ok;
+}
 
-    std::wstring modelPath = ModelPath().wstring();
-    Log("InitModel: loading %s", winrt::to_string(modelPath).c_str());
-    if (OrtStatus* st = ort->CreateSession(app.env, modelPath.c_str(), so, &app.ortSession)) { Fail("CreateSession", st); return false; }
+// Releases the current model's session and input buffer. Caller guarantees no
+// ml-queue work that uses them is still in flight (see SwitchModel).
+static void ReleaseModel(App& app)
+{
+    Log("ReleaseModel: enter (%s)", app.opt.model ? app.opt.model->name : "none");
+    if (app.modelInValue) { ort->ReleaseValue(app.modelInValue); app.modelInValue = nullptr; }
+    if (app.dmlAlloc && app.dmlApi)
+    {
+        if (OrtStatus* st = app.dmlApi->FreeGPUAllocation(app.dmlAlloc)) { Fail("FreeGPUAllocation", st); ort->ReleaseStatus(st); }
+        app.dmlAlloc = nullptr;
+    }
+    if (app.ortSession) { ort->ReleaseSession(app.ortSession); app.ortSession = nullptr; }
+    app.modelIn.Reset();
+    Log("ReleaseModel: exit");
+}
+
+// Loads app.opt.model: ORT session on the shared device/ml queue, GPU input buffer,
+// output resample tables.
+static bool LoadModel(App& app)
+{
+    if (!app.opt.model || !app.env || !app.dmlApi || !app.dmlDevice) { Log("LoadModel: FAIL not initialised"); return false; }
+    const ModelSpec& spec = *app.opt.model;
+    Log("LoadModel: enter (%s)", spec.name);
+
+    OrtSessionOptions* so = nullptr;
+    if (OrtStatus* st = ort->CreateSessionOptions(&so)) { Fail("CreateSessionOptions", st); return false; }
+    if (OrtStatus* st = app.dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, app.dmlDevice.Get(), app.mlQueue.Get()))
+    { Fail("AppendExecutionProvider_DML1", st); ort->ReleaseSessionOptions(so); return false; }
+
+    std::wstring modelPath = ModelPath(spec.file).wstring();
+    Log("LoadModel: loading %s (%s, input %dx%d '%s' -> '%s', %s)", winrt::to_string(modelPath).c_str(), spec.name,
+        spec.inW, spec.inH, spec.inName, spec.outName, spec.imagenetNorm ? "ImageNet-normalised" : "RGB 0..1");
+    OrtStatus* created = ort->CreateSession(app.env, modelPath.c_str(), so, &app.ortSession);
+    ort->ReleaseSessionOptions(so);
+    if (created) { Fail("CreateSession", created); app.ortSession = nullptr; return false; }
 
     const OrtMemoryInfo* inInfos[1] = { nullptr };
     if (OrtStatus* st = ort->SessionGetMemoryInfoForInputs(app.ortSession, inInfos, 1)) { Fail("SessionGetMemoryInfoForInputs", st); return false; }
 
     // Model input: a VRAM buffer the prep shader writes and DirectML reads - the
     // picture never visits the CPU. (M1: a resource handed to DML needs UAV access.)
-    const UINT64 modelBytes = (UINT64)3 * H * W * sizeof(float);
-    int64_t modelDims[4] = { 1, 3, H, W };
+    const UINT64 modelBytes = (UINT64)3 * spec.inH * spec.inW * sizeof(float);
+    int64_t modelDims[4] = { 1, 3, spec.inH, spec.inW };
     if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, modelBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.modelIn, nullptr)) return false;
 
-    void* dmlAlloc = nullptr;
-    if (OrtStatus* st = dmlApi->CreateGPUAllocationFromD3DResource(app.modelIn.Get(), &dmlAlloc)) { Fail("CreateGPUAllocationFromD3DResource", st); return false; }
-    if (OrtStatus* st = ort->CreateTensorWithDataAsOrtValue(const_cast<OrtMemoryInfo*>(inInfos[0]), dmlAlloc, modelBytes,
+    if (OrtStatus* st = app.dmlApi->CreateGPUAllocationFromD3DResource(app.modelIn.Get(), &app.dmlAlloc)) { Fail("CreateGPUAllocationFromD3DResource", st); return false; }
+    if (OrtStatus* st = ort->CreateTensorWithDataAsOrtValue(const_cast<OrtMemoryInfo*>(inInfos[0]), app.dmlAlloc, modelBytes,
                                                             modelDims, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &app.modelInValue))
     { Fail("CreateTensorWithDataAsOrtValue", st); return false; }
 
+    app.modelOut.assign((size_t)spec.inW * spec.inH, 0.f);
     app.rawDepth.resize((size_t)W * H);
-    Log("InitModel: exit ok, %dx%d on the shared device via the ml queue (GPU-resident input)", H, W);
+
+    // Pixel-centre bilinear taps (same convention as SampleDepth), computed once so
+    // the per-pass resample is a table walk rather than 269k clamped lookups.
+    auto taps = [](int src, int dst) {
+        std::vector<App::ResampleTap> t(dst);
+        for (int i = 0; i < dst; i++)
+        {
+            const float p = std::clamp((i + .5f) / dst * src - .5f, 0.f, float(src - 1));
+            const int i0 = int(p);
+            t[i] = { i0, std::min(i0 + 1, src - 1), p - i0 };
+        }
+        return t;
+    };
+    app.resampleX = taps(spec.inW, W);
+    app.resampleY = taps(spec.inH, H);
+    Log("LoadModel: exit ok, %s %dx%d on the shared device via the ml queue (GPU-resident input)%s", spec.name,
+        spec.inW, spec.inH, (spec.inW == W && spec.inH == H) ? "" : ", output resampled to the depth grid");
     return true;
 }
 
@@ -1502,11 +1630,13 @@ static UINT64 SubmitPrep(App& app, UINT srcDescIndex, int srcW, int srcH, ID3D12
 {
     if (srcW <= 0 || srcH <= 0) return 0;
 
+    const ModelSpec& spec = *app.opt.model;
     PrepConstants pc{};
-    pc.dw = W; pc.dh = H;
-    pc.exactLoad = (srcW == W && srcH == H && crop.size == 1 && crop.x == 0 && crop.y == 0) ? 1u : 0u;
+    pc.dw = (uint32_t)spec.inW; pc.dh = (uint32_t)spec.inH;
+    pc.exactLoad = (srcW == spec.inW && srcH == spec.inH && crop.size == 1 && crop.x == 0 && crop.y == 0) ? 1u : 0u;
     pc.cropX = crop.x; pc.cropY = crop.y; pc.cropSize = crop.size;
-    pc.taps = (uint32_t)std::clamp(int(std::ceil(srcW * crop.size / W)), 1, 4);
+    pc.taps = (uint32_t)std::clamp(int(std::ceil(srcW * crop.size / spec.inW)), 1, 4);
+    pc.normalize = spec.imagenetNorm ? 1u : 0u;
 
     app.mlCmdAlloc->Reset();
     app.mlCmdList->Reset(app.mlCmdAlloc.Get(), nullptr);
@@ -1518,7 +1648,7 @@ static UINT64 SubmitPrep(App& app, UINT srcDescIndex, int srcW, int srcH, ID3D12
     cl->SetComputeRoot32BitConstants(0, sizeof(PrepConstants) / 4, &pc, 0);
     cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDescIndex));
     cl->SetComputeRootUnorderedAccessView(2, app.modelIn->GetGPUVirtualAddress());
-    cl->Dispatch((W + 7) / 8, (H + 7) / 8, 1);
+    cl->Dispatch((spec.inW + 7) / 8, (spec.inH + 7) / 8, 1);
 
     D3D12_RESOURCE_BARRIER uav{};
     uav.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
@@ -1542,14 +1672,41 @@ static void WaitMlFence(App& app, UINT64 value)
     WaitForSingleObject(app.mlFenceEvent, INFINITE);
 }
 
+// modelOut (model size) -> rawDepth (W x H grid), pixel-centre bilinear via the
+// tap tables built in InitModel. Verified against SampleDepth by SelfTestResample.
+static void ResampleToGrid(App& app)
+{
+    const ModelSpec& spec = *app.opt.model;
+    if (app.modelOut.size() != (size_t)spec.inW * spec.inH) return;
+    if (app.rawDepth.size() != (size_t)W * H) return;
+    if (app.resampleX.size() != (size_t)W || app.resampleY.size() != (size_t)H) return;
+
+    const float* src = app.modelOut.data();
+    for (int y = 0; y < H; y++)
+    {
+        const App::ResampleTap ty = app.resampleY[y];
+        const float* r0 = src + (size_t)ty.i0 * spec.inW;
+        const float* r1 = src + (size_t)ty.i1 * spec.inW;
+        float* out = app.rawDepth.data() + (size_t)y * W;
+        for (int x = 0; x < W; x++)
+        {
+            const App::ResampleTap tx = app.resampleX[x];
+            const float top = r0[tx.i0] + (r0[tx.i1] - r0[tx.i0]) * tx.t;
+            const float bot = r1[tx.i0] + (r1[tx.i1] - r1[tx.i0]) * tx.t;
+            out[x] = top + (bot - top) * ty.t;
+        }
+    }
+}
+
 // Runs the model on whatever the prep shader put in the input buffer.
 static bool RunModelRaw(App& app)
 {
     if (!app.ortSession || !app.modelInValue) return false;
 
+    const ModelSpec& spec = *app.opt.model;
     OrtValue* out = nullptr;
-    const char* inName = "pixel_values";
-    const char* outName = "predicted_depth";
+    const char* inName = spec.inName;
+    const char* outName = spec.outName;
     if (OrtStatus* st = ort->Run(app.ortSession, nullptr, &inName, (const OrtValue* const*)&app.modelInValue, 1, &outName, 1, &out))
     { Fail("Run", st); ort->ReleaseStatus(st); return false; }
 
@@ -1562,7 +1719,7 @@ static bool RunModelRaw(App& app)
     OrtStatus* metadataError = ort->GetTensorElementType(info, &type);
     if (!metadataError) metadataError = ort->GetTensorShapeElementCount(info, &count);
     ort->ReleaseTensorTypeAndShapeInfo(info);
-    if (metadataError || type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || count != app.rawDepth.size())
+    if (metadataError || type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || count != app.modelOut.size())
     {
         if (metadataError) { Fail("depth metadata", metadataError); ort->ReleaseStatus(metadataError); }
         else Log("RunModelRaw: incompatible depth output (type %d, elements %zu)", (int)type, count);
@@ -1572,10 +1729,19 @@ static bool RunModelRaw(App& app)
     if (OrtStatus* st = ort->GetTensorMutableData(out, (void**)&dp))
     { Fail("GetTensorMutableData", st); ort->ReleaseStatus(st); ort->ReleaseValue(out); return false; }
     if (!dp) { ort->ReleaseValue(out); Log("RunModelRaw: null output"); return false; }
-    memcpy(app.rawDepth.data(), dp, app.rawDepth.size() * sizeof(float));
+    memcpy(app.modelOut.data(), dp, app.modelOut.size() * sizeof(float));
     ort->ReleaseValue(out);
-    for (float v : app.rawDepth)
+    for (float v : app.modelOut)
         if (!std::isfinite(v)) { Log("RunModelRaw: non-finite depth output"); return false; }
+
+    // Resample to the renderer's W x H depth grid (pixel-centre bilinear). For the
+    // native 686x392 model this is a plain copy, so its path is unchanged.
+    if (spec.inW == W && spec.inH == H)
+    {
+        app.rawDepth = app.modelOut;
+        return true;
+    }
+    ResampleToGrid(app);
     return true;
 }
 
@@ -1652,7 +1818,10 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
     DepthSlot& s = app.slots[app.writeSlot];
     if (app.opt.source == SourceKind::Synthetic) RegionMeans(preparedDepth, src->time, s.back, s.panel, s.marker);
     if (app.opt.useTruth) MakeTruth(preparedDepth, src->time);
-    DilateNearHorizontal(preparedDepth, W, H, app.opt.dilate);
+    // Worker thread: opt.model is the model that produced this depth.
+    const int dilateH = app.opt.dilate >= 0 ? app.opt.dilate : app.opt.model->dilateH;
+    const int dilateV = app.opt.dilateV >= 0 ? app.opt.dilateV : app.opt.model->dilateV;
+    DilateNear(preparedDepth, W, H, dilateH, dilateV);
     memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
     s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
     s.lo = lo; s.hi = hi; s.completeTime = NowSeconds();
@@ -1718,6 +1887,35 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     return true;
 }
 
+// Worker thread only, between passes: replace the depth model. Depth pauses for the
+// load (~1-2 s); colour keeps presenting, and the stale-depth guard shows it flat
+// meanwhile. On failure the previous model is restored.
+static bool SwitchModel(App& app, const ModelSpec* next)
+{
+    if (!next || next == app.opt.model) return true;
+    const ModelSpec* previous = app.opt.model;
+    Log("SwitchModel: enter (%s -> %s)", previous ? previous->name : "none", next->name);
+    const double t0 = NowSeconds();
+
+    WaitMlFence(app, app.mlFenceVal);        // no prep/inference may still use the old buffers
+    ReleaseModel(app);
+    app.opt.model = next;
+    bool ok = LoadModel(app);
+    if (!ok)
+    {
+        Log("SwitchModel: %s failed to load; restoring %s", next->name, previous ? previous->name : "none");
+        ReleaseModel(app);
+        app.opt.model = previous;
+        if (!previous || !LoadModel(app)) { Log("SwitchModel: exit FAIL (no model loaded)"); return false; }
+    }
+    // Output ranges differ completely between models (e.g. 0..6 vs 0..0.17), so the
+    // smoothed normalisation and the foreground tracker must start again.
+    app.smoother.have = false;
+    app.foregroundTracker.Reset();
+    Log("SwitchModel: exit %s, now %s (%.0f ms)", ok ? "ok" : "restored", app.opt.model->name, (NowSeconds() - t0) * 1000);
+    return true;
+}
+
 static void WorkerMain(App* app)
 {
     g_threadName = "worker";
@@ -1731,6 +1929,10 @@ static void WorkerMain(App* app)
     {
     while (!app->stop.load())
     {
+        const ModelSpec* wanted = app->requestedModel.load();
+        if (wanted && wanted != app->opt.model && !SwitchModel(*app, wanted))
+        { app->depthHealthy = false; Log("WorkerMain: no depth model; flat viewing"); break; }
+
         SourceRef src = app->sources.Latest();
         // A captured desktop that is not changing delivers no new frames - do not
         // burn the GPU recomputing identical depth. (Image/synthetic keep running:
@@ -1945,7 +2147,10 @@ static bool SelfTestPrep(App& app, const std::vector<unsigned char>& scene, cons
     UINT64 v = SubmitPrep(app, DESC_TEST_SRC, W, H, nullptr, 0, crop);
     WaitMlFence(app, v);
 
-    const UINT64 bytes = (UINT64)3 * W * H * sizeof(float);
+    // The test source is W x H; the model input may be a different size.
+    const ModelSpec& spec = *app.opt.model;
+    const int MW = spec.inW, MH = spec.inH;
+    const UINT64 bytes = (UINT64)3 * MW * MH * sizeof(float);
     ComPtr<ID3D12Resource> rb;
     if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, rb, nullptr)) return false;
     app.cmdAlloc[0]->Reset();
@@ -1962,27 +2167,43 @@ static bool SelfTestPrep(App& app, const std::vector<unsigned char>& scene, cons
     const float istd[3] = { 1.f / 0.229f, 1.f / 0.224f, 1.f / 0.225f };
     size_t bad = 0;
     float worst = 0;
-    const bool cropped = crop.size != 1;
+    // Mirror SubmitPrep's choice of path exactly: direct Load, or taps x taps
+    // bilinear samples averaged.
+    const bool exact = (MW == W && MH == H && crop.size == 1 && crop.x == 0 && crop.y == 0);
+    const int taps = std::clamp(int(std::ceil(W * crop.size / MW)), 1, 4);
     std::vector<float> channel(W*H);
     for (int c = 0; c < 3; c++)
     {
         for (size_t i=0; i<channel.size(); ++i) channel[i]=scene[i*3+c]/255.f;
-        for (int y = 0; y < H; y++)
+        for (int y = 0; y < MH; y++)
         {
-            for (int x = 0; x < W; x++)
+            for (int x = 0; x < MW; x++)
             {
-                float pixel = cropped ? SampleDepth(channel,W,H,crop.x+(x+.5f)/W*crop.size,crop.y+(y+.5f)/H*crop.size) : channel[y*W+x];
-                float ref = (pixel - mean[c]) * istd[c];
-                float d = fabsf(gp[((size_t)c * H + y) * W + x] - ref);
+                float pixel = 0;
+                if (exact) pixel = channel[y*W+x];
+                else
+                {
+                    for (int j = 0; j < taps; j++)
+                        for (int i = 0; i < taps; i++)
+                            pixel += SampleDepth(channel, W, H,
+                                crop.x + (x + (i + .5f) / taps) / MW * crop.size,
+                                crop.y + (y + (j + .5f) / taps) / MH * crop.size);
+                    pixel /= float(taps * taps);
+                }
+                float ref = spec.imagenetNorm ? (pixel - mean[c]) * istd[c] : pixel;
+                // Compare in 0..1 pixel units so one tolerance fits both normalisations.
+                float d = fabsf(gp[((size_t)c * MH + y) * MW + x] - ref) / (spec.imagenetNorm ? istd[c] : 1.f);
                 worst = std::max(worst, d);
-                if (d > (cropped ? .012f : 1e-5f)) bad++;
+                // Sampled path: GPU bilinear weights are fixed-point (~1/256).
+                if (d > (exact ? 3e-6f : .0028f)) bad++;
             }
         }
     }
     rb->Unmap(0, nullptr);
 
     bool ok = bad == 0;
-    Log("SelfTestPrep: exit %s - %zu of %zu values differ from the CPU preprocessing (worst |diff| %.2e)", ok ? "PASS" : "FAIL", bad, (size_t)3 * W * H, worst);
+    Log("SelfTestPrep: exit %s - %zu of %zu values differ from the CPU preprocessing (%dx%d, %d taps, worst |diff| %.2e px)",
+        ok ? "PASS" : "FAIL", bad, (size_t)3 * MW * MH, MW, MH, exact ? 0 : taps, worst);
     return ok;
 }
 
@@ -2006,6 +2227,33 @@ static bool SelfTestForegroundModel(App& app)
     const bool fused=FuseForeground(base,app.rawDepth,W,H,crop);
     Log("SelfTestForegroundModel: PASS full/crop inference finite; alignment %s", fused ? "accepted" : "safely rejected");
     return true;
+}
+
+// The table-driven model-output resample vs the reference SampleDepth, on a
+// deterministic non-smooth pattern (a smooth one would hide tap/offset mistakes).
+static bool SelfTestResample(App& app)
+{
+    const ModelSpec& spec = *app.opt.model;
+    Log("SelfTestResample: enter (%dx%d -> %dx%d)", spec.inW, spec.inH, W, H);
+    if (spec.inW == W && spec.inH == H) { Log("SelfTestResample: exit PASS (same size - plain copy)"); return true; }
+
+    const std::vector<float> saved = app.modelOut;
+    for (size_t i = 0; i < app.modelOut.size(); i++)
+        app.modelOut[i] = float((i * 2654435761u) % 1000u) / 1000.f;
+    ResampleToGrid(app);
+
+    float worst = 0;
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+        {
+            const float ref = SampleDepth(app.modelOut, spec.inW, spec.inH, (x + .5f) / W, (y + .5f) / H);
+            worst = std::max(worst, std::abs(app.rawDepth[(size_t)y * W + x] - ref));
+        }
+    app.modelOut = saved;
+
+    const bool ok = worst < 1e-5f;
+    Log("SelfTestResample: exit %s (worst |diff| %.2e vs SampleDepth)", ok ? "PASS" : "FAIL", worst);
+    return ok;
 }
 
 static bool SelfTest(App& app)
@@ -2032,6 +2280,7 @@ static bool SelfTest(App& app)
             ramp[(size_t)y * W + x] = 0.5f + 0.5f * sinf(x * 0.021f) * cosf(y * 0.017f);
 
     bool ok = SelfTestPrep(app, synth);
+    ok = SelfTestResample(app) && ok;
     ok = SelfTestPrep(app, synth, DepthCrop{.17f,.23f,.5f}) && ok;
     c.mirrorTol = MIRROR_TOL;
     for (uint32_t mode : { (uint32_t)FILL_STRETCH, (uint32_t)FILL_MIRROR })
@@ -2136,6 +2385,12 @@ static void RunFrameLoop(App& app)
                 const bool foreground = next.foreground != 0 && next.stereo != 0;
                 if (app.foregroundEnabled.exchange(foreground) != foreground)
                     Log("Foreground refinement: %s", foreground ? "enabled" : "disabled");
+                if (next.version >= 4)
+                {
+                    const ModelSpec* model = next.fastModel ? &kZipDepth : &kDepthAnythingV2;
+                    if (app.requestedModel.exchange(model) != model)
+                        Log("Depth model requested: %s", model->name);
+                }
             }
         }
         screen.Key((GetAsyncKeyState(recenterKey) & 0x8000) != 0);
@@ -2526,6 +2781,14 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     c.doWarp = app.opt.doWarp ? 1u : 0u;
     c.scaleFocal = app.opt.warpScale * (float)(t.cw * 0.5) / tanHalfX;
     c.invZNear = 1.0f / 1.2f; c.invZFar = 1.0f / 12.0f;
+    if (!app.opt.headLocked)
+    {
+        // As the frame loop does for the fixed screen (default 3 m): content behind
+        // the screen plane gets uncrossed disparity (outward in each eye).
+        const float screenDistance = 3.0f;
+        c.invZNear -= 1.0f / screenDistance;
+        c.invZFar -= 1.0f / screenDistance;
+    }
     c.eye0 = -0.0355f; c.eye1 = 0.0355f;
     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
     c.exactLoad = (app.srcW == t.cw && app.srcH == t.ch) ? 1u : 0u;
@@ -2617,8 +2880,7 @@ static void Shutdown(App& app)
 
     DumpDebugMessages(app);
 
-    if (app.modelInValue) ort->ReleaseValue(app.modelInValue);
-    if (app.ortSession) ort->ReleaseSession(app.ortSession);
+    if (ort) ReleaseModel(app);
     if (app.colorSc) xrDestroySwapchain_(app.colorSc);
     if (app.depthSc) xrDestroySwapchain_(app.depthSc);
     if (app.session) xrDestroySession_(app.session);
@@ -2637,6 +2899,11 @@ int wmain(int argc, wchar_t** wideArgv)
     for (auto& arg : arguments) argv.push_back(arg.data());
     setvbuf(stdout, nullptr, _IONBF, 0);
     g_t0 = std::chrono::steady_clock::now();
+    // Physical-pixel window geometry for the client-area crop: without this, a
+    // DPI-unaware process gets scaled client rects that do not match the captured
+    // frame (Windows display scaling of 150% would put the crop in the wrong place).
+    if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+        Log("main: per-monitor DPI awareness unavailable (error %lu); window crops fall back to the whole frame when inconsistent", GetLastError());
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
     static App app;
@@ -2649,7 +2916,7 @@ int wmain(int argc, wchar_t** wideArgv)
     {
     if (app.opt.checkPackage)
     {
-        Log("Package check: model %s", winrt::to_string(ModelPath().wstring()).c_str());
+        Log("Package check: model %s", winrt::to_string(ModelPath(app.opt.model->file).wstring()).c_str());
         for (const auto* name : { L"openxr_loader.dll", L"DirectML.dll" })
         {
             HMODULE module = LoadLibraryW((ExecutableDirectory() / name).c_str());
@@ -2667,6 +2934,12 @@ int wmain(int argc, wchar_t** wideArgv)
         { Log("Desktop control: invalid settings or incompatible projection diagnostic"); return 1; }
         app.foregroundEnabled = initial.foreground != 0 && initial.stereo != 0;
         app.opt.paired = initial.paired != 0;
+        if (initial.version >= 4)
+        {
+            app.opt.model = initial.fastModel ? &kZipDepth : &kDepthAnythingV2;
+            app.requestedModel = app.opt.model;
+            Log("Desktop control: depth model %s", app.opt.model->name);
+        }
     }
     do
     {

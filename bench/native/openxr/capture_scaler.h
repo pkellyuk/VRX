@@ -51,13 +51,23 @@ float4 PS(V v) : SV_TARGET { return float4(picture.Sample(linearClamp, v.uv).rgb
         return device->CreateRasterizerState(&rd, &raster_);
     }
 
+    // w x h is the valid captured content; `region`, if given, selects part of it
+    // (e.g. a window's client area, excluding its frame and title bar).
     HRESULT Copy(ID3D11Device* device, ID3D11DeviceContext* context,
         ID3D11Texture2D* captured, int w, int h, ID3D11Texture2D* target,
-        ID3D11RenderTargetView* rtv, int targetW, int targetH)
+        ID3D11RenderTargetView* rtv, int targetW, int targetH, const RECT* region = nullptr)
     {
         D3D11_TEXTURE2D_DESC desc{}; captured->GetDesc(&desc);
         if (w <= 0 || h <= 0 || UINT(w) > desc.Width || UINT(h) > desc.Height) return E_INVALIDARG;
         D3D11_BOX box{ 0, 0, 0, UINT(w), UINT(h), 1 };
+        if (region)
+        {
+            if (region->left < 0 || region->top < 0 || region->right > w || region->bottom > h ||
+                region->left >= region->right || region->top >= region->bottom) return E_INVALIDARG;
+            box = { UINT(region->left), UINT(region->top), 0, UINT(region->right), UINT(region->bottom), 1 };
+            w = region->right - region->left;
+            h = region->bottom - region->top;
+        }
         if (w == targetW && h == targetH)
         {
             context->CopySubresourceRegion(target, 0, 0, 0, 0, captured, 0, &box);
