@@ -8,11 +8,13 @@
 #include "foreground_refinement.h"
 #include "gpu_choice.h"
 #include "depth_fusion.h"
+#include "frame_timing.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <string>
 #include <vector>
 
 static void Check(bool ok, const char* message)
@@ -389,7 +391,7 @@ static void TestDesktopControl()
     Check(ParseDesktopSettings("VRX 1 6.25 3.5 0.2 0.4 0.8 0 1 1 187 120 4 7 0", settings), "valid complete desktop snapshot");
     Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7, "snapshot values and command sequence");
     Check(!ParseDesktopSettings("VRX 1 6.25 3.5", settings), "partial snapshot rejected");
-    Check(!ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 0 0 0 1 0 0 0 0", settings), "unknown version rejected");
+    Check(!ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 0 0 0 1 0 0 0 0 0", settings), "unknown version rejected");
     Check(settings.foreground == 0, "v1 keeps foreground refinement off");
     Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1", settings) && settings.foreground == 1, "v2 enables foreground refinement");
     Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 0", settings) && settings.foreground == 0, "v2 disables foreground refinement");
@@ -410,6 +412,11 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1", settings), "v5 missing fuse flag rejected");
     Check(!ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 2 0", settings), "v5 invalid steady flag rejected");
     Check(!ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 0 1 0", settings), "v5 trailing value rejected");
+    Check(ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0", settings) && settings.delayed == 0, "v5 leaves delayed timing off");
+    Check(ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1", settings) && settings.delayed == 1 && settings.paired == 0, "v6 delayed timing");
+    Check(ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 1 1 1 0 0", settings) && settings.delayed == 0 && settings.paired == 1, "v6 matched timing");
+    Check(!ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0", settings), "v6 missing timing flag rejected");
+    Check(!ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 2", settings), "v6 invalid timing flag rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -506,6 +513,36 @@ static void TestDepthFusion()
     std::printf("PASS: depth fusion maths\n");
 }
 
+// "Delayed to depth" frame choice (frame_timing.h).
+static void TestFrameTiming()
+{
+    // 60 fps frames at t = 0.000, 0.0167, ... 0.1
+    std::vector<TimedFrame> h;
+    for (int i = 0; i <= 6; i++) h.push_back({ (uint64_t)(100 + i), i / 60.0 });
+    const double now = 0.1;
+    Check(PickDelayedFrame({}, now, 0.05) == -1, "no history, no frame");
+    Check(PickDelayedFrame(h, now, 0.0) == 6, "no delay shows the newest frame");
+    Check(PickDelayedFrame(h, now, 0.05) == 3, "50 ms delay shows the newest frame at or before now - 50 ms");
+    Check(PickDelayedFrame(h, now, 0.5) == 0, "a delay longer than the history shows the oldest kept frame");
+    Check(PickDelayedFrame(h, now, -1.0) == 6, "negative delay is treated as none");
+
+    // History keeps exactly one frame at or before the target, and never exceeds maxKeep.
+    Check(DelayedHistoryExcess(h, now, 0.05, 10) == 3, "frames older than the shown one are dropped");
+    Check(DelayedHistoryExcess(h, now, 0.0, 10) == 6, "no delay keeps only the newest frame");
+    Check(DelayedHistoryExcess(h, now, 0.5, 4) == 3, "at most maxKeep frames are kept");
+    Check(DelayedHistoryExcess({ { 1, 0.0 } }, now, 0.0, 4) == 0, "a single frame is never dropped");
+
+    DepthDelayEstimate d;
+    d.Update(0.060);
+    Check(d.have && std::fabs(d.value - 0.060) < 1e-9, "first delay sample taken as is");
+    d.Update(0.160);
+    Check(std::fabs(d.value - 0.080) < 1e-9, "delay estimate is smoothed");
+    d.Update(-1.0); d.Update(5.0);
+    Check(std::fabs(d.value - 0.080) < 1e-9, "invalid delay samples are ignored");
+    Check(std::string(FrameTimingName(FrameTiming::Delayed)) == "delayed to depth", "timing names");
+    std::printf("PASS: game frame timing\n");
+}
+
 static void TestForegroundRefinement()
 {
     constexpr int w=196, h=112;
@@ -561,6 +598,7 @@ int main(int argc, char** argv)
     TestForegroundRefinement();
     TestDesktopControl();
     TestDepthFusion();
+    TestFrameTiming();
     if (argc > 1)
     {
         const std::string path(argv[1]); DesktopSettings settings;

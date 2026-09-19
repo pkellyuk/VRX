@@ -179,7 +179,7 @@ public partial class MainWindow : Window
         HorizontalSlider.Value = p.Horizontal; StrengthSlider.Value = p.Strength;
         FollowCheck.IsChecked = p.Follow; StereoCheck.IsChecked = p.Stereo; DismissCheck.IsChecked = p.AutoDismiss;
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
-        PairedCheck.IsChecked = p.MatchFrameToDepth;
+        TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
         FastModelCheck.IsChecked = p.FastDepthModel;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
@@ -196,7 +196,8 @@ public partial class MainWindow : Window
             Distance = DistanceSlider.Value, Height = HeightSlider.Value, Horizontal = HorizontalSlider.Value,
             Strength = StrengthSlider.Value, Follow = FollowCheck.IsChecked == true, Stereo = StereoCheck.IsChecked == true,
             ForegroundRefinement = ForegroundCheck.IsChecked == true,
-            MatchFrameToDepth = PairedCheck.IsChecked == true,
+            MatchFrameToDepth = TimingList.SelectedIndex == 2,
+            DelayToDepth = TimingList.SelectedIndex == 1,
             FastDepthModel = FastModelCheck.IsChecked == true,
             SteadyDepth = SteadyCheck.IsChecked == true,
             FuseModels = FuseCheck.IsChecked == true,
@@ -315,6 +316,7 @@ public partial class MainWindow : Window
         var legacy = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(one.ExecutablePath)))!.AsObject();
         legacy.Remove("ForegroundRefinement");
         legacy.Remove("MatchFrameToDepth");
+        legacy.Remove("DelayToDepth");
         legacy.Remove("FastDepthModel");
         legacy.Remove("SteadyDepth");
         legacy.Remove("FuseModels");
@@ -339,10 +341,13 @@ public partial class MainWindow : Window
         var original = new Profile { FastDepthModel = false };
         var both = new Profile { FuseModels = true };
         var unsteady = new Profile { SteadyDepth = false };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 5 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0"))
-            throw new Exception("Control snapshot must be v5 ending with the fast-model, steady and fuse flags (see desktop_control.h)");
+        var delayed = new Profile { DelayToDepth = true };
+        var matchedWins = new Profile { DelayToDepth = true, MatchFrameToDepth = true };
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 6 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0"))
+            throw new Exception("Control snapshot must be v6 ending with the matched, fast-model, steady, fuse and delayed flags (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         one.MatchFrameToDepth = false;
@@ -350,9 +355,16 @@ public partial class MainWindow : Window
         refreshing = true; AppList.ItemsSource = new[] { sample }; AppList.SelectedItem = sample; refreshing = false;
         profile = one; PutProfile(one); WindowList.ItemsSource = sample.Windows; WindowList.SelectedIndex = 0;
         if (ForegroundCheck.IsChecked != true) throw new Exception("Foreground checkbox default is not on");
-        if (PairedCheck.IsChecked != false) throw new Exception("Frame matching should default off");
-        PairedCheck.IsChecked = true;
-        if (!ReadProfile().MatchFrameToDepth) throw new Exception("Frame matching checkbox is not mapped to settings");
+        if (TimingList.SelectedIndex != 0) throw new Exception("Game frame timing should default to the latest frame");
+        if (store.Load(one.ExecutablePath).DelayToDepth) throw new Exception("Profiles saved before delayed timing existed must load with it off");
+        TimingList.SelectedIndex = 1;
+        if (!ReadProfile().DelayToDepth || ReadProfile().MatchFrameToDepth) throw new Exception("Delayed timing is not mapped to settings");
+        TimingList.SelectedIndex = 2;
+        if (ReadProfile().DelayToDepth || !ReadProfile().MatchFrameToDepth) throw new Exception("Matched timing is not mapped to settings");
+        PutProfile(two);
+        if (TimingList.SelectedIndex != 2) throw new Exception("A saved frame-matching profile must show as matched to depth");
+        PutProfile(one);
+        TimingList.SelectedIndex = 2;
         ForegroundCheck.IsChecked = false;
         if (ReadProfile().ForegroundRefinement) throw new Exception("Foreground checkbox not mapped to saved settings");
         if (FastModelCheck.IsChecked != true) throw new Exception("Fast depth model should default on");

@@ -18,7 +18,11 @@ public sealed class Profile
     public bool Follow { get; set; }
     public bool Stereo { get; set; } = true;
     public bool ForegroundRefinement { get; set; } = true;
+    // Game frame timing (frame_timing.h): latest frame (both false), delayed to depth
+    // (DelayToDepth, v6 snapshot) or matched to depth (MatchFrameToDepth, which wins if
+    // both are set). Profiles saved before DelayToDepth existed load as false.
     public bool MatchFrameToDepth { get; set; }
+    public bool DelayToDepth { get; set; }
     // ZipDepth (default) or Depth Anything V2. Sent in the v4 control snapshot; applies live.
     // Profiles saved before this setting existed load as true.
     public bool FastDepthModel { get; set; } = true;
@@ -42,7 +46,7 @@ public sealed class Profile
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 5 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)}\n");
+        $"VRX 6 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)

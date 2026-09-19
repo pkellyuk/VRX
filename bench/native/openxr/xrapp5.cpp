@@ -49,6 +49,9 @@
 //                                   hardware motion estimator, where the motion is verified
 //            --fuse                 fuse ZipDepth with Depth Anything V2 (runs alongside on the
 //                                   depth GPU; its late result is moved to the current frame)
+//            --delayed              hold the game image back by the measured depth delay, so the
+//                                   newest depth lines up with it (smooth; --paired is exact but
+//                                   updates at the depth rate). See frame_timing.h / XSYNC.md
 //            --head-locked          follow your head (default fixed screen; '=' recenters)
 //            --keep-dashboard       skip the SteamVR startup dashboard-close request
 //   keys:    '=' recenter; F8 dismiss SteamVR dashboard (keys also reach the game)
@@ -110,6 +113,7 @@ using Microsoft::WRL::ComPtr;
 #include "foreground_refinement.h"
 #include "depth_fusion.h"
 #include "motion_estimator.h"
+#include "frame_timing.h"
 
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wdx = winrt::Windows::Graphics::DirectX;
@@ -241,12 +245,16 @@ struct Options
     int testDepthFailures = 0;          // diagnostic: inject initial inference failures
     bool steady = false;                // --steady (the desktop app sets it per game, live)
     bool fuse = false;                  // --fuse (likewise)
+    bool delayed = false;               // --delayed: game frame timing "delayed to depth" (paired wins if both)
 };
 
 static const int SLOTS = 3;
 static const int SLOT_FRESH = 4;        // flag bit in readySlot
 static const int RING = 3;              // in-flight render frames
-static const int SRC_RING = 8;          // source textures; references and GPU fences guard reuse
+// Source textures; references and GPU fences guard reuse. 12: "delayed to depth" keeps
+// up to DELAYED_HISTORY recent frames on top of the depth slots and capture in flight.
+static const int SRC_RING = 12;
+static const size_t DELAYED_HISTORY = 6;
 using SourceFrames = SourceRing<SRC_RING>;
 using SourceRef = SourceFrames::ReadRef;
 static const int MAX_COLOR_W = 1920;
@@ -695,6 +703,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--paired")) { opt->paired = true; continue; }
         if (!strcmp(a, "--steady")) { opt->steady = true; continue; }
         if (!strcmp(a, "--fuse")) { opt->fuse = true; continue; }
+        if (!strcmp(a, "--delayed")) { opt->delayed = true; continue; }
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
@@ -3645,8 +3654,12 @@ static void RunFrameLoop(App& app)
     double loopStart = NowSeconds(), lastReport = loopStart;
     uint64_t frames = 0, drawn = 0, depthUpdates = 0;
     uint64_t repFrames = 0, repDrawn = 0, repDepth = 0, lastCapFrames = 0;
-    double repCpuMs = 0, repAgeMs = 0;
+    double repCpuMs = 0, repAgeMs = 0, repShownAgeMs = 0;
     std::vector<unsigned char> scene;
+    // "Delayed to depth": recent frames (oldest first) and the measured depth delay.
+    std::deque<SourceRef> history;
+    std::vector<TimedFrame> historyTimes;
+    DepthDelayEstimate depthDelay;
     const DepthSlot* cur = nullptr;
     const bool useDepthSc = app.opt.submitDepth;
     WarpTarget& target = app.mainTarget;
@@ -3702,6 +3715,11 @@ static void RunFrameLoop(App& app)
                     const ModelSpec* model = next.fastModel ? &kZipDepth : &kDepthAnythingV2;
                     if (app.requestedModel.exchange(model) != model)
                         Log("Depth model requested: %s", model->name);
+                }
+                if (next.version >= 6 && app.opt.delayed != (next.delayed != 0))
+                {
+                    app.opt.delayed = next.delayed != 0;
+                    Log("Game frame timing: %s", FrameTimingName(app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest));
                 }
                 if (next.version >= 5)
                 {
@@ -3881,6 +3899,31 @@ static void RunFrameLoop(App& app)
                     RecordUploadNear(app, cur->nearUp.Get());
                     tookSlot = true;
                     depthUpdates++; repDepth++;
+                    depthDelay.Update(cur->completeTime - cur->sceneTime);
+                }
+
+                // --- game frame timing (frame_timing.h)
+                const FrameTiming timing = app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest;
+                if (timing == FrameTiming::Delayed && source && !newSrc)
+                {
+                    if (!history.empty() && history.back()->layout != source->layout) history.clear();
+                    if (history.empty() || history.back()->seq != source->seq) history.push_back(source);
+                    auto times = [&]()
+                    {
+                        historyTimes.clear();
+                        for (const auto& f : history) historyTimes.push_back({ f->seq, f->time });
+                    };
+                    times();
+                    for (size_t drop = DelayedHistoryExcess(historyTimes, t, depthDelay.value, DELAYED_HISTORY); drop > 0; drop--) history.pop_front();
+                    times();
+                    const int pick = PickDelayedFrame(historyTimes, t, depthDelay.value);
+                    if (pick >= 0) source = history[pick];
+                    // Never older than the depth: then show the depth's own frame (as matched).
+                    if (cur && cur->source && source->layout == cur->source->layout && source->seq < cur->source->seq) source = cur->source;
+                }
+                else if (!history.empty())
+                {
+                    history.clear();
                 }
                 stereo = app.opt.doWarp && source && cur && cur->source &&
                     source->layout == cur->source->layout &&
@@ -3932,7 +3975,7 @@ static void RunFrameLoop(App& app)
                 if (tookSlot) app.slotFence = fv;
                 if (newSrc) app.sources.Publish(newSrc, fv, t);
 
-                if (drewSource) { drawn++; repDrawn++; }
+                if (drewSource) { drawn++; repDrawn++; if (source) repShownAgeMs += (t - source->time) * 1000.0; }
                 if (cur) repAgeMs += (NowSeconds() - cur->completeTime) * 1000.0;
             }
             const bool releasedColor = colorImage.Release(xrReleaseImage_);
@@ -4030,15 +4073,17 @@ static void RunFrameLoop(App& app)
         {
             double dt = now - lastReport;
             uint64_t capFrames = app.cap.frames.load();
-            Log("render %.1f fps (drawn %.1f, cpu %.2f ms/frame) | capture %.1f fps | depth %.1f updates/s, model %.1f ms, age %.1f ms, range %.2f..%.2f%s",
+            Log("render %.1f fps (drawn %.1f, cpu %.2f ms/frame) | capture %.1f fps | depth %.1f updates/s, model %.1f ms, age %.1f ms, range %.2f..%.2f | %s: game frame age %.1f ms, depth delay %.1f ms%s",
                 repFrames / dt, repDrawn / dt, repDrawn ? repCpuMs / repDrawn : 0.0,
                 (capFrames - lastCapFrames) / dt,
                 repDepth / dt, cur ? cur->modelMs : 0.0, repDrawn ? repAgeMs / repDrawn : 0.0,
                 cur ? cur->lo : 0.f, cur ? cur->hi : 0.f,
+                FrameTimingName(app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest),
+                repDrawn ? repShownAgeMs / repDrawn : 0.0, depthDelay.value * 1000.0,
                 app.opt.useTruth ? " [warp uses TRUTH]" : "");
             if (app.opt.source == SourceKind::Synthetic && cur)
                 Log("       model near: back %.2f panel %.2f marker %.2f", cur->back, cur->panel, cur->marker);
-            lastReport = now; repFrames = repDrawn = repDepth = 0; repCpuMs = repAgeMs = 0;
+            lastReport = now; repFrames = repDrawn = repDepth = 0; repCpuMs = repAgeMs = repShownAgeMs = 0;
             lastCapFrames = capFrames;
         }
         if (app.opt.runSeconds > 0 && now - loopStart > app.opt.runSeconds) exitLoop = true;
@@ -4267,6 +4312,7 @@ int wmain(int argc, wchar_t** wideArgv)
             app.requestedModel = app.opt.model;
             Log("Desktop control: depth model %s", app.opt.model->name);
         }
+        if (initial.version >= 6) app.opt.delayed = initial.delayed != 0;
         if (initial.version >= 5)
         {
             app.steadyEnabled = initial.steady != 0;
