@@ -1,6 +1,6 @@
-VRX 1.3.0 - Windows x64
+VRX 1.4.0 - Windows x64
 
-Install with VRX-Setup-1.3.0.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.4.0.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -22,9 +22,16 @@ position, stereo strength and head-follow mode can be changed during playback.
 
 Extra foreground depth passes are experimental and default on. Their benefit
 varies and no clear improvement was seen in the initial Helldivers 2 test.
-Match game frames to depth defaults off. It gives cleaner moving outlines in
-the tested game, but adds delay and limits game-image motion to the depth rate.
 Neither option guarantees 60 fps. Disable extra foreground passes for comparisons.
+
+"Game frame timing" (per game, applies live) chooses which game frame is shown
+with the depth. "Latest frame" (default) is smooth and immediate, but the depth
+lags slightly behind moving things. "Delayed to depth" holds the game image back
+by the measured depth delay so the two line up, while motion stays at the capture
+rate; the delay is roughly the depth delay. "Matched to depth" (previously "match
+game frames to depth") shows each depth estimate with the exact frame it came
+from: the best alignment, but the game updates only at the depth rate. Games set
+up with the earlier frame matching open as "Matched to depth".
 
 Depth is estimated by ZipDepth by default: about 6x less GPU time than Depth
 Anything V2 Small, so depth keeps closer to the game. Untick "Fast depth model
