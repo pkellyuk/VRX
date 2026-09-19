@@ -7,7 +7,9 @@
 #include "desktop_control.h"
 #include "foreground_refinement.h"
 #include "gpu_choice.h"
+#include "depth_fusion.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -387,7 +389,7 @@ static void TestDesktopControl()
     Check(ParseDesktopSettings("VRX 1 6.25 3.5 0.2 0.4 0.8 0 1 1 187 120 4 7 0", settings), "valid complete desktop snapshot");
     Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7, "snapshot values and command sequence");
     Check(!ParseDesktopSettings("VRX 1 6.25 3.5", settings), "partial snapshot rejected");
-    Check(!ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 0 0 0 1 0 0", settings), "unknown version rejected");
+    Check(!ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 0 0 0 1 0 0 0 0", settings), "unknown version rejected");
     Check(settings.foreground == 0, "v1 keeps foreground refinement off");
     Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1", settings) && settings.foreground == 1, "v2 enables foreground refinement");
     Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 0", settings) && settings.foreground == 0, "v2 disables foreground refinement");
@@ -401,6 +403,13 @@ static void TestDesktopControl()
     Check(ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 0", settings) && settings.fastModel == 0, "v4 selects the default model");
     Check(!ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings), "v4 missing model flag rejected");
     Check(!ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 2", settings), "v4 invalid model flag rejected");
+    Check(ParseDesktopSettings("VRX 4 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1", settings) && settings.steady == 0 && settings.fuse == 0, "v4 leaves steady/fuse off");
+    Check(ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0", settings) && settings.steady == 1 && settings.fuse == 0, "v5 steady only");
+    Check(ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 0 1", settings) && settings.steady == 0 && settings.fuse == 1, "v5 fuse only");
+    Check(ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 1", settings) && settings.steady == 1 && settings.fuse == 1 && settings.fastModel == 1, "v5 both");
+    Check(!ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1", settings), "v5 missing fuse flag rejected");
+    Check(!ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 2 0", settings), "v5 invalid steady flag rejected");
+    Check(!ParseDesktopSettings("VRX 5 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 0 1 0", settings), "v5 trailing value rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -416,6 +425,85 @@ static void TestDesktopControl()
     screen.Place(left, right, left.orientation, 1, .5f);
     screen.Adjust(6, 4, 0, 0, .5f);
     Check(screen.pose.position.x == 0 && screen.size.width == 6 && screen.size.height == 3, "slider preserves stationary origin after player movement");
+}
+
+// The fusion maths (depth_fusion.h); bench/native/xmmodel/fusion_golden checks it
+// against the Python reference on real frames, these check its defining properties.
+static void TestDepthFusion()
+{
+    const int w = 96, h = 64;
+    fusion::Image z(w, h), ramp(w, h), luma(w, h);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+        {
+            z.at(x, y) = 0.2f + 0.6f * (float)x / (w - 1);
+            ramp.at(x, y) = (float)x;
+            luma.at(x, y) = std::fmod(x * 37.0f + y * 91.0f, 256.0f);
+        }
+
+    // Blur keeps a constant image constant and preserves the mean of a ramp's middle.
+    fusion::Image flat(w, h, 0.37f);
+    const fusion::Image blurred = fusion::Blur(flat, 4.0f);
+    Check(std::fabs(blurred.at(10, 10) - 0.37f) < 1e-5f && std::fabs(blurred.at(0, 0) - 0.37f) < 1e-5f, "blur keeps a constant");
+    Check(std::fabs(fusion::Blur(ramp, 2.0f).at(48, 30) - 48.0f) < 1e-3f, "blur keeps a linear ramp in the middle");
+    Check(fusion::GaussianKernel(4.0f).size() == 33 && fusion::GaussianKernel(16.0f).size() == 129, "kernel size as OpenCV (8 sigma + 1, odd)");
+
+    // Global fit recovers an exact affine relation.
+    fusion::Image d(w, h);
+    for (size_t i = 0; i < d.v.size(); i++) d.v[i] = 0.7f * z.v[i] + 0.05f;
+    float a = 0, b = 0;
+    fusion::GlobalFit(z, d, a, b);
+    Check(std::fabs(a - 0.7f) < 1e-4f && std::fabs(b - 0.05f) < 1e-4f, "global fit recovers the affine map");
+
+    // The guided fit reproduces a target that is an affine map of the guide.
+    const fusion::Image fitted = fusion::GuidedFit(z, d, 16.0f);
+    float worst = 0;
+    for (size_t i = 0; i < d.v.size(); i++) worst = std::max(worst, std::fabs(fitted.v[i] - d.v[i]));
+    Check(worst < 1e-3f, "guided fit reproduces an affine target");
+
+    // Zero motion vectors: identity maps, remap returns the image, trust is full.
+    std::vector<int16_t> zero((size_t)((w + 7) / 8) * ((h + 7) / 8) * 2, 0);
+    const fusion::Motion still = fusion::MotionFromVectors(zero.data(), (w + 7) / 8, (h + 7) / 8, w, h);
+    Check(still.valid() && still.mapX.at(5, 7) == 5.0f && still.mapY.at(5, 7) == 7.0f, "zero vectors give identity maps");
+    Check(fusion::Remap(ramp, still).at(40, 20) == 40.0f, "identity remap");
+    float mean = 0;
+    const fusion::Image full = fusion::MotionTrust(luma, luma, still, &mean);
+    Check(full.valid() && mean > 0.999f && full.at(3, 3) == 1.0f, "identical pictures are fully trusted");
+
+    // Uniform vectors of (-8, 0) quarter pels = 2 px: the moved ramp reads x - 2.
+    std::vector<int16_t> left(zero.size());
+    for (size_t i = 0; i < left.size(); i += 2) { left[i] = -8; left[i + 1] = 0; }
+    const fusion::Motion shift = fusion::MotionFromVectors(left.data(), (w + 7) / 8, (h + 7) / 8, w, h);
+    Check(std::fabs(fusion::Remap(ramp, shift).at(40, 20) - 38.0f) < 1e-4f, "vectors move content by quarter pels");
+
+    // Pictures that do not match: trust collapses to zero everywhere (whole-frame cut).
+    fusion::Image other(w, h);
+    for (size_t i = 0; i < other.v.size(); i++) other.v[i] = 255.0f - luma.v[i];
+    const fusion::Image none = fusion::MotionTrust(luma, other, still, &mean);
+    Check(none.valid() && none.at(40, 20) == 0.0f && mean < fusion::VERIFY_CUT, "mismatched pictures are not trusted");
+
+    // Fusion with no trust follows the fast model mapped globally; with full trust and
+    // an anchor that is an affine map of the fast model, it reproduces the anchor.
+    const fusion::Image noTrust = fusion::Fuse(z, fusion::Image(w, h, 0.9f), fusion::Image(w, h, 0.0f), 0.7f, 0.05f);
+    worst = 0;
+    for (size_t i = 0; i < z.v.size(); i++) worst = std::max(worst, std::fabs(noTrust.v[i] - d.v[i]));
+    Check(worst < 1e-3f, "untrusted fusion falls back to the global mapping");
+    const fusion::Image trusted = fusion::Fuse(z, d, fusion::Image(), 1.0f, 0.0f);
+    worst = 0;
+    for (size_t i = 0; i < z.v.size(); i++) worst = std::max(worst, std::fabs(trusted.v[i] - d.v[i]));
+    Check(worst < 1e-3f, "trusted fusion follows the anchor");
+
+    // Steadying: no trust leaves the frame alone; full trust blends by alpha.
+    const fusion::Image prev(w, h, 0.8f), cur(w, h, 0.4f);
+    Check(fusion::Steady(cur, prev, fusion::Image(w, h, 0.0f)).at(9, 9) == 0.4f, "untrusted steadying leaves the frame");
+    Check(std::fabs(fusion::Steady(cur, prev, fusion::Image(w, h, 1.0f)).at(9, 9) - (0.4f + fusion::STEADY_ALPHA * 0.4f)) < 1e-6f, "trusted steadying blends by alpha");
+    Check(fusion::Steady(cur, fusion::Image(), fusion::Image()).at(9, 9) == 0.4f, "steadying without history is a no-op");
+
+    // Luma: BT.601 from packed RGBA (R in the low byte).
+    const uint32_t px[2] = { 0xFF0000FFu, 0xFF00FF00u };
+    const fusion::Image l = fusion::LumaFromRgba(px, 2, 1);
+    Check(l.at(0, 0) == std::round(0.299f * 255) && l.at(1, 0) == std::round(0.587f * 255), "luma weights and channel order");
+    std::printf("PASS: depth fusion maths\n");
 }
 
 static void TestForegroundRefinement()
@@ -472,6 +560,7 @@ int main(int argc, char** argv)
 {
     TestForegroundRefinement();
     TestDesktopControl();
+    TestDepthFusion();
     if (argc > 1)
     {
         const std::string path(argv[1]); DesktopSettings settings;

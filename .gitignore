@@ -1,4 +1,4 @@
-﻿# --- Python virtualenvs -------------------------------------------------
+# --- Python virtualenvs -------------------------------------------------
 .venv/
 .venv-dml/
 .venv-*/
@@ -16,6 +16,7 @@ bench/models/
 [Bb]in/
 [Oo]bj/
 bench/native/**/out/
+bench/xmmodel/out/
 desktop/out/
 release/out/
 *.obj

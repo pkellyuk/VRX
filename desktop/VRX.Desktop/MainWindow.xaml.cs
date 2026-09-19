@@ -181,6 +181,8 @@ public partial class MainWindow : Window
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         PairedCheck.IsChecked = p.MatchFrameToDepth;
         FastModelCheck.IsChecked = p.FastDepthModel;
+        SteadyCheck.IsChecked = p.SteadyDepth;
+        FuseCheck.IsChecked = p.FuseModels;
         ShowGpuChoice(p.DepthGpu);
         RecenterKeys.SelectedValue = p.RecenterKey; MenuKeys.SelectedValue = p.MenuKey;
         SettingsPanel.IsEnabled = true;
@@ -196,6 +198,8 @@ public partial class MainWindow : Window
             ForegroundRefinement = ForegroundCheck.IsChecked == true,
             MatchFrameToDepth = PairedCheck.IsChecked == true,
             FastDepthModel = FastModelCheck.IsChecked == true,
+            SteadyDepth = SteadyCheck.IsChecked == true,
+            FuseModels = FuseCheck.IsChecked == true,
             DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
             AutoDismiss = DismissCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
             MenuKey = (int)(MenuKeys.SelectedValue ?? 0) };
@@ -312,6 +316,8 @@ public partial class MainWindow : Window
         legacy.Remove("ForegroundRefinement");
         legacy.Remove("MatchFrameToDepth");
         legacy.Remove("FastDepthModel");
+        legacy.Remove("SteadyDepth");
+        legacy.Remove("FuseModels");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
             throw new Exception("Fast depth model must default on for old profiles and keep a per-game opt-out");
@@ -331,9 +337,14 @@ public partial class MainWindow : Window
         one.MatchFrameToDepth = true;
         File.WriteAllText(Path.Combine(output, "control-contract.txt"), one.Control(4, 7, false));
         var original = new Profile { FastDepthModel = false };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 4 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 1") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0"))
-            throw new Exception("Control snapshot must be v4 and end with the fast-model flag (see desktop_control.h)");
+        var both = new Profile { SteadyDepth = true, FuseModels = true };
+        var steadyOnly = new Profile { SteadyDepth = true };
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 5 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1") ||
+            !steadyOnly.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0"))
+            throw new Exception("Control snapshot must be v5 ending with the fast-model, steady and fuse flags (see desktop_control.h)");
+        if (store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
+            throw new Exception("Profiles saved before steady/fuse existed must load with both off");
         one.MatchFrameToDepth = false;
         var sample = new RunningApp(1234, "game.exe", one.ExecutablePath, [new GameWindow(42, "Example game window")], null);
         refreshing = true; AppList.ItemsSource = new[] { sample }; AppList.SelectedItem = sample; refreshing = false;
@@ -366,8 +377,15 @@ public partial class MainWindow : Window
         File.WriteAllLines(Path.Combine(output, "gpus.txt"), real.Select(g => $"{g.Id} | {g.Label}"));
         if (real.Count < 2 || real[0].Id != Gpus.Same || real[1].Id != Gpus.Auto) throw new Exception("Engine GPU listing failed");
         if (Gpus.ValidId("name:#0") || Gpus.ValidId("3") || !Gpus.ValidId("name:NVIDIA GeForce RTX 3060#1")) throw new Exception("Depth GPU id validation failed");
+        if (SteadyCheck.IsChecked != false || FuseCheck.IsChecked != false) throw new Exception("Steady depth and fusion should default off");
+        SteadyCheck.IsChecked = true;
+        if (!ReadProfile().SteadyDepth || ReadProfile().FuseModels) throw new Exception("Steady depth checkbox is not mapped to settings");
+        FuseCheck.IsChecked = true;
+        if (!ReadProfile().FuseModels) throw new Exception("Fusion checkbox is not mapped to settings");
+        if (!FuseCheck.IsEnabled) throw new Exception("Fusion must be available with the fast depth model");
         FastModelCheck.IsChecked = false;
         if (ReadProfile().FastDepthModel) throw new Exception("Fast depth model checkbox is not mapped to settings");
+        if (FuseCheck.IsEnabled) throw new Exception("Fusion needs ZipDepth: its checkbox must be disabled without the fast depth model");
         PutProfile(one);
         PathLabel.Text = one.ExecutablePath; Status.Text = "Preview · saved settings are isolated by executable path";
         UpdateButtons();

@@ -45,6 +45,10 @@
 //                                   for each fill mode, at the presented resolution
 //            --selftest --debug --dump --submit-depth --freeze-pose --ab=N --depth-lie
 //            --test-depth-failures=N  diagnostic: fail the first N depth attempts
+//            --steady               steady depth: blend in the previous depth, moved by the GPU's
+//                                   hardware motion estimator, where the motion is verified
+//            --fuse                 fuse ZipDepth with Depth Anything V2 (runs alongside on the
+//                                   depth GPU; its late result is moved to the current frame)
 //            --head-locked          follow your head (default fixed screen; '=' recenters)
 //            --keep-dashboard       skip the SteamVR startup dashboard-close request
 //   keys:    '=' recenter; F8 dismiss SteamVR dashboard (keys also reach the game)
@@ -81,10 +85,12 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -102,6 +108,8 @@ using Microsoft::WRL::ComPtr;
 #include "capture_window.h"
 #include "desktop_control.h"
 #include "foreground_refinement.h"
+#include "depth_fusion.h"
+#include "motion_estimator.h"
 
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wdx = winrt::Windows::Graphics::DirectX;
@@ -231,6 +239,8 @@ struct Options
     bool depthLie = false;
     double abSeconds = 0.0;
     int testDepthFailures = 0;          // diagnostic: inject initial inference failures
+    bool steady = false;                // --steady (the desktop app sets it per game, live)
+    bool fuse = false;                  // --fuse (likewise)
 };
 
 static const int SLOTS = 3;
@@ -452,6 +462,48 @@ struct App
     std::atomic<uint64_t> depthPublished{ 0 };
     std::atomic<bool> depthHealthy{ false };
     int testDepthFailuresLeft = 0;      // main until worker starts, then worker only
+
+    // Depth steadying and two-model fusion (depth_fusion.h, XMMODEL.md). Set by the
+    // render thread from the desktop settings; everything below them is owned by the
+    // depth worker (and by main before the worker starts), except the anchor mailboxes.
+    std::atomic<bool> steadyEnabled{ false }, fuseEnabled{ false };
+    // Grid image: each depth frame box-filtered to the W x H depth grid as RGBA8 and
+    // read back - luma for the motion estimator, colour for the anchor model.
+    ComPtr<ID3D12PipelineState> gridPso;                 // root signature: prepRootSig
+    ComPtr<ID3D12Resource> gridBuf, gridReadback;
+    uint32_t* gridMapped = nullptr;
+    ComPtr<ID3D12CommandAllocator> gridAlloc;
+    ComPtr<ID3D12GraphicsCommandList> gridList;
+    MotionEstimator motion;
+    bool motionTried = false;           // the estimator is created on first use
+    int motionCurSlot = 0;              // slots 0/1 alternate current/previous; 2 = anchor
+    // Steadying: the previous output, its luma and frame.
+    fusion::Image steadyPrevOut, steadyPrevLuma;
+    uint64_t steadyPrevSeq = 0, postLayout = 0;
+    bool steadyHave = false;
+    // Fusion: recent fast-model near maps by frame, for fitting the anchor onto them.
+    std::deque<std::pair<uint64_t, fusion::Image>> fastHistory;
+    uint64_t anchorUsedId = 0;          // the anchor result currently in motion slot 2
+    float anchorGa = 1, anchorGb = 0;
+    bool anchorFit = false;
+    std::vector<double> postMs;         // worker: steady/fuse CPU+GPU time per pass
+    double postStageMs[8] = {};         // per-stage totals since the last report (see PostProcessDepth)
+    unsigned postFused = 0, postSteadied = 0, postPasses = 0;
+    double postTrustSum = 0, postAgeSum = 0;
+    bool motionUnavailableLogged = false, fuseModelLogged = false;
+
+    // Anchor model (Depth Anything V2) on its own thread and queue on the depth GPU.
+    struct AnchorJob { std::vector<uint32_t> rgba; fusion::Image luma; uint64_t seq = 0; double time = 0; bool valid = false; };
+    struct AnchorResult { fusion::Image nearMap, luma; uint64_t seq = 0, id = 0; double time = 0; };
+    std::mutex anchorMutex;
+    std::condition_variable anchorCv;
+    AnchorJob anchorJob;                // latest request (overwritten; the anchor takes the newest)
+    AnchorResult anchorResult;          // latest result
+    std::thread anchorThread;
+    std::atomic<bool> anchorFailed{ false };
+    std::atomic<unsigned> anchorPasses{ 0 };
+    AnchorResult anchorCurrent;         // depth worker's copy of the result in use
+    UINT64 gridLast = 0;                // ml fence value of the last grid pass
 };
 
 // descriptor heap layout
@@ -641,6 +693,8 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--truth")) { opt->useTruth = true; continue; }
         if (!strcmp(a, "--dump")) { opt->doDump = true; continue; }
         if (!strcmp(a, "--paired")) { opt->paired = true; continue; }
+        if (!strcmp(a, "--steady")) { opt->steady = true; continue; }
+        if (!strcmp(a, "--fuse")) { opt->fuse = true; continue; }
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
@@ -695,6 +749,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         opt->monitorIndex, opt->windowTitle.c_str(), opt->imagePath.c_str(), opt->runSeconds);
     Log("ParseArgs: fill %s dilate %d vertical %d (-1 = per model)", opt->fillMode == FILL_MIRROR ? "mirror" : "stretch", opt->dilate, opt->dilateV);
     Log("ParseArgs: depth model %s (%dx%d)", opt->model->name, opt->model->inW, opt->model->inH);
+    Log("ParseArgs: steady depth %s, model fusion %s", opt->steady ? "on" : "off", opt->fuse ? "on" : "off");
     const auto& g = opt->depthGpu;
     Log("ParseArgs: depth GPU %s%ls%s%s", g.kind == GpuRequest::Kind::Same ? "same as headset" : g.kind == GpuRequest::Kind::Auto ? "auto (another GPU)" :
         g.kind == GpuRequest::Kind::Index ? "adapter index" : "named: ", g.kind == GpuRequest::Kind::Named ? g.name.c_str() : L"",
@@ -1584,6 +1639,48 @@ void main(uint3 id : SV_DispatchThreadID)
 }
 )HLSL";
 
+// Source texture -> the depth grid (DW x DH) as packed RGBA8 (R in the low byte), with
+// kPrepHlsl's box filter. Read back for steadying/fusion: its luma drives the hardware
+// motion estimator and its colour is the anchor model's input. Same constants as prep.
+static const char* kGridHlsl = R"HLSL(
+cbuffer C : register(b0)
+{
+    uint DW; uint DH; uint taps; uint exactLoad;
+    float cropX; float cropY; float cropSize; uint normalize;
+};
+
+Texture2D<float4>        scene : register(t0);
+RWStructuredBuffer<uint> grid  : register(u0);
+SamplerState             samp  : register(s0);
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= DW || id.y >= DH) return;
+
+    float3 v = float3(0, 0, 0);
+    if (exactLoad != 0)
+    {
+        v = scene.Load(int3(id.xy, 0)).rgb;
+    }
+    else
+    {
+        [loop] for (uint j = 0; j < taps; j++)
+        {
+            [loop] for (uint i = 0; i < taps; i++)
+            {
+                float2 uv = float2(((float)id.x + ((float)i + 0.5) / (float)taps) / (float)DW,
+                                   ((float)id.y + ((float)j + 0.5) / (float)taps) / (float)DH);
+                v += scene.SampleLevel(samp, uv, 0).rgb;
+            }
+        }
+        v /= (float)(taps * taps);
+    }
+    uint3 c = (uint3)round(saturate(v) * 255.0);
+    grid[id.y * DW + id.x] = c.r | (c.g << 8) | (c.b << 16) | (255u << 24);
+}
+)HLSL";
+
 // Inference GPU, frame transfer: received BGRA8 frame (SW x SH rows, `pitch` bytes
 // apart) -> the model's NCHW float input (DW x DH). Bilinear with pixel centres and
 // clamped edges when the sizes differ (same convention as SampleDepth), normalised
@@ -1826,9 +1923,10 @@ static bool InitShaders(App& app)
 {
     Log("InitShaders: enter");
 
-    ComPtr<ID3DBlob> warpCs, prepCs;
+    ComPtr<ID3DBlob> warpCs, prepCs, gridCs;
     if (!CompileCs("warp.hlsl", kWarpHlsl, warpCs)) return false;
     if (!CompileCs("prep.hlsl", kPrepHlsl, prepCs)) return false;
+    if (!CompileCs("grid.hlsl", kGridHlsl, gridCs)) return false;
     if (!MakeRootSig(app, sizeof(WarpConstants) / 4, true, app.warpRootSig)) return false;
     if (!MakeRootSig(app, sizeof(PrepConstants) / 4, false, app.prepRootSig)) return false;
 
@@ -1839,6 +1937,21 @@ static bool InitShaders(App& app)
     pd.pRootSignature = app.prepRootSig.Get();
     pd.CS = { prepCs->GetBufferPointer(), prepCs->GetBufferSize() };
     if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.prepPso)))) { Log("InitShaders: FAIL prep PSO"); return false; }
+    pd.CS = { gridCs->GetBufferPointer(), gridCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.gridPso)))) { Log("InitShaders: FAIL grid PSO"); return false; }
+
+    // Grid image for steadying/fusion: 1 MB each, made up front so options can be
+    // switched on live.
+    const UINT64 gridBytes = (UINT64)W * H * sizeof(uint32_t);
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, gridBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.gridBuf, nullptr)) return false;
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, gridBytes, D3D12_RESOURCE_FLAG_NONE,
+                    D3D12_RESOURCE_STATE_COPY_DEST, app.gridReadback, nullptr)) return false;
+    if (FAILED(app.gridReadback->Map(0, nullptr, (void**)&app.gridMapped)) || !app.gridMapped) { Log("InitShaders: FAIL grid readback map"); return false; }
+    if (FAILED(app.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&app.gridAlloc))) ||
+        FAILED(app.device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, app.gridAlloc.Get(), nullptr, IID_PPV_ARGS(&app.gridList))))
+    { Log("InitShaders: FAIL grid command list"); return false; }
+    app.gridList->Close();
 
     if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, (UINT64)W * H * sizeof(float), D3D12_RESOURCE_FLAG_NONE,
                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, app.nearBuf, nullptr)) return false;
@@ -1916,6 +2029,19 @@ static void RecordCopyToSwapchain(App& app, WarpTarget& t, ID3D12Resource* color
 // ------------------------------------------------------------------ model
 static bool LoadModel(App& app);
 
+// A DirectML device on `device` (DirectML.dll ships next to the executable).
+static bool CreateDmlDevice(ID3D12Device* device, ComPtr<IDMLDevice>& out)
+{
+    if (!device) { Log("CreateDmlDevice: FAIL no device"); return false; }
+    HMODULE dmllib = LoadLibraryW(L"DirectML.dll");
+    if (!dmllib) { Log("CreateDmlDevice: FAIL DirectML.dll"); return false; }
+    auto createDmlDevice = (HRESULT(WINAPI*)(ID3D12Device*, DML_CREATE_DEVICE_FLAGS, REFIID, void**))
+        GetProcAddress(dmllib, "DMLCreateDevice");
+    if (!createDmlDevice) { Log("CreateDmlDevice: FAIL DMLCreateDevice export"); return false; }
+    if (FAILED(createDmlDevice(device, DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&out)))) { Log("CreateDmlDevice: FAIL DMLCreateDevice"); return false; }
+    return true;
+}
+
 // One-time ONNX Runtime + DirectML setup. The model itself is loaded by LoadModel,
 // which the worker can call again to switch models during playback.
 static bool InitModel(App& app)
@@ -1929,12 +2055,7 @@ static bool InitModel(App& app)
 
     ort->CreateEnv(ORT_LOGGING_LEVEL_ERROR, "xrapp5", &app.env);
 
-    HMODULE dmllib = LoadLibraryW(L"DirectML.dll");
-    if (!dmllib) { Log("InitModel: FAIL DirectML.dll"); return false; }
-    auto createDmlDevice = (HRESULT(WINAPI*)(ID3D12Device*, DML_CREATE_DEVICE_FLAGS, REFIID, void**))
-        GetProcAddress(dmllib, "DMLCreateDevice");
-    if (!createDmlDevice) { Log("InitModel: FAIL DMLCreateDevice export"); return false; }
-    if (FAILED(createDmlDevice(app.inferDevice.Get(), DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&app.dmlDevice)))) { Log("InitModel: FAIL DMLCreateDevice"); return false; }
+    if (!CreateDmlDevice(app.inferDevice.Get(), app.dmlDevice)) return false;
     Log("InitModel: DirectML on %ls%s", app.inferName.c_str(), app.secondGpu ? " (second GPU)" : "");
 
     const bool ok = LoadModel(app);
@@ -1969,6 +2090,10 @@ static bool LoadModel(App& app)
 
     OrtSessionOptions* so = nullptr;
     if (OrtStatus* st = ort->CreateSessionOptions(&so)) { Fail("CreateSessionOptions", st); return false; }
+    // DirectML runs the model on the GPU; ORT's CPU thread pool must not spin after
+    // each pass, taking cores from the capture thread and steady/fuse maths.
+    for (const char* key : { "session.intra_op.allow_spinning", "session.inter_op.allow_spinning" })
+        if (OrtStatus* st = ort->AddSessionConfigEntry(so, key, "0")) { Fail("AddSessionConfigEntry", st); ort->ReleaseStatus(st); }
     if (OrtStatus* st = app.dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, app.dmlDevice.Get(), app.inferQueue.Get()))
     { Fail("AppendExecutionProvider_DML1", st); ort->ReleaseSessionOptions(so); return false; }
 
@@ -2346,6 +2471,363 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
     app.depthPublished++; app.depthHealthy = true;
 }
 
+// ------------------------------------------------ steadying and model fusion
+// See XMMODEL.md and depth_fusion.h. Both work on the published near map, before
+// DilateNear, and both are off unless the desktop app (or --steady / --fuse) turns
+// them on; with both off none of this runs.
+static const double FUSE_MAX_AGE = 0.3;     // s: an older anchor only supplies the global scale
+static const size_t FAST_HISTORY = 16;      // fast-model maps kept for fitting the anchor
+
+static bool FuseActive(const App& app)
+{
+    return app.fuseEnabled.load() && app.opt.model == &kZipDepth && !app.anchorFailed.load();
+}
+
+// Grid image of the texture at descriptor `srcDesc` (srcW x srcH) on the ml queue,
+// copied to the readback buffer. Returns the ml fence value that marks it complete
+// (0 = not submitted).
+static UINT64 SubmitGridDesc(App& app, UINT srcDesc, int srcW, int srcH, ID3D12Fence* srcFence, UINT64 srcValue)
+{
+    if (!app.gridPso || !app.gridList || srcW <= 0 || srcH <= 0) return 0;
+
+    WaitMlFence(app, app.gridLast);                 // the allocator and readback must be idle
+    PrepConstants pc{};
+    pc.dw = (uint32_t)W; pc.dh = (uint32_t)H;
+    pc.exactLoad = (srcW == W && srcH == H) ? 1u : 0u;
+    pc.taps = (uint32_t)std::clamp(int(std::ceil((double)srcW / W)), 1, 4);
+
+    app.gridAlloc->Reset();
+    app.gridList->Reset(app.gridAlloc.Get(), nullptr);
+    ID3D12GraphicsCommandList* cl = app.gridList.Get();
+    ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
+    cl->SetDescriptorHeaps(1, heaps);
+    cl->SetComputeRootSignature(app.prepRootSig.Get());
+    cl->SetPipelineState(app.gridPso.Get());
+    cl->SetComputeRoot32BitConstants(0, sizeof(PrepConstants) / 4, &pc, 0);
+    cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDesc));
+    cl->SetComputeRootUnorderedAccessView(2, app.gridBuf->GetGPUVirtualAddress());
+    cl->Dispatch((W + 7) / 8, (H + 7) / 8, 1);
+    Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cl->CopyBufferRegion(app.gridReadback.Get(), 0, app.gridBuf.Get(), 0, (UINT64)W * H * sizeof(uint32_t));
+    Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    cl->Close();
+
+    if (srcFence) app.mlQueue->Wait(srcFence, srcValue);
+    ID3D12CommandList* lists[] = { cl };
+    app.mlQueue->ExecuteCommandLists(1, lists);
+    app.mlQueue->Signal(app.mlFence.Get(), ++app.mlFenceVal);
+    app.gridLast = app.mlFenceVal;
+    return app.gridLast;
+}
+
+static UINT64 SubmitGrid(App& app, const SourceRef& src)
+{
+    if (!src) return 0;
+    const UINT64 done = SubmitGridDesc(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
+    if (done) app.sources.MarkRead(src, SourceFrames::Reader::Model, done);
+    return done;
+}
+
+// The hardware motion estimator, created on first use on the headset GPU (where the
+// captured frames are). False, logged once, when this GPU has none.
+static bool EnsureMotion(App& app)
+{
+    if (app.motion.ok()) return true;
+    if (app.motionTried) return false;
+    app.motionTried = true;
+    if (app.motion.Init(app.device.Get(), W, H, &Log)) return true;
+    Log("EnsureMotion: no hardware motion estimation on this GPU; steady depth and model fusion have no effect");
+    return false;
+}
+
+// Anchor thread: Depth Anything V2 on its own queue on the depth GPU, fed the newest
+// grid image the depth worker hands over. Normal queue priority (the fast model's
+// queue may be HIGH); without a second GPU it is capped at 10 passes per second so it
+// does not take the game's GPU time.
+static void AnchorMain(App* app)
+{
+    g_threadName = "anchor";
+    if (!app) return;
+    const ModelSpec& spec = kDepthAnythingV2;
+    Log("AnchorMain: enter (%s on %ls%s)", spec.name, app->inferName.c_str(), app->secondGpu ? ", second GPU" : ", headset GPU, capped at 10 per second");
+    if (spec.inW != W || spec.inH != H) { Log("AnchorMain: FAIL model input %dx%d is not the depth grid", spec.inW, spec.inH); app->anchorFailed = true; return; }
+
+    ComPtr<ID3D12CommandQueue> queue;
+    ComPtr<IDMLDevice> dml;
+    OrtSession* session = nullptr;
+    OrtMemoryInfo* cpu = nullptr;
+    auto cleanup = [&]()
+    {
+        if (cpu) { ort->ReleaseMemoryInfo(cpu); cpu = nullptr; }
+        if (session) { ort->ReleaseSession(session); session = nullptr; }
+    };
+    D3D12_COMMAND_QUEUE_DESC qd{};
+    qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    if (!app->inferDevice || FAILED(app->inferDevice->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue))) || !CreateDmlDevice(app->inferDevice.Get(), dml))
+    { Log("AnchorMain: FAIL queue/DirectML; model fusion off"); app->anchorFailed = true; return; }
+    OrtSessionOptions* so = nullptr;
+    if (OrtStatus* st = ort->CreateSessionOptions(&so)) { Fail("CreateSessionOptions", st); ort->ReleaseStatus(st); app->anchorFailed = true; return; }
+    // GPU model: one non-spinning CPU thread, so it never competes with the depth worker.
+    OrtStatus* st = ort->SetIntraOpNumThreads(so, 1);
+    for (const char* key : { "session.intra_op.allow_spinning", "session.inter_op.allow_spinning" })
+        if (!st) st = ort->AddSessionConfigEntry(so, key, "0");
+    if (!st) st = app->dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, dml.Get(), queue.Get());
+    if (!st) st = ort->CreateSession(app->env, ModelPath(spec.file).c_str(), so, &session);
+    ort->ReleaseSessionOptions(so);
+    if (!st) st = ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &cpu);
+    if (st) { Fail("AnchorMain session", st); ort->ReleaseStatus(st); cleanup(); app->anchorFailed = true; return; }
+    Log("AnchorMain: ready");
+
+    std::vector<float> input((size_t)3 * W * H), raw((size_t)W * H);
+    const int64_t dims[4] = { 1, 3, H, W };
+    const float mean[3] = { 0.485f, 0.456f, 0.406f }, istd[3] = { 1 / 0.229f, 1 / 0.224f, 1 / 0.225f };
+    RangeSmoother smoother;
+    std::vector<double> passMs;
+    double lastStart = 0, nextLog = NowSeconds() + 5.0;
+    const double minInterval = app->secondGpu ? 0.0 : 0.1;
+    uint64_t nextId = 1;
+    int failures = 0;
+    while (!app->stop.load())
+    {
+        const double wait = lastStart + minInterval - NowSeconds();
+        if (wait > 0) Sleep((DWORD)(wait * 1000) + 1);
+        App::AnchorJob job;
+        {
+            std::unique_lock<std::mutex> lock(app->anchorMutex);
+            app->anchorCv.wait_for(lock, std::chrono::milliseconds(100), [&] { return app->stop.load() || app->anchorJob.valid; });
+            if (app->stop.load()) break;
+            if (!app->anchorJob.valid) continue;
+            job = std::move(app->anchorJob);
+            app->anchorJob.valid = false;
+        }
+        if (!FuseActive(*app) || job.rgba.size() != (size_t)W * H) continue;
+        lastStart = NowSeconds();
+
+        const size_t plane = (size_t)W * H;
+        for (size_t i = 0; i < plane; i++)
+        {
+            const uint32_t p = job.rgba[i];
+            for (int c = 0; c < 3; c++) input[c * plane + i] = (((p >> (8 * c)) & 255) / 255.0f - mean[c]) * istd[c];
+        }
+        OrtValue* in = nullptr;
+        OrtValue* out = nullptr;
+        const char* inName = spec.inName;
+        const char* outName = spec.outName;
+        OrtStatus* rs = ort->CreateTensorWithDataAsOrtValue(cpu, input.data(), input.size() * sizeof(float), dims, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &in);
+        if (!rs) rs = ort->Run(session, nullptr, &inName, (const OrtValue* const*)&in, 1, &outName, 1, &out);
+        float* dp = nullptr;
+        size_t count = 0;
+        if (!rs)
+        {
+            OrtTensorTypeAndShapeInfo* info = nullptr;
+            rs = ort->GetTensorTypeAndShape(out, &info);
+            if (!rs) { rs = ort->GetTensorShapeElementCount(info, &count); ort->ReleaseTensorTypeAndShapeInfo(info); }
+            if (!rs) rs = ort->GetTensorMutableData(out, (void**)&dp);
+        }
+        const bool good = !rs && dp && count == plane && std::all_of(dp, dp + count, [](float v) { return std::isfinite(v); });
+        if (good) memcpy(raw.data(), dp, plane * sizeof(float));
+        if (rs) { Fail("AnchorMain run", rs); ort->ReleaseStatus(rs); }
+        if (out) ort->ReleaseValue(out);
+        if (in) ort->ReleaseValue(in);
+        if (!good)
+        {
+            if (++failures >= 3) { Log("AnchorMain: 3 failures; model fusion off"); app->anchorFailed = true; break; }
+            Log("AnchorMain: pass failed (%d/3)", failures);
+            continue;
+        }
+        failures = 0;
+
+        float lo = 0, hi = 1;
+        SmoothRange(smoother, raw, NowSeconds(), app->opt.smooth, app->opt.smoothTau, &lo, &hi);
+        const float inv = (hi - lo) > 1e-6f ? 1.0f / (hi - lo) : 0.0f;
+        fusion::Image nearMap(W, H);
+        for (size_t i = 0; i < plane; i++) nearMap.v[i] = std::clamp((raw[i] - lo) * inv, 0.0f, 1.0f);
+        {
+            std::lock_guard<std::mutex> lock(app->anchorMutex);
+            app->anchorResult.nearMap = std::move(nearMap);
+            app->anchorResult.luma = std::move(job.luma);
+            app->anchorResult.seq = job.seq;
+            app->anchorResult.time = job.time;
+            app->anchorResult.id = nextId++;
+        }
+        app->anchorPasses++;
+        passMs.push_back((NowSeconds() - lastStart) * 1000.0);
+        if (NowSeconds() >= nextLog && !passMs.empty())
+        {
+            std::sort(passMs.begin(), passMs.end());
+            Log("Anchor: %zu passes in 5 s | pass ms p50 %.1f p95 %.1f", passMs.size(), passMs[passMs.size() / 2], passMs[passMs.size() * 95 / 100]);
+            passMs.clear();
+            nextLog = NowSeconds() + 5.0;
+        }
+    }
+    cleanup();
+    Log("AnchorMain: exit");
+}
+
+static void EnsureAnchor(App& app)
+{
+    if (app.anchorThread.joinable() || app.anchorFailed.load()) return;
+    app.anchorThread = std::thread(AnchorMain, &app);
+}
+
+// Steadying and/or fusion of this pass's near map (in place). Never fails the pass:
+// anything unavailable leaves the map as it was. Stage times go to postStageMs:
+// 0 grid wait + luma, 1 luma upload, 2 anchor hand-over + result, 3 motion estimates,
+// 4 fusion maths, 5 steadying maths.
+static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, std::vector<float>& nearMap)
+{
+    if (!src || gridDone == 0 || nearMap.size() != (size_t)W * H) return;
+    const bool steady = app.steadyEnabled.load();
+    const bool fuse = FuseActive(app);
+    if (!steady && !fuse) return;
+    const auto t0 = std::chrono::steady_clock::now();
+    auto stageStart = t0;
+    auto stage = [&](int i)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        app.postStageMs[i] += std::chrono::duration<double, std::milli>(now - stageStart).count();
+        stageStart = now;
+    };
+
+    WaitMlFence(app, gridDone);
+    std::vector<uint32_t> rgba(app.gridMapped, app.gridMapped + (size_t)W * H);
+    fusion::Image luma = fusion::LumaFromRgba(rgba.data(), W, H);
+    if (!EnsureMotion(app)) return;
+    if (app.postLayout != src->layout)
+    {
+        // A resized/moved source: nothing from before lines up any more.
+        app.postLayout = src->layout;
+        app.steadyHave = false;
+        app.fastHistory.clear();
+        app.anchorFit = false;
+    }
+    stage(0);
+    const int cur = app.motionCurSlot;
+    if (!app.motion.Upload(cur, luma.v.data())) { Log("PostProcessDepth: luma upload failed"); return; }
+    stage(1);
+
+    fusion::Image z(W, H);
+    z.v = nearMap;
+
+    // Fusion bookkeeping: hand this frame to the anchor, take its newest result.
+    double anchorAge = 0;
+    bool useAnchor = false, anchorSameFrame = false;
+    if (fuse)
+    {
+        EnsureAnchor(app);
+        {
+            std::lock_guard<std::mutex> lock(app.anchorMutex);
+            app.anchorJob.rgba = std::move(rgba);
+            app.anchorJob.luma = luma;
+            app.anchorJob.seq = src->seq;
+            app.anchorJob.time = src->time;
+            app.anchorJob.valid = true;
+        }
+        app.anchorCv.notify_one();
+        app.fastHistory.push_back({ src->seq, z });
+        while (app.fastHistory.size() > FAST_HISTORY) app.fastHistory.pop_front();
+
+        bool fresh = false;
+        {
+            std::lock_guard<std::mutex> lock(app.anchorMutex);
+            if (app.anchorResult.id != 0 && app.anchorResult.id != app.anchorUsedId)
+            {
+                app.anchorCurrent = app.anchorResult;
+                fresh = true;
+            }
+        }
+        if (fresh)
+        {
+            app.anchorUsedId = app.anchorCurrent.id;
+            if (!app.motion.Upload(2, app.anchorCurrent.luma.v.data())) Log("PostProcessDepth: anchor luma upload failed");
+            // Fit the anchor onto the fast model's map of the same frame: the global
+            // mapping between the two models' scales.
+            for (const auto& [seq, map] : app.fastHistory)
+            {
+                if (seq != app.anchorCurrent.seq) continue;
+                fusion::GlobalFit(map, app.anchorCurrent.nearMap, app.anchorGa, app.anchorGb);
+                app.anchorFit = true;
+                break;
+            }
+        }
+        anchorAge = src->time - app.anchorCurrent.time;
+        useAnchor = app.anchorCurrent.id != 0 && app.anchorFit && anchorAge >= 0 && anchorAge <= FUSE_MAX_AGE;
+        anchorSameFrame = useAnchor && app.anchorCurrent.seq == src->seq;
+    }
+    else
+    {
+        app.fastHistory.clear();
+        app.anchorFit = false;
+    }
+    stage(2);
+
+    // The motion estimates this pass needs, in one submission.
+    MotionEstimator::Pair pairs[MotionEstimator::MAX_BATCH];
+    std::vector<int16_t> vectors[MotionEstimator::MAX_BATCH];
+    int count = 0, anchorIndex = -1, prevIndex = -1;
+    if (useAnchor && !anchorSameFrame) { anchorIndex = count; pairs[count++] = { cur, 2 }; }
+    if (steady && app.steadyHave && app.steadyPrevSeq != src->seq) { prevIndex = count; pairs[count++] = { cur, 1 - cur }; }
+    const bool estimated = count > 0 && app.motion.EstimateMany(pairs, count, vectors);
+    if (count > 0 && !estimated) { anchorIndex = prevIndex = -1; Log("PostProcessDepth: motion estimate failed"); }
+    stage(3);
+    const int bw = app.motion.blocksW(), bh = app.motion.blocksH();
+
+    fusion::Image out = z;
+    if (fuse && app.anchorCurrent.id != 0 && app.anchorFit)
+    {
+        fusion::Image fused;
+        if (useAnchor && (anchorSameFrame || anchorIndex >= 0))
+        {
+            fusion::Image moved, trust;
+            if (anchorSameFrame) moved = app.anchorCurrent.nearMap;
+            else
+            {
+                const fusion::Motion m = fusion::MotionFromVectors(vectors[anchorIndex].data(), bw, bh, W, H);
+                float trustMean = 0;
+                trust = fusion::MotionTrust(luma, app.anchorCurrent.luma, m, &trustMean);
+                moved = fusion::Remap(app.anchorCurrent.nearMap, m);
+                app.postTrustSum += trustMean;
+            }
+            if (moved.valid()) fused = fusion::Fuse(z, moved, trust, app.anchorGa, app.anchorGb);
+            if (fused.valid()) { app.postFused++; app.postAgeSum += anchorAge; }
+        }
+        if (!fused.valid())
+        {
+            // Anchor too old (or motion unavailable): keep the anchor's scale so the
+            // depth does not jump between the two models' ranges.
+            fused = fusion::Image(W, H);
+            for (size_t i = 0; i < fused.v.size(); i++) fused.v[i] = std::clamp(app.anchorGa * z.v[i] + app.anchorGb, 0.0f, 1.0f);
+        }
+        out = std::move(fused);
+    }
+    stage(4);
+
+    if (steady)
+    {
+        if (prevIndex >= 0)
+        {
+            const fusion::Motion m = fusion::MotionFromVectors(vectors[prevIndex].data(), bw, bh, W, H);
+            const fusion::Image trust = fusion::MotionTrust(luma, app.steadyPrevLuma, m);
+            out = fusion::Steady(out, fusion::Remap(app.steadyPrevOut, m), trust);
+            app.postSteadied++;
+        }
+        app.steadyPrevOut = out;
+        app.steadyPrevLuma = std::move(luma);
+        app.steadyPrevSeq = src->seq;
+        app.steadyHave = true;
+        app.motionCurSlot = 1 - cur;
+    }
+    else
+    {
+        app.steadyHave = false;
+    }
+    stage(5);
+
+    nearMap = std::move(out.v);
+    app.postPasses++;
+    app.postMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+}
+
 static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>& nearScratch)
 {
     if (!src) return false;
@@ -2367,6 +2849,15 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
         const UINT64 prepDone = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
         app.sources.MarkRead(src, SourceFrames::Reader::Model, prepDone);
     }
+    // Steady/fuse need this frame on the depth grid; queued now so the GPU makes it
+    // while the model runs.
+    const bool post = app.steadyEnabled.load() || FuseActive(app);
+    const UINT64 gridDone = post ? SubmitGrid(app, src) : 0;
+    if (app.fuseEnabled.load() && app.opt.model != &kZipDepth && !app.fuseModelLogged)
+    {
+        Log("ComputeAndPublish: model fusion needs ZipDepth as the main model; off while %s is selected", app.opt.model->name);
+        app.fuseModelLogged = true;
+    }
     if (!RunModelRaw(app)) return false;
     double modelMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - m0).count();
     app.passMs.push_back(modelMs);                  // worker thread only; summarised by WorkerMain
@@ -2377,6 +2868,7 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     nearScratch.resize(app.rawDepth.size());
     for (size_t i = 0; i < nearScratch.size(); i++)
         nearScratch[i] = std::min(1.0f, std::max(0.0f, (app.rawDepth[i] - lo) * inv));
+    PostProcessDepth(app, src, gridDone, nearScratch);
 
     // Make global depth available immediately; an optional crop must never hold
     // back this result or mutate a slot the render thread may be reading.
@@ -2495,6 +2987,20 @@ static void WorkerMain(App* app)
             Log("Worker: %zu passes in 2 s | pass ms p50 %.1f p95 %.1f max %.1f | %s", v.size(), pct(.5), pct(.95), v.back(),
                 !app->secondGpu ? "one GPU" : app->frameTransfer ? "second GPU, copy-engine frames" : "second GPU, prep on headset GPU");
             v.clear();
+            if (app->postPasses > 0 && !app->postMs.empty())
+            {
+                // Steady/fuse: their own time after the model (grid wait, motion
+                // estimates, CPU maths), how many passes each changed, anchor state.
+                auto& p = app->postMs;
+                std::sort(p.begin(), p.end());
+                Log("Worker: steady %s, fuse %s | post ms p50 %.1f p95 %.1f | steadied %u, fused %u of %u | anchor passes %u, mean age %.0f ms, motion trust %.2f",
+                    app->steadyEnabled.load() ? "on" : "off", FuseActive(*app) ? "on" : "off", p[p.size() / 2], p[std::min(p.size() - 1, p.size() * 95 / 100)],
+                    app->postSteadied, app->postFused, app->postPasses, app->anchorPasses.exchange(0),
+                    app->postFused ? app->postAgeSum / app->postFused * 1000.0 : 0.0, app->postFused ? app->postTrustSum / app->postFused : 0.0);
+                p.clear();
+                app->postSteadied = app->postFused = app->postPasses = 0;
+                app->postAgeSum = app->postTrustSum = 0;
+            }
             nextSummary = NowSeconds() + 2.0;
         }
     }
@@ -2597,6 +3103,127 @@ static bool UploadTestSource(App& app, const std::vector<unsigned char>& rgb)
     app.cmdList->Close();
     WaitFence(app, SubmitAndSignal(app));
     return true;
+}
+
+// Steady/fuse building blocks on this GPU (--selftest only; a GPU without a motion
+// estimator skips that part, as playback does):
+//  1. grid shader vs the CPU: an exact W x H source must come back unchanged;
+//  2. hardware motion estimation: a textured frame shifted by (6, 3) px must give
+//     (-24, -12) quarter pels on nearly every interior block, and the per-pixel
+//     motion must then move the reference onto the current frame;
+//  3. steadying with that verified motion blends towards the moved previous map.
+static bool SelfTestSteadyFuse(App& app, const std::vector<unsigned char>& scene)
+{
+    Log("SelfTestSteadyFuse: enter");
+    if (scene.size() != (size_t)W * H * 3) { Log("SelfTestSteadyFuse: FAIL bad scene"); return false; }
+
+    if (!UploadTestSource(app, scene)) { Log("SelfTestSteadyFuse: FAIL upload"); return false; }
+    const UINT64 done = SubmitGridDesc(app, DESC_TEST_SRC, W, H, nullptr, 0);
+    if (!done) { Log("SelfTestSteadyFuse: FAIL grid submit"); return false; }
+    WaitMlFence(app, done);
+    size_t gridBad = 0;
+    for (size_t i = 0; i < (size_t)W * H; i++)
+    {
+        const uint32_t p = app.gridMapped[i];
+        if ((p & 255) != scene[i * 3] || ((p >> 8) & 255) != scene[i * 3 + 1] || ((p >> 16) & 255) != scene[i * 3 + 2]) gridBad++;
+    }
+    const bool gridOk = gridBad == 0;
+    Log("SelfTestSteadyFuse: grid image %s (%zu of %d pixels differ)", gridOk ? "PASS" : "FAIL", gridBad, W * H);
+
+    if (!EnsureMotion(app))
+    {
+        Log("SelfTestSteadyFuse: exit %s (motion estimation unavailable: SKIPPED)", gridOk ? "PASS" : "FAIL");
+        return gridOk;
+    }
+    // Smooth value noise on 4-px cells: texture everywhere for block matching.
+    auto pattern = [](int x, int y) -> float
+    {
+        auto cell = [](int cx, int cy) { unsigned h = (unsigned)(cx * 73856093) ^ (unsigned)(cy * 19349663); h = (h ^ (h >> 13)) * 1274126177u; return (float)((h >> 8) & 255); };
+        const int cx = (int)floorf(x / 4.0f), cy = (int)floorf(y / 4.0f);
+        const float fx = x / 4.0f - cx, fy = y / 4.0f - cy;
+        const float top = cell(cx, cy) * (1 - fx) + cell(cx + 1, cy) * fx, bot = cell(cx, cy + 1) * (1 - fx) + cell(cx + 1, cy + 1) * fx;
+        return std::round(top * (1 - fy) + bot * fy);
+    };
+    const int dx = 6, dy = 3;
+    fusion::Image ref(W, H), cur(W, H), refNear(W, H), curNear(W, H);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+        {
+            ref.at(x, y) = pattern(x, y);
+            cur.at(x, y) = pattern(x - dx, y - dy);
+            refNear.at(x, y) = (float)x / (W - 1);
+            curNear.at(x, y) = 0.2f;              // far from the moved ramp, so the blend is measurable
+        }
+    std::vector<int16_t> vec;
+    if (!app.motion.Upload(0, cur.v.data()) || !app.motion.Upload(1, ref.v.data()) || !app.motion.Estimate(0, 1, vec))
+    { Log("SelfTestSteadyFuse: FAIL motion estimate"); return false; }
+    const int bw = app.motion.blocksW(), bh = app.motion.blocksH();
+    int right = 0, n = 0;
+    for (int by = 1; by + 1 < bh; by++)
+        for (int bx = 1; bx + 1 < bw; bx++, n++)
+            if (vec[((size_t)by * bw + bx) * 2] == -4 * dx && vec[((size_t)by * bw + bx) * 2 + 1] == -4 * dy) right++;
+    const bool motionOk = right >= n * 95 / 100;
+    Log("SelfTestSteadyFuse: motion %s (%d of %d interior blocks exactly (%d, %d) quarter pels)", motionOk ? "PASS" : "FAIL", right, n, -4 * dx, -4 * dy);
+
+    const fusion::Motion m = fusion::MotionFromVectors(vec.data(), bw, bh, W, H);
+    float trustMean = 0;
+    const fusion::Image trust = fusion::MotionTrust(cur, ref, m, &trustMean);
+    const fusion::Image moved = fusion::Remap(refNear, m);
+    // Interior pixel: its reference position is (x - dx), so the moved ramp there is (x - dx)/(W-1).
+    const int px = W / 2, py = H / 2;
+    const float movedWant = (float)(px - dx) / (W - 1);
+    const fusion::Image steadied = fusion::Steady(curNear, moved, trust);
+    const float steadyWant = 0.2f + fusion::STEADY_ALPHA * trust.at(px, py) * (movedWant - 0.2f);
+    const bool mapOk = std::fabs(moved.at(px, py) - movedWant) < 1e-3f && trustMean > 0.9f &&
+                       std::fabs(steadied.at(px, py) - steadyWant) < 1e-4f && std::fabs(steadied.at(px, py) - 0.2f) > 0.05f;
+    Log("SelfTestSteadyFuse: steady %s (trust mean %.3f, moved %.4f want %.4f, steadied %.4f want %.4f)", mapOk ? "PASS" : "FAIL",
+        trustMean, moved.at(px, py), movedWant, steadied.at(px, py), steadyWant);
+    const bool ok = gridOk && motionOk && mapOk;
+    Log("SelfTestSteadyFuse: exit %s", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// --selftest with --steady and/or --fuse: real depth passes on the live source for a
+// few seconds with the options on (no VR session), then checks that the output stays
+// finite and in range, that steadying/fusion ran, and that the anchor model produced
+// results. Exercises the grid pass, motion estimator, anchor thread and CPU maths.
+static bool FirstSourceFrame(App& app);
+
+static bool SelfTestPipeline(App& app)
+{
+    if (!app.steadyEnabled.load() && !app.fuseEnabled.load()) return true;
+    Log("SelfTestPipeline: enter (steady %d, fuse %d)", (int)app.steadyEnabled.load(), (int)app.fuseEnabled.load());
+    if (!FirstSourceFrame(app)) { Log("SelfTestPipeline: FAIL no source frame"); return false; }
+
+    std::vector<float> nearMap;
+    unsigned passes = 0, bad = 0, steadied = 0, fused = 0;
+    std::vector<double> postMs;
+    const double end = NowSeconds() + 6.0;
+    while (NowSeconds() < end)
+    {
+        SourceRef src = app.sources.Latest();
+        if (!src) { Sleep(5); continue; }
+        if (!ComputeAndPublish(app, src, nearMap)) { Log("SelfTestPipeline: FAIL depth pass"); return false; }
+        passes++;
+        for (float v : nearMap) if (!std::isfinite(v) || v < 0 || v > 1) { bad++; break; }
+        steadied += app.postSteadied; fused += app.postFused;
+        app.postSteadied = app.postFused = 0;
+        postMs.insert(postMs.end(), app.postMs.begin(), app.postMs.end());
+        app.postMs.clear();
+        Sleep(8);
+    }
+    std::sort(postMs.begin(), postMs.end());
+    const unsigned anchors = app.anchorPasses.exchange(0);
+    Log("SelfTestPipeline: mean ms per pass - grid+luma %.2f, luma upload %.2f, anchor hand-over %.2f, motion estimates %.2f, fuse %.2f, steady %.2f",
+        app.postStageMs[0] / passes, app.postStageMs[1] / passes, app.postStageMs[2] / passes, app.postStageMs[3] / passes,
+        app.postStageMs[4] / passes, app.postStageMs[5] / passes);
+    const bool fuseOk = !FuseActive(app) || (anchors > 0 && fused > 0);
+    const bool ok = passes > 20 && bad == 0 && !postMs.empty() && fuseOk;
+    Log("SelfTestPipeline: exit %s - %u passes, %u out of range, post ms p50 %.1f p95 %.1f, steadied %u, fused %u, anchor passes %u%s",
+        ok ? "PASS" : "FAIL", passes, bad, postMs.empty() ? 0.0 : postMs[postMs.size() / 2],
+        postMs.empty() ? 0.0 : postMs[std::min(postMs.size() - 1, postMs.size() * 95 / 100)], steadied, fused, anchors,
+        app.motion.ok() ? "" : " (no motion estimator)");
+    return ok;
 }
 
 // GPU warp vs the CPU reference at WxH, pixel for pixel.
@@ -2965,6 +3592,8 @@ static bool SelfTest(App& app)
     ok = SelfTestTransfer(app, synth) && ok;
     ok = SelfTestFrameTransfer(app) && ok;
     ok = SelfTestPrep(app, synth, DepthCrop{.17f,.23f,.5f}) && ok;
+    // Steady/fuse parts only in --selftest (playback creates the estimator when used).
+    if (app.opt.selfTestOnly) ok = SelfTestSteadyFuse(app, synth) && ok;
     c.mirrorTol = MIRROR_TOL;
     for (uint32_t mode : { (uint32_t)FILL_STRETCH, (uint32_t)FILL_MIRROR })
     {
@@ -3073,6 +3702,13 @@ static void RunFrameLoop(App& app)
                     const ModelSpec* model = next.fastModel ? &kZipDepth : &kDepthAnythingV2;
                     if (app.requestedModel.exchange(model) != model)
                         Log("Depth model requested: %s", model->name);
+                }
+                if (next.version >= 5)
+                {
+                    if (app.steadyEnabled.exchange(next.steady != 0) != (next.steady != 0))
+                        Log("Steady depth: %s", next.steady ? "enabled" : "disabled");
+                    if (app.fuseEnabled.exchange(next.fuse != 0) != (next.fuse != 0))
+                        Log("Model fusion: %s", next.fuse ? "enabled" : "disabled");
                 }
             }
         }
@@ -3551,6 +4187,9 @@ static void Shutdown(App& app)
     Log("Shutdown: enter");
     app.stop = true;
     if (app.worker.joinable()) app.worker.join();
+    app.anchorCv.notify_all();
+    if (app.anchorThread.joinable()) app.anchorThread.join();
+    app.motion.Release();
     if (app.cap.thread.joinable()) app.cap.thread.join();
     WaitFence(app, app.fenceVal);
     WaitDepthIdle(app);
@@ -3596,6 +4235,8 @@ int wmain(int argc, wchar_t** wideArgv)
     if (app.opt.listGpus) return ListGpus();
     app.testDepthFailuresLeft = app.opt.testDepthFailures;
     app.foregroundEnabled = app.opt.foreground && app.opt.doWarp;
+    app.steadyEnabled = app.opt.steady;
+    app.fuseEnabled = app.opt.fuse;
 
     int rc = 1;
     try
@@ -3626,6 +4267,12 @@ int wmain(int argc, wchar_t** wideArgv)
             app.requestedModel = app.opt.model;
             Log("Desktop control: depth model %s", app.opt.model->name);
         }
+        if (initial.version >= 5)
+        {
+            app.steadyEnabled = initial.steady != 0;
+            app.fuseEnabled = initial.fuse != 0;
+            Log("Desktop control: steady depth %s, model fusion %s", initial.steady ? "on" : "off", initial.fuse ? "on" : "off");
+        }
     }
     do
     {
@@ -3641,7 +4288,12 @@ int wmain(int argc, wchar_t** wideArgv)
         if (!InitShaders(app)) break;
 
         if (!SelfTest(app)) { Log("main: GPU shaders do not match the CPU reference - not presenting"); break; }
-        if (app.opt.selfTestOnly) { if (SelfTestForegroundModel(app)) rc = 0; break; }
+        if (app.opt.selfTestOnly)
+        {
+            const bool fg = SelfTestForegroundModel(app);
+            if (SelfTestPipeline(app) && fg) rc = 0;
+            break;
+        }
 
         if (!FirstSourceFrame(app)) break;
 

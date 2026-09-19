@@ -27,6 +27,12 @@ public sealed class Profile
     public string DepthGpu { get; set; } = Gpus.Same;
     // Replaced by DepthGpu; read only so profiles from earlier xgpu builds migrate.
     public bool DepthOnSecondGpu { get; set; }
+    // Experimental (XMMODEL.md), sent in the v5 control snapshot, apply live:
+    // steadying blends in the previous depth moved by the GPU's motion estimator;
+    // fusion runs Depth Anything V2 alongside ZipDepth (needs the fast model).
+    // Profiles saved before these existed load as false.
+    public bool SteadyDepth { get; set; }
+    public bool FuseModels { get; set; }
     public bool AutoDismiss { get; set; } = true;
     public int RecenterKey { get; set; } = 0xBB;
     public int MenuKey { get; set; } = 0x77;
@@ -36,7 +42,7 @@ public sealed class Profile
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 4 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)}\n");
+        $"VRX 5 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)
