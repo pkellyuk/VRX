@@ -27,11 +27,11 @@ public sealed class Profile
     public string DepthGpu { get; set; } = Gpus.Same;
     // Replaced by DepthGpu; read only so profiles from earlier xgpu builds migrate.
     public bool DepthOnSecondGpu { get; set; }
-    // Experimental (XMMODEL.md), sent in the v5 control snapshot, apply live:
-    // steadying blends in the previous depth moved by the GPU's motion estimator;
-    // fusion runs Depth Anything V2 alongside ZipDepth (needs the fast model).
-    // Profiles saved before these existed load as false.
-    public bool SteadyDepth { get; set; }
+    // XMMODEL.md; sent in the v5 control snapshot, apply live. Steadying blends in the
+    // previous depth moved by the GPU's motion estimator: on by default, including for
+    // profiles saved before it existed. Fusion runs Depth Anything V2 alongside ZipDepth
+    // (needs the fast model, best with a second GPU): off by default.
+    public bool SteadyDepth { get; set; } = true;
     public bool FuseModels { get; set; }
     public bool AutoDismiss { get; set; } = true;
     public int RecenterKey { get; set; } = 0xBB;

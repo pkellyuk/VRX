@@ -162,10 +162,11 @@ to back. The files go to `bench/xmmodel/out/sbs/` and are not committed.
 ## Engine implementation (xmmodel branch)
 
 There are two independent per-game tickboxes in the desktop app, and both apply live.
-Both are off by default until they have been tested in the headset.
+After the first headset test (fused + steadied looked clearly better), steadying is on
+by default, including for existing profiles, and fusion is off by default.
 
-- **Steady depth — motion vectors (experimental):** works on any GPU that has a
-  hardware motion estimator.
+- **Steady depth — motion vectors:** works on any GPU that has a hardware motion
+  estimator.
 - **Fuse with Depth Anything V2 (experimental):** needs ZipDepth as the main model,
   and works best with a second depth GPU.
 
