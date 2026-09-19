@@ -7,9 +7,9 @@ are needed. This provides a virtual 3D screen, not native VR camera controls.
 
 ## Get started
 
-Download VRX v1.2.0: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.2.0/VRX-Setup-1.2.0.exe)
-or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.2.0/VRX-1.2.0-win-x64.zip)
-([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.2.0); older versions on
+Download VRX v1.3.0: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.3.0/VRX-Setup-1.3.0.exe)
+or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.3.0/VRX-1.3.0-win-x64.zip)
+([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.3.0); older versions on
 [GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.
@@ -34,6 +34,8 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 - The packaged release includes the desktop runtime, native dependencies, and both depth models.
 - Depth is estimated by [ZipDepth](https://github.com/fabiotosi92/ZipDepth) by default: about 6x less GPU time per estimate than Depth Anything V2 Small (2.0 vs 13.1 ms on an RTX 3090), which keeps depth much closer to the game's frame rate. Untick **Fast depth model — ZipDepth** (per game, applies live) to use Depth Anything V2 instead. Fast motion and foreground edges can still distort.
 - **Depth GPU** (per game, applies at Attach / Play) chooses which graphics card runs the depth model: the game's own GPU (default), any other GPU automatically, or a specific card from the list. Cards are remembered by name, and identical cards by their order, because Windows' GPU numbering can change after driver updates; if the chosen card is missing, VRX uses the game's GPU and the setting shows it as not found. With another card, the capture step makes a small model-size copy of each frame and the game GPU's copy engine sends it across, so depth no longer competes with the game. Measured with the RTX 3090 saturated by other work: ZipDepth 7.7 ms per estimate on an RTX 3060 (vs 19.9 ms on the busy 3090), Depth Anything V2 25.6 ms (vs 120.5 ms). Foreground crop passes still use the game GPU.
+- **Steady depth — motion vectors** (per game, default on, applies live) reduces depth shimmer. Each new depth estimate is blended with the previous one, which the graphics card's hardware motion estimator (its video engine, not the shader cores) moves to where things are now, but only where that motion is verified, so fast pans and occlusions fall back to the new estimate. It adds CPU work to each depth pass, which the session log reports. See [XMMODEL.md](XMMODEL.md).
+- **Fuse with Depth Anything V2** (per game, default off, applies live, needs the fast depth model) runs Depth Anything V2 alongside ZipDepth. ZipDepth keeps depth fast; Depth Anything's more detailed layering is moved to the current frame with motion vectors, checked, and fitted onto ZipDepth region by region. It works best with another GPU as the depth GPU, and runs at most 10 times per second on one GPU. In the first headset test, fused and steadied depth together removed most of the "that looks wrong" moments. Offline: 59% closer to Depth Anything's layout than ZipDepth alone and 16% less flicker, or 36% less with steadying (XMMODEL.md).
 - **Match game frames to depth** improves alignment but adds latency and limits motion to the depth update rate. It defaults off.
 - **Extra foreground depth passes** are experimental and default on; their benefit varies.
 - GPU contention can reduce depth update speed. A steady 60 depth updates per second is not guaranteed.

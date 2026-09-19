@@ -1,6 +1,6 @@
-VRX 1.2.0 - Windows x64
+VRX 1.3.0 - Windows x64
 
-Install with VRX-Setup-1.2.0.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.3.0.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -33,6 +33,16 @@ Anything V2 Small, so depth keeps closer to the game. Untick "Fast depth model
 another graphics card so it no longer competes with the game. Cards are chosen by
 name; if the chosen card is missing, the game's GPU is used. Foreground crop
 passes still run on the game's GPU.
+
+"Steady depth - motion vectors" (per game, default on, applies live) reduces
+depth shimmer: each new depth estimate is blended with the previous one, moved to
+where things are now by the graphics card's hardware motion estimator (its video
+engine), only where that motion is verified. "Fuse with Depth Anything V2" (per
+game, default off, applies live, needs the fast depth model) runs Depth Anything
+V2 alongside ZipDepth for more detailed layering, moved to the current frame the
+same way; it is best with another GPU chosen as the depth GPU and is limited to
+10 passes per second on one GPU. Both add CPU work to each depth pass; the session
+log reports it. GPUs without a hardware motion estimator play without them.
 No game injection, motion-controller controls, or in-headset UI.
 SteamVR dashboard dismissal is best-effort. Other games/headsets need validation.
 
