@@ -1,6 +1,6 @@
-VRX 1.4.0 - Windows x64
+VRX 1.5.0 - Windows x64
 
-Install with VRX-Setup-1.4.0.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.5.0.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.

@@ -7,9 +7,9 @@ are needed. This provides a virtual 3D screen, not native VR camera controls.
 
 ## Get started
 
-Download VRX v1.4.0: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.4.0/VRX-Setup-1.4.0.exe)
-or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.4.0/VRX-1.4.0-win-x64.zip)
-([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.4.0); older versions on
+Download VRX v1.5.0: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.5.0/VRX-Setup-1.5.0.exe)
+or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.5.0/VRX-1.5.0-win-x64.zip)
+([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.5.0); older versions on
 [GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.
