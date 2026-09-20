@@ -18,6 +18,17 @@ VRX is free and open source.
 
 [<img src="https://storage.ko-fi.com/cdn/kofi3.png?v=6" alt="Buy me a coffee" height="36">](https://ko-fi.com/pkellyuk)
 
+## Quick hints
+
+From using VRX day to day:
+
+- **Run the game at 1080p.** It is much more stable, and in the headset you will
+  not notice the difference.
+- **Single GPU:** the fast **ZipDepth** model with **Game frame timing → Delayed
+  to depth** and **Steady depth — motion vectors** gives the best experience.
+- **Second GPU:** set it as the **Depth GPU**, turn on **Fuse with Depth Anything
+  V2**, and keep **Delayed to depth** with **Steady depth — motion vectors**.
+
 ## Get started
 
 Download VRX v1.5.0: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.5.0/VRX-Setup-1.5.0.exe)
