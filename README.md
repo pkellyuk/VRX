@@ -1,3 +1,5 @@
+<img src="docs/vrx-logo.png" alt="VRX" width="200">
+
 # VRX
 
 Play flat PC games on a stereo screen in VR using your keyboard and mouse.

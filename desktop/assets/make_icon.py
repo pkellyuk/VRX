@@ -230,8 +230,16 @@ def main():
         y += size + 6
     out = os.path.join(preview_dir, 'vrx-icon-preview.png')
     sheet.save(out)
-    render(512, detailed=True).save(os.path.join(preview_dir, 'vrx-icon-512.png'))
+    large = render(512, detailed=True)
+    large.save(os.path.join(preview_dir, 'vrx-icon-512.png'))
     print(f'wrote {out}')
+
+    # The logo the README shows, tracked in the repository.
+    docs = os.path.normpath(os.path.join(here, '..', '..', 'docs'))
+    os.makedirs(docs, exist_ok=True)
+    logo = os.path.join(docs, 'vrx-logo.png')
+    large.save(logo, optimize=True)
+    print(f'wrote {logo} ({os.path.getsize(logo)} bytes, 512x512)')
 
 
 if __name__ == '__main__':
