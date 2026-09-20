@@ -9,7 +9,7 @@
 Play flat PC games on a stereo screen in VR using your keyboard and mouse.
 VRX captures the selected game window, estimates depth, and creates a stereo
 view. All settings live in a desktop app; no in-headset UI or motion controllers
-are needed. This provides a virtual 3D screen, not native VR camera controls.
+are needed.
 
 It is not only for games: attach to a browser window and any 2D video you play in
 it — YouTube, a streaming service, your own files — becomes 3D on the same screen.
