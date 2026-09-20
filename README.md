@@ -84,3 +84,10 @@ To package an installer and portable ZIP, install Inno Setup 6 and run
 `./release/build-release.ps1`. Outputs go into a fresh folder under `release/out`.
 Third-party notices and license texts are retained under `release` and bundled
 with the release.
+
+## License
+
+VRX is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+The released packages also contain third-party components under their own
+licenses (the depth models, ONNX Runtime, DirectML, the OpenXR loader and the
+.NET runtime): see `release/THIRD-PARTY-NOTICES.txt` and `release/licenses`.

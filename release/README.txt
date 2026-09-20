@@ -67,5 +67,7 @@ The installer is not code-signed and Windows may display an unknown-publisher
 warning. Download only from the project's GitHub release and compare SHA256SUMS.txt
 if verifying the download. Do not disable Windows security features.
 
-Third-party notices and license texts are in the licenses folder.
+VRX itself is licensed under the Apache License 2.0: see LICENSE and NOTICE.
+Third-party components keep their own licenses; notices and license texts are in
+THIRD-PARTY-NOTICES.txt and the licenses folder.
 Project: https://github.com/pkellyuk/VRX
