@@ -24,6 +24,16 @@ Extra foreground depth passes are experimental and default on. Their benefit
 varies and no clear improvement was seen in the initial Helldivers 2 test.
 Neither option guarantees 60 fps. Disable extra foreground passes for comparisons.
 
+"Smooth depth steps (sub-pixel warp)" (per game, default on, applies live) keeps
+the fractional part of each eye's shift. Without it the whole scene has only
+about 25 distinct depths, so smoothly receding surfaces such as grass, roads and
+walls show ridges like a ploughed field. Turning it off restores the earlier warp,
+which is very slightly sharper.
+
+"Make base settings" saves the settings shown as the starting point for games you
+have not set up yet; games already set up keep their own. "Reset this profile"
+returns a game to those base settings, or to VRX's defaults if none are saved.
+
 "Game frame timing" (per game, applies live) chooses which game frame is shown
 with the depth. "Latest frame" (default) is smooth and immediate, but the depth
 lags slightly behind moving things. "Delayed to depth" holds the game image back

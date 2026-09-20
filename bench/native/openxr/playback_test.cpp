@@ -391,7 +391,7 @@ static void TestDesktopControl()
     Check(ParseDesktopSettings("VRX 1 6.25 3.5 0.2 0.4 0.8 0 1 1 187 120 4 7 0", settings), "valid complete desktop snapshot");
     Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7, "snapshot values and command sequence");
     Check(!ParseDesktopSettings("VRX 1 6.25 3.5", settings), "partial snapshot rejected");
-    Check(!ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 0 0 0 1 0 0 0 0 0", settings), "unknown version rejected");
+    Check(!ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 0 0 0 1 0 0 0 0 0 1", settings), "unknown version rejected");
     Check(settings.foreground == 0, "v1 keeps foreground refinement off");
     Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1", settings) && settings.foreground == 1, "v2 enables foreground refinement");
     Check(ParseDesktopSettings("VRX 2 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 0", settings) && settings.foreground == 0, "v2 disables foreground refinement");
@@ -417,6 +417,11 @@ static void TestDesktopControl()
     Check(ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 1 1 1 0 0", settings) && settings.delayed == 0 && settings.paired == 1, "v6 matched timing");
     Check(!ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0", settings), "v6 missing timing flag rejected");
     Check(!ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 2", settings), "v6 invalid timing flag rejected");
+    Check(ParseDesktopSettings("VRX 6 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1", settings) && settings.subpixel == 1, "v6 keeps the sub-pixel warp on");
+    Check(ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 0", settings) && settings.subpixel == 0, "v7 turns the sub-pixel warp off");
+    Check(ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1", settings) && settings.subpixel == 1, "v7 sub-pixel warp on");
+    Check(!ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1", settings), "v7 missing warp flag rejected");
+    Check(!ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 2", settings), "v7 invalid warp flag rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");

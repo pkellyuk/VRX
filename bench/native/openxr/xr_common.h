@@ -282,15 +282,20 @@ static void FillHole(std::vector<int>& src, const float* nrow, int w, int x, int
     }
 }
 
+// subpixel: keep the fractional part of each shift. Whole-pixel shifts quantise a
+// smoothly receding surface into ~25 flat bands with a 1 px step between them, which
+// reads as ridges ("ploughed field") on uniform texture; sampling the colour at the
+// fractional source position that lands on this destination removes them.
 static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vector<float>& near01,
                         float eyeOffset, float focalPx, float scale, float invZNear, float invZFar,
                         float nearZ, float farZ, bool doWarp, int fillMode,
-                        unsigned char* outRGBA, float* outDepth)
+                        unsigned char* outRGBA, float* outDepth, bool subpixel = false)
 {
     if (!outRGBA || !outDepth) return;
     if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) return;
 
     std::vector<int> src(W);
+    std::vector<float> srcDest(W);            // where the chosen source pixel really lands
     for (int y = 0; y < H; y++)
     {
         const float* nrow = near01.data() + (size_t)y * W;
@@ -299,15 +304,18 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
         for (int x = 0; x < W; x++)
         {
             int dx = x;
+            float destF = (float)x;
             if (doWarp)
             {
                 // Content at distance Z sits at -focal*E/Z in the eye's image
                 // relative to the cyclopean image (left eye: shifted right).
                 float invZ = invZFar + nrow[x] * (invZNear - invZFar);
-                dx = x - (int)lroundf(scale * focalPx * eyeOffset * invZ);
+                const float s = scale * focalPx * eyeOffset * invZ;
+                destF = (float)x - s;
+                dx = x - (int)lroundf(s);
             }
             if (dx < 0 || dx >= W) continue;
-            if (src[dx] < 0 || nrow[x] > nrow[src[dx]]) src[dx] = x;
+            if (src[dx] < 0 || nrow[x] > nrow[src[dx]]) { src[dx] = x; srcDest[dx] = destF; }
         }
 
         // holes: maximal runs of unwritten dest pixels
@@ -326,11 +334,23 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
         float* drow = outDepth + (size_t)y * (ROW_PITCH / 4);
         for (int x = 0; x < W; x++)
         {
-            int s = src[x] >= 0 ? src[x] : -2 - src[x];
+            const bool filled = src[x] < 0;
+            int s = filled ? -2 - src[x] : src[x];
             size_t si = ((size_t)y * W + s) * 3;
-            crow[x * 4 + 0] = scene[si + 0];
-            crow[x * 4 + 1] = scene[si + 1];
-            crow[x * 4 + 2] = scene[si + 2];
+            // Filled pixels have no continuous mapping, so they stay whole-pixel.
+            // srcDest is indexed by DESTINATION: where the pixel written here landed.
+            const float pos = (subpixel && !filled) ?
+                std::min(std::max((float)s + ((float)x - srcDest[x]), 0.0f), (float)(W - 1)) : (float)s;
+            const int i0 = (int)pos, i1 = i0 + 1 < W ? i0 + 1 : W - 1;
+            const float fr = pos - i0;
+            const size_t a = ((size_t)y * W + i0) * 3, b = ((size_t)y * W + i1) * 3;
+            // Same arithmetic as the shader: UNORM values, lerp as c0 + f*(c1-c0),
+            // then the UNORM store's round-to-nearest.
+            for (int ch = 0; ch < 3; ch++)
+            {
+                const float c0 = scene[a + ch] / 255.0f, c1 = scene[b + ch] / 255.0f;
+                crow[x * 4 + ch] = (unsigned char)lroundf((c0 + fr * (c1 - c0)) * 255.0f);
+            }
             crow[x * 4 + 3] = 255;
             float invZ = invZFar + nrow[s] * (invZNear - invZFar);
             drow[x] = (farZ / (farZ - nearZ)) * (1.0f - nearZ * invZ);

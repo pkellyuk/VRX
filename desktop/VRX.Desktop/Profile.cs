@@ -37,6 +37,11 @@ public sealed class Profile
     // (needs the fast model, best with a second GPU): off by default.
     public bool SteadyDepth { get; set; } = true;
     public bool FuseModels { get; set; }
+    // Sub-pixel stereo warp (v7 snapshot, applies live). Whole-pixel shifts quantise
+    // smoothly receding surfaces into ~25 depth bands, which look like ridges on
+    // uniform texture ("ploughed field"); sub-pixel removes them at the cost of a
+    // very slight softening. On by default, including for older profiles.
+    public bool SubpixelWarp { get; set; } = true;
     public bool AutoDismiss { get; set; } = true;
     public int RecenterKey { get; set; } = 0xBB;
     public int MenuKey { get; set; } = 0x77;
@@ -46,18 +51,55 @@ public sealed class Profile
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 6 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)}\n");
+        $"VRX 7 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)
 {
     public string Root { get; } = root;
+    // Settings a game with no profile starts from ("Make base settings"). The game's
+    // own path and window are never part of it.
+    public string BaseFile => Path.Combine(Root, "base-settings.json");
+    public bool HasBase => File.Exists(BaseFile);
+    public void SaveBase(Profile profile)
+    {
+        if (!profile.Valid()) throw new InvalidDataException("Settings are outside the allowed range or shortcut keys conflict.");
+        var copy = JsonSerializer.Deserialize<Profile>(JsonSerializer.Serialize(profile))!;
+        copy.ExecutablePath = "";
+        copy.PreferredWindowTitle = "";
+        AtomicWrite(BaseFile, JsonSerializer.Serialize(copy, new JsonSerializerOptions { WriteIndented = true }));
+    }
+    // The saved base, or VRX's own defaults if there is none (or it is unreadable).
+    public Profile BaseSettings()
+    {
+        try
+        {
+            if (File.Exists(BaseFile))
+            {
+                var saved = JsonSerializer.Deserialize<Profile>(File.ReadAllText(BaseFile));
+                if (saved != null)
+                {
+                    saved.ExecutablePath = "";
+                    saved.PreferredWindowTitle = "";
+                    saved.DepthGpu ??= Gpus.Same;
+                    if (saved.Valid()) return saved;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or JsonException) { }
+        return new Profile();
+    }
     public string FileFor(string executable) => Path.Combine(Root, "profiles",
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(executable).ToUpperInvariant()))) + ".json");
     public Profile Load(string executable)
     {
         string file = FileFor(executable);
-        if (!File.Exists(file)) return new Profile { ExecutablePath = executable };
+        if (!File.Exists(file))
+        {
+            var start = BaseSettings();
+            start.ExecutablePath = executable;
+            return start;
+        }
         var profile = JsonSerializer.Deserialize<Profile>(File.ReadAllText(file));
         if (profile != null)
         {

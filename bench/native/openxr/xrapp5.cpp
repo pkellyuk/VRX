@@ -246,6 +246,7 @@ struct Options
     bool steady = false;                // --steady (the desktop app sets it per game, live)
     bool fuse = false;                  // --fuse (likewise)
     bool delayed = false;               // --delayed: game frame timing "delayed to depth" (paired wins if both)
+    bool subpixel = true;               // sub-pixel warp (no depth banding); --whole-pixel restores the old warp
 };
 
 static const int SLOTS = 3;
@@ -283,6 +284,7 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     uint32_t indicator, depthLie, writeDepth, exactLoad;
     uint32_t fillMode;
     float mirrorTol;
+    uint32_t subpixel;
 };
 
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
@@ -704,6 +706,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--steady")) { opt->steady = true; continue; }
         if (!strcmp(a, "--fuse")) { opt->fuse = true; continue; }
         if (!strcmp(a, "--delayed")) { opt->delayed = true; continue; }
+        if (!strcmp(a, "--whole-pixel")) { opt->subpixel = false; continue; }
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
@@ -758,7 +761,8 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         opt->monitorIndex, opt->windowTitle.c_str(), opt->imagePath.c_str(), opt->runSeconds);
     Log("ParseArgs: fill %s dilate %d vertical %d (-1 = per model)", opt->fillMode == FILL_MIRROR ? "mirror" : "stretch", opt->dilate, opt->dilateV);
     Log("ParseArgs: depth model %s (%dx%d)", opt->model->name, opt->model->inW, opt->model->inH);
-    Log("ParseArgs: steady depth %s, model fusion %s", opt->steady ? "on" : "off", opt->fuse ? "on" : "off");
+    Log("ParseArgs: steady depth %s, model fusion %s, warp %s", opt->steady ? "on" : "off", opt->fuse ? "on" : "off",
+        opt->subpixel ? "sub-pixel" : "whole pixels");
     const auto& g = opt->depthGpu;
     Log("ParseArgs: depth GPU %s%ls%s%s", g.kind == GpuRequest::Kind::Same ? "same as headset" : g.kind == GpuRequest::Kind::Auto ? "auto (another GPU)" :
         g.kind == GpuRequest::Kind::Index ? "adapter index" : "named: ", g.kind == GpuRequest::Kind::Named ? g.name.c_str() : L"",
@@ -1462,13 +1466,16 @@ cbuffer C : register(b0)
     uint  exactLoad;    // source is exactly CW x CH: Load() instead of filtering
     uint  fillMode;     // 0 stretch, 1 mirror (see FillHole in xr_common.h)
     float mirrorTol;
+    uint  subpixel;     // 1: sample at the fractional source position (no depth banding)
 };
 
 Texture2D<float4>        scene    : register(t0);
 StructuredBuffer<float>  nearBuf  : register(t1);   // DW x DH, 0 = far .. 1 = near
 RWTexture2DArray<float4> outColor : register(u0);
 RWTexture2DArray<float>  outDepth : register(u1);   // D3D projective depth for nearZ/farZ
-RWStructuredBuffer<uint> scratch  : register(u2);   // [0,N): source x per dest, [N,2N): its nearness; N = CW*CH*2
+// [0,N): source x per dest, [N,2N): its nearness, [2N,3N): where that source pixel
+// really lands (fractional), for sub-pixel sampling; N = CW*CH*2
+RWStructuredBuffer<uint> scratch  : register(u2);
 SamplerState             samp     : register(s0);
 
 float NearAt(int x, int y)
@@ -1507,12 +1514,14 @@ void main(uint3 id : SV_DispatchThreadID)
     {
         float n = (doWarp != 0 || writeDepth != 0) ? NearAt(x, (int)y) : 0.0;
         int dx = x;
+        float destF = (float)x;
         if (doWarp != 0)
         {
             float invZ = invZFar + n * (invZNear - invZFar);
             float s = scaleFocal * eye * invZ;
             int r = (s < 0.0) ? -(int)floor(-s + 0.5) : (int)floor(s + 0.5);   // lround
             dx = x - r;
+            destF = (float)x - s;
         }
         if (dx >= 0 && dx < iw)
         {
@@ -1521,6 +1530,7 @@ void main(uint3 id : SV_DispatchThreadID)
             {
                 scratch[base + dx] = (uint)x;
                 scratch[N + base + dx] = asuint(n);
+                scratch[2 * N + base + dx] = asuint(destF);
             }
         }
     }
@@ -1544,7 +1554,7 @@ void main(uint3 id : SV_DispatchThreadID)
         if (lastValid < 0 && rightValid < 0)
         {
             float xn = NearAt(x, (int)y);
-            [loop] for (h = x; h < r; h++) { scratch[base + h] = (uint)x; scratch[N + base + h] = asuint(xn); }
+            [loop] for (h = x; h < r; h++) { scratch[base + h] = (uint)x; scratch[N + base + h] = asuint(xn); scratch[2 * N + base + h] = asuint((float)h); }
         }
         else
         {
@@ -1554,7 +1564,7 @@ void main(uint3 id : SV_DispatchThreadID)
 
             if (fillMode == 0)
             {
-                [loop] for (h = x; h < r; h++) { scratch[base + h] = (uint)anchor; scratch[N + base + h] = asuint(anchorNear); }
+                [loop] for (h = x; h < r; h++) { scratch[base + h] = (uint)anchor; scratch[N + base + h] = asuint(anchorNear); scratch[2 * N + base + h] = asuint((float)h); }
             }
             else
             {
@@ -1571,6 +1581,7 @@ void main(uint3 id : SV_DispatchThreadID)
                     if (cn <= anchorNear + mirrorTol) { good = cand; goodNear = cn; }
                     scratch[base + h] = (uint)good;
                     scratch[N + base + h] = asuint(goodNear);
+                    scratch[2 * N + base + h] = asuint((float)h);
                 }
             }
         }
@@ -1581,7 +1592,25 @@ void main(uint3 id : SV_DispatchThreadID)
     {
         int s = (int)scratch[base + x];
         float4 col;
-        if (exactLoad != 0) col = scene.Load(int3(s, y, 0));
+        if (subpixel != 0)
+        {
+            // The source pixel `s` lands at scratch[2N+...]; the content that lands
+            // exactly here is at s + (x - that). Blended in float rather than by the
+            // sampler, so the GPU matches the CPU reference (SelfTestWarp).
+            float pos = clamp((float)s + ((float)x - asfloat(scratch[2 * N + base + x])), 0.0, (float)(iw - 1));
+            int i0 = (int)pos;
+            int i1 = min(i0 + 1, iw - 1);
+            float fr = pos - (float)i0;
+            float4 c0, c1;
+            if (exactLoad != 0) { c0 = scene.Load(int3(i0, y, 0)); c1 = scene.Load(int3(i1, y, 0)); }
+            else
+            {
+                c0 = scene.SampleLevel(samp, float2(((float)i0 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
+                c1 = scene.SampleLevel(samp, float2(((float)i1 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
+            }
+            col = lerp(c0, c1, fr);
+        }
+        else if (exactLoad != 0) col = scene.Load(int3(s, y, 0));
         else col = scene.SampleLevel(samp, float2(((float)s + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
         col.a = 1.0;
 
@@ -1897,7 +1926,7 @@ static bool MakeWarpTarget(App& app, int cw, int ch, UINT tableIndex, WarpTarget
                      D3D12_HEAP_FLAG_NONE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, t.colorOut)) return false;
     if (!MakeTexture(dev, cw, ch, DXGI_FORMAT_R32_TYPELESS, VIEWS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                      D3D12_HEAP_FLAG_NONE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, t.depthOut)) return false;
-    const UINT scratchElems = (UINT)cw * (UINT)ch * VIEWS * 2;
+    const UINT scratchElems = (UINT)cw * (UINT)ch * VIEWS * 3;   // source, nearness, sub-pixel position
     if (!MakeBuffer(dev, D3D12_HEAP_TYPE_DEFAULT, (UINT64)scratchElems * 4, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, t.scratch, nullptr)) return false;
 
@@ -3288,9 +3317,10 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     std::vector<float> refDepth((size_t)(ROW_PITCH / 4) * H);
     const float eyes[VIEWS] = { c.eye0, c.eye1 };
     size_t badColor = 0, badDepth = 0;
+    int worstColor = 0;
     for (UINT e = 0; e < VIEWS; e++)
     {
-        WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode, refColor.data(), refDepth.data());
+        WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode, refColor.data(), refDepth.data(), c.subpixel != 0);
         for (int y = 0; y < H; y++)
         {
             const unsigned char* grow = cp + cfp[e].Offset + (size_t)y * cfp[e].Footprint.RowPitch;
@@ -3299,7 +3329,21 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
             const float* rdrow = refDepth.data() + (size_t)y * (ROW_PITCH / 4);
             for (int x = 0; x < W; x++)
             {
-                if (memcmp(grow + x * 4, rrow + x * 4, 4) != 0) badColor++;
+                // Whole-pixel warp copies a source pixel, so it must match exactly.
+                // Sub-pixel blends two of them, and the GPU's UNORM store rounds ties
+                // to even where lroundf rounds away from zero: allow one last bit,
+                // and report the worst difference so a real error still shows.
+                if (c.subpixel == 0)
+                {
+                    if (memcmp(grow + x * 4, rrow + x * 4, 4) != 0) badColor++;
+                }
+                else
+                {
+                    int worst = 0;
+                    for (int ch = 0; ch < 4; ch++) worst = std::max(worst, std::abs((int)grow[x * 4 + ch] - (int)rrow[x * 4 + ch]));
+                    worstColor = std::max(worstColor, worst);
+                    if (worst > 1) badColor++;
+                }
                 if (c.writeDepth && fabsf(gdrow[x] - rdrow[x]) > 1e-5f) badDepth++;
             }
         }
@@ -3310,7 +3354,8 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     const size_t total = (size_t)W * H * VIEWS;
     const size_t tolerance = total / 2000;          // 0.05 % - rounding ties only
     bool ok = badColor <= tolerance && badDepth <= tolerance;
-    Log("SelfTestWarp[%s]: exit %s - mismatches colour %zu depth %zu of %zu px (tolerance %zu)", name, ok ? "PASS" : "FAIL", badColor, badDepth, total, tolerance);
+    Log("SelfTestWarp[%s]: exit %s - mismatches colour %zu depth %zu of %zu px (tolerance %zu)%s", name, ok ? "PASS" : "FAIL",
+        badColor, badDepth, total, tolerance, c.subpixel ? (worstColor <= 1 ? " [sub-pixel: worst 1 bit]" : " [sub-pixel: worst > 1 bit]") : "");
     return ok;
 }
 
@@ -3584,6 +3629,7 @@ static bool SelfTest(App& app)
     c.eye0 = -0.0355f; c.eye1 = 0.0355f;
     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
     c.writeDepth = 1; c.exactLoad = 1;
+    c.subpixel = app.opt.subpixel ? 1u : 0u;
 
     std::vector<unsigned char> synth;
     std::vector<float> truth;
@@ -3715,6 +3761,11 @@ static void RunFrameLoop(App& app)
                     const ModelSpec* model = next.fastModel ? &kZipDepth : &kDepthAnythingV2;
                     if (app.requestedModel.exchange(model) != model)
                         Log("Depth model requested: %s", model->name);
+                }
+                if (next.version >= 7 && app.opt.subpixel != (next.subpixel != 0))
+                {
+                    app.opt.subpixel = next.subpixel != 0;
+                    Log("Stereo warp: %s", app.opt.subpixel ? "sub-pixel (smooth depth)" : "whole pixels");
                 }
                 if (next.version >= 6 && app.opt.delayed != (next.delayed != 0))
                 {
@@ -3957,6 +4008,7 @@ static void RunFrameLoop(App& app)
                     }
                     c.eye0 = -0.5f * ipd; c.eye1 = 0.5f * ipd;
                     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
+                    c.subpixel = app.opt.subpixel ? 1u : 0u;
                     c.indicator = (app.opt.abSeconds > 0.0) ? (depthOn ? 1u : 2u) : 0u;
                     c.depthLie = app.opt.depthLie ? 1u : 0u;
                     c.writeDepth = useDepthSc && stereo ? 1u : 0u;
@@ -4156,6 +4208,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     c.eye0 = -0.0355f; c.eye1 = 0.0355f;
     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
     c.exactLoad = (app.srcW == t.cw && app.srcH == t.ch) ? 1u : 0u;
+    c.subpixel = app.opt.subpixel ? 1u : 0u;
     c.fillMode = (uint32_t)fillMode;
     c.mirrorTol = MIRROR_TOL;
 
@@ -4313,6 +4366,7 @@ int wmain(int argc, wchar_t** wideArgv)
             Log("Desktop control: depth model %s", app.opt.model->name);
         }
         if (initial.version >= 6) app.opt.delayed = initial.delayed != 0;
+        if (initial.version >= 7) app.opt.subpixel = initial.subpixel != 0;
         if (initial.version >= 5)
         {
             app.steadyEnabled = initial.steady != 0;

@@ -181,6 +181,7 @@ public partial class MainWindow : Window
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
         FastModelCheck.IsChecked = p.FastDepthModel;
+        SubpixelCheck.IsChecked = p.SubpixelWarp;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
         ShowGpuChoice(p.DepthGpu);
@@ -199,6 +200,7 @@ public partial class MainWindow : Window
             MatchFrameToDepth = TimingList.SelectedIndex == 2,
             DelayToDepth = TimingList.SelectedIndex == 1,
             FastDepthModel = FastModelCheck.IsChecked == true,
+            SubpixelWarp = SubpixelCheck.IsChecked == true,
             SteadyDepth = SteadyCheck.IsChecked == true,
             FuseModels = FuseCheck.IsChecked == true,
             DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
@@ -281,7 +283,27 @@ public partial class MainWindow : Window
     private void DismissClick(object sender, RoutedEventArgs e)
     { if (SaveAndApply() && engine.Running) { engine.Update(profile!, dismiss: true); Status.Text = "SteamVR menu dismissal requested"; } }
     private void ResetClick(object sender, RoutedEventArgs e)
-    { if (profile != null) { PutProfile(new Profile { ExecutablePath = profile.ExecutablePath }); SaveAndApply(); } }
+    {
+        if (profile == null) return;
+        var start = store.BaseSettings();
+        start.ExecutablePath = profile.ExecutablePath;
+        start.PreferredWindowTitle = profile.PreferredWindowTitle;
+        PutProfile(start);
+        SaveAndApply();
+        Status.Text = store.HasBase ? "Reset to your base settings" : "Reset to VRX's default settings";
+    }
+    // Keeps the settings shown here as the starting point for games not yet set up.
+    private void MakeBaseClick(object sender, RoutedEventArgs e)
+    {
+        if (profile == null) { Status.Text = "Select a game first, then save its settings as the base."; return; }
+        if (!SaveAndApply()) return;
+        try
+        {
+            store.SaveBase(profile);
+            Status.Text = "Base settings saved · games you have not set up yet will start from these";
+        }
+        catch (Exception ex) { Status.Text = "Could not save base settings: " + ex.Message; }
+    }
     private void RefreshClick(object sender, RoutedEventArgs e) => RefreshApps();
     private void ShowAllChanged(object sender, RoutedEventArgs e) { if (ready) RefreshApps(); }
     private void WindowSelected(object sender, SelectionChangedEventArgs e)
@@ -319,6 +341,7 @@ public partial class MainWindow : Window
         legacy.Remove("DelayToDepth");
         legacy.Remove("FastDepthModel");
         legacy.Remove("SteadyDepth");
+        legacy.Remove("SubpixelWarp");
         legacy.Remove("FuseModels");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
@@ -343,18 +366,25 @@ public partial class MainWindow : Window
         var unsteady = new Profile { SteadyDepth = false };
         var delayed = new Profile { DelayToDepth = true };
         var matchedWins = new Profile { DelayToDepth = true, MatchFrameToDepth = true };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 6 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0"))
-            throw new Exception("Control snapshot must be v6 ending with the matched, fast-model, steady, fuse and delayed flags (see desktop_control.h)");
+        var wholePixel = new Profile { SubpixelWarp = false };
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 7 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0"))
+            throw new Exception("Control snapshot must be v7 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
+        if (!store.Load(one.ExecutablePath).SubpixelWarp)
+            throw new Exception("Profiles saved before the sub-pixel warp existed must load with it on");
         one.MatchFrameToDepth = false;
         var sample = new RunningApp(1234, "game.exe", one.ExecutablePath, [new GameWindow(42, "Example game window")], null);
         refreshing = true; AppList.ItemsSource = new[] { sample }; AppList.SelectedItem = sample; refreshing = false;
         profile = one; PutProfile(one); WindowList.ItemsSource = sample.Windows; WindowList.SelectedIndex = 0;
         if (ForegroundCheck.IsChecked != true) throw new Exception("Foreground checkbox default is not on");
+        if (SubpixelCheck.IsChecked != true) throw new Exception("The sub-pixel warp should default on");
+        SubpixelCheck.IsChecked = false;
+        if (ReadProfile().SubpixelWarp) throw new Exception("Sub-pixel warp checkbox is not mapped to settings");
+        SubpixelCheck.IsChecked = true;
         if (TimingList.SelectedIndex != 0) throw new Exception("Game frame timing should default to the latest frame");
         if (store.Load(one.ExecutablePath).DelayToDepth) throw new Exception("Profiles saved before delayed timing existed must load with it off");
         TimingList.SelectedIndex = 1;
@@ -400,6 +430,24 @@ public partial class MainWindow : Window
         FastModelCheck.IsChecked = false;
         if (ReadProfile().FastDepthModel) throw new Exception("Fast depth model checkbox is not mapped to settings");
         if (FuseCheck.IsEnabled) throw new Exception("Fusion needs ZipDepth: its checkbox must be disabled without the fast depth model");
+        // Base settings: new games start from them, existing profiles are untouched,
+        // and the game's own path/window never leak into the base.
+        var baseSource = new Profile { ExecutablePath = one.ExecutablePath, PreferredWindowTitle = "Example game window",
+            Width = 7.25, Distance = 2.5, Strength = 1.4, SubpixelWarp = false, DelayToDepth = true, FuseModels = true, MenuKey = 0x79 };
+        store.SaveBase(baseSource);
+        var fresh = store.Load(Path.Combine(output, "fresh", "game.exe"));
+        if (fresh.Width != 7.25 || fresh.Strength != 1.4 || fresh.SubpixelWarp || !fresh.DelayToDepth || !fresh.FuseModels || fresh.MenuKey != 0x79)
+            throw new Exception("A new game must start from the saved base settings");
+        if (fresh.ExecutablePath != Path.Combine(output, "fresh", "game.exe") || fresh.PreferredWindowTitle.Length != 0)
+            throw new Exception("Base settings must not carry another game's path or window");
+        if (store.Load(two.ExecutablePath).Width != 4) throw new Exception("Base settings must not change games that already have a profile");
+        File.WriteAllText(store.BaseFile, "{ not json");
+        if (store.Load(Path.Combine(output, "broken", "game.exe")).Width != new Profile().Width)
+            throw new Exception("An unreadable base must fall back to VRX's defaults");
+        File.Delete(store.BaseFile);
+        if (store.HasBase || store.Load(Path.Combine(output, "none", "game.exe")).Width != new Profile().Width)
+            throw new Exception("With no base saved, new games must use VRX's defaults");
+
         PutProfile(one);
         PathLabel.Text = one.ExecutablePath; Status.Text = "Preview · saved settings are isolated by executable path";
         UpdateButtons();

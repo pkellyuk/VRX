@@ -28,7 +28,7 @@
     </Grid>
    </Border>
    <Border Grid.Column="2" Background="#192438" CornerRadius="12" Padding="22">
-    <ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto"><StackPanel x:Name="SettingsPanel" IsEnabled="False">
+    <ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto"><StackPanel x:Name="SettingsPanel" IsEnabled="False" Margin="0,0,16,0">
      <TextBlock Text="Screen placement" FontSize="21" FontWeight="SemiBold"/>
      <TextBlock Text="Changes apply live. Position is relative to your last recenter." Foreground="#9EAFC7" TextWrapping="Wrap" Margin="0,5,0,12"/>
      <Border Background="#101B2C" CornerRadius="8" Margin="0,0,0,12">
@@ -60,6 +60,7 @@
       </ComboBox></DockPanel>
      <TextBlock Text="Delayed and matched line the depth up with the game better, but show the game later." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,5"/>
      <CheckBox x:Name="FastModelCheck" Content="Fast depth model — ZipDepth" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="On (default): ZipDepth, about 6x less GPU time per depth estimate than Depth Anything V2 (2.0 vs 13.1 ms on an RTX 3090), so depth keeps up with the game much better. Off: Depth Anything V2, the original model; depth detail differs slightly between them. Applies live (depth pauses for under a second while the model loads); saved per game."/>
+     <CheckBox x:Name="SubpixelCheck" Content="Smooth depth steps (sub-pixel warp)" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="On (default): the stereo shift keeps its fractional part, so smoothly receding surfaces such as grass, roads and walls look smooth. Off: whole-pixel shifts, which quantise the scene into about 25 depth bands and can show ridges like a ploughed field. Off is very slightly sharper. Applies live; saved per game."/>
      <CheckBox x:Name="SteadyCheck" Content="Steady depth — motion vectors" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="Reduces depth shimmer: each new depth estimate is blended with the previous one, moved to where things are now by the graphics card's hardware motion estimator (its video engine, not the shader cores). Only where the motion is verified, so moving edges should not trail. On by default; works on any GPU with a hardware motion estimator. Applies live; saved per game."/>
      <CheckBox x:Name="FuseCheck" Content="Fuse with Depth Anything V2 (experimental)" IsEnabled="{Binding ElementName=FastModelCheck, Path=IsChecked}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="Runs Depth Anything V2 alongside ZipDepth: ZipDepth keeps depth fast, Depth Anything supplies more detailed layering, moved to the current frame with motion vectors. Best with another GPU chosen as the depth GPU; on one GPU it runs at most 10 times a second. Needs the fast depth model. Applies live; saved per game."/>
      <TextBlock Text="Fusion is best with a second depth GPU. Both can be used together." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="20,0,0,5"/>
@@ -72,7 +73,8 @@
       <StackPanel Grid.Column="2"><TextBlock Text="Dismiss SteamVR menu" Margin="0,0,0,5"/><ComboBox x:Name="MenuKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
      </Grid>
      <TextBlock Text="Shortcuts work during VR playback and also reach the game. Choose keys that do not conflict with your game controls." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,14"/>
-     <WrapPanel><Button x:Name="RecenterButton" Content="Recenter now" Click="RecenterClick" IsEnabled="False"/><Button x:Name="DismissButton" Content="Dismiss menu" Click="DismissClick" IsEnabled="False"/><Button Content="Reset this profile" Click="ResetClick"/></WrapPanel>
+     <WrapPanel><Button x:Name="RecenterButton" Content="Recenter now" Click="RecenterClick" IsEnabled="False"/><Button x:Name="DismissButton" Content="Dismiss menu" Click="DismissClick" IsEnabled="False"/><Button Content="Reset this profile" Click="ResetClick" ToolTip="Puts this game back to the base settings (or VRX's defaults if no base has been saved)."/>
+     <Button x:Name="BaseButton" Content="Make base settings" Click="MakeBaseClick" ToolTip="Saves the settings shown here as the starting point for games you have not set up yet. Screen placement, 3D strength, depth options and shortcuts are all included; the game's own path and window are not. Games you have already set up keep their own settings."/></WrapPanel>
     </StackPanel></ScrollViewer>
    </Border>
   </Grid>

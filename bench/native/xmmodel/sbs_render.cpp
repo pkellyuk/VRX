@@ -14,7 +14,11 @@
 //                    already dilated as the engine does before publishing)
 // stdout, per frame: (2*CW)*CH*3 bytes RGB, left eye | right eye
 //
-// usage: sbs_render.exe --size=CWxCH [--screen-width=5.7] [--distance=3] [--ipd=0.063] [--strength=1]
+// --subpixel keeps the fractional part of each pixel's shift instead of rounding it
+// to whole pixels, which removes the depth banding ("ploughed field" ridges) on
+// smoothly receding surfaces; the colour is then sampled bilinearly.
+//
+// usage: sbs_render.exe --size=CWxCH [--screen-width=5.7] [--distance=3] [--ipd=0.063] [--strength=1] [--subpixel]
 #define NOMINMAX
 #include <windows.h>
 #include <fcntl.h>
@@ -49,6 +53,7 @@ struct Params
 {
     int cw = 1920, ch = 1080;
     float screenWidth = 5.7f, distance = 3.0f, ipd = 0.063f, strength = 1.0f;
+    bool subpixel = false;
 };
 
 struct Frame
@@ -75,7 +80,8 @@ static float NearAt(const Frame& f, const Params& p, int x, int y)
 
 // One row of one eye: kWarpHlsl main(), fillMode = mirror.
 static void WarpRow(const Frame& f, const Params& p, int y, float eye, float scaleFocal, float invZNear, float invZFar,
-                    std::vector<int>& src, std::vector<float>& srcNear, std::vector<float>& rowNear, unsigned char* out)
+                    std::vector<int>& src, std::vector<float>& srcNear, std::vector<float>& rowNear,
+                    std::vector<float>& srcDest, unsigned char* out)
 {
     const int iw = p.cw;
     for (int x = 0; x < iw; x++) rowNear[x] = NearAt(f, p, x, y);
@@ -94,6 +100,7 @@ static void WarpRow(const Frame& f, const Params& p, int y, float eye, float sca
         {
             src[dx] = x;
             srcNear[dx] = n;
+            srcDest[dx] = (float)x - s;          // where this source pixel really lands
         }
     }
 
@@ -114,7 +121,7 @@ static void WarpRow(const Frame& f, const Params& p, int y, float eye, float sca
         if (lastValid < 0 && rightValid < 0)
         {
             const float xn = rowNear[x];
-            for (int h = x; h < r; h++) { src[h] = x; srcNear[h] = xn; }
+            for (int h = x; h < r; h++) { src[h] = x; srcNear[h] = xn; srcDest[h] = (float)h; }
         }
         else
         {
@@ -132,13 +139,30 @@ static void WarpRow(const Frame& f, const Params& p, int y, float eye, float sca
                 if (cn <= anchorNear + MIRROR_TOL) { good = cand; goodNear = cn; }
                 src[h] = good;
                 srcNear[h] = goodNear;
+                srcDest[h] = (float)h;           // filled pixels have no sub-pixel position
             }
         }
         x = r;      // lastValid/lastNear deliberately unchanged: fills are not sources
     }
 
     const unsigned char* in = f.rgb + (size_t)y * p.cw * 3;
-    for (int xo = 0; xo < iw; xo++) memcpy(out + (size_t)xo * 3, in + (size_t)src[xo] * 3, 3);
+    if (!p.subpixel)
+    {
+        for (int xo = 0; xo < iw; xo++) memcpy(out + (size_t)xo * 3, in + (size_t)src[xo] * 3, 3);
+        return;
+    }
+    // Sub-pixel: the source pixel `s` lands at srcDest[s]; the content that lands
+    // exactly on this destination is at s + (dest - srcDest[s]) (the mapping's slope
+    // is ~1), sampled bilinearly.
+    for (int xo = 0; xo < iw; xo++)
+    {
+        const int s0 = src[xo];
+        const float pos = std::clamp((float)s0 + ((float)xo - srcDest[xo]), 0.0f, (float)(iw - 1));
+        const int i0 = (int)pos, i1 = std::min(i0 + 1, iw - 1);
+        const float fr = pos - i0;
+        for (int c = 0; c < 3; c++)
+            out[(size_t)xo * 3 + c] = (unsigned char)(in[(size_t)i0 * 3 + c] * (1.0f - fr) + in[(size_t)i1 * 3 + c] * fr + 0.5f);
+    }
 }
 
 static void RenderFrame(const Frame& f, const Params& p, unsigned char* sbs)
@@ -157,12 +181,12 @@ static void RenderFrame(const Frame& f, const Params& p, unsigned char* sbs)
         pool.emplace_back([&, t]()
         {
             std::vector<int> src(p.cw);
-            std::vector<float> srcNear(p.cw), rowNear(p.cw);
+            std::vector<float> srcNear(p.cw), rowNear(p.cw), srcDest(p.cw);
             for (int y = (int)t; y < p.ch; y += (int)threads)
             {
                 unsigned char* row = sbs + (size_t)y * outRow;
-                WarpRow(f, p, y, -0.5f * p.ipd, scaleFocal, invZNear, invZFar, src, srcNear, rowNear, row);
-                WarpRow(f, p, y, +0.5f * p.ipd, scaleFocal, invZNear, invZFar, src, srcNear, rowNear, row + (size_t)p.cw * 3);
+                WarpRow(f, p, y, -0.5f * p.ipd, scaleFocal, invZNear, invZFar, src, srcNear, rowNear, srcDest, row);
+                WarpRow(f, p, y, +0.5f * p.ipd, scaleFocal, invZNear, invZFar, src, srcNear, rowNear, srcDest, row + (size_t)p.cw * 3);
             }
         });
     }
@@ -194,6 +218,7 @@ int main(int argc, char** argv)
         if (!strncmp(a, "--distance=", 11)) { p.distance = (float)atof(a + 11); continue; }
         if (!strncmp(a, "--ipd=", 6)) { p.ipd = (float)atof(a + 6); continue; }
         if (!strncmp(a, "--strength=", 11)) { p.strength = (float)atof(a + 11); continue; }
+        if (!strcmp(a, "--subpixel")) { p.subpixel = true; continue; }
         Log("unknown option %s", a);
         return 2;
     }
@@ -205,8 +230,8 @@ int main(int argc, char** argv)
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
     const float focalPx = (float)p.cw * p.distance / p.screenWidth;
-    Log("main: enter %dx%d screen %.2f m at %.2f m, ipd %.3f, strength %.2f -> focal %.0f px, disparity near %+.1f px far %+.1f px per eye",
-        p.cw, p.ch, p.screenWidth, p.distance, p.ipd, p.strength, focalPx,
+    Log("main: enter %dx%d screen %.2f m at %.2f m, ipd %.3f, strength %.2f, %s -> focal %.0f px, disparity near %+.1f px far %+.1f px per eye",
+        p.cw, p.ch, p.screenWidth, p.distance, p.ipd, p.strength, p.subpixel ? "sub-pixel" : "whole pixels", focalPx,
         p.strength * focalPx * 0.5f * p.ipd * (1.0f / 1.2f - 1.0f / p.distance),
         p.strength * focalPx * 0.5f * p.ipd * (1.0f / 12.0f - 1.0f / p.distance));
 
