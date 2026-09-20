@@ -11,6 +11,9 @@ VRX captures the selected game window, estimates depth, and creates a stereo
 view. All settings live in a desktop app; no in-headset UI or motion controllers
 are needed. This provides a virtual 3D screen, not native VR camera controls.
 
+It is not only for games: attach to a browser window and any 2D video you play in
+it — YouTube, a streaming service, your own files — becomes 3D on the same screen.
+
 VRX is free and open source.
 
 [<img src="https://storage.ko-fi.com/cdn/kofi3.png?v=6" alt="Buy me a coffee" height="36">](https://ko-fi.com/pkellyuk)
