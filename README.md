@@ -5,9 +5,9 @@ VRX captures the selected game window, estimates depth, and creates a stereo
 view. All settings live in a desktop app; no in-headset UI or motion controllers
 are needed. This provides a virtual 3D screen, not native VR camera controls.
 
-VRX is free and open source. If you would like to support it:
+VRX is free and open source.
 
-[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/pkellyuk)
+[<img src="https://storage.ko-fi.com/cdn/kofi3.png?v=6" alt="Buy me a coffee" height="36">](https://ko-fi.com/pkellyuk)
 
 ## Get started
 
