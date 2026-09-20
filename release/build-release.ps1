@@ -53,7 +53,7 @@ try {
         }
     }
     Copy-Item release/README.txt,release/THIRD-PARTY-NOTICES.txt $payload
-Copy-Item LICENSE,NOTICE $payload                       # VRX's own licence (Apache-2.0)
+    Copy-Item LICENSE $payload                          # VRX's own licence (GPL-3.0)
     $commit = & git rev-parse HEAD
     $dirty = & git status --porcelain
     @("VRX 1.5.0", "Source commit: $commit", "Working tree dirty: $([bool]$dirty)", "Built UTC: $([DateTime]::UtcNow.ToString('O'))") | Set-Content "$payload\BUILD.txt"

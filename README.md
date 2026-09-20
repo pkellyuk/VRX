@@ -87,7 +87,13 @@ with the release.
 
 ## License
 
-VRX is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
-The released packages also contain third-party components under their own
-licenses (the depth models, ONNX Runtime, DirectML, the OpenXR loader and the
-.NET runtime): see `release/THIRD-PARTY-NOTICES.txt` and `release/licenses`.
+Copyright (C) 2026 Paul Kelly.
+
+VRX is free software licensed under the [GNU General Public License v3.0](LICENSE):
+you may use, study, share and modify it, and anything you distribute that is built
+from it must also be released under the GPL with its source available. It comes with
+no warranty.
+
+The released packages also contain third-party components under their own licenses
+(the depth models, ONNX Runtime, DirectML, the OpenXR loader and the .NET runtime):
+see `release/THIRD-PARTY-NOTICES.txt` and `release/licenses`.
