@@ -1,5 +1,9 @@
 <img src="docs/vrx-logo.png" alt="VRX" width="200">
 
+### [⬇ Download the latest release](https://github.com/pkellyuk/VRX/releases/latest)
+
+[![Latest release](https://img.shields.io/github/v/release/pkellyuk/VRX?label=latest%20release&color=76DCC6)](https://github.com/pkellyuk/VRX/releases/latest)
+
 # VRX
 
 Play flat PC games on a stereo screen in VR using your keyboard and mouse.
