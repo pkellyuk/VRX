@@ -112,11 +112,33 @@ frame on an RTX 3090. That is an estimate until the log shows it in the headset.
 PSVR2's 2804 x 2860 eye buffers: the curve alone (A), the curve with the room (B), the
 kept v10 eye pass (D, also `--room-v10-eye` in playback) and the flat screen's
 half-size room layer (E), each at four views (yaw 0, 30, 60 and 120 degrees, pitch -15)
-and the curved ones at 60% and 100% curve. Every case and view draws 30 frames to warm
-up and 300 timed ones. It locks the GPU clocks when Developer Mode allows (else, or
-with `--bench-boost`, it runs three times for the spread), logs min / p50 / p95 per
-pass with each view's screen, room and mixed pixel counts, spot-checks one frame per
-view against `room.h`, and writes `room-bench.csv`.
+and the curved ones at 60% and 100% curve.
+- **Interleaved.** The cases that draw the same screen (the curved one at each curve,
+  or the flat one) are drawn in turn, frame by frame, the order rotating each round, so
+  other work on the GPU falls on them alike. Every round also draws a probe, the curve
+  alone at 60% and yaw 0: the same work in every group. Each case and view gets 30
+  frames to warm up and 300 timed ones.
+- **Clocks.** It locks the GPU clocks when Developer Mode allows and SteamVR's
+  compositor is not running, because the lock slows the headset's own frames too.
+  `--bench-lock` locks them anyway. Otherwise, or with `--bench-boost`, it runs three
+  times for the spread.
+- **Contention.** A row (a case at one curve, view and run) is marked CONTENDED when
+  its eye or total p50 is more than 10% above its min, or when the probe's min in the
+  same rounds is more than 5% above its best. Other work shared the GPU then, and even
+  the min is not reliable. The summary and the acceptance lines use steady rows only.
+  They say "not judged" where a comparison has none, and give "meets" or "misses"
+  otherwise. SteamVR's compositor drawing for a headset in use is enough to contend
+  every curved row. For a baseline, run it with nothing else drawing on the GPU: no
+  game, and SteamVR closed or idle.
+- **Check.** One extra frame per case and view is read back and compared with
+  `room.h` at every 16th pixel. At most 0.1% of those may be more than 2 levels off.
+  Away from any edge, where only rounding separates the GPU from `room.h` (3 levels at
+  most, measured), at most 0.01% may be more than 8 levels off.
+- **Output.** It logs min / p50 / p95 per pass with each view's screen, room and mixed
+  pixel counts, and the eye pass's time per million off-screen pixels on the min and
+  on the p50. It writes all of it, with the probe's times and the CONTENDED flag and
+  reason, to `room-bench.csv`.
+- It runs only when the self-test passes.
 
 ## Tests
 

@@ -66,6 +66,8 @@
 //                                   right eye); the playback log prints the headset's own
 //            --bench-boost          do not lock the GPU clocks for the benchmark (the headset
 //                                   runs at boost clocks; locked ones vary less)
+//            --bench-lock           lock them even while SteamVR's compositor runs (the lock
+//                                   slows the headset's frames too, so it is not the default)
 //            --head-locked          follow your head (default fixed screen; '=' recenters)
 //            --keep-dashboard       skip the SteamVR startup dashboard-close request
 //   keys:    '=' recenter; F8 dismiss SteamVR dashboard (keys also reach the game)
@@ -273,6 +275,7 @@ struct Options
     bool roomV10Eye = false;            // --room-v10-eye: the kept v10 eye pass (A/B diagnostic)
     bool benchRoom = false;             // --bench-room (with --selftest): the offline room benchmark
     bool benchBoost = false;            // --bench-boost: leave the GPU clocks unlocked while benchmarking
+    bool benchLock = false;             // --bench-lock: lock the GPU clocks even while SteamVR's compositor runs
     float benchFov[4] = { -52.0f, 43.5f, 48.7f, -48.7f };   // --bench-fov: left eye L, R, U, D degrees (estimates)
 };
 
@@ -812,6 +815,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--room-v10-eye")) { opt->roomV10Eye = true; continue; }
         if (!strcmp(a, "--bench-room")) { opt->benchRoom = true; continue; }
         if (!strcmp(a, "--bench-boost")) { opt->benchBoost = true; continue; }
+        if (!strcmp(a, "--bench-lock")) { opt->benchLock = true; continue; }
         if (!strncmp(a, "--bench-fov=", 12))
         {
             float f[4] = {};
@@ -898,7 +902,10 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
     if (opt->benchRoom && !opt->selfTestOnly) { Log("ParseArgs: --bench-room only runs with --selftest, ignored"); opt->benchRoom = false; }
     if (opt->benchRoom)
         Log("ParseArgs: room benchmark after the self-test - left eye fov %.1f / %.1f / %.1f / %.1f deg (mirrored for the right), GPU clocks %s",
-            opt->benchFov[0], opt->benchFov[1], opt->benchFov[2], opt->benchFov[3], opt->benchBoost ? "unlocked (--bench-boost)" : "locked if Developer Mode allows");
+            opt->benchFov[0], opt->benchFov[1], opt->benchFov[2], opt->benchFov[3],
+            opt->benchBoost ? "unlocked (--bench-boost)"
+                            : (opt->benchLock ? "locked if Developer Mode allows, even while SteamVR's compositor runs (--bench-lock)"
+                                              : "locked if Developer Mode allows and SteamVR's compositor is not running"));
     if (opt->roomV10Eye) Log("ParseArgs: the room's eye pass is the kept v10 copy (--room-v10-eye, A/B diagnostic)");
 
     Log("ParseArgs: source %s (monitor %d, window '%ls', image '%ls') seconds %.0f",
@@ -5415,26 +5422,45 @@ static XrQuaternionf YawPitch(float yawDeg, float pitchDeg)
 }
 
 // How far the GPU's eye buffers are from a CPU reference, per pixel: `reference`
-// fills rgb (encoded, 0..1) for eye e at (x, y) and returns false on a failure.
+// fills rgb (encoded, 0..1) for eye e at (x, y) and returns false on a failure. With
+// `kinds` (the CPU reference's sample kind of every pixel, eye-major, w x h per eye;
+// kEyeKindMixed where its four rays disagree), the pixels at an edge - mixed, or next to
+// a pixel of another kind, where a GPU and a CPU ray can land either side - are also
+// counted on their own. Away from any edge, only rounding separates them: a few levels
+// at most, so a pixel more than kEyeFarOff levels off there is drawn wrong.
+static const unsigned char kEyeKindMixed = 255;
+static const int kEyeFarOff = 8;
+
 struct EyeCompare
 {
     size_t checked = 0, bad = 0;        // bad: a channel more than 2 bits off
     int worst = 0;
+    size_t edgeChecked = 0, edgeBad = 0; // of those, the pixels at an edge (with `kinds`)
+    size_t interiorFar = 0;             // away from any edge and more than kEyeFarOff levels off
+    int interiorWorst = 0;              // the worst away from any edge
+    size_t InteriorChecked() const { return checked - edgeChecked; }
+    size_t InteriorBad() const { return bad - edgeBad; }
 };
 
 template <typename Reference>
-static bool CompareEyes(const std::vector<std::vector<unsigned char>>& got, int bufferW, int w, int h, int step, Reference reference, EyeCompare& out)
+static bool CompareEyes(const char* what, const std::vector<std::vector<unsigned char>>& got, int bufferW, int w, int h, int step, Reference reference,
+                        const std::vector<unsigned char>* kinds, EyeCompare& out)
 {
-    if (got.size() != VIEWS || bufferW <= 0 || w <= 0 || h <= 0 || step <= 0) return false;
+    if (!what) { Log("CompareEyes: FAIL no name"); return false; }
+    if (got.size() != VIEWS || w <= 0 || h <= 0 || bufferW < w || step <= 0)
+    { Log("CompareEyes: FAIL %s - %zu eyes, buffer %d wide, %dx%d, step %d", what, got.size(), bufferW, w, h, step); return false; }
+    if (kinds && kinds->size() != (size_t)w * h * VIEWS) { Log("CompareEyes: FAIL %s - %zu kinds for %dx%d x %u eyes", what, kinds->size(), w, h, VIEWS); return false; }
+    Log("CompareEyes: enter (%s, %dx%d x %u eyes, every %d px%s)", what, w, h, VIEWS, step, kinds ? ", edges apart" : "");
     out = EyeCompare();
     for (uint32_t e = 0; e < VIEWS; e++)
     {
-        if (got[e].size() < (size_t)bufferW * h * 4) return false;
+        if (got[e].size() < (size_t)bufferW * h * 4) { Log("CompareEyes: FAIL %s - eye %u has %zu bytes", what, e, got[e].size()); return false; }
+        const unsigned char* k = kinds ? kinds->data() + (size_t)e * w * h : nullptr;
         for (int y = step / 2; y < h; y += step)
             for (int x = step / 2; x < w; x += step)
             {
                 float ref[3];
-                if (!reference((int)e, x, y, ref)) return false;
+                if (!reference((int)e, x, y, ref)) { Log("CompareEyes: FAIL %s - no reference for eye %u at %d,%d", what, e, x, y); return false; }
                 const unsigned char* gp = got[e].data() + ((size_t)y * bufferW + x) * 4;
                 int diff = 0;
                 for (int ch = 0; ch < 3; ch++)
@@ -5442,8 +5468,25 @@ static bool CompareEyes(const std::vector<std::vector<unsigned char>>& got, int 
                 out.worst = std::max(out.worst, diff);
                 if (diff > 2) out.bad++;
                 out.checked++;
+
+                // At an edge: its own rays disagree, or a neighbour's kind differs.
+                const unsigned char own = k ? k[(size_t)y * w + x] : 0;
+                bool edge = k && own == kEyeKindMixed;
+                for (int ny = std::max(0, y - 1); k && !edge && ny <= std::min(h - 1, y + 1); ny++)
+                    for (int nx = std::max(0, x - 1); !edge && nx <= std::min(w - 1, x + 1); nx++)
+                        edge = k[(size_t)ny * w + nx] != own;
+                if (!edge)
+                {
+                    out.interiorWorst = std::max(out.interiorWorst, diff);
+                    if (diff > kEyeFarOff) out.interiorFar++;
+                    continue;
+                }
+                out.edgeChecked++;
+                if (diff > 2) out.edgeBad++;
             }
     }
+    Log("CompareEyes: exit - %s: %zu of %zu px more than 2 bits off (worst %d)%s", what, out.bad, out.checked, out.worst,
+        kinds ? "; edges counted apart" : "");
     return true;
 }
 
@@ -5628,11 +5671,13 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         if (!v10Recorded || !ReadbackRgba(app, app.testEyeOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, gotV10) || gotV10.size() != VIEWS)
         { Log("SelfTestRoom[%s]: FAIL v10 eye pass or its readback", name); return false; }
         EyeCompare v10;
-        const bool v10Compared = CompareEyes(gotV10, TEST_EYE_W, TEST_EYE_W, TEST_EYE_H, 1, [&](int e, int x, int y, float ref[3])
+        char v10What[48];
+        snprintf(v10What, sizeof(v10What), "SelfTestRoom[%s] v10 eye pass", name);
+        const bool v10Compared = CompareEyes(v10What, gotV10, TEST_EYE_W, TEST_EYE_W, TEST_EYE_H, 1, [&](int e, int x, int y, float ref[3])
         {
             const RgbaImage pic{ pictures[e].data(), W, H, W * 4 };
             return room_v10::RoomPixel(cc, cyl, room, view, e, x, y, pic, &glowImg, light, ref);
-        }, v10);
+        }, nullptr, v10);
         if (!v10Compared) { Log("SelfTestRoom[%s]: FAIL v10 reference", name); return false; }
         size_t v10VsNew = 0;
         for (uint32_t e = 0; e < VIEWS; e++)
@@ -5746,30 +5791,51 @@ static bool SelfTest(App& app)
 
 // ------------------------------------------------------------ room benchmark
 // --selftest --bench-room: the room's GPU passes timed offline, with no VR session, at
-// the headset's eye size. Every case and view draws 30 frames to warm up, then 300
-// timed frames, each its own command list with five timestamps - T0, after EMIT, after
-// LIGHT, after the eye pass, after the copy into a stand-in swapchain image - and a
-// fence wait, as the frame loop's room frames are timed. Min / p50 / p95 per pass go
-// to the log and to room-bench.csv in the current directory. For each view, every
-// pixel is classified by the CPU reference's own sample kinds (screen, room, mixed), so
-// the eye pass's cost can be put per room pixel, and one frame is read back and
-// spot-checked against the CPU reference, so a broken frame is never timed as a fast one.
+// the headset's eye size. The cases that draw the same screen - the curved one at each
+// of kBenchCurves, or the flat one - form a group, and a group's cases are drawn in
+// turn, frame by frame, the order rotating each round, so other work on the GPU falls
+// on them alike. Every round also draws the probe: the plain curve pass at the first
+// curve and yaw 0, the same work in every group, so its min shows whether the GPU was
+// as free there as in the best group. Every case and view draws 30 frames to warm up,
+// then 300 timed frames, each its own command list with five timestamps - T0, after
+// EMIT, after LIGHT, after the eye pass, after the copy into a stand-in swapchain
+// image - and a fence wait, as the frame loop's room frames are timed. Min / p50 / p95
+// per pass go to the log and to room-bench.csv in the current directory.
+//
+// A row (a case at one curve, view and run) is CONTENDED when its eye pass's or its
+// total's p50 is more than 10% above its min, or when the probe's min in the same rounds
+// is more than 5% above its best: other work (SteamVR's compositor, a game) shared the
+// GPU, and even the min may carry it - the probe catches the case where every frame of
+// a round was slowed alike. The acceptance lines use steady rows only. (The probe's own
+// p50 is not a test: short frames, like E's, can stay steady while the probe's longer
+// ones are hit.)
+//
+// In the first run, every pixel of each case and view is classified by the CPU
+// reference's own sample kinds (screen, room, mixed), so the eye pass's cost can be put
+// per room pixel, and one extra frame is read back and checked against the CPU
+// reference at every 16th pixel, so a broken frame is never timed as a fast one.
 #pragma comment(lib, "advapi32.lib")
 
 static const int BENCH_EYE_W = 2804, BENCH_EYE_H = 2860;     // SteamVR's recommended PSVR2 eye buffer (the headset log)
 static const int BENCH_WARMUP = 30, BENCH_FRAMES = 300;
-static const int BENCH_CHECK_STEP = 16;                      // the spot check: every 16th pixel each way
+static const int BENCH_CHECK_STEP = 16;                      // the check: every 16th pixel each way
+static const size_t BENCH_CHECK_ALLOWED = 1000;              // at most 1 in 1000 checked px more than 2 bits off...
+static const size_t BENCH_CHECK_INTERIOR = 10000;            // ... and 1 in 10000 away from any edge more than kEyeFarOff off
 static const float kBenchYaws[] = { 0.0f, 30.0f, 60.0f, 120.0f };
 static const int BENCH_VIEWS = (int)(sizeof(kBenchYaws) / sizeof(kBenchYaws[0]));
 static const float kBenchPitch = -15.0f;
-static const float kBenchCurves[] = { 0.6f, 1.0f };          // the curved cases run at both
+static const float kBenchCurves[] = { 0.6f, 1.0f };          // the curved cases run at both; the probe at the first
 static const int BENCH_CURVES = (int)(sizeof(kBenchCurves) / sizeof(kBenchCurves[0]));
+static const int BENCH_GROUPS = BENCH_CURVES + 1;            // the curved screen at each curve, then the flat screen
 static const int BENCH_ROOM = 45;                            // the Room slider, percent
 static const float BENCH_HALF_IPD = 0.036f;
 static const float BENCH_STAGE_FLOOR = -1.2f;                // SteamVR's floor, metres below the eyes
 static const UINT BENCH_QUERIES = 64;
 static const int BENCH_PASSES = (int)TIME_SLOT;              // emit, light, eye, copy, total
+static const int BENCH_EYE_PASS = 2, BENCH_TOTAL = BENCH_PASSES - 1;
 static const char* const kBenchPassNames[BENCH_PASSES] = { "emit", "light", "eye", "copy", "total" };
+static const double BENCH_STEADY = 1.10, BENCH_STEADY_MS = 0.010;       // steady: eye and total p50 <= min * 1.10 + 0.01 ms
+static const double BENCH_PROBE_SLOWER = 1.05, BENCH_PROBE_MS = 0.005;  // a free GPU: the probe's eye min <= its best * 1.05 + 0.005 ms
 
 // The cases of the v11 spec (section 5.2). C and F need Glass, Reflections and the room
 // light, which later steps add: they are listed now and skipped until `ready`.
@@ -5795,15 +5861,40 @@ static const int BENCH_CASES = (int)(sizeof(kBenchCases) / sizeof(kBenchCases[0]
 
 struct BenchStats { double min = 0, p50 = 0, p95 = 0; };
 
-static BenchStats BenchStatsOf(std::vector<double> v)
+// One case's (or the probe's) timings at one view: min / p50 / p95 per pass over the
+// timed frames, and whether they were steady - the eye pass's and the total's p50
+// within BENCH_STEADY of their min. Other work on the GPU pushes the p50 up.
+struct BenchTimes
 {
-    BenchStats s;
-    if (v.empty()) return s;
-    std::sort(v.begin(), v.end());
-    s.min = v.front();
-    s.p50 = v[v.size() / 2];
-    s.p95 = v[std::min(v.size() - 1, v.size() * 95 / 100)];
-    return s;
+    BenchStats pass[BENCH_PASSES];
+    size_t frames = 0;
+    double eyeAbove = 0, totalAbove = 0;    // how far the eye pass's and the total's p50 lie above their min, percent
+    bool steady = false;
+};
+
+static bool BenchTimesOf(const char* what, const std::vector<double> samples[BENCH_PASSES], BenchTimes& out)
+{
+    if (!what || !samples) { Log("BenchTimesOf: FAIL no samples"); return false; }
+    Log("BenchTimesOf: enter (%s, %zu frames)", what, samples[0].size());
+    out = BenchTimes();
+    for (int p = 0; p < BENCH_PASSES; p++)
+    {
+        if (samples[p].empty()) { Log("BenchTimesOf: FAIL %s has no %s times", what, kBenchPassNames[p]); return false; }
+        std::vector<double> v = samples[p];
+        std::sort(v.begin(), v.end());
+        out.pass[p].min = v.front();
+        out.pass[p].p50 = v[v.size() / 2];
+        out.pass[p].p95 = v[std::min(v.size() - 1, v.size() * 95 / 100)];
+    }
+    out.frames = samples[0].size();
+    const BenchStats& eye = out.pass[BENCH_EYE_PASS];
+    const BenchStats& total = out.pass[BENCH_TOTAL];
+    out.eyeAbove = eye.min > 0 ? 100.0 * (eye.p50 / eye.min - 1.0) : 0.0;
+    out.totalAbove = total.min > 0 ? 100.0 * (total.p50 / total.min - 1.0) : 0.0;
+    out.steady = eye.p50 <= eye.min * BENCH_STEADY + BENCH_STEADY_MS && total.p50 <= total.min * BENCH_STEADY + BENCH_STEADY_MS;
+    Log("BenchTimesOf: exit - %s: eye %.3f ms min, p50 %+.1f%%; total %.3f ms min, p50 %+.1f%%: %s", what, eye.min, out.eyeAbove, total.min,
+        out.totalAbove, out.steady ? "steady" : "unsteady");
+    return true;
 }
 
 // Every pixel of one view by its four samples' kinds, as the eye pass casts them: all
@@ -5816,12 +5907,16 @@ struct BenchClasses
 };
 
 // The CPU reference's classification of every pixel (room null: the plain curve pass),
-// spread over the CPU's threads.
-static BenchClasses BenchClassify(const CurveConstants& cc, const Cylinder& cyl, const Room* room, const RoomView& view, bool v10)
+// spread over the CPU's threads. With `kinds`, each pixel's kind too (eye-major, ew x eh
+// per eye; kEyeKindMixed where its four rays disagree), for CompareEyes' edges.
+static BenchClasses BenchClassify(const CurveConstants& cc, const Cylinder& cyl, const Room* room, const RoomView& view, bool v10,
+                                  std::vector<unsigned char>* kinds)
 {
     const int rows = (int)cc.eh * (int)VIEWS;
     const unsigned threads = std::max(1u, std::min(64u, std::thread::hardware_concurrency()));
-    Log("BenchClassify: enter (%ux%u x %u eyes, %s, %u threads)", cc.ew, cc.eh, VIEWS, room ? (v10 ? "room, v10" : "room") : "curve only", threads);
+    Log("BenchClassify: enter (%ux%u x %u eyes, %s, %u threads%s)", cc.ew, cc.eh, VIEWS, room ? (v10 ? "room, v10" : "room") : "curve only", threads,
+        kinds ? ", with each pixel's kind" : "");
+    if (kinds) kinds->assign((size_t)cc.ew * cc.eh * VIEWS, 0);
     std::vector<BenchClasses> part(threads);
     std::vector<std::thread> pool;
     for (unsigned t = 0; t < threads; t++)
@@ -5842,7 +5937,9 @@ static BenchClasses BenchClassify(const CurveConstants& cc, const Cylinder& cyl,
                         else if (v10) kind[s] = room_v10::RoomClassify(cc, cyl, *room, view, o, d, &u, &v, &gu, &gv);
                         else kind[s] = RoomClassify(cc, cyl, *room, view, o, d, &u, &v, &gu, &gv);
                     }
-                    if (kind[0] != kind[1] || kind[1] != kind[2] || kind[2] != kind[3]) c.mixed++;
+                    const bool mixed = kind[0] != kind[1] || kind[1] != kind[2] || kind[2] != kind[3];
+                    if (kinds) (*kinds)[(size_t)row * cc.ew + x] = mixed ? kEyeKindMixed : (unsigned char)kind[0];
+                    if (mixed) c.mixed++;
                     else if (!room) (kind[0] == 0 ? c.screen : (kind[0] == 1 ? c.glow : c.world))++;
                     else if (kind[0] == 0 || kind[0] == kRoomKindFootprint) c.screen++;
                     else if (kind[0] == kRoomKindOutside) c.world++;
@@ -5924,7 +6021,7 @@ static bool DeveloperModeOn()
 }
 
 // Whether SteamVR's compositor is running. It draws on the same GPU, so the benchmark's
-// p50 and p95 then include some of its frames; the min is the least disturbed figure.
+// frames can share the GPU with its frames (and a game's).
 static bool CompositorRunning()
 {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -5939,35 +6036,297 @@ static bool CompositorRunning()
     return found;
 }
 
-// Locks the GPU's clocks for the benchmark's lifetime, and unlocks them after.
+// Locks the GPU's clocks for the benchmark: Release unlocks them, as does going out of
+// scope on an early return.
 struct BenchStablePower
 {
     ID3D12Device* device = nullptr;
-    ~BenchStablePower()
+    void Release()
     {
         if (!device) return;
         const HRESULT hr = device->SetStablePowerState(FALSE);
+        device = nullptr;
         Log("BenchRoom: GPU clocks unlocked again (0x%08X)", (unsigned)hr);
     }
+    ~BenchStablePower() { Release(); }
 };
 
-// One row of results: a case at one curve, one view and one run.
+// One row of results: a case at one curve (or the flat screen), one view and one run.
 struct BenchRow
 {
-    int run = 0, caseIndex = 0, curvePct = 0, view = 0;
+    int run = 0, caseIndex = 0, group = 0, curvePct = 0, view = 0;
     int ew = 0, eh = 0, emitters = 0;
     BenchClasses classes;
     EyeCompare check;
-    BenchStats stats[BENCH_PASSES];
+    BenchTimes times;                   // the case's
+    BenchTimes probe;                   // the probe's, drawn in the same rounds
+    bool contended = false;
+    char why[112] = "";                 // what made it CONTENDED
 };
+
+// What every group draws: the screen, the eyes' fields of view, the self-test's pictures
+// and glow (for the check), and the probe's constants.
+struct BenchScene
+{
+    float width = 5.7f, height = 0, distance = 0, glowHalfW = 0, glowHalfH = 0;
+    XrPosef screenPose{};
+    XrFovf fov[VIEWS]{};
+    uint32_t world = 0;                                 // the default world colour; its value costs nothing
+    std::vector<std::vector<unsigned char>> pictures;   // the self-test's warped pair, W x H RGBA per eye
+    std::vector<unsigned char> glowPx;                  // the self-test's glow, ambiW x ambiH RGBA
+    int glowW = 0, glowH = 0;
+    CurveConstants probe{};                             // the plain curve pass at kBenchCurves[0], yaw 0, full size
+};
+
+// One timed entry of a group at one view: a case, or the probe.
+struct BenchEntry
+{
+    int caseIndex = -1;                 // -1: the probe
+    CurveConstants cc{};
+    D3D12_GPU_VIRTUAL_ADDRESS roomCb = 0;
+    ID3D12PipelineState* roomPso = nullptr;
+    int ew = 0, eh = 0;
+    std::vector<double> samples[BENCH_PASSES];
+};
+
+// The head at the origin, turned yawDeg and pitched kBenchPitch; the eyes either side.
+static bool BenchEyes(float yawDeg, XrPosef eyes[VIEWS])
+{
+    if (!eyes) { Log("BenchEyes: FAIL no eyes"); return false; }
+    const XrQuaternionf q = YawPitch(yawDeg, kBenchPitch);
+    float R[3][3];
+    QuatRows(q, R);
+    for (uint32_t e = 0; e < VIEWS; e++)
+    {
+        const float side = e == 0 ? -BENCH_HALF_IPD : BENCH_HALF_IPD;
+        eyes[e].orientation = q;
+        eyes[e].position = { side * R[0][0], side * R[1][0], side * R[2][0] };
+    }
+    Log("BenchEyes: yaw %.0f, pitch %.0f - left eye at %.4f, %.4f, %.4f m", yawDeg, kBenchPitch, eyes[0].position.x, eyes[0].position.y,
+        eyes[0].position.z);
+    return true;
+}
+
+// One extra frame of a case, read back and checked against the CPU reference at every
+// 16th pixel, with every pixel of the view classified by the CPU reference (for the
+// pixel counts, and to tell the check's edge pixels from the rest). At most 1 in 1000
+// of the checked pixels may be more than 2 bits off - at an edge a GPU and a CPU ray can
+// land either side, and elsewhere rounding reaches 3 levels on a few - and away from any
+// edge at most 1 in 10000 may be more than kEyeFarOff (8) levels off, which is a wrong
+// surface, not rounding.
+static bool BenchCheck(App& app, BenchGpu& b, const BenchScene& sc, const BenchEntry& en, const Cylinder& cyl, const Room* room,
+                       const RoomView& view, UINT emitters, const char* what, BenchRow& row)
+{
+    if (!what) { Log("BenchCheck: FAIL no name"); return false; }
+    if (en.caseIndex < 0 || en.caseIndex >= BENCH_CASES) { Log("BenchCheck: FAIL %s - case %d", what, en.caseIndex); return false; }
+    const BenchCase& bc = kBenchCases[en.caseIndex];
+    if (bc.room != (room != nullptr)) { Log("BenchCheck: FAIL %s - the room is %s", what, room ? "given to a case without one" : "missing"); return false; }
+    if (sc.pictures.size() != VIEWS || sc.glowPx.empty()) { Log("BenchCheck: FAIL %s - no pictures or glow", what); return false; }
+    Log("BenchCheck: enter (%s, %ux%u per eye, every %d px)", what, en.cc.ew, en.cc.eh, BENCH_CHECK_STEP);
+
+    double ms[BENCH_PASSES];
+    if (!BenchFrame(app, b, en.cc, en.roomCb, emitters, nullptr, en.roomPso, ms)) { Log("BenchCheck: FAIL %s - the frame", what); return false; }
+    RoomLightmap light;
+    if (room)
+    {
+        std::vector<std::vector<unsigned char>> lm;
+        if (!ReadbackRgba(app, app.roomLight.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, lm, 8) || lm.size() != (size_t)kRoomFaces)
+        { Log("BenchCheck: FAIL %s - lightmap readback", what); return false; }
+        light.texels.resize((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 4);
+        for (int f = 0; f < kRoomFaces; f++)
+            for (size_t i = 0; i < (size_t)kRoomLightmap * kRoomLightmap * 4; i++)
+                light.texels[(size_t)f * kRoomLightmap * kRoomLightmap * 4 + i] = RoomHalfToFloat(((const uint16_t*)lm[f].data())[i]);
+    }
+    std::vector<std::vector<unsigned char>> got;
+    if (!ReadbackRgba(app, b.eyes.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, got) || got.size() != VIEWS)
+    { Log("BenchCheck: FAIL %s - eye readback", what); return false; }
+
+    std::vector<unsigned char> kinds;
+    row.classes = BenchClassify(en.cc, cyl, room, view, bc.v10, &kinds);
+    const RgbaImage glowImg{ sc.glowPx.data(), sc.glowW, sc.glowH, sc.glowW * 4 };
+    const bool compared = CompareEyes(what, got, BENCH_EYE_W, (int)en.cc.ew, (int)en.cc.eh, BENCH_CHECK_STEP, [&](int e, int x, int y, float ref[3])
+    {
+        const RgbaImage pic{ sc.pictures[e].data(), W, H, W * 4 };
+        if (!room) return CurvedPixel(en.cc, e, x, y, cyl, pic, &glowImg, ref);
+        if (bc.v10) return room_v10::RoomPixel(en.cc, cyl, *room, view, e, x, y, pic, &glowImg, light, ref);
+        return RoomPixel(en.cc, cyl, *room, view, e, x, y, pic, &glowImg, light, ref);
+    }, &kinds, row.check);
+    if (!compared) { Log("BenchCheck: FAIL %s - the reference", what); return false; }
+
+    const EyeCompare& k = row.check;
+    const size_t farAllowed = k.InteriorChecked() / BENCH_CHECK_INTERIOR, allowed = k.checked / BENCH_CHECK_ALLOWED;
+    const bool pass = k.interiorFar <= farAllowed && k.bad <= allowed;
+    Log("BenchCheck: exit %s - %s: %zu of %zu px more than 2 bits off (allowed %zu, worst %d); away from edges %zu of %zu (worst %d), %zu more than "
+        "%d levels off (allowed %zu); at edges %zu of %zu%s", pass ? "PASS" : "FAIL", what, k.bad, k.checked, allowed, k.worst, k.InteriorBad(),
+        k.InteriorChecked(), k.interiorWorst, k.interiorFar, kEyeFarOff, farAllowed, k.edgeBad, k.edgeChecked,
+        pass ? "" : ": the timed frame is not what the CPU reference draws");
+    return pass;
+}
+
+// One group - the cases that draw the curved screen at kBenchCurves[g], or (g ==
+// BENCH_CURVES) the flat screen - timed at every view, its cases and the probe drawn in
+// turn. In the first run it also checks one extra frame of each case and view (and
+// counts its pixel classes); later runs copy those from the first. Appends a row per
+// case and view, each with the probe's times from the same rounds.
+static bool BenchGroup(App& app, BenchGpu& b, const BenchScene& sc, int run, int g, std::vector<BenchRow>& rows)
+{
+    if (run < 0 || g < 0 || g >= BENCH_GROUPS) { Log("BenchGroup: FAIL run %d, group %d", run, g); return false; }
+    const bool curved = g < BENCH_CURVES;
+    const float curve = curved ? kBenchCurves[g] : 0.0f;
+    const int curvePct = (int)std::lround(curve * 100.0f);
+    char label[16];
+    if (curved) snprintf(label, sizeof(label), "%d%%", curvePct);
+    else snprintf(label, sizeof(label), "flat");
+
+    // The group's cases: the ready ones that draw this screen.
+    std::vector<int> members;
+    int roomMembers = 0;
+    for (int ci = 0; ci < BENCH_CASES; ci++)
+    {
+        const BenchCase& bc = kBenchCases[ci];
+        if (!bc.ready || bc.curved != curved) continue;
+        members.push_back(ci);
+        if (bc.room) roomMembers++;
+    }
+    Log("BenchGroup: enter (run %d, %s screen, %zu cases and the probe, drawn in turn)", run + 1, label, members.size());
+    if (members.empty()) { Log("BenchGroup: exit - the %s screen has no cases yet", label); return true; }
+    if (roomMembers > RING + 1) { Log("BenchGroup: FAIL %d room cases, more than roomCbUp's %d constant slots", roomMembers, RING + 1); return false; }
+
+    Cylinder cyl;
+    if (curved && (!BuildCylinder(sc.width, sc.height, sc.distance, curve, cyl) || !cyl.curved)) { Log("BenchGroup: FAIL cylinder at %s", label); return false; }
+
+    // The room, as the frame loop builds it round the recentre point: one for the group,
+    // whose room cases differ only in their constants. Each case has its own slot of
+    // roomCbUp; the frame loop's slots are free, as the self-test runs no frame loop.
+    Room room;
+    RoomEmitterLayout layout;
+    RoomView view;
+    if (roomMembers > 0)
+    {
+        RoomInputs in;
+        in.W = sc.width; in.H = sc.height; in.eye[2] = sc.distance; in.floorY = BENCH_STAGE_FLOOR; in.cyl = cyl;
+        std::vector<RoomEmitter> em;
+        layout = RoomLayout(sc.width, sc.height, app.ambiW, app.ambiH);
+        if (!BuildRoom(in, room) || layout.count() == 0 || !BuildRoomEmitters(room, cyl, sc.width, sc.height, sc.glowHalfW, sc.glowHalfH, layout, em))
+        { Log("BenchGroup: FAIL room at %s", label); return false; }
+        view.flatLayer = !curved; view.W = sc.width; view.H = sc.height; view.glowOn = true;
+        view.glowHalfW = sc.glowHalfW; view.glowHalfH = sc.glowHalfH; view.dither = true;
+        memcpy(app.roomGeomMapped[RING], em.data(), em.size() * sizeof(RoomEmitter));
+        Log("BenchGroup: %s room %.2f x %.2f x %.2f m, floor %.2f m below the eye, %s front, %d emitters (glow blocks %d px)", label, 2 * room.X,
+            room.yC - room.yF, room.zB + room.g, -room.yF, room.curved ? "curved" : "flat", layout.count(), layout.block);
+    }
+
+    // Each case's eye size, eye pass and constants; the probe last.
+    std::vector<BenchEntry> entries(members.size() + 1);
+    int slot = 0;
+    for (size_t m = 0; m < members.size(); m++)
+    {
+        const BenchCase& bc = kBenchCases[members[m]];
+        BenchEntry& en = entries[m];
+        en.caseIndex = members[m];
+        en.ew = bc.room && !bc.curved ? BENCH_EYE_W / 2 : BENCH_EYE_W;
+        en.eh = bc.room && !bc.curved ? BENCH_EYE_H / 2 : BENCH_EYE_H;
+        en.roomPso = bc.v10 ? app.curveRoomV10Pso.Get() : app.curveRoomPso.Get();
+        if (!bc.room) continue;
+        const RoomShading shading = MakeRoomShading(room, BENCH_ROOM, sc.world, sc.width * sc.height);
+        const RoomConstants rc = MakeRoomConstants(room, shading, layout, view, W, H, 1.0f);
+        memcpy(app.roomCbMapped + (size_t)slot * sizeof(RoomConstants), &rc, sizeof(rc));
+        en.roomCb = app.roomCbUp->GetGPUVirtualAddress() + (UINT64)slot * sizeof(RoomConstants);
+        slot++;
+    }
+    BenchEntry& probe = entries.back();
+    probe.cc = sc.probe;
+    probe.ew = BENCH_EYE_W;
+    probe.eh = BENCH_EYE_H;
+
+    bool geometryPending = roomMembers > 0;      // the group's first room frame copies in the emitters' geometry
+    const size_t n = entries.size();
+    for (int vi = 0; vi < BENCH_VIEWS; vi++)
+    {
+        XrPosef eyes[VIEWS];
+        if (!BenchEyes(kBenchYaws[vi], eyes)) { Log("BenchGroup: FAIL eyes"); return false; }
+        for (size_t m = 0; m + 1 < n; m++)
+            entries[m].cc = MakeCurveConstants(curved ? cyl : Cylinder(), sc.screenPose, eyes, sc.fov, entries[m].ew, entries[m].eh, true,
+                                               2.0f * sc.glowHalfW, 2.0f * sc.glowHalfH, sc.world, true);
+        for (BenchEntry& en : entries)
+            for (std::vector<double>& s : en.samples)
+            {
+                s.clear();
+                s.reserve(BENCH_FRAMES);
+            }
+
+        // The rounds: every entry once a round, each round starting one further on.
+        for (int i = 0; i < BENCH_WARMUP + BENCH_FRAMES; i++)
+            for (size_t j = 0; j < n; j++)
+            {
+                BenchEntry& en = entries[((size_t)i + j) % n];
+                const bool copyGeometry = geometryPending && en.roomCb != 0;
+                double ms[BENCH_PASSES];
+                if (!BenchFrame(app, b, en.cc, en.roomCb, (UINT)layout.count(), copyGeometry ? app.roomGeomUp[RING].Get() : nullptr, en.roomPso, ms))
+                {
+                    Log("BenchGroup: FAIL %s yaw %.0f, round %d, %s (device %s)", label, kBenchYaws[vi], i,
+                        en.caseIndex < 0 ? "the probe" : kBenchCases[en.caseIndex].what, FAILED(app.device->GetDeviceRemovedReason()) ? "removed" : "ok");
+                    return false;
+                }
+                if (copyGeometry) geometryPending = false;
+                if (i < BENCH_WARMUP) continue;
+                for (int p = 0; p < BENCH_PASSES; p++) en.samples[p].push_back(ms[p]);
+            }
+
+        char what[48];
+        snprintf(what, sizeof(what), "probe, %s yaw %.0f", label, kBenchYaws[vi]);
+        BenchTimes probeTimes;
+        if (!BenchTimesOf(what, probe.samples, probeTimes)) { Log("BenchGroup: FAIL the probe's times"); return false; }
+
+        for (size_t m = 0; m + 1 < n; m++)
+        {
+            const BenchEntry& en = entries[m];
+            const BenchCase& bc = kBenchCases[en.caseIndex];
+            BenchRow row;
+            row.run = run; row.caseIndex = en.caseIndex; row.group = g; row.curvePct = curvePct; row.view = vi;
+            row.ew = en.ew; row.eh = en.eh; row.emitters = bc.room ? layout.count() : 0;
+            row.probe = probeTimes;
+            snprintf(what, sizeof(what), "%c %s yaw %.0f", bc.id, label, kBenchYaws[vi]);
+            if (!BenchTimesOf(what, en.samples, row.times)) { Log("BenchGroup: FAIL the times of %s", what); return false; }
+            if (run == 0 && !BenchCheck(app, b, sc, en, cyl, bc.room ? &room : nullptr, view, (UINT)layout.count(), what, row))
+            { Log("BenchGroup: FAIL the check of %s", what); return false; }
+            for (const BenchRow& first : rows)
+            {
+                if (run == 0 || first.run != 0 || first.caseIndex != row.caseIndex || first.group != g || first.view != vi) continue;
+                row.classes = first.classes;
+                row.check = first.check;
+            }
+
+            const BenchStats* s = row.times.pass;
+            const double offscreenM = (double)row.classes.Offscreen() / 1e6;
+            char pixels[160];
+            if (bc.room)
+                snprintf(pixels, sizeof(pixels), "screen %.2f M, room %.2f M, mixed %.3f M px", row.classes.screen / 1e6, row.classes.room / 1e6,
+                         row.classes.mixed / 1e6);
+            else
+                snprintf(pixels, sizeof(pixels), "screen %.2f M, glow %.2f M, world %.2f M, mixed %.3f M px", row.classes.screen / 1e6,
+                         row.classes.glow / 1e6, row.classes.world / 1e6, row.classes.mixed / 1e6);
+            Log("BenchGroup[%s] run %d: total %.3f / %.3f / %.3f ms (min / p50 / p95); emit %.3f / %.3f / %.3f, light %.3f / %.3f / %.3f, "
+                "eye %.3f / %.3f / %.3f, copy %.3f / %.3f / %.3f; %s; eye per M off-screen px %.4f ms (min), %.4f ms (p50); "
+                "probe eye %.3f / %.3f ms (min / p50); check %zu of %zu px more than 2 bits off, %zu more than %d away from edges; %s",
+                what, run + 1, s[4].min, s[4].p50, s[4].p95, s[0].min, s[0].p50, s[0].p95, s[1].min, s[1].p50, s[1].p95,
+                s[2].min, s[2].p50, s[2].p95, s[3].min, s[3].p50, s[3].p95, pixels, offscreenM > 0 ? s[2].min / offscreenM : 0.0,
+                offscreenM > 0 ? s[2].p50 / offscreenM : 0.0, probeTimes.pass[BENCH_EYE_PASS].min, probeTimes.pass[BENCH_EYE_PASS].p50,
+                row.check.bad, row.check.checked, row.check.interiorFar, kEyeFarOff, row.times.steady ? "steady" : "unsteady");
+            rows.push_back(row);
+        }
+    }
+    Log("BenchGroup: exit - run %d, %s screen, %zu cases at %d views", run + 1, label, members.size(), BENCH_VIEWS);
+    return true;
+}
 
 static bool BenchRoom(App& app)
 {
     if (!app.device || !app.curveRoomPso || !app.curveRoomV10Pso || !app.roomCbMapped || !app.roomGeomMapped[RING] ||
         !app.testTarget.colorOut || !app.ambiTex || !app.roomLight || !app.roomEmitters)
     { Log("BenchRoom: FAIL the room's passes are not built"); return false; }
-    Log("BenchRoom: enter (%dx%d per eye, %d warm-up + %d timed frames per case and view, Room %d%%, source %dx%d, glow %dx%d)",
-        BENCH_EYE_W, BENCH_EYE_H, BENCH_WARMUP, BENCH_FRAMES, BENCH_ROOM, W, H, app.ambiW, app.ambiH);
+    Log("BenchRoom: enter (%dx%d per eye, %d warm-up + %d timed frames per case and view, the cases of a screen drawn in turn with a probe, "
+        "Room %d%%, source %dx%d, glow %dx%d)", BENCH_EYE_W, BENCH_EYE_H, BENCH_WARMUP, BENCH_FRAMES, BENCH_ROOM, W, H, app.ambiW, app.ambiH);
     const double started = NowSeconds();
     ID3D12Device* dev = app.device.Get();
 
@@ -6008,224 +6367,138 @@ static bool BenchRoom(App& app)
     Log("BenchRoom: %.1f MB of eye buffers and a stand-in swapchain image, timestamps at %.0f MHz", 2.0 * BENCH_EYE_W * BENCH_EYE_H * 4 * VIEWS / (1024.0 * 1024.0),
         b.freq / 1e6);
 
-    // --- the scene the checks need: the self-test's warped pair and glow
-    std::vector<std::vector<unsigned char>> pictures, glowPx;
-    if (!ReadbackRgba(app, app.testTarget.colorOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pictures) || pictures.size() != VIEWS ||
+    // --- the scene: the default screen (5.7 m, 16:9) at 3 m, the eyes at its middle's
+    // height; the self-test's warped pair and glow, which the check needs too
+    BenchScene sc;
+    sc.height = sc.width * 9.0f / 16.0f;
+    sc.distance = ScreenAnchor::distance;
+    const float margin = kAmbiMargin * sc.width;
+    sc.glowHalfW = 0.5f * sc.width + margin;
+    sc.glowHalfH = 0.5f * sc.height + margin;
+    sc.screenPose = XrPosef{ { 0, 0, 0, 1 }, { 0, 0, -sc.distance } };
+    const float d2r = kRoomPi / 180.0f;
+    sc.fov[0] = XrFovf{ app.opt.benchFov[0] * d2r, app.opt.benchFov[1] * d2r, app.opt.benchFov[2] * d2r, app.opt.benchFov[3] * d2r };
+    sc.fov[1] = XrFovf{ -sc.fov[0].angleRight, -sc.fov[0].angleLeft, sc.fov[0].angleUp, sc.fov[0].angleDown };
+    std::vector<std::vector<unsigned char>> glowPx;
+    if (!ReadbackRgba(app, app.testTarget.colorOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, sc.pictures) || sc.pictures.size() != VIEWS ||
         !ReadbackRgba(app, app.ambiTex.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, glowPx) || glowPx.size() != 1)
     { Log("BenchRoom: FAIL readback of the pictures and glow"); return false; }
-    const RgbaImage glowImg{ glowPx[0].data(), app.ambiW, app.ambiH, app.ambiW * 4 };
+    sc.glowPx = std::move(glowPx[0]);
+    sc.glowW = app.ambiW;
+    sc.glowH = app.ambiH;
+    Cylinder probeCyl;
+    XrPosef probeEyes[VIEWS];
+    if (!BuildCylinder(sc.width, sc.height, sc.distance, kBenchCurves[0], probeCyl) || !probeCyl.curved || !BenchEyes(kBenchYaws[0], probeEyes))
+    { Log("BenchRoom: FAIL the probe's cylinder"); return false; }
+    sc.probe = MakeCurveConstants(probeCyl, sc.screenPose, probeEyes, sc.fov, BENCH_EYE_W, BENCH_EYE_H, true, 2.0f * sc.glowHalfW, 2.0f * sc.glowHalfH,
+                                  sc.world, true);
+    Log("BenchRoom: screen %.2f x %.2f m at %.1f m, eyes %.3f m apart, fov left eye %.1f / %.1f / %.1f / %.1f deg (right mirrored), views yaw 0/30/60/120 "
+        "at pitch %.0f; the probe is (A) at %.0f%%, yaw %.0f", sc.width, sc.height, sc.distance, 2 * BENCH_HALF_IPD, app.opt.benchFov[0], app.opt.benchFov[1],
+        app.opt.benchFov[2], app.opt.benchFov[3], kBenchPitch, kBenchCurves[0] * 100.0f, kBenchYaws[0]);
 
-    // --- the clocks
+    // --- the clocks. Locking them (SetStablePowerState) holds the whole GPU at its base
+    // clocks - SteamVR's and a game's frames too - so it is not done while SteamVR's
+    // compositor runs, unless --bench-lock asks for it.
+    const bool compositor = CompositorRunning();
     BenchStablePower power;
     if (app.opt.benchBoost) Log("BenchRoom: GPU clocks left unlocked (--bench-boost): 3 runs, for the spread");
+    else if (compositor && !app.opt.benchLock)
+        Log("BenchRoom: GPU clocks left unlocked, because SteamVR's compositor is running and locking them would slow the headset's frames too for the whole "
+            "benchmark (--bench-lock locks them anyway): 3 runs, for the spread");
     else if (!DeveloperModeOn()) Log("BenchRoom: Developer Mode is off, so the GPU clocks cannot be locked (SetStablePowerState): 3 runs, for the spread");
     else
     {
         const HRESULT hr = dev->SetStablePowerState(TRUE);
         if (SUCCEEDED(hr)) power.device = dev;
-        Log("BenchRoom: SetStablePowerState(TRUE) %s (0x%08X)%s", SUCCEEDED(hr) ? "- GPU clocks locked" : "failed", (unsigned)hr,
-            SUCCEEDED(hr) ? "" : ": 3 runs, for the spread");
+        Log("BenchRoom: SetStablePowerState(TRUE) %s (0x%08X)%s%s", SUCCEEDED(hr) ? "- GPU clocks locked" : "failed", (unsigned)hr,
+            SUCCEEDED(hr) ? "" : ": 3 runs, for the spread", SUCCEEDED(hr) && compositor ? " (--bench-lock: SteamVR's frames are slowed too)" : "");
         if (FAILED(dev->GetDeviceRemovedReason())) { Log("BenchRoom: FAIL the device was removed"); return false; }
     }
     const bool stable = power.device != nullptr;
     const int runs = stable ? 1 : 3;
-    const bool compositor = CompositorRunning();
-    if (compositor) Log("BenchRoom: SteamVR's compositor is running on this GPU: p50 and p95 include some of its work; the min is the least disturbed");
-
-    // --- the scene: the default screen (5.7 m, 16:9) at 3 m, the eyes at its middle's height
-    const float width = 5.7f, height = width * 9.0f / 16.0f, distance = ScreenAnchor::distance;
-    const float margin = kAmbiMargin * width, glowHalfW = 0.5f * width + margin, glowHalfH = 0.5f * height + margin;
-    const XrPosef screenPose{ { 0, 0, 0, 1 }, { 0, 0, -distance } };
-    const float d2r = kRoomPi / 180.0f;
-    const XrFovf fovLeft{ app.opt.benchFov[0] * d2r, app.opt.benchFov[1] * d2r, app.opt.benchFov[2] * d2r, app.opt.benchFov[3] * d2r };
-    const XrFovf fovRight{ -fovLeft.angleRight, -fovLeft.angleLeft, fovLeft.angleUp, fovLeft.angleDown };
-    const uint32_t world = 0;                   // the default world colour; its value costs nothing
-    const D3D12_GPU_VIRTUAL_ADDRESS roomCbAddress = app.roomCbUp->GetGPUVirtualAddress() + (UINT64)RING * sizeof(RoomConstants);
-    Log("BenchRoom: screen %.2f x %.2f m at %.1f m, eyes %.3f m apart, fov left eye %.1f / %.1f / %.1f / %.1f deg (right mirrored), views yaw 0/30/60/120 at pitch %.0f",
-        width, height, distance, 2 * BENCH_HALF_IPD, app.opt.benchFov[0], app.opt.benchFov[1], app.opt.benchFov[2], app.opt.benchFov[3], kBenchPitch);
+    if (compositor) Log("BenchRoom: SteamVR's compositor is running on this GPU: its frames can fall in the timed ones, and rows where they did are marked CONTENDED");
 
     std::vector<BenchRow> rows;
     bool ok = true;
+    for (int ci = 0; ci < BENCH_CASES; ci++)
+        if (!kBenchCases[ci].ready) Log("BenchRoom[%c]: skipped - %s needs Glass, Reflections and the room light (later steps)", kBenchCases[ci].id, kBenchCases[ci].what);
     for (int run = 0; run < runs && ok; run++)
-    {
-        for (int ci = 0; ci < BENCH_CASES && ok; ci++)
-        {
-            const BenchCase& bc = kBenchCases[ci];
-            if (!bc.ready)
-            {
-                if (run == 0) Log("BenchRoom[%c]: skipped - %s needs Glass, Reflections and the room light (later steps)", bc.id, bc.what);
-                continue;
-            }
-            const int curveCount = bc.curved ? BENCH_CURVES : 1;
-            for (int k = 0; k < curveCount && ok; k++)
-            {
-                const float curve = bc.curved ? kBenchCurves[k] : 0.0f;
-                const int curvePct = (int)std::lround(curve * 100.0f);
-                Cylinder cyl;
-                if (bc.curved && (!BuildCylinder(width, height, distance, curve, cyl) || !cyl.curved))
-                { Log("BenchRoom[%c %d%%]: FAIL cylinder", bc.id, curvePct); ok = false; break; }
-
-                // The room, as the frame loop builds it round the recentre point.
-                Room room;
-                RoomEmitterLayout layout;
-                RoomView view;
-                ID3D12PipelineState* roomPso = bc.v10 ? app.curveRoomV10Pso.Get() : app.curveRoomPso.Get();
-                if (bc.room)
-                {
-                    RoomInputs in;
-                    in.W = width; in.H = height; in.eye[2] = distance; in.floorY = BENCH_STAGE_FLOOR; in.cyl = cyl;
-                    std::vector<RoomEmitter> em;
-                    layout = RoomLayout(width, height, app.ambiW, app.ambiH);
-                    if (!BuildRoom(in, room) || layout.count() == 0 ||
-                        !BuildRoomEmitters(room, cyl, width, height, glowHalfW, glowHalfH, layout, em))
-                    { Log("BenchRoom[%c %d%%]: FAIL room", bc.id, curvePct); ok = false; break; }
-                    view.flatLayer = !bc.curved; view.W = width; view.H = height; view.glowOn = true;
-                    view.glowHalfW = glowHalfW; view.glowHalfH = glowHalfH; view.dither = true;
-                    const RoomShading shading = MakeRoomShading(room, BENCH_ROOM, world, width * height);
-                    const RoomConstants rc = MakeRoomConstants(room, shading, layout, view, W, H, 1.0f);
-                    memcpy(app.roomCbMapped + (size_t)RING * sizeof(RoomConstants), &rc, sizeof(rc));
-                    memcpy(app.roomGeomMapped[RING], em.data(), em.size() * sizeof(RoomEmitter));
-                    if (run == 0)
-                        Log("BenchRoom[%c %d%%]: room %.2f x %.2f x %.2f m, floor %.2f m below the eye, %s front, %d emitters (glow blocks %d px)",
-                            bc.id, curvePct, 2 * room.X, room.yC - room.yF, room.zB + room.g, -room.yF, room.curved ? "curved" : "flat",
-                            layout.count(), layout.block);
-                }
-                const D3D12_GPU_VIRTUAL_ADDRESS roomCb = bc.room ? roomCbAddress : 0;
-                const int ew = bc.room && !bc.curved ? BENCH_EYE_W / 2 : BENCH_EYE_W, eh = bc.room && !bc.curved ? BENCH_EYE_H / 2 : BENCH_EYE_H;
-                bool geometryPending = bc.room;          // the case's first frame copies in the emitters' geometry
-                RoomLightmap light;
-
-                for (int vi = 0; vi < BENCH_VIEWS && ok; vi++)
-                {
-                    // The head at the origin, turned and pitched; the eyes either side of it.
-                    const XrQuaternionf q = YawPitch(kBenchYaws[vi], kBenchPitch);
-                    float R[3][3];
-                    QuatRows(q, R);
-                    XrPosef eyes[VIEWS];
-                    for (uint32_t e = 0; e < VIEWS; e++)
-                    {
-                        const float side = e == 0 ? -BENCH_HALF_IPD : BENCH_HALF_IPD;
-                        eyes[e].orientation = q;
-                        eyes[e].position = { side * R[0][0], side * R[1][0], side * R[2][0] };
-                    }
-                    const XrFovf fov[VIEWS] = { fovLeft, fovRight };
-                    const CurveConstants cc = MakeCurveConstants(bc.curved ? cyl : Cylinder(), screenPose, eyes, fov, ew, eh, true,
-                                                                 2.0f * glowHalfW, 2.0f * glowHalfH, world, true);
-
-                    std::vector<double> samples[BENCH_PASSES];
-                    for (auto& s : samples) s.reserve(BENCH_FRAMES);
-                    for (int i = 0; i < BENCH_WARMUP + BENCH_FRAMES; i++)
-                    {
-                        double ms[BENCH_PASSES];
-                        if (!BenchFrame(app, b, cc, roomCb, (UINT)layout.count(), geometryPending ? app.roomGeomUp[RING].Get() : nullptr, roomPso, ms))
-                        {
-                            Log("BenchRoom[%c %d%% yaw %.0f]: FAIL frame %d (device %s)", bc.id, curvePct, kBenchYaws[vi], i,
-                                FAILED(dev->GetDeviceRemovedReason()) ? "removed" : "ok");
-                            ok = false;
-                            break;
-                        }
-                        geometryPending = false;
-                        if (i >= BENCH_WARMUP)
-                            for (int p = 0; p < BENCH_PASSES; p++) samples[p].push_back(ms[p]);
-                    }
-                    if (!ok) break;
-
-                    BenchRow row;
-                    row.run = run; row.caseIndex = ci; row.curvePct = curvePct; row.view = vi;
-                    row.ew = ew; row.eh = eh; row.emitters = bc.room ? layout.count() : 0;
-                    for (int p = 0; p < BENCH_PASSES; p++) row.stats[p] = BenchStatsOf(samples[p]);
-
-                    if (run == 0)
-                    {
-                        // Pixel classes, and one frame read back and spot-checked.
-                        row.classes = BenchClassify(cc, cyl, bc.room ? &room : nullptr, view, bc.v10);
-                        if (bc.room && light.texels.empty())
-                        {
-                            std::vector<std::vector<unsigned char>> lm;
-                            if (!ReadbackRgba(app, app.roomLight.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, lm, 8) || lm.size() != (size_t)kRoomFaces)
-                            { Log("BenchRoom[%c %d%%]: FAIL lightmap readback", bc.id, curvePct); ok = false; break; }
-                            light.texels.resize((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 4);
-                            for (int f = 0; f < kRoomFaces; f++)
-                                for (size_t i = 0; i < (size_t)kRoomLightmap * kRoomLightmap * 4; i++)
-                                    light.texels[(size_t)f * kRoomLightmap * kRoomLightmap * 4 + i] = RoomHalfToFloat(((const uint16_t*)lm[f].data())[i]);
-                        }
-                        std::vector<std::vector<unsigned char>> got;
-                        if (!ReadbackRgba(app, b.eyes.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, got) || got.size() != VIEWS)
-                        { Log("BenchRoom[%c %d%%]: FAIL eye readback", bc.id, curvePct); ok = false; break; }
-                        const bool compared = CompareEyes(got, BENCH_EYE_W, ew, eh, BENCH_CHECK_STEP, [&](int e, int x, int y, float ref[3])
-                        {
-                            const RgbaImage pic{ pictures[e].data(), W, H, W * 4 };
-                            if (!bc.room) return CurvedPixel(cc, e, x, y, cyl, pic, &glowImg, ref);
-                            if (bc.v10) return room_v10::RoomPixel(cc, cyl, room, view, e, x, y, pic, &glowImg, light, ref);
-                            return RoomPixel(cc, cyl, room, view, e, x, y, pic, &glowImg, light, ref);
-                        }, row.check);
-                        if (!compared) { Log("BenchRoom[%c %d%%]: FAIL reference", bc.id, curvePct); ok = false; break; }
-                        if (row.check.bad > row.check.checked / 200)
-                        {
-                            Log("BenchRoom[%c %d%% yaw %.0f]: FAIL the timed frame is not what the CPU reference draws: %zu of %zu px off by more than 2 bits",
-                                bc.id, curvePct, kBenchYaws[vi], row.check.bad, row.check.checked);
-                            ok = false;
-                        }
-                    }
-                    else
-                    {
-                        for (const BenchRow& first : rows)
-                            if (first.run == 0 && first.caseIndex == ci && first.curvePct == curvePct && first.view == vi) { row.classes = first.classes; row.check = first.check; }
-                    }
-
-                    const BenchStats* s = row.stats;
-                    const double offscreenM = (double)row.classes.Offscreen() / 1e6;
-                    char pixels[160];
-                    if (bc.room)
-                        snprintf(pixels, sizeof(pixels), "screen %.2f M, room %.2f M, mixed %.3f M px", row.classes.screen / 1e6, row.classes.room / 1e6,
-                                 row.classes.mixed / 1e6);
-                    else
-                        snprintf(pixels, sizeof(pixels), "screen %.2f M, glow %.2f M, world %.2f M, mixed %.3f M px", row.classes.screen / 1e6,
-                                 row.classes.glow / 1e6, row.classes.world / 1e6, row.classes.mixed / 1e6);
-                    Log("BenchRoom[%c %d%% yaw %.0f] run %d: total %.3f / %.3f / %.3f ms (min / p50 / p95); emit %.3f / %.3f / %.3f, light %.3f / %.3f / %.3f, "
-                        "eye %.3f / %.3f / %.3f, copy %.3f / %.3f / %.3f; %s; eye %.4f ms per M off-screen px; check %zu of %zu px off by more than 2 bits (worst %d)",
-                        bc.id, curvePct, kBenchYaws[vi], run + 1, s[4].min, s[4].p50, s[4].p95, s[0].min, s[0].p50, s[0].p95, s[1].min, s[1].p50, s[1].p95,
-                        s[2].min, s[2].p50, s[2].p95, s[3].min, s[3].p50, s[3].p95, pixels, offscreenM > 0 ? s[2].p50 / offscreenM : 0.0,
-                        row.check.bad, row.check.checked, row.check.worst);
-                    rows.push_back(row);
-                }
-            }
-        }
-    }
+        for (int g = 0; g < BENCH_GROUPS && ok; g++)
+            ok = BenchGroup(app, b, sc, run, g, rows);
     WaitFence(app, app.fenceVal);
+
+    // --- contention. The probe's best eye min is what the GPU gives it when free; a row
+    // that was unsteady itself, or whose rounds' probe min was more than 5% above that,
+    // shared the GPU with other work.
+    double bestProbe = -1;
+    for (const BenchRow& r : rows)
+        if (r.probe.frames > 0 && (bestProbe < 0 || r.probe.pass[BENCH_EYE_PASS].min < bestProbe)) bestProbe = r.probe.pass[BENCH_EYE_PASS].min;
+    size_t contendedRows = 0;
+    for (BenchRow& r : rows)
+    {
+        const BenchStats& probeEye = r.probe.pass[BENCH_EYE_PASS];
+        const bool probeSlow = r.probe.frames > 0 && probeEye.min > bestProbe * BENCH_PROBE_SLOWER + BENCH_PROBE_MS;
+        r.contended = !r.times.steady || probeSlow;
+        if (!r.contended) continue;
+        contendedRows++;
+        char own[40] = "", slow[64] = "";
+        if (!r.times.steady) snprintf(own, sizeof(own), "p50 +%.0f%% on its min; ", std::max(r.times.eyeAbove, r.times.totalAbove));
+        if (probeSlow) snprintf(slow, sizeof(slow), "probe min %.3f ms, +%.0f%% on its best; ", probeEye.min, 100.0 * (probeEye.min / bestProbe - 1.0));
+        snprintf(r.why, sizeof(r.why), "%s%s", own, slow);
+        const size_t len = strlen(r.why);
+        if (len >= 2) r.why[len - 2] = 0;
+        const BenchCase& bc = kBenchCases[r.caseIndex];
+        char where[16];
+        if (bc.curved) snprintf(where, sizeof(where), "%d%%", r.curvePct);
+        else snprintf(where, sizeof(where), "flat");
+        Log("BenchRoom: [%c %s yaw %.0f] run %d CONTENDED - %s", bc.id, where, kBenchYaws[r.view], r.run + 1, r.why);
+    }
+    if (!rows.empty() && contendedRows > 0)
+        Log("BenchRoom: CONTENDED - %zu of %zu rows shared the GPU with other work%s: their eye or total p50 was more than %.0f%% above its min, or the probe's "
+            "min in the same rounds was more than %.0f%% above its best (%.3f ms). Their mins are not reliable, and the acceptance below uses steady rows "
+            "only. For a clean baseline, run with nothing else drawing on the GPU (no game; SteamVR closed or idle)",
+            contendedRows, rows.size(), compositor ? " (SteamVR's compositor is running)" : "", (BENCH_STEADY - 1.0) * 100.0,
+            (BENCH_PROBE_SLOWER - 1.0) * 100.0, bestProbe);
+    else if (!rows.empty())
+        Log("BenchRoom: steady - in every row the eye and total p50 are within %.0f%% of their min, and the probe's min within %.0f%% of its best (%.3f ms)",
+            (BENCH_STEADY - 1.0) * 100.0, (BENCH_PROBE_SLOWER - 1.0) * 100.0, bestProbe);
 
     // --- room-bench.csv: one row per run, case, curve and view
     FILE* csv = nullptr;
     if (fopen_s(&csv, "room-bench.csv", "w") || !csv) { Log("BenchRoom: FAIL cannot write room-bench.csv"); ok = false; }
     else
     {
-        fprintf(csv, "run,case,what,curve_pct,yaw_deg,pitch_deg,eye_w,eye_h,emitters,clocks,compositor,screen_px,room_px,glow_px,world_px,mixed_px,check_px,check_bad_px");
+        fprintf(csv, "run,case,what,curve_pct,yaw_deg,pitch_deg,eye_w,eye_h,emitters,clocks,compositor,contended,why,probe_eye_min_ms,probe_eye_p50_ms,"
+                     "screen_px,room_px,glow_px,world_px,mixed_px,check_px,check_bad_px,check_edge_px,check_edge_bad_px,check_interior_far_px");
         for (int p = 0; p < BENCH_PASSES; p++) fprintf(csv, ",%s_min_ms,%s_p50_ms,%s_p95_ms", kBenchPassNames[p], kBenchPassNames[p], kBenchPassNames[p]);
-        fprintf(csv, ",eye_ms_per_M_offscreen_px\n");
+        fprintf(csv, ",eye_min_ms_per_M_offscreen_px,eye_p50_ms_per_M_offscreen_px\n");
         for (const BenchRow& r : rows)
         {
             const BenchCase& bc = kBenchCases[r.caseIndex];
             const double offscreenM = (double)r.classes.Offscreen() / 1e6;
-            fprintf(csv, "%d,%c,\"%s\",%d,%.0f,%.0f,%d,%d,%d,%s,%s,%llu,%llu,%llu,%llu,%llu,%zu,%zu", r.run + 1, bc.id, bc.what, r.curvePct, kBenchYaws[r.view],
-                    kBenchPitch, r.ew, r.eh, r.emitters, stable ? "locked" : "unlocked", compositor ? "running" : "off",
-                    (unsigned long long)r.classes.screen, (unsigned long long)r.classes.room,
-                    (unsigned long long)r.classes.glow, (unsigned long long)r.classes.world, (unsigned long long)r.classes.mixed, r.check.checked, r.check.bad);
-            for (int p = 0; p < BENCH_PASSES; p++) fprintf(csv, ",%.4f,%.4f,%.4f", r.stats[p].min, r.stats[p].p50, r.stats[p].p95);
-            fprintf(csv, ",%.5f\n", offscreenM > 0 ? r.stats[2].p50 / offscreenM : 0.0);
+            fprintf(csv, "%d,%c,\"%s\",%d,%.0f,%.0f,%d,%d,%d,%s,%s,%s,\"%s\",%.4f,%.4f,%llu,%llu,%llu,%llu,%llu,%zu,%zu,%zu,%zu,%zu", r.run + 1, bc.id, bc.what,
+                    r.curvePct, kBenchYaws[r.view], kBenchPitch, r.ew, r.eh, r.emitters, stable ? "locked" : "unlocked", compositor ? "running" : "off",
+                    r.contended ? "yes" : "no", r.why, r.probe.pass[BENCH_EYE_PASS].min, r.probe.pass[BENCH_EYE_PASS].p50,
+                    (unsigned long long)r.classes.screen, (unsigned long long)r.classes.room, (unsigned long long)r.classes.glow,
+                    (unsigned long long)r.classes.world, (unsigned long long)r.classes.mixed, r.check.checked, r.check.bad, r.check.edgeChecked,
+                    r.check.edgeBad, r.check.interiorFar);
+            for (int p = 0; p < BENCH_PASSES; p++) fprintf(csv, ",%.4f,%.4f,%.4f", r.times.pass[p].min, r.times.pass[p].p50, r.times.pass[p].p95);
+            fprintf(csv, ",%.5f,%.5f\n", offscreenM > 0 ? r.times.pass[BENCH_EYE_PASS].min / offscreenM : 0.0,
+                    offscreenM > 0 ? r.times.pass[BENCH_EYE_PASS].p50 / offscreenM : 0.0);
         }
         fclose(csv);
-        Log("BenchRoom: wrote room-bench.csv (%zu rows)", rows.size());
+        Log("BenchRoom: wrote room-bench.csv (%zu rows, %zu contended)", rows.size(), contendedRows);
     }
 
-    // --- summary: for each case, the median over the runs of each view's min and p50,
-    // and their spread; then what the spec's acceptance compares, among the cases that
-    // exist so far. With other work on the GPU (SteamVR's compositor) the p50 carries
-    // its frames too, and the min is the least disturbed figure.
+    // --- summary: for each case, the median over the runs of each view's min and p50
+    // among its steady rows, and their spread; then what the spec's acceptance compares,
+    // among the cases that exist so far - judged only where every figure has a steady row.
     auto statOf = [&](char id, int curvePct, int view, int pass, bool useMin, double* spread)
     {
         std::vector<double> v;
         for (const BenchRow& r : rows)
-            if (kBenchCases[r.caseIndex].id == id && r.curvePct == curvePct && r.view == view) v.push_back(useMin ? r.stats[pass].min : r.stats[pass].p50);
+            if (!r.contended && kBenchCases[r.caseIndex].id == id && r.curvePct == curvePct && r.view == view)
+                v.push_back(useMin ? r.times.pass[pass].min : r.times.pass[pass].p50);
         if (spread) *spread = v.empty() ? 0.0 : *std::max_element(v.begin(), v.end()) - *std::min_element(v.begin(), v.end());
         if (v.empty()) return -1.0;
         std::sort(v.begin(), v.end());
@@ -6240,40 +6513,58 @@ static bool BenchRoom(App& app)
             for (int k = 0; k < (bc.curved ? BENCH_CURVES : 1); k++)
             {
                 const int curvePct = bc.curved ? (int)std::lround(kBenchCurves[k] * 100.0f) : 0;
-                char line[320] = "";
+                char line[400] = "";
                 size_t used = 0;
                 double worstSpread = 0;
                 for (int vi = 0; vi < BENCH_VIEWS && used < sizeof(line); vi++)
                 {
                     double spreadMin = 0, spreadP50 = 0;
-                    const double totalMin = statOf(bc.id, curvePct, vi, BENCH_PASSES - 1, true, &spreadMin);
-                    const double totalP50 = statOf(bc.id, curvePct, vi, BENCH_PASSES - 1, false, &spreadP50);
-                    const double eyeMin = statOf(bc.id, curvePct, vi, 2, true, nullptr);
+                    const double totalMin = statOf(bc.id, curvePct, vi, BENCH_TOTAL, true, &spreadMin);
+                    const double totalP50 = statOf(bc.id, curvePct, vi, BENCH_TOTAL, false, &spreadP50);
+                    const double eyeMin = statOf(bc.id, curvePct, vi, BENCH_EYE_PASS, true, nullptr);
                     worstSpread = std::max(worstSpread, std::max(spreadMin, spreadP50));
-                    used += (size_t)snprintf(line + used, sizeof(line) - used, "%syaw %.0f %.3f / %.3f (eye min %.3f)", vi ? ", " : "", kBenchYaws[vi],
-                                             totalMin, totalP50, eyeMin);
+                    if (totalMin < 0) used += (size_t)snprintf(line + used, sizeof(line) - used, "%syaw %.0f CONTENDED", vi ? ", " : "", kBenchYaws[vi]);
+                    else
+                        used += (size_t)snprintf(line + used, sizeof(line) - used, "%syaw %.0f %.3f / %.3f (eye min %.3f)", vi ? ", " : "", kBenchYaws[vi],
+                                                 totalMin, totalP50, eyeMin);
                 }
-                Log("BenchRoom: summary [%c %d%%] %s - total min / p50: %s ms; spread over %d run%s at most %.3f ms", bc.id, curvePct, bc.what, line, runs,
-                    runs > 1 ? "s" : "", worstSpread);
+                char where[16];
+                if (bc.curved) snprintf(where, sizeof(where), "%d%%", curvePct);
+                else snprintf(where, sizeof(where), "flat");
+                Log("BenchRoom: summary [%c %s] %s - total min / p50 over the steady runs: %s ms; spread over %d run%s at most %.3f ms", bc.id, where, bc.what,
+                    line, runs, runs > 1 ? "s" : "", worstSpread);
             }
         }
         for (int k = 0; k < BENCH_CURVES; k++)
         {
             const int curvePct = (int)std::lround(kBenchCurves[k] * 100.0f);
-            for (int useMin = 0; useMin < 2; useMin++)
+            for (int useMin = 1; useMin >= 0; useMin--)
             {
                 const bool m = useMin != 0;
-                const double a0 = statOf('A', curvePct, 0, 2, m, nullptr), b0 = statOf('B', curvePct, 0, 2, m, nullptr);
-                const double a60 = statOf('A', curvePct, 2, 2, m, nullptr), b60 = statOf('B', curvePct, 2, 2, m, nullptr);
-                const double emitLight = statOf('B', curvePct, 0, 0, m, nullptr) + statOf('B', curvePct, 0, 1, m, nullptr);
-                const double dVsB = statOf('D', curvePct, 0, BENCH_PASSES - 1, m, nullptr) - statOf('B', curvePct, 0, BENCH_PASSES - 1, m, nullptr);
-                Log("BenchRoom: acceptance at %d%% (%s) - (B) eye minus (A) eye: %+.3f ms at yaw 0, %+.3f ms at yaw 60 (target at most +0.25); "
-                    "EMIT + LIGHT %.3f ms (target at most 0.15); (D) total minus (B) total at yaw 0: %+.3f ms (the same shader until Stage 1, so noise)",
-                    curvePct, m ? "min" : "p50", b0 - a0, b60 - a60, emitLight, dVsB);
+                const double a0 = statOf('A', curvePct, 0, BENCH_EYE_PASS, m, nullptr), b0 = statOf('B', curvePct, 0, BENCH_EYE_PASS, m, nullptr);
+                const double a60 = statOf('A', curvePct, 2, BENCH_EYE_PASS, m, nullptr), b60 = statOf('B', curvePct, 2, BENCH_EYE_PASS, m, nullptr);
+                const double emit = statOf('B', curvePct, 0, 0, m, nullptr), light = statOf('B', curvePct, 0, 1, m, nullptr);
+                const double d0 = statOf('D', curvePct, 0, BENCH_TOTAL, m, nullptr), bt0 = statOf('B', curvePct, 0, BENCH_TOTAL, m, nullptr);
+                if (a0 < 0 || b0 < 0 || a60 < 0 || b60 < 0 || emit < 0 || light < 0)
+                {
+                    Log("BenchRoom: acceptance at %d%% (%s) not judged - CONTENDED: (A) and (B) at yaw 0 and 60 each need a steady row, and some have none",
+                        curvePct, m ? "min" : "p50");
+                    continue;
+                }
+                const double gap0 = b0 - a0, gap60 = b60 - a60, emitLight = emit + light;
+                char dVsB[48];
+                if (d0 < 0 || bt0 < 0) snprintf(dVsB, sizeof(dVsB), "no steady row");
+                else snprintf(dVsB, sizeof(dVsB), "%+.3f ms", d0 - bt0);
+                Log("BenchRoom: acceptance at %d%% (%s) - (B) eye minus (A) eye: %+.3f ms at yaw 0 (%s), %+.3f ms at yaw 60 (%s), target at most +0.25; "
+                    "EMIT + LIGHT %.3f ms (%s, target at most 0.15); (D) total minus (B) total at yaw 0: %s (the same shader until Stage 1, so noise); "
+                    "(C) against (D) waits for case C", curvePct, m ? "min" : "p50", gap0, gap0 <= 0.25 ? "meets" : "misses", gap60,
+                    gap60 <= 0.25 ? "meets" : "misses", emitLight, emitLight <= 0.15 ? "meets" : "misses", dVsB);
             }
         }
     }
-    Log("BenchRoom: exit %s (%.1f s, %s clocks, %d run%s)", ok ? "PASS" : "FAIL", NowSeconds() - started, stable ? "locked" : "unlocked", runs, runs > 1 ? "s" : "");
+    power.Release();
+    Log("BenchRoom: exit %s (%.1f s, %s clocks, %d run%s; %zu of %zu rows contended)", ok ? "PASS" : "FAIL", NowSeconds() - started,
+        stable ? "locked" : "unlocked", runs, runs > 1 ? "s" : "", contendedRows, rows.size());
     return ok;
 }
 
@@ -7405,7 +7696,8 @@ int wmain(int argc, wchar_t** wideArgv)
         {
             const bool fg = SelfTestForegroundModel(app);
             bool passed = SelfTestPipeline(app) && fg;
-            if (app.opt.benchRoom) passed = BenchRoom(app) && passed;
+            if (app.opt.benchRoom && !passed) Log("main: --bench-room skipped - the self-test failed, so its passes are not worth timing");
+            if (app.opt.benchRoom && passed) passed = BenchRoom(app);
             if (passed) rc = 0;
             break;
         }
