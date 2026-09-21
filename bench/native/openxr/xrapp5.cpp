@@ -7342,6 +7342,14 @@ static void RunFrameLoop(App& app)
     double firstDrawTime = -1.0;
     double dashboardVisibleSince = -1.0;
     bool dashboardStartupAttempted = false, dashboardCloseRequested = false;
+    // A session SteamVR keeps hidden behind its menu (frames submitted, but SYNCHRONIZED
+    // rather than VISIBLE) never reaches the visible-playback close above, so it gets a
+    // few closes of its own until it has been shown once.
+    double hiddenSince = -1.0, lastHiddenClose = -1.0;
+    int hiddenCloses = 0;
+    bool everVisible = false;
+    const int kHiddenCloseMax = 3;
+    const double kHiddenCloseAfter = 2.0, kHiddenCloseEvery = 4.0;
     bool dashboardKeyWasDown = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
     long long lastPhase = -1;
     bool depthOn = useDepthSc;
@@ -8126,20 +8134,34 @@ static void RunFrameLoop(App& app)
         else if (dashboardVisibleSince < 0.0) dashboardVisibleSince = NowSeconds();
         const bool startupCloseDue = visiblePicture && NowSeconds() - dashboardVisibleSince >= 1.0 &&
             !app.opt.keepDashboard && !dashboardStartupAttempted;
+        if (visiblePicture) everVisible = true;
+        const bool hiddenPicture = XR_SUCCEEDED(er) && running && state == XR_SESSION_STATE_SYNCHRONIZED;
+        if (!hiddenPicture || everVisible) hiddenSince = -1.0;
+        else if (hiddenSince < 0.0) hiddenSince = NowSeconds();
+        const bool hiddenCloseDue = hiddenPicture && !everVisible && !app.opt.keepDashboard &&
+            hiddenCloses < kHiddenCloseMax && NowSeconds() - hiddenSince >= kHiddenCloseAfter &&
+            (lastHiddenClose < 0.0 || NowSeconds() - lastHiddenClose >= kHiddenCloseEvery);
         if (dashboardCloseRequested && !app.steamVrRuntime)
         {
             Log("SteamVR dashboard: F8 only applies to the SteamVR runtime");
             dashboardCloseRequested = false;
         }
-        if (app.steamVrRuntime && (startupCloseDue || dashboardCloseRequested) && !app.dashboardBusy.load())
+        if (app.steamVrRuntime && (startupCloseDue || hiddenCloseDue || dashboardCloseRequested) && !app.dashboardBusy.load())
         {
+            if (hiddenCloseDue && !startupCloseDue && !dashboardCloseRequested)
+            {
+                ++hiddenCloses;
+                lastHiddenClose = NowSeconds();
+                Log("SteamVR dashboard: still hidden behind SteamVR (SYNCHRONIZED for %.1f s) - close attempt %d of %d",
+                    NowSeconds() - hiddenSince, hiddenCloses, kHiddenCloseMax);
+            }
             // A finished worker remains joinable. Reap it before an explicit
             // later key press starts a new request; never block the frame loop
             // on an in-flight network operation.
             if (app.dashboardWorker.joinable()) app.dashboardWorker.join();
             const bool fromKey = dashboardCloseRequested;
             dashboardCloseRequested = false;
-            dashboardStartupAttempted = true;
+            if (startupCloseDue || fromKey) dashboardStartupAttempted = true;
             app.dashboardBusy = true;
             app.dashboardWorker = std::thread([&app, fromKey] {
                 g_threadName = "menu";
