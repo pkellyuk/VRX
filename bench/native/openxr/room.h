@@ -95,6 +95,7 @@ struct Room
     float zSide = 0;                    // where the front meets the side walls
     float margin = 0;                   // the glow margin, metres
     bool floorTracked = false;          // the floor came from STAGE
+    float floorWanted = 0;              // that floor (or the seated guess); yF is lower when the screen reaches below it
     bool phiReduced = false;            // the arc was shortened to keep the viewer inside
     float frontFloorArea = 0;           // floor (and ceiling) area in front of a curved front: outside the room
 };
@@ -164,6 +165,7 @@ inline bool BuildRoom(const RoomInputs& in, Room& out)
     r.X = std::fmax(std::fmax(0.5f * W + r.margin + 0.1f * W, std::fabs(ex) + kRoomSideClearance), kRoomMinHalfWidth);
     float floorRef = ey - 1.2f;                         // seated guess
     if (std::isfinite(in.floorY) && ey - in.floorY >= 0.5f && ey - in.floorY <= 2.3f) { floorRef = in.floorY; r.floorTracked = true; }
+    r.floorWanted = floorRef;
     r.yF = std::fmin(std::fmin(floorRef, -0.5f * H - kRoomFloorBelowScreen), ey - 0.8f);
     r.yC = std::fmax(std::fmax(r.yF + kRoomMinHeight, 0.5f * H + r.margin), ey + 0.8f);
     r.zB = ez + std::fmax(1.5f, 0.5f * ez);

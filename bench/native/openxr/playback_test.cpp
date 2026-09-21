@@ -909,6 +909,12 @@ static void TestRoom()
     tracked.floorY = -1.2f;
     Room withFloor;
     Check(BuildRoom(tracked, withFloor) && withFloor.floorTracked && withFloor.yF <= -1.2f, "a tracked floor is used, never above the screen's bottom");
+    Check(withFloor.floorWanted == -1.2f && withFloor.yF < withFloor.floorWanted - 0.5f,
+        "the default screen reaches below a seated floor: the room's floor is lowered, and the floor that was wanted is kept for the log");
+    tracked.floorY = -2.0f;
+    Check(BuildRoom(tracked, withFloor) && withFloor.floorTracked && withFloor.yF == -2.0f && withFloor.floorWanted == -2.0f,
+        "a standing floor below the screen is used as it is");
+    tracked.floorY = -1.2f;
     tracked.floorY = -5.0f;
     Check(BuildRoom(tracked, withFloor) && !withFloor.floorTracked, "an implausible tracked floor falls back to the seated guess");
     RoomInputs offset = in;

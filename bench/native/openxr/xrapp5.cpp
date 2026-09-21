@@ -5637,7 +5637,9 @@ static void RunFrameLoop(App& app)
                 const auto* rc = (const XrEventDataReferenceSpaceChangePending*)&ev;
                 stageLocated = false;
                 stageLocateFrom = rc->changeTime;
-                Log("RunFrameLoop: reference space %d change pending - the room's floor will be looked up again", (int)rc->referenceSpaceType);
+                const XrReferenceSpaceType changed = rc->referenceSpaceType;
+                Log("RunFrameLoop: %s space change pending - the room's floor will be looked up again",
+                    changed == XR_REFERENCE_SPACE_TYPE_LOCAL ? "LOCAL" : changed == XR_REFERENCE_SPACE_TYPE_STAGE ? "STAGE" : "reference");
             }
             ev = { XR_TYPE_EVENT_DATA_BUFFER };
         }
@@ -5814,9 +5816,17 @@ static void RunFrameLoop(App& app)
                             roomRejected = false;
                             roomFailedLogged = false;
                             roomGeometryDirty = true;
+                            // Say which floor won: SteamVR's (or the seated guess), or the screen's
+                            // bottom edge when the screen reaches below it.
+                            char floorWhy[128];
+                            const float wantedDrop = in.eye[1] - room.floorWanted, drop = in.eye[1] - room.yF;
+                            if (drop > wantedDrop + 0.01f)
+                                snprintf(floorWhy, sizeof(floorWhy), "%s %.2f m below - lowered %.2f m to stay under the screen",
+                                         room.floorTracked ? "SteamVR's floor is" : "the seated guess is", wantedDrop, drop - wantedDrop);
+                            else
+                                snprintf(floorWhy, sizeof(floorWhy), "%s", room.floorTracked ? "SteamVR's floor" : "seated guess");
                             Log("RunFrameLoop: room %.2f x %.2f x %.2f m, floor %.2f m below the eye (%s), %s front%s, %d emitters (glow blocks %d px)",
-                                2 * room.X, room.yC - room.yF, room.zB + room.g, in.eye[1] - room.yF,
-                                room.floorTracked ? "STAGE" : "seated guess", room.curved ? "curved" : "flat",
+                                2 * room.X, room.yC - room.yF, room.zB + room.g, drop, floorWhy, room.curved ? "curved" : "flat",
                                 room.phiReduced ? " (arc shortened to keep the viewer inside)" : "", roomLayout.count(), roomLayout.block);
                         }
                     }
