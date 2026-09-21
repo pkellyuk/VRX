@@ -58,6 +58,13 @@
 // world colour (RoomEnvironment). The patterns are box-filtered over each pixel's footprint
 // (RoomPulse, RoomBar) from the rays' exact differentials. RoomSurface shades a sample;
 // the bounce weighs each face's finished albedo (RoomFinishAlbedo).
+// REFLECTIONS (v11, Reflections above 0; they turn the finish on too). The glass and the
+// floor carry a coat (Schlick, F0 0.6 at 100%) that mirrors the room once: a sample's ray is
+// reflected where it meets its face, from each eye's own position, and sees the screen as a
+// small mirror picture of the source (RoomMirrorPicture, 128 texels wide) with an edge
+// softened over the pixel's footprint, or else the room's other faces as the lightmap has
+// them, without their frames, tiles or reflections (RoomReflection). The bounce counts
+// the coat's mean reflectance.
 //
 // All of it is computed once per frame into a small lightmap (kRoomLightmap^2 per
 // face) that both eyes sample: diffuse light does not depend on where you look from.
@@ -101,9 +108,9 @@ static const float kRoomLightMax = 20.0f;       // emitted radiance at 100%
 static const uint32_t kRoomLightDefault = 0xFFB46B;     // 3000 K, "Soft white"
 static const float kRoomFootMin = 1e-4f;        // a pixel's footprint on a surface, metres, at least ...
 static const float kRoomFootMax = 10.0f;        // ... and at most
-// The finish (v11), on while Glass (or, later, Reflections) is above 0: the side walls,
-// the back wall and the ceiling become glass panes in slim frames, the floor gets 1 m
-// tiles, and beyond the glass lies a sky and a ground at the floor's level (RoomEnvironment).
+// The finish (v11), on while Glass or Reflections is above 0: the side walls, the back
+// wall and the ceiling become glass panes in slim frames, the floor gets 1 m tiles, and
+// beyond the glass lies a sky and a ground at the floor's level (RoomEnvironment).
 static const float kRoomGlassF0 = 0.6f;         // the coat's reflectance face on, at Reflections 100%
 static const float kRoomFloorGloss = 0.5f;      // the floor reflects this much of what the glass does
 static const float kRoomFramePitch = 1.5f;      // frames: the bays' target width, metres ...
@@ -121,6 +128,12 @@ static const float kRoomEnvLineW = 0.03f;       // ... and this wide
 static const float kRoomEnvLineMean = 0.0591f;  // the grid's mean cover, 1 - (1 - 0.03)^2 (for reflected rays)
 static const float kRoomEnvFog = 50.0f;         // the ground fades into the horizon's colour over this distance
 static const float kRoomEnvHorizonDy = 1e-4f;   // a ray this close to level shows the horizon's colour
+// Reflections (v11): the mirror picture of the screen, and the reflected ray.
+static const int kRoomMirrorW = 128;            // the mirror picture's width, texels ...
+static const int kRoomMirrorMinH = 8;           // ... and its height (the source's aspect), at least
+static const int kRoomMirrorMaxH = 256;         // ... and at most (the texture's height)
+static const float kRoomNudge = 1e-3f;          // a reflected ray starts this far off its face, metres
+static const float kRoomReflFootMax = 0.1f;     // the reflected screen's soft edge, metres, at most
 
 // ------------------------------------------------------------------- geometry
 struct RoomInputs
@@ -831,6 +844,92 @@ inline bool RoomEmitRadiance(const RoomEmitterLayout& l, const unsigned char* sr
     return true;
 }
 
+// ------------------------------------------------------------ the mirror picture
+// Reflections (v11) see the screen as a small picture of the source: kRoomMirrorW texels
+// wide and as tall as the source's aspect makes it (72 for 16:9, 228 for 9:16), each the
+// exact mean of its box of source pixels. The GPU's MIRROR pass (kRoomHlsl, ROOM_MIRROR)
+// computes it each frame into an RGBA16F texture of kRoomMirrorW x kRoomMirrorMaxH, of
+// which only the first h rows are used.
+
+// Pixel box (i, j) of a w x h grid over a srcW x srcH picture: edges on whole pixels,
+// every pixel in exactly one box (RoomPatchBox's rule for any grid).
+inline void RoomGridBox(int i, int j, int w, int h, int srcW, int srcH, int* x0, int* x1, int* y0, int* y1)
+{
+    if (!x0 || !x1 || !y0 || !y1) return;
+    if (w <= 0 || h <= 0) { *x0 = *x1 = *y0 = *y1 = 0; return; }
+    *x0 = (int)((long long)i * srcW / w); *x1 = (int)((long long)(i + 1) * srcW / w);
+    *y0 = (int)((long long)j * srcH / h); *y1 = (int)((long long)(j + 1) * srcH / h);
+}
+
+// The mirror picture's size for a srcW x srcH source: kRoomMirrorW wide, and
+// round(kRoomMirrorW srcH / srcW) tall within [kRoomMirrorMinH, kRoomMirrorMaxH].
+inline bool RoomMirrorSize(int srcW, int srcH, int* w, int* h)
+{
+    if (!w || !h) return false;
+    *w = *h = 0;
+    if (srcW <= 0 || srcH <= 0) return false;
+    const long long rows = (2LL * kRoomMirrorW * srcH + srcW) / (2LL * srcW);
+    *w = kRoomMirrorW;
+    *h = (int)(rows < kRoomMirrorMinH ? kRoomMirrorMinH : (rows > kRoomMirrorMaxH ? kRoomMirrorMaxH : rows));
+    return true;
+}
+
+// A mirror picture as floats, [row][column][rgba], linear, for the CPU reference; Sample
+// is the eye pass's MirrorH: bilinear by hand, edges clamped to the w x h in use.
+struct RoomMirror
+{
+    int w = 0, h = 0;
+    std::vector<float> texels;          // w * h * 4
+    bool Sample(float u, float v, float out[3]) const
+    {
+        if (!out || w <= 0 || h <= 0 || texels.size() != (size_t)w * h * 4) return false;
+        const float x = u * (float)w - 0.5f, y = v * (float)h - 0.5f;
+        const float fx0 = std::floor(x), fy0 = std::floor(y), fx = x - fx0, fy = y - fy0;
+        auto clampi = [](int i, int n) { return i < 0 ? 0 : (i > n - 1 ? n - 1 : i); };
+        const int x0 = clampi((int)fx0, w), x1 = clampi((int)fx0 + 1, w), y0 = clampi((int)fy0, h), y1 = clampi((int)fy0 + 1, h);
+        auto at = [&](int xi, int yi, int ch) { return texels[((size_t)yi * w + xi) * 4 + ch]; };
+        for (int ch = 0; ch < 3; ch++)
+        {
+            const float top = at(x0, y0, ch) + fx * (at(x1, y0, ch) - at(x0, y0, ch));
+            const float bot = at(x0, y1, ch) + fx * (at(x1, y1, ch) - at(x0, y1, ch));
+            out[ch] = top + fy * (bot - top);
+        }
+        return true;
+    }
+};
+
+// The mirror picture of `src` (RGBA8, pitch in bytes), as the MIRROR pass computes it:
+// each texel the mean of its RoomGridBox, every RoomStride-th pixel through the decode
+// table, summed row by row in the shader's order.
+inline bool RoomMirrorPicture(const unsigned char* src, int srcW, int srcH, int srcPitch, const float table[256], RoomMirror& out)
+{
+    if (!src || !table || srcW <= 0 || srcH <= 0 || srcPitch < srcW * 4) return false;
+    int w = 0, h = 0;
+    if (!RoomMirrorSize(srcW, srcH, &w, &h)) return false;
+    out.w = w; out.h = h;
+    out.texels.assign((size_t)w * h * 4, 0.0f);
+    const int stride = RoomStride(srcW);
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++)
+        {
+            int x0, x1, y0, y1;
+            RoomGridBox(i, j, w, h, srcW, srcH, &x0, &x1, &y0, &y1);
+            float sum[3] = { 0, 0, 0 };
+            int count = 0;
+            for (int y = y0; y < y1; y += stride)
+                for (int x = x0; x < x1; x += stride)
+                {
+                    const unsigned char* px = src + (size_t)y * srcPitch + (size_t)x * 4;
+                    sum[0] += table[px[0]]; sum[1] += table[px[1]]; sum[2] += table[px[2]];
+                    count++;
+                }
+            float* t = &out.texels[((size_t)j * w + i) * 4];
+            for (int ch = 0; ch < 3; ch++) t[ch] = count > 0 ? sum[ch] / (float)count : 0.0f;
+            t[3] = 1.0f;
+        }
+    return true;
+}
+
 // -------------------------------------------------------------------- lighting
 // G = pi x the form factor from a point (p, n) to a Lambertian quad: exact (Lambert's
 // polygon formula) close up, the disk formula further than twice the quad's diagonal.
@@ -874,11 +973,12 @@ inline float RoomFormFactor(const float p[3], const float n[3], const RoomEmitte
 }
 
 // The room's controls beyond the Room slider (v11): Glass walls, 0 (solid) .. 100 (clear),
-// and the room light, its level 0 (off) .. 100 and its colour. Reflections join them in
-// the next step.
+// Reflections, 0 (none) .. 100 (the coat at its strongest), and the room light, its level
+// 0 (off) .. 100 and its colour.
 struct RoomLook
 {
     int glass = 0;
+    int reflect = 0;
     int light = 0;
     uint32_t lightRgb = kRoomLightDefault;      // 0xRRGGBB
 };
@@ -930,7 +1030,7 @@ struct RoomShading
     // The finish (kRoomFlagFinish): on while Glass or Reflections is above 0.
     bool finish = false;
     float glass = 0;                    // T = Glass / 100: how clear the panes are
-    float reflect = 0;                  // r = Reflections / 100 (0 until the reflections' step)
+    float reflect = 0;                  // r = Reflections / 100: the coat's strength
     float fbar = 0;                     // RoomFresnelMean(r): the coat's mean reflectance
 };
 
@@ -975,7 +1075,7 @@ inline RoomShading MakeRoomShading(const Room& r, int roomPercent, uint32_t worl
     const float ceiling = RoomArea(r, kFaceCeiling);
     s.kappaBar = r.lightValid && ceiling > 0 ? (r.lightX1 - r.lightX0) * (r.lightZ1 - r.lightZ0) / ceiling : 0.0f;
     s.glass = (float)(look.glass < 0 ? 0 : (look.glass > 100 ? 100 : look.glass)) / 100.0f;
-    s.reflect = 0;
+    s.reflect = (float)(look.reflect < 0 ? 0 : (look.reflect > 100 ? 100 : look.reflect)) / 100.0f;
     s.fbar = RoomFresnelMean(s.reflect);
     s.finish = r.valid && (s.glass > 0 || s.reflect > 0);
     float total = 0, weighted = 0;
@@ -1078,11 +1178,12 @@ static const uint32_t kRoomFlagFlatLayer = 2;   // flat screen: the compositor d
 static const uint32_t kRoomFlagGlow = 4;        // the ambilight is on
 static const uint32_t kRoomFlagDither = 8;
 static const uint32_t kRoomFlagFinish = 16;     // Glass or Reflections above 0: frames, tiles, the coat, the glass
+static const uint32_t kRoomFlagReflect = 32;    // Reflections above 0: the reflected ray and the MIRROR pass
 static const uint32_t kRoomFlagLight = 64;      // the room light is on: its panel fits, its level is above 0, its colour is not black
 
 // Rows 0-10 are v10's. Rows 11-20 are v11's: the finish (row 11: glass, reflections and
 // the coat's mean reflectance; row 12: the frames), the room light (rows 13-15), the
-// mirror picture (row 16, zero until the reflections' step), and the eye pass's
+// mirror picture's size (row 16, zero while Reflections is 0), and the eye pass's
 // reciprocals and screen bounds (rows 17-20).
 // kRoomCbufferHlsl declares rows 0-20.
 struct RoomConstants                            // must match kRoomCbufferHlsl
@@ -1103,7 +1204,7 @@ struct RoomConstants                            // must match kRoomCbufferHlsl
     float lightX0 = 0, lightX1 = 0, lightZ0 = 0, lightZ1 = 0;       // 13
     float lightL[4] = { 0, 0, 0, 0 };           // 14: emitted rgb, w = the panel is valid
     float lightSeen[4] = { 0, 0, 0, 0 };        // 15: seen rgb
-    uint32_t mirrorW = 0, mirrorH = 0, upad0 = 0, upad1 = 0;        // 16
+    uint32_t mirrorW = 0, mirrorH = 0, upad0 = 0, upad1 = 0;        // 16: the mirror picture in use (RoomMirrorSize)
     float invH = 0, inv2X = 0, invSide = 0, invFloorZ = 0;          // 17
     float inv2sMax = 0, invGlowW = 0, invGlowH = 0, tanA = 0;       // 18
     float wingS = 0, scrTanWrap = 0, scrBoxX = 0, scrBoxY = 0;      // 19
@@ -1118,10 +1219,11 @@ static_assert(offsetof(RoomConstants, pitchSide) == 192 && offsetof(RoomConstant
               offsetof(RoomConstants, pad5) == 336, "rows 11-20 as in the v11 spec (section 3.5)");
 
 // Whether any of the v11 controls is on in these constants, so that the eye pass needs
-// their code (xrapp5.cpp RoomEyePso picks its look variant): the room light or the finish.
+// their code (xrapp5.cpp RoomEyePso picks its look variant): the room light, the finish or
+// the reflections.
 inline bool RoomLookOn(const RoomConstants& rc)
 {
-    return (rc.flags & (kRoomFlagLight | kRoomFlagFinish)) != 0;
+    return (rc.flags & (kRoomFlagLight | kRoomFlagFinish | kRoomFlagReflect)) != 0;
 }
 
 inline float RoomBounceScale(const RoomShading& sh)
@@ -1153,6 +1255,14 @@ inline RoomConstants MakeRoomConstants(const Room& r, const RoomShading& sh, con
     // while the finish is off), and the frames' bays and crossbar (always, from the room).
     c.glass = sh.finish ? sh.glass : 0.0f; c.reflect = sh.finish ? sh.reflect : 0.0f; c.fbar = sh.finish ? sh.fbar : 0.0f;
     c.pitchSide = r.pitchSide; c.pitchBack = r.pitchBack; c.transomY = r.transomY;
+    // Row 16 and flag 32: with Reflections above 0, the mirror picture's size for this
+    // source (the MIRROR pass runs only then). No source, no mirror, no reflections.
+    int mirrorW = 0, mirrorH = 0;
+    if (c.reflect > 0 && RoomMirrorSize(srcW, srcH, &mirrorW, &mirrorH))
+    {
+        c.flags |= kRoomFlagReflect;
+        c.mirrorW = (uint32_t)mirrorW; c.mirrorH = (uint32_t)mirrorH;
+    }
     // Rows 13-15: the room light's panel, its emitted radiance (EMIT gives it to the lamp
     // emitter; w is 1 when the panel fits, as the emitter's n.w) and its seen radiance.
     c.lightX0 = r.lightX0; c.lightX1 = r.lightX1; c.lightZ0 = r.lightZ0; c.lightZ1 = r.lightZ1;
@@ -1476,6 +1586,21 @@ inline bool RoomEnvironment(const RoomConstants& rc, const float o[3], const flo
     return true;
 }
 
+// What the eye pass reads besides its geometry: the room's constants (the room light's
+// panel, colour and flag, read from here as the GPU reads them from RoomC), each eye's
+// picture (it may have no pixels in the flat layer, which never samples it), the glow
+// (null: none), the lightmap, and for reflections the mirror picture and the room, whose
+// faces a reflected ray leaves through (RoomPixel fills `room` in when it is null).
+struct RoomEyeInputs
+{
+    const RoomConstants* rc = nullptr;
+    const RgbaImage* picture = nullptr;
+    const RgbaImage* glow = nullptr;
+    const RoomLightmap* light = nullptr;
+    const RoomMirror* mirror = nullptr;
+    const Room* room = nullptr;
+};
+
 // What the finish drew at a sample, for the self-test's coverage counts.
 struct RoomSurfaceInfo
 {
@@ -1483,20 +1608,171 @@ struct RoomSurfaceInfo
     float kappa = 0;                    // the room light's panel's cover (ceiling)
     float grout = -1;                   // the floor's grout cover (-1: not a tiled floor sample)
     int env = 0;                        // beyond the glass: 0 not drawn, 1 sky, 2 horizon, 3 ground
+    float fresnel = 0;                  // the coat's reflectance where a reflection was traced (F, or Ff on the floor), else 0
+    float kappaS = 0;                   // how much of that reflection is the screen (its soft edge)
 };
 
-// A room surface's radiance at a primary sample (spec 2.5, the reflections' terms at 0):
-// L comes in as the lightmap's Ld and goes out as what the eye sees there. `face` is the
-// sample's face and (o, d) its ray, Dx and Dy the ray's differentials: the point is the
-// ray's hit on the face's plane (one divide), and its footprint filters the frames, tiles,
-// panel and ground grid.
+// A face's axis (0 x, 1 y, 2 z) and the sign of its normal into the room along it.
+inline int RoomFaceAxis(int face, float* sgn)
+{
+    if (sgn) *sgn = (face == kFaceLeft || face == kFaceFloor) ? 1.0f : -1.0f;
+    return (face == kFaceLeft || face == kFaceRight) ? 0 : ((face == kFaceFloor || face == kFaceCeiling) ? 1 : 2);
+}
+
+// The screen as a reflected ray (o, d, rcp = 1/d) sees it, within `widen` metres of its
+// outline: the curved screen (a slab test against the screen's box grown by `widen` - the
+// widened arc lies inside it - then the arc's quadratic, and atan2 for the angle: this path
+// is secondary only) or the flat layer's rectangle at z = 0. Gives its uv (the picture's),
+// the ray's t there and how far inside the outline the hit lies, e (negative outside).
+inline bool RoomScreenWideHit(const CurveConstants& c, const RoomConstants& rc, const float o[3], const float d[3], const float rcp[3], float widen,
+                              float* u, float* v, float* t, float* e)
+{
+    if (!o || !d || !rcp || !u || !v || !t || !e) return false;
+    *u = *v = *t = *e = 0;
+    if ((rc.flags & kRoomFlagFlatLayer) != 0)
+    {
+        if (!(d[2] < 0) || !(rc.screenW > 0) || !(rc.screenH > 0)) return false;
+        const float ts = -o[2] / d[2];
+        const float x = o[0] + ts * d[0], y = o[1] + ts * d[1];
+        const float hw = 0.5f * rc.screenW, hh = 0.5f * rc.screenH;
+        if (!(ts > 0) || std::fabs(x) > hw + widen || std::fabs(y) > hh + widen) return false;
+        *t = ts; *u = x / rc.screenW + 0.5f; *v = 0.5f - y / rc.screenH;
+        *e = std::fmin(hw - std::fabs(x), hh - std::fabs(y));
+        return true;
+    }
+    const float R = c.radius;
+    if (!(R > 0) || !(c.halfWidth > 0) || !(c.halfHeight > 0)) return false;
+    const float lo[3] = { -rc.scrBoxX - widen, -rc.scrBoxY - widen, -kRoomScreenPad - widen }, hi[3] = { rc.scrBoxX + widen, rc.scrBoxY + widen, rc.scrBoxZ + widen };
+    float tn[3], tf[3];
+    for (int k = 0; k < 3; k++)
+    {
+        const float t1 = (lo[k] - o[k]) * rcp[k], t2 = (hi[k] - o[k]) * rcp[k];
+        tn[k] = std::fmin(t1, t2); tf[k] = std::fmax(t1, t2);
+    }
+    const float enter = std::fmax(std::fmax(tn[0], tn[1]), tn[2]), leave = std::fmin(std::fmin(tf[0], tf[1]), tf[2]);
+    if (!(leave >= std::fmax(enter, 0.0f))) return false;
+    const float a = d[0] * d[0] + d[2] * d[2];
+    if (!(a > 1e-12f)) return false;
+    const float b = 2.0f * (o[0] * d[0] + (o[2] - R) * d[2]);
+    const float cc = o[0] * o[0] + o[2] * o[2] - 2.0f * o[2] * R;
+    const float disc = b * b - 4.0f * a * cc;
+    if (disc < 0) return false;
+    const float sq = std::sqrt(disc);
+    const float q = -0.5f * (b + (b < 0 ? -sq : sq));
+    float t0 = q / a, t1 = (q != 0) ? cc / q : t0;
+    if (t0 > t1) { const float swap = t0; t0 = t1; t1 = swap; }
+    for (int i = 0; i < 2; i++)
+    {
+        const float tr = i == 0 ? t0 : t1;
+        if (!(tr > 0)) continue;
+        const float x = o[0] + tr * d[0], y = o[1] + tr * d[1], z = o[2] + tr * d[2];
+        const float toward = R - z;
+        if (!(toward > 0)) continue;
+        const float phi = std::atan2(x, toward);
+        if (std::fabs(phi) > c.halfWrap + widen / R || std::fabs(y) > c.halfHeight + widen) continue;
+        *t = tr;
+        *u = (R * phi) / (2.0f * c.halfWidth) + 0.5f;
+        *v = 0.5f - y / (2.0f * c.halfHeight);
+        *e = std::fmin(R * (c.halfWrap - std::fabs(phi)), c.halfHeight - std::fabs(y));
+        return true;
+    }
+    return false;
+}
+
+// A reflection (spec 2.6): what the coat of a sample on `face` mirrors. The sample's ray
+// (direction d, its pixel's differentials Dx and Dy) met the face at p, t; the reflected
+// ray keeps the ray's origin eye (so each eye sees its own mirror image) and starts
+// kRoomNudge along itself from p (along the normal would shift the mirror image by as much). It sees the screen as the mirror picture, with a soft edge over
+// its footprint fw = (|Dx| + |Dy|)(t + t_s) (at most kRoomReflFootMax): kappa_s =
+// clamp(e / fw + 0.5, 0, 1). Round or behind the screen it leaves the room through a face
+// that shows the lightmap as the finish's secondary surfaces do - no frames, tiles or
+// further reflections: the front wall with the glow, the floor coated, the walls and the
+// ceiling as glass over the ground's mean grid, the ceiling's panel with an isotropic
+// footprint. `own` (the sample's own coated light) stands in if it finds no exit, which
+// only a ray from an edge can. kappaS (may be null) gets kappa_s.
+inline bool RoomReflection(const CurveConstants& c, const RoomEyeInputs& in, int face, const float p[3], const float d[3], float t,
+                           const float Dx[3], const float Dy[3], const float own[3], float out[3], float* kappaS)
+{
+    if (!p || !d || !Dx || !Dy || !own || !out) return false;
+    if (!in.rc || !in.light || !in.mirror || !in.room) return false;
+    if (face <= kFaceFront || face >= kRoomFaces) return false;
+    const RoomConstants& rc = *in.rc;
+    const int axis = RoomFaceAxis(face, nullptr);
+    float o2[3], d2[3] = { d[0], d[1], d[2] };
+    d2[axis] = -d2[axis];
+    RoomAt(p, d2, kRoomNudge / std::sqrt(d2[0] * d2[0] + d2[1] * d2[1] + d2[2] * d2[2]), o2);
+    const float spread = std::sqrt(Dx[0] * Dx[0] + Dx[1] * Dx[1] + Dx[2] * Dx[2]) + std::sqrt(Dy[0] * Dy[0] + Dy[1] * Dy[1] + Dy[2] * Dy[2]);
+    float rcp[3];
+    RoomRayRcp(d2, rcp);
+    float S[3] = { 0, 0, 0 }, ks = 0, su = 0, sv = 0, ts = 0, es = 0;
+    if (RoomScreenWideHit(c, rc, o2, d2, rcp, kRoomReflFootMax, &su, &sv, &ts, &es))
+    {
+        const float fw = std::fmin(std::fmax(spread * (t + ts), kRoomFootMin), kRoomReflFootMax);
+        ks = std::fmin(std::fmax(es / fw + 0.5f, 0.0f), 1.0f);
+        if (ks > 0 && !in.mirror->Sample(su, sv, S)) return false;
+    }
+    if (kappaS) *kappaS = ks;
+    if (ks >= 1.0f)
+    {
+        out[0] = S[0]; out[1] = S[1]; out[2] = S[2];
+        return true;
+    }
+    float B[3] = { own[0], own[1], own[2] };
+    RoomHit h;
+    if (RoomExitFast(*in.room, o2, d2, rcp, h))
+    {
+        float Ld2[3];
+        if (!in.light->Sample(h.face, h.u, h.v, Ld2)) return false;
+        if (h.face == kFaceFront)
+        {
+            for (int ch = 0; ch < 3; ch++) B[ch] = Ld2[ch];
+            const float gu = h.s * rc.invGlowW + 0.5f, gv = 0.5f - h.y * rc.invGlowH;
+            if ((rc.flags & kRoomFlagGlow) != 0 && in.glow && gu >= 0 && gu <= 1 && gv >= 0 && gv <= 1)
+            {
+                float g[4];
+                if (!SampleRgba(*in.glow, gu, gv, g)) return false;
+                for (int ch = 0; ch < 3; ch++) B[ch] += SrgbToLinear(g[ch]);
+            }
+        }
+        else if (h.face == kFaceFloor)
+        {
+            for (int ch = 0; ch < 3; ch++) B[ch] = (1.0f - kRoomFloorGloss * rc.fbar) * Ld2[ch];
+        }
+        else
+        {
+            float env[3] = { 0, 0, 0 };
+            if (rc.glass > 0 && !RoomEnvironment(rc, o2, d2, nullptr, nullptr, env, nullptr)) return false;
+            for (int ch = 0; ch < 3; ch++) B[ch] = (1.0f - rc.glass) * (1.0f - rc.fbar) * Ld2[ch] + rc.glass * env[ch];
+            if (h.face == kFaceCeiling)
+            {
+                const float t2 = (rc.yC - o2[1]) * rcp[1];
+                float p2[3];
+                RoomAt(o2, d2, t2, p2);
+                const float f2 = std::fmin(std::fmax(spread * (t + t2), kRoomFootMin), kRoomFootMax);
+                const float k2 = RoomPanelCoverage(rc, p2[0], p2[2], f2, f2);
+                for (int ch = 0; ch < 3; ch++) B[ch] = k2 * (Ld2[ch] + rc.lightSeen[ch]) + (1.0f - k2) * B[ch];
+            }
+        }
+    }
+    for (int ch = 0; ch < 3; ch++) out[ch] = ks * S[ch] + (1.0f - ks) * B[ch];
+    return true;
+}
+
+// A room surface's radiance at a primary sample (spec 2.5): L comes in as the lightmap's
+// Ld and goes out as what the eye sees there. `face` is the sample's face and (o, d) its
+// ray, Dx and Dy the ray's differentials: the point is the ray's hit on the face's plane
+// (one divide), and its footprint filters the frames, tiles, panel and ground grid.
 //   finish off: Ld, plus the room light's panel over the ceiling (kappa Ls);
-//   finish on:  floor    (1 - fbarF) tau Ld
-//               walls    phi Ld + (1 - phi) [(1 - T)(1 - fbar) Ld + T Env]   (frames opaque)
+//   finish on:  floor    Ff Lrefl + (1 - Ff)(1 - fbarF) tau Ld
+//               walls    phi Ld + (1 - phi) [F Lrefl + (1 - F)((1 - T)(1 - fbar) Ld + T Env)]   (frames opaque)
 //               ceiling  kappa (Ld + Ls) + (1 - kappa) x the walls' formula
-// With Glass 0 the walls are Ld again, frames and panes alike. The front is never finished.
+// F and Ff are the coat's Fresnel terms at the ray's angle to the face (the floor's without
+// its grout), and Lrefl what it mirrors (RoomReflection, which reads `c` and `in`: both
+// needed with flag 32); with Reflections 0 they are 0 and no reflection is traced, nor
+// where the frames or the panel cover the whole footprint. With Glass and Reflections 0 the
+// walls are Ld again, frames and panes alike. The front is never finished.
 inline bool RoomSurface(const RoomConstants& rc, int face, const float o[3], const float d[3], const float Dx[3], const float Dy[3], float L[3],
-                        RoomSurfaceInfo* info)
+                        RoomSurfaceInfo* info, const CurveConstants* c = nullptr, const RoomEyeInputs* in = nullptr)
 {
     if (!o || !d || !Dx || !Dy || !L) return false;
     if (face <= kFaceFront || face >= kRoomFaces) return true;
@@ -1519,13 +1795,27 @@ inline bool RoomSurface(const RoomConstants& rc, int face, const float o[3], con
     float p[3], Px[3], Py[3];
     RoomAt(o, d, t, p);
     if (!RoomPlaneFootprint(t, d, n, Dx, Dy, Px, Py)) return true;
+    const bool reflect = (rc.flags & kRoomFlagReflect) != 0;
+    if (reflect && (!c || !in)) return false;
+    const float cosn = std::fabs(d[axis]) / std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    float refl[3] = { 0, 0, 0 }, own[3], kappaS = 0;
     if (face == kFaceFloor)
     {
         float g = 0;
         const float tau = RoomTileFactor(p, RoomFootprintAxis(Px, Py, 0), RoomFootprintAxis(Px, Py, 2), &g);
         const float coat = 1.0f - kRoomFloorGloss * rc.fbar * (1.0f - g);
-        for (int ch = 0; ch < 3; ch++) L[ch] = coat * tau * L[ch];
-        if (info) info->grout = g;
+        const float ff = reflect ? kRoomFloorGloss * RoomFresnel(rc.reflect, cosn) * (1.0f - g) : 0.0f;
+        if (ff > 0)
+        {
+            for (int ch = 0; ch < 3; ch++) own[ch] = coat * L[ch];
+            if (!RoomReflection(*c, *in, face, p, d, t, Dx, Dy, own, refl, &kappaS)) return false;
+        }
+        for (int ch = 0; ch < 3; ch++)
+        {
+            const float base = coat * tau * L[ch];
+            L[ch] = ff > 0 ? ff * refl[ch] + (1.0f - ff) * base : base;
+        }
+        if (info) { info->grout = g; info->fresnel = ff; info->kappaS = kappaS; }
         return true;
     }
     const int a0 = face == kFaceLeft || face == kFaceRight ? 2 : 0, a1 = face == kFaceCeiling ? 2 : 1;
@@ -1535,27 +1825,24 @@ inline bool RoomSurface(const RoomConstants& rc, int face, const float o[3], con
     if (rc.glass > 0 && !RoomEnvironment(rc, o, d, Dx, Dy, env, &envKind)) return false;
     float kappa = 0;
     if (face == kFaceCeiling) kappa = RoomPanelCoverage(rc, p[0], p[2], RoomFootprintAxis(Px, Py, 0), RoomFootprintAxis(Px, Py, 2));
+    // The coat mirrors only where a pane shows: not over a frame or the panel.
+    const bool mirrored = reflect && (1.0f - phi) * (1.0f - kappa) > 0;
+    const float F = mirrored ? RoomFresnel(rc.reflect, cosn) : 0.0f;
+    if (mirrored)
+    {
+        for (int ch = 0; ch < 3; ch++) own[ch] = (1.0f - rc.fbar) * L[ch];
+        if (!RoomReflection(*c, *in, face, p, d, t, Dx, Dy, own, refl, &kappaS)) return false;
+    }
     for (int ch = 0; ch < 3; ch++)
     {
-        const float pane = (1.0f - rc.glass) * (1.0f - rc.fbar) * L[ch] + rc.glass * env[ch];
+        float pane = (1.0f - rc.glass) * (1.0f - rc.fbar) * L[ch] + rc.glass * env[ch];
+        if (mirrored) pane = F * refl[ch] + (1.0f - F) * pane;
         const float lg = phi * L[ch] + (1.0f - phi) * pane;
         L[ch] = face == kFaceCeiling ? kappa * (L[ch] + rc.lightSeen[ch]) + (1.0f - kappa) * lg : lg;
     }
-    if (info) { info->phi = phi; info->kappa = kappa; info->env = envKind; }
+    if (info) { info->phi = phi; info->kappa = kappa; info->env = envKind; info->fresnel = F; info->kappaS = kappaS; }
     return true;
 }
-
-// What the eye pass reads besides its geometry: the room's constants (the room light's
-// panel, colour and flag, read from here as the GPU reads them from RoomC), each eye's
-// picture (it may have no pixels in the flat layer, which never samples it), the glow
-// (null: none) and the lightmap.
-struct RoomEyeInputs
-{
-    const RoomConstants* rc = nullptr;
-    const RgbaImage* picture = nullptr;
-    const RgbaImage* glow = nullptr;
-    const RoomLightmap* light = nullptr;
-};
 
 // A sample's own ray and its pixel's ray differentials, for the v11 look (RoomSurface).
 struct RoomSampleRay
@@ -1568,7 +1855,7 @@ struct RoomSampleRay
 // colour; or a room surface - its lightmap radiance, plus the glow where it lies on
 // the front wall (light on the wall adds: it does not hide the wall's own light), and
 // with a v11 control on (RoomLookOn; `ray` is then the sample's ray) what RoomSurface
-// makes of it: the room light's panel, the frames, the glass and the tiles.
+// makes of it: the room light's panel, the frames, the glass, the tiles and the reflections.
 inline bool RoomSampleColour(const CurveConstants& c, const RoomView& view, const RoomEyeInputs& in, int kind, float u, float v,
                              float gu, float gv, const RoomSampleRay* ray, float out[3], RoomSurfaceInfo* info = nullptr)
 {
@@ -1591,7 +1878,7 @@ inline bool RoomSampleColour(const CurveConstants& c, const RoomView& view, cons
         if (!SampleRgba(*in.glow, gu, gv, g)) return false;
         for (int ch = 0; ch < 3; ch++) L[ch] += SrgbToLinear(g[ch]);
     }
-    if (ray && RoomLookOn(*in.rc) && !RoomSurface(*in.rc, kind - 1, ray->o, ray->d, ray->Dx, ray->Dy, L, info)) return false;
+    if (ray && RoomLookOn(*in.rc) && !RoomSurface(*in.rc, kind - 1, ray->o, ray->d, ray->Dx, ray->Dy, L, info, &c, &in)) return false;
     for (int ch = 0; ch < 3; ch++) out[ch] = LinearToSrgb(std::fmax(L[ch], 0.0f));
     return true;
 }
@@ -1603,12 +1890,14 @@ inline bool RoomSampleColour(const CurveConstants& c, const RoomView& view, cons
 // directions), otherwise each with its own ray. `info` (may be null): what the finish
 // drew at the centre sample, or at the first ray's when they do not agree.
 inline bool RoomPixel(const CurveConstants& c, const Cylinder& cyl, const Room& r, const RoomView& view, int e, int px, int py,
-                      const RoomEyeInputs& in, float out[3], RoomSurfaceInfo* info = nullptr)
+                      const RoomEyeInputs& inputs, float out[3], RoomSurfaceInfo* info = nullptr)
 {
     if (!out) return false;
     if (e < 0 || e > 1 || px < 0 || py < 0 || px >= (int)c.ew || py >= (int)c.eh) return false;
-    if (!in.rc || !in.picture || !in.light) return false;
-    if (!view.flatLayer && !in.picture->data) return false;
+    if (!inputs.rc || !inputs.picture || !inputs.light) return false;
+    if (!view.flatLayer && !inputs.picture->data) return false;
+    RoomEyeInputs in = inputs;
+    if (!in.room) in.room = &r;
 
     int kind[4];
     float uu[4], vv[4], gu[4], gv[4];
@@ -1693,6 +1982,11 @@ inline std::string RoomHlslDefines()
     defUint("ROOM_FLAG_DITHER", kRoomFlagDither);
     defUint("ROOM_FLAG_LIGHT", kRoomFlagLight);
     defUint("ROOM_FLAG_FINISH", kRoomFlagFinish);
+    defUint("ROOM_FLAG_REFLECT", kRoomFlagReflect);
+    def("ROOM_GLASS_F0", RoomHlslFloat(kRoomGlassF0));
+    def("ROOM_NUDGE", RoomHlslFloat(kRoomNudge));
+    def("ROOM_REFL_FOOT_MAX", RoomHlslFloat(kRoomReflFootMax));
+    def("ROOM_ENV_LINE_MEAN", RoomHlslFloat(kRoomEnvLineMean));
     def("ROOM_FLOOR_GLOSS", RoomHlslFloat(kRoomFloorGloss));
     def("ROOM_FRAME_W", RoomHlslFloat(kRoomFrameW));
     def("ROOM_GROUT_W", RoomHlslFloat(kRoomGroutW));

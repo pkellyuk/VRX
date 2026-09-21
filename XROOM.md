@@ -96,6 +96,29 @@ Everything is in linear display radiance, the space the compositor blends in.
     lets light out, so the room gets a little darker), the frames' share (about 8.5% of a
     wall, 10% of the ceiling) at rho, the panel's area at rho, the floor's grout. With
     Glass 0 the bounce is v10's to the bit.
+- **Reflections** (v11, `--room-reflect=N` until the desktop has its controls; 0 none ..
+  100). Above 0 the finish is on too (flag 16: frames and tiles) and flag 32 adds a coat to
+  the panes and the floor. It is a coated-glass look: Schlick's Fresnel with F0 = 0.6 at
+  100% (so 0.6 r face on and r at grazing), the floor half as strong and not in its grout.
+  - A pane shows F Lrefl + (1 - F)((1 - T)(1 - fbar) Ld + T Env) and the floor
+    Ff Lrefl + (1 - Ff)(1 - fbarF) tau Ld, where fbar = r (0.6 + 0.4/21) is the coat's
+    mean reflectance (diffuse light passes the coat twice). Frames and the ceiling's panel
+    are not coated.
+  - Lrefl: the sample's ray is mirrored where it meets its face, from each eye's own
+    position, so the mirror image has the right disparity; it starts 1 mm along itself.
+    The screen it meets is a mirror picture of the source, 128 texels wide and as tall as
+    its aspect (72 rows for 16:9), each the exact mean of its pixels (the MIRROR pass,
+    after EMIT, only with Reflections above 0). Its edge is soft over the reflection's
+    footprint, (|Dx| + |Dy|)(t + t_s) up to 10 cm. Round or behind the screen the ray
+    leaves the room through a face that shows the lightmap as a secondary surface: no
+    frames, tiles or further reflections; the glass over the ground's mean grid; the
+    ceiling's panel with an isotropic footprint.
+  - The flat screen's reflections are drawn in its half-size room layer (the compositor's
+    quads cannot be reflected), so the floor under the screen shows the picture, not the
+    black footprint. The mirror picture is mono and unwarped: the reflected screen has no
+    depth relief of its own.
+  - The bounce counts the coat: a pane's albedo is fbar + (1 - fbar)^2 (1 - T) rho, so
+    Reflections raise it a little (Room 100, Reflections 100: 0.58 against 0.50).
 - **Direct light:** a surface point p receives E = sum L_j G_j, where G is pi times the
   point-to-patch form factor.
   - Close up it uses Lambert's exact polygon formula. A softened point light would
@@ -154,8 +177,9 @@ depend on where you look from.
 
    The eye pass is compiled twice. With `ROOM_LOOK 0` it has no code for the v11
    controls and is Stage 1's pass exactly; it draws a room whose controls are all 0.
-   With `ROOM_LOOK 1` it adds the room light's panel and the glass (and, later,
-   Reflections); it draws a room with any of them on (`RoomLookOn`). In one shader the
+   With `ROOM_LOOK 1` it adds the room light's panel, the glass and the reflections (the
+   only pass that reads the mirror picture, t3); it draws a room with any of them on
+   (`RoomLookOn`). In one shader the
    light's code, even with the light off, cost the plain pass about 4% (curved, 60%:
    0.916 against 0.876 ms eye min), through registers. With the light on, the look pass
    costs 0.03-0.04 ms more than the plain one on the curved screen and 0.006-0.009 ms on
@@ -182,8 +206,12 @@ same with the room light at 50% (C), the kept v10 eye pass (D, also `--room-v10-
 playback) and the flat screen's half-size room layer without and with the room light
 (E, F), each at four views (yaw 0, 30, 60 and 120 degrees, pitch -15) and the curved
 ones at 60% and 100% curve. C and F are the spec's Glass 60 / Reflections 40 / Light 50
-cases; until Reflections exist they draw Glass 60 and the room light at 50%, and the log
-gives what that costs (C minus B, F minus E).
+cases, and the log gives what they cost (C minus B, F minus E) and C's total against D's.
+With the reflections, the minima of one run (SteamVR's compositor running, so most
+curved rows contended) were: C minus B +0.28-0.65 ms at 60% and +0.27-0.60 ms at 100%
+(yaw 0 to 120; about +0.13-0.29 of it the glass and the light), F minus E +0.06-0.16 ms,
+the MIRROR pass under 0.01 ms; C's total 0.07-0.24 ms under D's at yaw 30-120, 0.02-0.05
+over it at yaw 0.
 - **Interleaved.** The cases that draw the same screen (the curved one at each curve,
   or the flat one) are drawn in turn, frame by frame, the order rotating each round, so
   other work on the GPU falls on them alike. Every round also draws a probe, the curve
@@ -259,6 +287,13 @@ gives what that costs (C minus B, F minus E).
     step at the horizon, the far ground in the horizon's colour and the ground's grid on
     the tiles' lines; a sample on an upright, a pane, a tile and the panel; Glass 0
     giving the lightmap's light on frames and panes alike;
+  - reflections: the mirror picture's boxes cover every source pixel once, its sizes
+    (72, 228, 96 rows), exact means and sampling; the image method on every coated face,
+    flat and curved (the screen's centre in full, its corner at uv (0, 0) half on); the
+    soft edge rising 0 to 1 over a footprint; the widened screen test keeping the whole
+    widened outline; the flat floor reflecting the mirror picture, not the black
+    footprint; left-right symmetry; a furnace (every coated surface L0 gives L0); the
+    bounce rising with Reflections and every albedo within 0..1;
   - details: the dither, half floats, levelling, the v10 snapshot.
 - **`SelfTestRoom`**, flat and 100% curved, each with the v11 controls at 0, with the
   room light at 50% (#FFB46B), and with the look (Glass 60 and that light), compares the
@@ -277,8 +312,11 @@ gives what that costs (C minus B, F minus E).
   - with the look, two dispatches: A, the screen and the tiled floor, and the right
     glass wall; B, the panel with the ceiling's beams and the back glass, and the left
     glass with the ground and the horizon. From the CPU reference, frames must cover
-    over 0.2% of A's pixels and the tiles over 1%, and in B the panel, the ground and
-    the sky over 1% each;
+    over 0.2% of A's pixels, the tiles over 1% and the screen's reflection (kappa_s > 0
+    and F > 0) over 1% of each eye's, and in B the panel, the ground and the sky over 1%
+    each; the look has Reflections 40, and its mirror picture (the first 73 rows of the
+    RGBA16F texture, read back 8 bytes a texel) must match `RoomMirrorPicture` within
+    half-float precision, the eye pass's reference reading the GPU's own;
   - `--selftest --dump` writes `room-eyes-flat.ppm`, `room-eyes-curved.ppm`,
     `room-eyes-flat-light.ppm`, `room-eyes-curved-light.ppm` and
     `room-eyes-{flat,curved}-look-{a,b}.ppm`.
@@ -296,5 +334,8 @@ gives what that costs (C minus B, F minus E).
   below it too. A raised platform (a cinema riser) so that your feet are on the virtual
   floor is the first candidate for a follow-up, once the room has been seen in the
   headset.
-- Not in this version: a soft floor reflection of the screen, a gathered first bounce,
+- Reflections are one bounce, mono (from the source picture, unwarped) and see the
+  room's other faces without their frames, tiles or reflections; the look pass with them
+  costs about 0.3-0.65 ms more than the plain one on the curved screen.
+- Not in this version: a gathered first bounce,
   textures, props, per-face colours, and a room outline in the desktop's top view.

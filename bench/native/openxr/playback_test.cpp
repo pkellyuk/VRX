@@ -1662,7 +1662,7 @@ static void TestRoom()
         const RoomConstants rcg = MakeRoomConstants(room, g60, layout, fview, 1920, 1080, 1.0f);
         Check(g60.finish && (rcg.flags & kRoomFlagFinish) != 0 && rcg.glass == 0.6f && rcg.reflect == 0 && rcg.fbar == 0 && RoomLookOn(rcg) &&
               rcg.pitchSide == room.pitchSide && rcg.pitchBack == room.pitchBack && rcg.transomY == room.transomY,
-            "Glass 60: flag 16, row 11 the glass (no reflections yet), row 12 the frames; the look eye pass");
+            "Glass 60: flag 16, row 11 the glass (Reflections 0), row 12 the frames; the look eye pass");
         {
             const float fine = 1e-4f;
             bool corners = true;
@@ -1919,6 +1919,445 @@ static void TestRoom()
             }
             Check(same, "the finish with Glass 0: frames and panes alike are the lightmap's light");
         }
+    }
+
+    // ---- reflections (v11): the mirror picture (G), the reflected ray (E) and the bounce (C5)
+    {
+        const float A = in.W * in.H;
+
+        // G: the mirror picture's boxes, sizes and sampling.
+        {
+            const int sizes[3][2] = { { 1920, 1080 }, { 3840, 2160 }, { 686, 392 } };
+            bool once = true;
+            for (const auto& sz : sizes)
+            {
+                int w = 0, h = 0;
+                Check(RoomMirrorSize(sz[0], sz[1], &w, &h), "G: a mirror picture size");
+                std::vector<unsigned char> hits((size_t)sz[0] * sz[1], 0);
+                for (int j = 0; j < h; j++)
+                    for (int i = 0; i < w; i++)
+                    {
+                        int x0, x1, y0, y1;
+                        RoomGridBox(i, j, w, h, sz[0], sz[1], &x0, &x1, &y0, &y1);
+                        for (int y = y0; y < y1; y++)
+                            for (int x = x0; x < x1; x++) hits[(size_t)y * sz[0] + x]++;
+                    }
+                for (unsigned char n : hits) once = once && n == 1;
+            }
+            Check(once && RoomStride(3840) == 2, "G: the mirror picture's boxes cover every source pixel exactly once at 1920x1080, 3840x2160 (stride 2) and 686x392");
+            int w = 0, h = 0, w9 = 0, h9 = 0, w4 = 0, h4 = 0, wt = 0, ht = 0;
+            Check(RoomMirrorSize(1920, 1080, &w, &h) && w == 128 && h == 72 && RoomMirrorSize(1080, 1920, &w9, &h9) && w9 == 128 && h9 == 228 &&
+                  RoomMirrorSize(1600, 1200, &w4, &h4) && w4 == 128 && h4 == 96 && RoomMirrorSize(686, 392, &wt, &ht) && ht == 73 &&
+                  RoomMirrorSize(4000, 10, &wt, &ht) && ht == kRoomMirrorMinH && RoomMirrorSize(10, 4000, &wt, &ht) && ht == kRoomMirrorMaxH &&
+                  !RoomMirrorSize(0, 1080, &wt, &ht),
+                "G: the mirror picture is 128 x 72 for 16:9, 128 x 228 for 9:16, 128 x 96 for 4:3 (73 rows for the self-test's 686x392), within 8..256 rows");
+
+            // Red left of x = 302, blue right of it (a column of boxes straddles it): exact per-texel means of whole-pixel boxes.
+            const int pw = 686, ph = 392, split = 302;
+            std::vector<unsigned char> pic((size_t)pw * ph * 4);
+            for (int y = 0; y < ph; y++)
+                for (int x = 0; x < pw; x++)
+                {
+                    unsigned char* q = &pic[((size_t)y * pw + x) * 4];
+                    q[0] = x < split ? 255 : 0; q[1] = 0; q[2] = x < split ? 0 : 255; q[3] = 255;
+                }
+            RoomMirror m;
+            Check(RoomMirrorPicture(pic.data(), pw, ph, pw * 4, table, m) && m.w == 128 && m.h == 73 && m.texels.size() == (size_t)128 * 73 * 4,
+                "G: the self-test source's mirror picture");
+            bool means = true, straddled = false;
+            for (int j = 0; j < m.h; j++)
+                for (int i = 0; i < m.w; i++)
+                {
+                    int x0, x1, y0, y1;
+                    RoomGridBox(i, j, m.w, m.h, pw, ph, &x0, &x1, &y0, &y1);
+                    const double red = (double)std::max(0, std::min(x1, split) - x0) / (double)(x1 - x0);
+                    straddled = straddled || (red > 0 && red < 1);
+                    const float* t = &m.texels[((size_t)j * m.w + i) * 4];
+                    means = means && std::fabs(t[0] - red * table[255]) <= 1e-6 && t[1] == 0.0f && std::fabs(t[2] - (1.0 - red) * table[255]) <= 1e-6 &&
+                            t[3] == 1.0f;
+                }
+            Check(means && straddled, "G: red on the left and blue on the right give each texel its box's exact mean, the straddling column too");
+            bool centres = true;
+            for (int j = 0; j < m.h; j += 7)
+                for (int i = 0; i < m.w; i += 5)
+                {
+                    float s3[3];
+                    centres = centres && m.Sample(((float)i + 0.5f) / (float)m.w, ((float)j + 0.5f) / (float)m.h, s3);
+                    for (int ch = 0; ch < 3; ch++) centres = centres && s3[ch] == m.texels[((size_t)j * m.w + i) * 4 + ch];
+                }
+            RoomMirror empty;
+            float s3[3];
+            Check(centres && !empty.Sample(0.5f, 0.5f, s3), "G: RoomMirror::Sample at a texel's centre returns the texel");
+        }
+
+        // C5: the bounce rises with Reflections (the coat reflects what the glass would pass
+        // or the wall absorb); every face's albedo stays within 0..1 for Glass and
+        // Reflections 0..100 at Room 100.
+        {
+            float prev = -1.0f;
+            bool rises = true;
+            for (int rp : { 0, 25, 50, 100 })
+            {
+                RoomLook lk;
+                lk.reflect = rp;
+                const RoomShading rs = MakeRoomShading(room, 50, 0, A, lk);
+                rises = rises && rs.rhoBar > prev && rs.finish == (rp > 0) && rs.reflect == (float)rp / 100.0f;
+                prev = rs.rhoBar;
+            }
+            Check(rises, "C5: the bounce's mean albedo rises with Reflections (0, 25, 50, 100)");
+            bool bounded = true;
+            for (int k = 0; k < 2; k++)
+                for (int gp = 0; gp <= 100; gp += 10)
+                    for (int rp = 0; rp <= 100; rp += 10)
+                    {
+                        RoomLook lk;
+                        lk.glass = gp; lk.reflect = rp;
+                        const Room& r = k ? curved : room;
+                        const RoomShading rs = MakeRoomShading(r, 100, 0, A, lk);
+                        for (int f = 0; f < kRoomFaces; f++)
+                        {
+                            const float plain = f == kFaceFloor ? rs.rhoFloor : (f == kFaceCeiling ? rs.rhoCeiling : rs.rhoWall);
+                            const float a = rs.finish ? RoomFinishAlbedo(r, rs, f, plain) : plain;
+                            bounded = bounded && a >= 0 && a <= 1.0f;
+                        }
+                    }
+            RoomLook r100;
+            r100.reflect = 100;
+            const RoomShading plain100 = MakeRoomShading(room, 100, 0, A), refl100 = MakeRoomShading(room, 100, 0, A, r100);
+            std::printf("room reflections: bounce albedo at Room 100 %.3f, with Reflections 100 %.3f\n", (double)plain100.rhoBar, (double)refl100.rhoBar);
+            Check(bounded && refl100.rhoBar > plain100.rhoBar && refl100.rhoBar < 0.7f,
+                "C5: every face's albedo stays within 0..1 for Glass and Reflections 0..100 at Room 100; Reflections 100 raise the bounce modestly");
+        }
+
+        // The constants: flag 32 and the mirror picture's size with Reflections on, and the
+        // look eye pass; none of it with Reflections 0.
+        RoomView fview;
+        fview.flatLayer = true; fview.W = in.W; fview.H = in.H; fview.glowOn = false; fview.glowHalfW = glowHalfW; fview.glowHalfH = glowHalfH;
+        {
+            RoomLook r40;
+            r40.reflect = 40;
+            const RoomConstants rc = MakeRoomConstants(room, MakeRoomShading(room, 40, 0x2A3441, A, r40), layout, fview, 1920, 1080, 1.0f);
+            const RoomConstants noSource = MakeRoomConstants(room, MakeRoomShading(room, 40, 0x2A3441, A, r40), layout, fview, 0, 0, 1.0f);
+            Check((rc.flags & (kRoomFlagFinish | kRoomFlagReflect)) == (kRoomFlagFinish | kRoomFlagReflect) && rc.mirrorW == 128 && rc.mirrorH == 72 &&
+                  rc.reflect == 0.4f && rc.fbar == RoomFresnelMean(0.4f) && RoomLookOn(rc) && (noSource.flags & kRoomFlagReflect) == 0 && noSource.mirrorH == 0,
+                "Reflections 40: flags 16 and 32, the coat in row 11, a 128 x 72 mirror picture in row 16 (none without a source)");
+        }
+
+        // E: the reflected ray. Each room (flat, 100% curved) with Reflections on; the
+        // mirror picture a ramp, (u, v) at each texel's centre, so that bilinear sampling
+        // returns the uv it was sampled at.
+        RoomMirror ramp;
+        ramp.w = 128; ramp.h = 72;
+        ramp.texels.resize((size_t)ramp.w * ramp.h * 4);
+        for (int j = 0; j < ramp.h; j++)
+            for (int i = 0; i < ramp.w; i++)
+            {
+                float* t = &ramp.texels[((size_t)j * ramp.w + i) * 4];
+                t[0] = ((float)i + 0.5f) / (float)ramp.w; t[1] = ((float)j + 0.5f) / (float)ramp.h; t[2] = 0.25f; t[3] = 1.0f;
+            }
+        auto constantLight = [](RoomLightmap& lm, const float perFace[kRoomFaces])
+        {
+            lm.texels.resize((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 4);
+            for (int f = 0; f < kRoomFaces; f++)
+                for (int k = 0; k < kRoomLightmap * kRoomLightmap; k++)
+                {
+                    float* t = &lm.texels[((size_t)f * kRoomLightmap * kRoomLightmap + k) * 4];
+                    t[0] = t[1] = t[2] = perFace[f]; t[3] = 1.0f;
+                }
+        };
+        const int faces[5] = { kFaceLeft, kFaceRight, kFaceFloor, kFaceCeiling, kFaceBack };
+        for (int curvedCase = 0; curvedCase < 2; curvedCase++)
+        {
+            const Room& r = curvedCase ? curved : room;
+            const Cylinder cyl = curvedCase ? curvedIn.cyl : Cylinder();
+            RoomView view = fview;
+            view.flatLayer = !curvedCase; view.cyl = cyl;
+            CurveConstants c;
+            c.radius = cyl.radius; c.halfWrap = cyl.halfWrap; c.halfWidth = cyl.halfWidth; c.halfHeight = cyl.halfHeight;
+            RoomLook lk;
+            lk.reflect = 100;
+            const RoomConstants rc = MakeRoomConstants(r, MakeRoomShading(r, 40, 0x2A3441, A, lk), layout, view, 1920, 1080, 1.0f);
+            RoomLightmap dark;
+            const float zero[kRoomFaces] = { 0, 0, 0, 0, 0, 0 };
+            constantLight(dark, zero);
+            RoomEyeInputs inputs;
+            inputs.rc = &rc; inputs.light = &dark; inputs.mirror = &ramp; inputs.room = &r;
+            const char* which = curvedCase ? "curved" : "flat";
+            // A screen point (u, v) of the picture, in the room's frame.
+            auto screenPoint = [&](float u, float v, float q[3])
+            {
+                if (!curvedCase) { q[0] = (u - 0.5f) * in.W; q[1] = (0.5f - v) * in.H; q[2] = 0; return; }
+                const float phi = (u - 0.5f) * 2.0f * cyl.halfWidth / cyl.radius;
+                q[0] = cyl.radius * std::sin(phi); q[1] = (0.5f - v) * 2.0f * cyl.halfHeight; q[2] = cyl.radius * (1.0f - std::cos(phi));
+            };
+            // E1: the image method. The eye aims at a screen point's mirror image in a face's
+            // plane; where its ray leaves the room through that face, the reflection sees that
+            // screen point. Eyes further back and to the side reach the curved room's side
+            // walls, which begin where its wings end.
+            const float eyes[6][3] = { { 0.0f, 0.0f, 3.0f }, { -r.X + 1.0f, 0.3f, r.zB - 0.4f }, { r.X - 1.0f, 0.3f, r.zB - 0.4f }, { 0.0f, -0.5f, r.zB - 0.4f },
+                                       { -r.X + 0.5f, 0.3f, r.zB - 0.2f }, { r.X - 0.5f, 0.3f, r.zB - 0.2f } };
+            int tested = 0;
+            bool centre = true, corner = true;
+            float worstUv = 0, cornerKappa = -1;
+            for (int face : faces)
+            {
+                float sgn = 0;
+                const int axis = RoomFaceAxis(face, &sgn);
+                Check(sgn == (face == kFaceLeft || face == kFaceFloor ? 1.0f : -1.0f), "a face's normal points into the room");
+                const float plane = face == kFaceLeft ? -r.X : (face == kFaceRight ? r.X : (face == kFaceFloor ? r.yF : (face == kFaceCeiling ? r.yC : r.zB)));
+                for (const auto& eye : eyes)
+                {
+                    float q[3], qc[3];
+                    screenPoint(0.5f, 0.5f, q);
+                    screenPoint(0.0f, 0.0f, qc);
+                    q[axis] = 2.0f * plane - q[axis];
+                    qc[axis] = 2.0f * plane - qc[axis];
+                    const float d[3] = { q[0] - eye[0], q[1] - eye[1], q[2] - eye[2] }, dc[3] = { qc[0] - eye[0], qc[1] - eye[1], qc[2] - eye[2] };
+                    RoomHit exitH, exitC;
+                    if (!RoomInside(r, eye) || !RoomExit(r, eye, d, exitH) || exitH.face != face || !RoomExit(r, eye, dc, exitC) || exitC.face != face) continue;
+                    const float Dx[3] = { 1e-4f, 0, 0 }, Dy[3] = { 0, 1e-4f, 0 }, own[3] = { 9, 9, 9 };
+                    float p[3], pc[3], out[3], outc[3], ks = -1, ksc = -1;
+                    RoomAt(eye, d, exitH.t, p);
+                    RoomAt(eye, dc, exitC.t, pc);
+                    const bool ran = RoomReflection(c, inputs, face, p, d, exitH.t, Dx, Dy, own, out, &ks) &&
+                                     RoomReflection(c, inputs, face, pc, dc, exitC.t, Dx, Dy, own, outc, &ksc);
+                    worstUv = std::max(worstUv, std::max(std::fabs(out[0] - 0.5f), std::fabs(out[1] - 0.5f)));
+                    centre = centre && ran && ks == 1.0f && std::fabs(out[0] - 0.5f) <= 1e-3f && std::fabs(out[1] - 0.5f) <= 1e-3f;
+                    // The corner: the reflected ray's own screen exitH, and its soft edge half on.
+                    float o2[3], d2[3] = { dc[0], dc[1], dc[2] };
+                    d2[axis] = -d2[axis];
+                    RoomAt(pc, d2, kRoomNudge / std::sqrt(d2[0] * d2[0] + d2[1] * d2[1] + d2[2] * d2[2]), o2);
+                    float su = -1, sv = -1, st = 0, se = 0;
+                    float rcp2[3];
+                    RoomRayRcp(d2, rcp2);
+                    const bool onScreen = RoomScreenWideHit(c, rc, o2, d2, rcp2, kRoomReflFootMax, &su, &sv, &st, &se);
+                    corner = corner && onScreen && std::fabs(su) <= 2e-3f && std::fabs(sv) <= 2e-3f && std::fabs(ksc - 0.5f) < 0.1f;
+                    cornerKappa = ksc;
+                    tested++;
+                    break;
+                }
+            }
+            std::printf("room reflections, E1 (%s): %d of 5 faces by the image method, worst centre uv error %.2e, corner kappa_s %.3f\n", which, tested,
+                        (double)worstUv, (double)cornerKappa);
+            std::fflush(stdout);
+            Check(tested == 5 && centre, "E1: aimed at the screen centre's mirror image in each face, the reflection sees the screen's centre in full");
+            Check(corner, "E1: aimed at its top-left corner's image, the reflection meets the screen at uv (0, 0), its soft edge half on");
+
+            // The widened screen test's box keeps every point of the widened outline: rays from
+            // near the screen's axis aimed at points up to 0.9 x widen beyond the outline (and
+            // inside it) all hit, with e the signed distance to the outline.
+            if (curvedCase)
+            {
+                uint32_t seed = 4242u;
+                auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return (float)(seed >> 8) / 16777216.0f; };
+                const float w = kRoomReflFootMax;
+                int hits = 0;
+                float worstE = 0;
+                for (int k = 0; k < 20000; k++)
+                {
+                    const float phi = (2.0f * rnd() - 1.0f) * (cyl.halfWrap + 0.9f * w / cyl.radius), y = (2.0f * rnd() - 1.0f) * (cyl.halfHeight + 0.9f * w);
+                    const float q[3] = { cyl.radius * std::sin(phi), y, cyl.radius * (1.0f - std::cos(phi)) };
+                    const float o[3] = { 0.6f * rnd() - 0.3f, 2.0f * rnd() - 1.0f, cyl.radius + 0.5f * rnd() - 0.25f };
+                    const float d[3] = { q[0] - o[0], q[1] - o[1], q[2] - o[2] };
+                    float rcp[3], su, sv, st, se;
+                    RoomRayRcp(d, rcp);
+                    if (!RoomScreenWideHit(c, rc, o, d, rcp, w, &su, &sv, &st, &se)) continue;
+                    hits++;
+                    const float want = std::fmin(cyl.radius * (cyl.halfWrap - std::fabs(phi)), cyl.halfHeight - std::fabs(y));
+                    worstE = std::max(worstE, std::fabs(se - want));
+                }
+                std::printf("room reflections, the widened screen test: %d of 20000 rays hit, worst e %.2e m\n", hits, (double)worstE);
+                std::fflush(stdout);
+                Check(hits == 20000 && worstE < 1e-4f, "the widened screen test's box keeps the whole widened outline, and e is the distance to the outline");
+            }
+
+            // E2: the soft edge, across the image of the screen's left edge in the floor.
+            {
+                const float eye[3] = { 0.0f, 0.0f, 3.0f };
+                const float Dx[3] = { 0.01f, 0, 0 }, Dy[3] = { 0, 0.01f, 0 }, own[3] = { 0, 0, 0 };
+                float edge[3];
+                screenPoint(0.0f, 0.5f, edge);
+                const float fw = 0.02f;             // (|Dx| + |Dy|)(t + t_s): the ray to the image has t + t_s = 1
+                bool monotonic = true, ends = true;
+                float prevK = -1, at05 = 0, at95 = 0;
+                for (int k = -40; k <= 40; k++)
+                {
+                    // Along the screen from outside its left edge to inside, by the arc on a curved screen.
+                    const float s = (float)k * 0.001f;
+                    float q[3];
+                    if (!curvedCase) { q[0] = edge[0] + s; q[1] = edge[1]; q[2] = 0; }
+                    else screenPoint((s + cyl.radius * -cyl.halfWrap) / (2.0f * cyl.halfWidth) + 0.5f, 0.5f, q);
+                    q[1] = 2.0f * r.yF - q[1];
+                    const float d[3] = { q[0] - eye[0], q[1] - eye[1], q[2] - eye[2] };
+                    RoomHit exitH;
+                    float p[3], out[3], ks = -1;
+                    if (!RoomExit(r, eye, d, exitH) || exitH.face != kFaceFloor) { ends = false; break; }
+                    RoomAt(eye, d, exitH.t, p);
+                    if (!RoomReflection(c, inputs, kFaceFloor, p, d, exitH.t, Dx, Dy, own, out, &ks)) { ends = false; break; }
+                    monotonic = monotonic && ks >= prevK;
+                    if (k == -40) ends = ends && ks == 0.0f;
+                    if (k == 40) ends = ends && ks == 1.0f;
+                    if (prevK < 0.05f && ks >= 0.05f) at05 = s;
+                    if (prevK < 0.95f && ks >= 0.95f) at95 = s;
+                    prevK = ks;
+                }
+                std::printf("room reflections, E2 (%s): the soft edge rises from 5%% to 95%% over %.4f m (the footprint %.4f m)\n", which,
+                            (double)(at95 - at05), (double)fw);
+                std::fflush(stdout);
+                Check(monotonic && ends && at95 - at05 > 0.6f * fw && at95 - at05 < 1.2f * fw,
+                    "E2: the reflected screen's edge rises monotonically from 0 to 1 over about one footprint");
+            }
+        }
+
+        // E3: the flat layer's floor reflection under the screen shows the mirror picture, not
+        // the darkM footprint: with it at 0.7 the floor sample is Ff x 0.7 brighter than with it darkM.
+        {
+            RoomView view = fview;
+            CurveConstants c;
+            RoomLook lk;
+            lk.reflect = 40;
+            const RoomConstants rc = MakeRoomConstants(room, MakeRoomShading(room, 40, 0x2A3441, A, lk), layout, view, 1920, 1080, 1.0f);
+            RoomLightmap lm;
+            const float per[kRoomFaces] = { 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f };
+            constantLight(lm, per);
+            RoomMirror grey = ramp, darkM = ramp;
+            for (size_t i = 0; i < grey.texels.size(); i++) { grey.texels[i] = 0.7f; darkM.texels[i] = 0.0f; }
+            RoomEyeInputs inGrey, inBlack;
+            inGrey.rc = inBlack.rc = &rc; inGrey.light = inBlack.light = &lm; inGrey.room = inBlack.room = &room;
+            inGrey.mirror = &grey; inBlack.mirror = &darkM;
+            const float eye[3] = { 0.0f, 0.0f, 3.0f }, q[3] = { 0.3f, 2.0f * room.yF - 0.2f, 0.0f };
+            const float d[3] = { q[0] - eye[0], q[1] - eye[1], q[2] - eye[2] };
+            const float Dx[3] = { 1e-4f, 0, 0 }, Dy[3] = { 0, 1e-4f, 0 };
+            float Lg[3] = { 0.05f, 0.05f, 0.05f }, Lb[3] = { 0.05f, 0.05f, 0.05f };
+            RoomSurfaceInfo ig, ib;
+            const bool ran = RoomSurface(rc, kFaceFloor, eye, d, Dx, Dy, Lg, &ig, &c, &inGrey) && RoomSurface(rc, kFaceFloor, eye, d, Dx, Dy, Lb, &ib, &c, &inBlack);
+            const float cosn = std::fabs(d[1]) / std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            const float ff = kRoomFloorGloss * RoomFresnel(0.4f, cosn);
+            Check(ran && ig.grout == 0.0f && ig.kappaS == 1.0f && std::fabs(ig.fresnel - ff) < 1e-6f && std::fabs((Lg[0] - Lb[0]) - ff * 0.7f) < 1e-6f &&
+                  RoomSurface(rc, kFaceFloor, eye, d, Dx, Dy, Lg, nullptr) == false,
+                "E3: the flat layer's floor under the screen reflects the mirror picture (Ff x M), not the darkM footprint; flag 32 needs the reflection's inputs");
+        }
+
+        // E4: symmetry. A mirrored mirror picture: a left-wall sample equals the mirrored
+        // right-wall sample (Glass 60 as well, so that the ground beyond takes part).
+        {
+            RoomView view = fview;
+            CurveConstants c;
+            RoomLook lk;
+            lk.reflect = 70; lk.glass = 60;
+            const RoomConstants rc = MakeRoomConstants(room, MakeRoomShading(room, 40, 0x2A3441, A, lk), layout, view, 1920, 1080, 1.0f);
+            RoomLightmap lm;
+            const float per[kRoomFaces] = { 0.08f, 0.03f, 0.03f, 0.05f, 0.02f, 0.04f };
+            constantLight(lm, per);
+            RoomMirror mA = ramp, mB = ramp;
+            uint32_t seed = 12345;
+            auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return (float)(seed >> 8) / 16777216.0f; };
+            // A smooth picture, lopsided left to right (float rounding of 1 - u moves a sample by
+            // ~1e-5 texels, which a noisy picture would turn into more than 1e-5 of difference).
+            for (int j = 0; j < mA.h; j++)
+                for (int i = 0; i < mA.w; i++)
+                    for (int ch = 0; ch < 3; ch++)
+                    {
+                        const float v = 0.4f + 0.25f * std::sin(0.11f * (float)i + (float)ch) * std::cos(0.07f * (float)j) + 0.3f * (float)i / (float)mA.w;
+                        mA.texels[((size_t)j * mA.w + i) * 4 + ch] = v;
+                        mB.texels[((size_t)j * mA.w + (mA.w - 1 - i)) * 4 + ch] = v;
+                    }
+            RoomEyeInputs inA, inB;
+            inA.rc = inB.rc = &rc; inA.light = inB.light = &lm; inA.room = inB.room = &room; inA.mirror = &mA; inB.mirror = &mB;
+            const float eye[3] = { 0.0f, 0.0f, 3.0f };
+            const float Dx[3] = { 2e-3f, 0, 0 }, Dy[3] = { 0, 2e-3f, 0 }, Dxm[3] = { -2e-3f, 0, 0 };
+            int samples = 0, screenSeen = 0;
+            float worst = 0;
+            for (int k = 0; k < 2000; k++)
+            {
+                // Towards the left wall, most of them near the screen's mirror image there (d.z about -0.3).
+                const float d[3] = { -1.0f, 0.6f * rnd() - 0.3f, 0.5f * rnd() - 0.6f }, dm[3] = { 1.0f, d[1], d[2] };
+                RoomHit exitH;
+                if (!RoomExit(room, eye, d, exitH) || exitH.face != kFaceLeft) continue;
+                float La[3], Lb[3];
+                lm.Sample(kFaceLeft, exitH.u, exitH.v, La);
+                lm.Sample(kFaceRight, exitH.u, exitH.v, Lb);     // the side walls share their chart: u along z, v down
+                RoomSurfaceInfo ia;
+                if (!RoomSurface(rc, kFaceLeft, eye, d, Dx, Dy, La, &ia, &c, &inA) || !RoomSurface(rc, kFaceRight, eye, dm, Dxm, Dy, Lb, nullptr, &c, &inB))
+                { worst = 1; break; }
+                for (int ch = 0; ch < 3; ch++) worst = std::max(worst, std::fabs(La[ch] - Lb[ch]) / std::max(std::fabs(La[ch]), 1e-3f));
+                samples++;
+                screenSeen += ia.kappaS > 0;
+            }
+            std::printf("room reflections, E4: %d wall samples, %d seeing the screen, worst left/right difference %.2e relative\n", samples, screenSeen, (double)worst);
+            std::fflush(stdout);
+            Check(samples > 1000 && screenSeen > 300 && worst < 1e-5f, "E4: a left-wall sample equals the mirrored right-wall sample, with a mirrored picture");
+        }
+
+        // E5: the furnace. Glass 0, the room light 0 and its panel taken out, the glow off. Every
+        // texel set so that its coated diffuse light is L0 (L0 / (1 - fbar) on the walls and the
+        // ceiling, L0 / (1 - fbar / 2) on the floor, L0 on the front), and the mirror picture L0:
+        // a pane (no frame) must show L0, a floor sample off the grout Ff L0 + (1 - Ff) tau L0.
+        for (int curvedCase = 0; curvedCase < 2; curvedCase++)
+            for (int rp : { 30, 100 })
+            {
+                const Room& r = curvedCase ? curved : room;
+                const Cylinder cyl = curvedCase ? curvedIn.cyl : Cylinder();
+                RoomView view = fview;
+                view.flatLayer = !curvedCase; view.cyl = cyl;
+                CurveConstants c;
+                c.radius = cyl.radius; c.halfWrap = cyl.halfWrap; c.halfWidth = cyl.halfWidth; c.halfHeight = cyl.halfHeight;
+                RoomLook lk;
+                lk.reflect = rp;
+                RoomConstants rc = MakeRoomConstants(r, MakeRoomShading(r, 40, 0x2A3441, A, lk), layout, view, 1920, 1080, 1.0f);
+                rc.lightX0 = rc.lightX1 = rc.lightZ0 = rc.lightZ1 = 0;
+                const float L0 = 0.1f, fbar = rc.fbar;
+                const float per[kRoomFaces] = { L0, L0 / (1.0f - fbar), L0 / (1.0f - fbar), L0 / (1.0f - kRoomFloorGloss * fbar), L0 / (1.0f - fbar), L0 / (1.0f - fbar) };
+                RoomLightmap lm;
+                constantLight(lm, per);
+                RoomMirror flat = ramp;
+                for (size_t i = 0; i < flat.texels.size(); i++) flat.texels[i] = L0;
+                RoomEyeInputs inputs;
+                inputs.rc = &rc; inputs.light = &lm; inputs.mirror = &flat; inputs.room = &r;
+                const float eye[3] = { 0.0f, 0.05f, 3.0f };
+                const float Dx[3] = { 1e-3f, 0, 0 }, Dy[3] = { 0, -1e-3f, 0 };
+                uint32_t seed = 777u + (uint32_t)rp;
+                auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return (float)(seed >> 8) / 16777216.0f; };
+                int panes = 0, floors = 0, screen = 0;
+                float worst = 0;
+                bool ran = true;
+                for (int k = 0; k < 10000; k++)
+                {
+                    const float d[3] = { 2.0f * rnd() - 1.0f, 2.0f * rnd() - 1.0f, 2.0f * rnd() - 1.0f };
+                    RoomHit exitH;
+                    if (!RoomExit(r, eye, d, exitH) || exitH.face == kFaceFront) continue;
+                    float L[3];
+                    lm.Sample(exitH.face, exitH.u, exitH.v, L);
+                    RoomSurfaceInfo info;
+                    if (!RoomSurface(rc, exitH.face, eye, d, Dx, Dy, L, &info, &c, &inputs)) { ran = false; break; }
+                    screen += info.kappaS > 0;
+                    if (exitH.face == kFaceFloor)
+                    {
+                        if (info.grout != 0.0f) continue;
+                        float p[3], Px[3], Py[3];
+                        const float n[3] = { 0, 1, 0 };
+                        const float t = (r.yF - eye[1]) / d[1];
+                        RoomAt(eye, d, t, p);
+                        RoomPlaneFootprint(t, d, n, Dx, Dy, Px, Py);
+                        float g = 0;
+                        const float tau = RoomTileFactor(p, RoomFootprintAxis(Px, Py, 0), RoomFootprintAxis(Px, Py, 2), &g);
+                        const float want = info.fresnel * L0 + (1.0f - info.fresnel) * tau * L0;
+                        worst = std::max(worst, std::fabs(L[0] - want) / want);
+                        floors++;
+                    }
+                    else
+                    {
+                        if (info.phi != 0.0f || info.kappa != 0.0f) continue;
+                        worst = std::max(worst, std::fabs(L[0] - L0) / L0);
+                        panes++;
+                    }
+                }
+                std::printf("room reflections, E5 furnace (%s, Reflections %d): %d panes and %d floor samples (%d seeing the screen), worst %.2e relative\n",
+                            curvedCase ? "curved" : "flat", rp, panes, floors, screen, (double)worst);
+                std::fflush(stdout);
+                Check(ran && panes > 1000 && floors > 500 && screen > 100 && worst < 1e-5f,
+                    "E5: the furnace - with every surface's coated light L0, a pane shows L0 and the floor Ff L0 + (1 - Ff) tau L0");
+            }
     }
 
     // ---- the constant buffer: 512 bytes, v10's rows as they were, rows 17-20 the eye pass's

@@ -62,6 +62,9 @@
 //            --room-glass=N         the room's side walls, back wall and ceiling as glass in
 //                                   slim frames, over a ground to the horizon: 0 solid
 //                                   (default) .. 100 clear; also 1 m floor tiles
+//            --room-reflect=N       reflections in the room's glass and floor (the screen
+//                                   mirrored, from each eye): 0 none (default) .. 100; also
+//                                   the frames and tiles, like --room-glass
 //            --room-light=N         the room's ceiling light above and behind you: 0 off
 //                                   (default) .. 100
 //            --room-light-colour=RRGGBB  its colour (default FFB46B, 3000 K)
@@ -279,6 +282,7 @@ struct Options
     uint32_t worldColor = 0;            // 0xRRGGBB around the screen (0 = black, no layer)
     int room = 0;                       // the room lit by the screen: 0 off, 1..100 (wall brightness)
     int roomGlass = 0;                  // the room's glass walls: 0 solid .. 100 clear (room.h RoomLook)
+    int roomReflect = 0;                // the reflections in its glass and floor: 0 none .. 100 (room.h RoomLook)
     int roomLight = 0;                  // the room light: 0 off .. 100 (room.h RoomLook)
     uint32_t roomLightColor = kRoomLightDefault;    // its colour, 0xRRGGBB
     bool roomV10Eye = false;            // --room-v10-eye: the kept v10 eye pass (A/B diagnostic)
@@ -531,6 +535,8 @@ struct App
     ComPtr<ID3D12Resource> roomLut;                      // float[256]: the sRGB decode
     ComPtr<ID3D12Resource> roomEmitters;                 // float4[6 * kRoomMaxEmitters]
     ComPtr<ID3D12Resource> roomLight;                    // RGBA16F, 6 faces x kRoomLightmap^2
+    ComPtr<ID3D12PipelineState> roomMirrorPso;           // MIRROR: the mirror picture (kRoomHlsl, ROOM_MIRROR)
+    ComPtr<ID3D12Resource> roomMirror;                   // RGBA16F, kRoomMirrorW x kRoomMirrorMaxH (the first mirrorH rows used), UAV at rest
     ComPtr<ID3D12Resource> roomGeomUp[RING + 1];         // emitter geometry to copy in; [RING] is the self-test's
     unsigned char* roomGeomMapped[RING + 1] = {};
     ComPtr<ID3D12Resource> roomCbUp;                     // RoomConstants, 512 B per frame slot + 1 for the self-test
@@ -621,10 +627,10 @@ static const UINT DESC_TEST_SRC = SRC_RING + 4;          // 1
 static const UINT DESC_TEST_TABLE = SRC_RING + 5;        // 4
 static const UINT DESC_AMBI_UAV = SRC_RING + 9;          // 3: the ambilight glow texture, its border ring, its history
 // The curve and room tables are 5 wide: their fifth entry (+4) is v11's mirror picture
-// (an SRV for the eye pass, a UAV for the room's passes), unused until it is made.
-static const UINT DESC_CURVE_MAIN = SRC_RING + 12;       // 5: warped pictures, glow, eye buffers, room lightmap, (mirror)
+// (an SRV for the eye pass, a UAV for the room's passes).
+static const UINT DESC_CURVE_MAIN = SRC_RING + 12;       // 5: warped pictures, glow, eye buffers, room lightmap, mirror picture
 static const UINT DESC_CURVE_TEST = SRC_RING + 17;       // 5: the same for the self-test
-static const UINT DESC_ROOM = SRC_RING + 22;             // 5: decode table, glow, emitters (UAV), lightmap (UAV), (mirror UAV)
+static const UINT DESC_ROOM = SRC_RING + 22;             // 5: decode table, glow, emitters (UAV), lightmap (UAV), mirror picture (UAV)
 static const UINT DESC_CURVE_BENCH = SRC_RING + 27;      // 5: the same as DESC_CURVE_MAIN for the room benchmark (--bench-room)
 static const UINT DESC_COUNT = SRC_RING + 32;
 static const int WORLD_W = 8;                            // the world colour layer: one colour needs few pixels
@@ -828,6 +834,12 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
             opt->roomGlass = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
             continue;
         }
+        if (!strncmp(a, "--room-reflect=", 15))
+        {
+            const int percent = atoi(a + 15);
+            opt->roomReflect = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+            continue;
+        }
         if (!strncmp(a, "--room-light=", 13))
         {
             const int percent = atoi(a + 13);
@@ -941,6 +953,9 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
     if (opt->roomV10Eye) Log("ParseArgs: the room's eye pass is the kept v10 copy (--room-v10-eye, A/B diagnostic)");
     if (opt->roomGlass > 0)
         Log("ParseArgs: room glass %d%% (frames, 1 m floor tiles and the ground beyond the glass)%s", opt->roomGlass,
+            opt->room > 0 ? "" : " (it needs the room: --room above 0)");
+    if (opt->roomReflect > 0)
+        Log("ParseArgs: room reflections %d%% (the screen mirrored in the glass and the floor; frames and 1 m floor tiles)%s", opt->roomReflect,
             opt->room > 0 ? "" : " (it needs the room: --room above 0)");
     if (opt->roomLight > 0 || opt->roomLightColor != kRoomLightDefault)
         Log("ParseArgs: room light %d%%, colour #%06X%s", opt->roomLight, (unsigned)opt->roomLightColor,
@@ -2232,8 +2247,8 @@ void main(uint3 id : SV_DispatchThreadID)
 // v10's; row 11 is the finish (how clear the glass is, the reflections and the coat's mean
 // reflectance - not "reflect", an HLSL intrinsic), row 12 the frames (the bays and the
 // crossbar); rows 13-15 are the room light (its panel, its emitted radiance with w = the
-// panel fits, its seen radiance); row 16 (the mirror picture) keeps a placeholder name until
-// the reflections' step; rows 17-20 are the eye pass's reciprocals and the screen's bounds.
+// panel fits, its seen radiance); row 16 is the mirror picture's size in use (0 while
+// Reflections is 0); rows 17-20 are the eye pass's reciprocals and the screen's bounds.
 // The 512-byte buffer's rows 21-31 are padding.
 static const char* kRoomCbufferHlsl = R"HLSL(
 cbuffer RoomC : register(ROOM_REGISTER)
@@ -2253,7 +2268,7 @@ cbuffer RoomC : register(ROOM_REGISTER)
     float pitchSide; float pitchBack; float transomY; float rpad4;
     float lightX0; float lightX1; float lightZ0; float lightZ1;
     float4 lightL; float4 lightSeen;
-    uint4 roomRow16;
+    uint mirrorW; uint mirrorH; uint upad0; uint upad1;
     float invH; float inv2X; float invSide; float invFloorZ;
     float inv2sMax; float invGlowW; float invGlowH; float tanA;
     float wingS; float scrTanWrap; float scrBoxX; float scrBoxY;
@@ -2323,14 +2338,16 @@ bool InsideH(float3 p)
 // The lightmap passes. ROOM_EMIT: one 256-thread group per emitter works out its
 // radiance (RoomEmitRadiance: exact pixel means through the decode table, summed in
 // the same order as the CPU); the room light, the last emitter, takes the constants'.
-// Otherwise: one thread per lightmap texel gathers every emitter (RoomTexel), streaming
-// them through group-shared memory.
+// ROOM_MIRROR (only with Reflections above 0): one thread per texel of the mirror picture
+// (RoomMirrorPicture). Otherwise: one thread per lightmap texel gathers every emitter
+// (RoomTexel), streaming them through group-shared memory.
 static const char* kRoomHlsl = R"HLSL(
 Texture2D<float4>          scene    : register(t0);
 StructuredBuffer<float>    lut      : register(t1);   // sRGB decode of each byte
 Texture2D<float4>          glow     : register(t2);   // the ambilight (8-bit, premultiplied, encoded)
 RWStructuredBuffer<float4> emit     : register(u0);   // 6 per emitter: 4 corners, normal, radiance
 RWTexture2DArray<float4>   lightmap : register(u1);   // 6 faces x 64 x 64, linear radiance
+RWTexture2D<float4>        mirrorOut : register(u2);  // the mirror picture, linear (mirrorW x mirrorH in use)
 
 float3 Decode(float3 v)
 {
@@ -2393,6 +2410,26 @@ void main(uint3 gid : SV_GroupID, uint gi : SV_GroupIndex)
         L = isScreen ? L + (mean - L) * alpha : mean;
         emit[e * ROOM_EMITTER_FLOAT4S + 5] = float4(L, 0.0);
     }
+}
+#elif defined(ROOM_MIRROR)
+// room.h RoomMirrorPicture: texel (i, j) of the mirror picture is the exact mean of its
+// RoomGridBox of source pixels, every stride-th, through the decode table, summed row by
+// row with a precise accumulator in the CPU's order.
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= mirrorW || id.y >= mirrorH) return;
+    uint x0 = (id.x * srcW) / mirrorW, x1 = ((id.x + 1) * srcW) / mirrorW;
+    uint y0 = (id.y * srcH) / mirrorH, y1 = ((id.y + 1) * srcH) / mirrorH;
+    precise float3 sum = float3(0, 0, 0);
+    uint count = 0;
+    for (uint y = y0; y < y1; y += stride)
+        for (uint x = x0; x < x1; x += stride)
+        {
+            sum += Decode(scene.Load(int3(x, y, 0)).rgb);
+            count++;
+        }
+    mirrorOut[id.xy] = float4(count > 0 ? sum / (float)count : float3(0, 0, 0), 1.0);
 }
 #else
 groupshared float4 sEm[128 * ROOM_EMITTER_FLOAT4S];
@@ -2482,14 +2519,19 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex)
 // them. room.h on the CPU: RoomScreenHit, RoomArcRoot, RoomExitFast, RoomExitOnFace,
 // RoomFillHit, RoomClassifyRay, RoomRayDiff, RoomPlaneFootprint, RoomBar, RoomPulse,
 // RoomCeilingPanel, RoomFrameCoverage, RoomHash, RoomTileFactor, RoomEnvironment,
-// RoomSurface, RoomSampleColour and RoomPixel.
+// RoomFresnel, RoomMirror::Sample, RoomScreenWideHit, RoomReflection, RoomSurface,
+// RoomSampleColour and RoomPixel.
 // It is compiled twice (InitShaders): with ROOM_LOOK 0 (curveRoomPso), the v11 controls'
 // code is left out, which makes it Stage 1's pass exactly, for a room whose controls are
-// all 0; with ROOM_LOOK 1 (curveRoomLookPso), for a room with the room light or the finish
-// (Glass) on (RoomLookOn). The light's code, even behind its flag, cost the plain pass
+// all 0; with ROOM_LOOK 1 (curveRoomLookPso), for a room with the room light, the finish
+// (Glass) or the reflections on (RoomLookOn). Only the look variant reads the mirror
+// picture (t3). The light's code, even behind its flag, cost the plain pass
 // registers and about 4% of its time (curved, 60%: 0.916 against 0.876 ms eye min).
 static const char* kCurveRoomHlsl = R"HLSL(
 Texture2DArray<float4> lightmap : register(t2);
+#if ROOM_LOOK
+Texture2D<float4> mirrorPic : register(t3);          // the mirror picture (MIRROR), its first mirrorH rows
+#endif
 
 static const int BAYER[64] = ROOM_BAYER;           // room.h kRoomBayer
 
@@ -2773,9 +2815,10 @@ float TileH(float3 p, float fx, float fz, out float grout)
     return (1.0 - ROOM_GROUT * grout) * tone;
 }
 
-// room.h RoomEnvironment: the sky, the horizon or the ground (with its filtered 1 m grid
-// and fog) that a ray sees beyond the glass, tinted by the world colour.
-float3 EnvH(float3 o, float3 d, float3 Dx, float3 Dy)
+// room.h RoomEnvironment: the sky, the horizon or the ground (with its 1 m grid, filtered
+// over the footprint from Dx and Dy, or its mean for a reflected ray, and fog) that a ray
+// sees beyond the glass, tinted by the world colour.
+float3 EnvH(float3 o, float3 d, float3 Dx, float3 Dy, bool filtered)
 {
     float3 w = roomWorld.rgb;
     float3 hc = ROOM_ENV_HORIZON * w;
@@ -2785,17 +2828,151 @@ float3 EnvH(float3 o, float3 d, float3 Dx, float3 Dy)
     if (dy > -ROOM_ENV_HORIZON_DY) return hc;
     float tg = (yF - o.y) / d.y;
     float3 q = RoomAt(o, d, tg);
-    float3 Px, Py;
-    FootprintH(tg, d, float3(0.0, 1.0, 0.0), Dx, Dy, Px, Py);
-    float grid = 1.0 - (1.0 - PulseH(q.x, 1.0, ROOM_ENV_LINE_W, FootAxisH(Px.x, Py.x))) * (1.0 - PulseH(q.z, 1.0, ROOM_ENV_LINE_W, FootAxisH(Px.z, Py.z)));
+    float grid = ROOM_ENV_LINE_MEAN;
+    if (filtered)
+    {
+        float3 Px, Py;
+        FootprintH(tg, d, float3(0.0, 1.0, 0.0), Dx, Dy, Px, Py);
+        grid = 1.0 - (1.0 - PulseH(q.x, 1.0, ROOM_ENV_LINE_W, FootAxisH(Px.x, Py.x))) * (1.0 - PulseH(q.z, 1.0, ROOM_ENV_LINE_W, FootAxisH(Px.z, Py.z)));
+    }
     float fog = 1.0 - exp(-tg * len / ROOM_ENV_FOG);
     float3 G = ROOM_ENV_GROUND * w * (1.0 + ROOM_ENV_LINE * grid);
     return G + (hc - G) * fog;
 }
 
+// room.h RoomFresnel: the coat's reflectance at c = |cos| of the ray's angle to the face.
+float FresnelH(float c)
+{
+    float q = 1.0 - c, q2 = q * q, q5 = q2 * q2 * q;
+    return roomReflect * (ROOM_GLASS_F0 + (1.0 - ROOM_GLASS_F0) * q5);
+}
+
+// room.h RoomMirror::Sample: the mirror picture, bilinear by hand over Load, edges clamped
+// to the mirrorW x mirrorH in use (the texture's other rows are never read).
+float3 MirrorH(float2 uv)
+{
+    float x = uv.x * (float)mirrorW - 0.5, y = uv.y * (float)mirrorH - 0.5;
+    float fx0 = floor(x), fy0 = floor(y), fx = x - fx0, fy = y - fy0;
+    int w1 = (int)mirrorW - 1, h1 = (int)mirrorH - 1;
+    int x0 = clamp((int)fx0, 0, w1), x1 = clamp((int)fx0 + 1, 0, w1), y0 = clamp((int)fy0, 0, h1), y1 = clamp((int)fy0 + 1, 0, h1);
+    float3 a = mirrorPic.Load(int3(x0, y0, 0)).rgb, b = mirrorPic.Load(int3(x1, y0, 0)).rgb;
+    float3 c = mirrorPic.Load(int3(x0, y1, 0)).rgb, e = mirrorPic.Load(int3(x1, y1, 0)).rgb;
+    float3 top = a + fx * (b - a), bot = c + fx * (e - c);
+    return top + fy * (bot - top);
+}
+
+// room.h RoomScreenWideHit: the screen as a reflected ray (o, d, invD = 1/d) sees it, within
+// `widen` of its outline - the curved screen (the slab test against its box grown by widen,
+// then atan2 for the angle: a secondary path) or the flat layer's rectangle. Its uv, the
+// ray's t there and how far inside the outline (es < 0 outside).
+bool ScreenWideH(float3 o, float3 d, float3 invD, float widen, out float2 uv, out float ts, out float es)
+{
+    uv = float2(0, 0); ts = 0.0; es = 0.0;
+    if ((flags & ROOM_FLAG_FLAT_LAYER) != 0)
+    {
+        if (!(d.z < 0.0) || !(screenW > 0.0) || !(screenH > 0.0)) return false;
+        float tf = -o.z / d.z;
+        float x = o.x + tf * d.x, y = o.y + tf * d.y;
+        float hw = 0.5 * screenW, hh = 0.5 * screenH;
+        if (!(tf > 0.0) || abs(x) > hw + widen || abs(y) > hh + widen) return false;
+        ts = tf; uv = float2(x / screenW + 0.5, 0.5 - y / screenH);
+        es = min(hw - abs(x), hh - abs(y));
+        return true;
+    }
+    if (!(R > 0.0) || !(halfW > 0.0) || !(halfH > 0.0)) return false;
+    float3 s1 = (float3(-scrBoxX - widen, -scrBoxY - widen, -ROOM_SCREEN_PAD - widen) - o) * invD;
+    float3 s2 = (float3(scrBoxX + widen, scrBoxY + widen, scrBoxZ + widen) - o) * invD;
+    float3 sn = min(s1, s2), sf = max(s1, s2);
+    float enter = max(max(sn.x, sn.y), sn.z), leave = min(min(sf.x, sf.y), sf.z);
+    if (!(leave >= max(enter, 0.0))) return false;
+    float a = d.x * d.x + d.z * d.z;
+    if (!(a > 1e-12)) return false;
+    float b = 2.0 * (o.x * d.x + (o.z - R) * d.z);
+    float cc = o.x * o.x + o.z * o.z - 2.0 * o.z * R;
+    float disc = b * b - 4.0 * a * cc;
+    if (disc < 0.0) return false;
+    float sq = sqrt(disc);
+    float q = -0.5 * (b + (b < 0.0 ? -sq : sq));
+    float t0 = q / a;
+    float t1 = (q != 0.0) ? cc / q : t0;
+    if (t0 > t1) { float sw = t0; t0 = t1; t1 = sw; }
+    [unroll] for (int i = 0; i < 2; i++)
+    {
+        float tr = (i == 0) ? t0 : t1;
+        if (!(tr > 0.0)) continue;
+        float x = o.x + tr * d.x, y = o.y + tr * d.y, z = o.z + tr * d.z;
+        float toward = R - z;
+        if (!(toward > 0.0)) continue;
+        float phi = atan2(x, toward);
+        if (abs(phi) > halfWrap + widen / R || abs(y) > halfH + widen) continue;
+        ts = tr;
+        uv = float2((R * phi) / (2.0 * halfW) + 0.5, 0.5 - y / (2.0 * halfH));
+        es = min(R * (halfWrap - abs(phi)), halfH - abs(y));
+        return true;
+    }
+    return false;
+}
+
+// room.h RoomReflection: what the coat of a sample on `face` mirrors. The sample's ray
+// (direction d, differentials Dx, Dy) met the face at p, t; the reflected ray starts
+// ROOM_NUDGE along itself from p, and each eye sees its own mirror image. The screen is the mirror
+// picture with a soft edge over the footprint (t + t_s)(|Dx| + |Dy|); round or behind it
+// the room's face where the ray leaves, as the finish's secondary surfaces (no frames,
+// tiles or further reflections); `own` if there is no exit.
+float3 ReflectH(int face, float3 p, float3 d, float t, float3 Dx, float3 Dy, float3 own)
+{
+    float3 d2 = d;
+    if (face == ROOM_FACE_LEFT || face == ROOM_FACE_RIGHT) d2.x = -d2.x;
+    else if (face == ROOM_FACE_FLOOR || face == ROOM_FACE_CEILING) d2.y = -d2.y;
+    else d2.z = -d2.z;
+    float3 o2 = RoomAt(p, d2, ROOM_NUDGE / sqrt(d2.x * d2.x + d2.y * d2.y + d2.z * d2.z));
+    float spread = sqrt(Dx.x * Dx.x + Dx.y * Dx.y + Dx.z * Dx.z) + sqrt(Dy.x * Dy.x + Dy.y * Dy.y + Dy.z * Dy.z);
+    float3 invD = 1.0 / d2;
+    float3 S = float3(0, 0, 0);
+    float ks = 0.0, ts, es;
+    float2 suv;
+    if (ScreenWideH(o2, d2, invD, ROOM_REFL_FOOT_MAX, suv, ts, es))
+    {
+        float fw = min(max(spread * (t + ts), ROOM_FOOT_MIN), ROOM_REFL_FOOT_MAX);
+        ks = min(max(es / fw + 0.5, 0.0), 1.0);
+        if (ks > 0.0) S = MirrorH(suv);
+    }
+    if (ks >= 1.0) return S;
+    float3 B = own;
+    RoomHitH h = (RoomHitH)0;
+    if (RoomExitFastH(o2, d2, invD, h))
+    {
+        float3 Ld2 = lightmap.SampleLevel(samp, float3(h.u, h.v, (float)h.face), 0).rgb;
+        if (h.face == ROOM_FACE_FRONT)
+        {
+            B = Ld2;
+            float2 g2 = float2(h.s * invGlowW + 0.5, 0.5 - h.y * invGlowH);
+            if ((flags & ROOM_FLAG_GLOW) != 0 && g2.x >= 0.0 && g2.x <= 1.0 && g2.y >= 0.0 && g2.y <= 1.0)
+                B += Dec(glow.SampleLevel(samp, g2, 0).rgb);
+        }
+        else if (h.face == ROOM_FACE_FLOOR) B = (1.0 - ROOM_FLOOR_GLOSS * roomFbar) * Ld2;
+        else
+        {
+            float3 env = float3(0, 0, 0);
+            if (roomGlass > 0.0) env = EnvH(o2, d2, Dx, Dy, false);
+            B = (1.0 - roomGlass) * (1.0 - roomFbar) * Ld2 + roomGlass * env;
+            if (h.face == ROOM_FACE_CEILING)
+            {
+                float t2 = (yC - o2.y) * invD.y;
+                float3 p2 = RoomAt(o2, d2, t2);
+                float f2 = min(max(spread * (t + t2), ROOM_FOOT_MIN), ROOM_FOOT_MAX);
+                float k2 = BarH(p2.x, 0.5 * (lightX0 + lightX1), lightX1 - lightX0, f2) * BarH(p2.z, 0.5 * (lightZ0 + lightZ1), lightZ1 - lightZ0, f2);
+                B = k2 * (Ld2 + lightSeen.rgb) + (1.0 - k2) * B;
+            }
+        }
+    }
+    return ks * S + (1.0 - ks) * B;
+}
+
 // room.h RoomSurface: a room surface's radiance L (the lightmap's Ld on entry) at a sample
 // on `face` with ray (o, d): the room light's panel on the ceiling, and with the finish on
-// the floor's tiles, the frames, the glass with what lies beyond it, and the panel as a fitting.
+// the floor's tiles, the frames, the glass with what lies beyond it, the panel as a fitting
+// and, with the reflections on, what the coat mirrors (one ReflectH per sample).
 float3 SurfaceH(int face, float3 L, float3 o, float3 d, float3 Dx, float3 Dy)
 {
     if (face == ROOM_FACE_FRONT) return L;
@@ -2814,24 +2991,40 @@ float3 SurfaceH(int face, float3 L, float3 o, float3 d, float3 Dx, float3 Dy)
     float3 p = RoomAt(o, d, t);
     float3 Px, Py;
     FootprintH(t, d, n, Dx, Dy, Px, Py);
+    bool refl = (flags & ROOM_FLAG_REFLECT) != 0;
+    float cosn = abs(da) / sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    // base: the sample without its reflection (the floor's tiles, or a pane); own: its coated
+    // light for a reflected ray that finds no exit; fr: the coat's reflectance (Ff or F),
+    // 0 where no reflection is traced - over a frame, over the panel, in the floor's grout.
+    float3 base, own;
+    float fr = 0.0, phi = 0.0, kappa = 0.0;
     if (face == ROOM_FACE_FLOOR)
     {
         float grout;
         float tau = TileH(p, FootAxisH(Px.x, Py.x), FootAxisH(Px.z, Py.z), grout);
         float coat = 1.0 - ROOM_FLOOR_GLOSS * roomFbar * (1.0 - grout);
-        return coat * tau * L;
+        base = coat * tau * L;
+        own = coat * L;
+        if (refl) fr = ROOM_FLOOR_GLOSS * FresnelH(cosn) * (1.0 - grout);
     }
-    float phi;
-    if (face == ROOM_FACE_LEFT || face == ROOM_FACE_RIGHT) phi = FrameH(face, p, FootAxisH(Px.z, Py.z), FootAxisH(Px.y, Py.y));
-    else if (face == ROOM_FACE_CEILING) phi = FrameH(face, p, FootAxisH(Px.x, Py.x), FootAxisH(Px.z, Py.z));
-    else phi = FrameH(face, p, FootAxisH(Px.x, Py.x), FootAxisH(Px.y, Py.y));
-    float3 env = float3(0, 0, 0);
-    if (roomGlass > 0.0) env = EnvH(o, d, Dx, Dy);
-    float3 pane = (1.0 - roomGlass) * (1.0 - roomFbar) * L + roomGlass * env;
-    float3 lg = phi * L + (1.0 - phi) * pane;
+    else
+    {
+        if (face == ROOM_FACE_LEFT || face == ROOM_FACE_RIGHT) phi = FrameH(face, p, FootAxisH(Px.z, Py.z), FootAxisH(Px.y, Py.y));
+        else if (face == ROOM_FACE_CEILING) phi = FrameH(face, p, FootAxisH(Px.x, Py.x), FootAxisH(Px.z, Py.z));
+        else phi = FrameH(face, p, FootAxisH(Px.x, Py.x), FootAxisH(Px.y, Py.y));
+        float3 env = float3(0, 0, 0);
+        if (roomGlass > 0.0) env = EnvH(o, d, Dx, Dy, true);
+        base = (1.0 - roomGlass) * (1.0 - roomFbar) * L + roomGlass * env;
+        own = (1.0 - roomFbar) * L;
+        if (face == ROOM_FACE_CEILING)
+            kappa = BarH(p.x, 0.5 * (lightX0 + lightX1), lightX1 - lightX0, FootAxisH(Px.x, Py.x)) *
+                    BarH(p.z, 0.5 * (lightZ0 + lightZ1), lightZ1 - lightZ0, FootAxisH(Px.z, Py.z));
+        if (refl && (1.0 - phi) * (1.0 - kappa) > 0.0) fr = FresnelH(cosn);
+    }
+    if (fr > 0.0) base = fr * ReflectH(face, p, d, t, Dx, Dy, own) + (1.0 - fr) * base;
+    if (face == ROOM_FACE_FLOOR) return base;
+    float3 lg = phi * L + (1.0 - phi) * base;
     if (face != ROOM_FACE_CEILING) return lg;
-    float kappa = BarH(p.x, 0.5 * (lightX0 + lightX1), lightX1 - lightX0, FootAxisH(Px.x, Py.x)) *
-                  BarH(p.z, 0.5 * (lightZ0 + lightZ1), lightZ1 - lightZ0, FootAxisH(Px.z, Py.z));
     return kappa * (L + lightSeen.rgb) + (1.0 - kappa) * lg;
 }
 #endif
@@ -2884,7 +3077,8 @@ void main(uint3 id : SV_DispatchThreadID)
     // The v11 controls (ROOM_LOOK only): a room sample goes through SurfaceH - when the four
     // rays agree, with the pixel's centre ray (the exact mean of their directions),
     // otherwise each with its own. (One loop over the samples instead measured slower
-    // with the light on.)
+    // with the light on, and with the reflections on it added 0.28-0.32 ms to the curved
+    // eye pass, though it made the shader half the size.)
     float3 col = float3(0, 0, 0);
 #if ROOM_LOOK
     float3 Dx, Dy;
@@ -3247,8 +3441,9 @@ static bool MakeAmbiRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
 
 // Constants, then one table: the warped pictures (t0), the glow (t1), the eye
 // buffers (u0); a linear clamping sampler for both reads.
-// With `room`, the table also holds the room's lightmap (t2, after the eye buffers)
-// and RoomConstants come as a root CBV (b1): 56 + 1 + 2 = 59 of 64 DWORDs.
+// With `room`, the table also holds the room's lightmap and mirror picture (t2 and t3,
+// after the eye buffers) and RoomConstants come as a root CBV (b1): 56 + 1 + 2 = 59 of 64
+// DWORDs (a table costs one DWORD however many ranges it holds).
 static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out, bool room = false)
 {
     static_assert(sizeof(CurveConstants) / 4 + 1 + 2 <= 64, "curve root signature: constants + table + CBV");
@@ -3258,7 +3453,7 @@ static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out, bool ro
     tbl[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     tbl[1].NumDescriptors = 1; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 2;
     tbl[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    tbl[2].NumDescriptors = 1; tbl[2].BaseShaderRegister = 2; tbl[2].OffsetInDescriptorsFromTableStart = 3;
+    tbl[2].NumDescriptors = 2; tbl[2].BaseShaderRegister = 2; tbl[2].OffsetInDescriptorsFromTableStart = 3;
 
     D3D12_ROOT_PARAMETER params[3]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -3291,7 +3486,7 @@ static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out, bool ro
 }
 
 // The room's lightmap passes: RoomConstants as a root CBV (b0), the picture (t0, one
-// per frame), then the decode table, glow, emitters and lightmap.
+// per frame), then the decode table, glow, emitters, lightmap and mirror picture (u0-u2).
 static bool MakeRoomRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
 {
     D3D12_DESCRIPTOR_RANGE srcRange{};
@@ -3301,7 +3496,7 @@ static bool MakeRoomRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
     tbl[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     tbl[0].NumDescriptors = 2; tbl[0].BaseShaderRegister = 1; tbl[0].OffsetInDescriptorsFromTableStart = 0;
     tbl[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-    tbl[1].NumDescriptors = 2; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 2;
+    tbl[1].NumDescriptors = 3; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 2;
 
     D3D12_ROOT_PARAMETER params[3]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -3512,7 +3707,8 @@ static bool InitShaders(App& app)
     const std::string roomEyeV10Text = roomEyeHead + kCurveRoomV10Hlsl;
     const std::string roomLightText = std::string("#define ROOM_REGISTER b0\n") + roomDefines + kRoomCbufferHlsl + kRoomGeomHlsl + kRoomHlsl;
     const std::string roomEmitText = std::string("#define ROOM_EMIT 1\n") + roomLightText;
-    ComPtr<ID3DBlob> roomEyeCs, roomEyeLookCs, roomEyeV10Cs, roomLightCs, roomEmitCs;
+    const std::string roomMirrorText = std::string("#define ROOM_MIRROR 1\n") + roomLightText;
+    ComPtr<ID3DBlob> roomEyeCs, roomEyeLookCs, roomEyeV10Cs, roomLightCs, roomEmitCs, roomMirrorCs;
     // The kept v10 eye pass and the eye pass with the v11 controls compile on their own
     // threads (D3DCompile is re-entrant), so that they do not add their seconds to every start.
     bool v10Compiled = false, lookCompiled = false;
@@ -3520,7 +3716,8 @@ static bool InitShaders(App& app)
     std::thread lookCompile([&]() { lookCompiled = CompileCs("curve-room-look.hlsl", roomEyeLookText.c_str(), roomEyeLookCs); });
     const bool roomCompiled = CompileCs("curve-room.hlsl", roomEyeText.c_str(), roomEyeCs) &&
                               CompileCs("room-light.hlsl", roomLightText.c_str(), roomLightCs) &&
-                              CompileCs("room-emit.hlsl", roomEmitText.c_str(), roomEmitCs);
+                              CompileCs("room-emit.hlsl", roomEmitText.c_str(), roomEmitCs) &&
+                              CompileCs("room-mirror.hlsl", roomMirrorText.c_str(), roomMirrorCs);
     v10Compile.join();
     lookCompile.join();
     if (!roomCompiled || !v10Compiled || !lookCompiled)
@@ -3539,6 +3736,8 @@ static bool InitShaders(App& app)
     if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.roomLightPso)))) { Log("InitShaders: FAIL room light PSO"); return false; }
     pd.CS = { roomEmitCs->GetBufferPointer(), roomEmitCs->GetBufferSize() };
     if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.roomEmitPso)))) { Log("InitShaders: FAIL room emit PSO"); return false; }
+    pd.CS = { roomMirrorCs->GetBufferPointer(), roomMirrorCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.roomMirrorPso)))) { Log("InitShaders: FAIL room mirror PSO"); return false; }
 
     const UINT64 emitterBytes = (UINT64)kRoomMaxEmitters * sizeof(RoomEmitter);
     if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, 256 * sizeof(float), D3D12_RESOURCE_FLAG_NONE,
@@ -3553,6 +3752,9 @@ static bool InitShaders(App& app)
     if (!MakeTexture(app.device.Get(), kRoomLightmap, kRoomLightmap, DXGI_FORMAT_R16G16B16A16_FLOAT, kRoomFaces,
                      D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_HEAP_FLAG_NONE,
                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.roomLight)) return false;
+    if (!MakeTexture(app.device.Get(), kRoomMirrorW, kRoomMirrorMaxH, DXGI_FORMAT_R16G16B16A16_FLOAT, 1,
+                     D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_HEAP_FLAG_NONE,
+                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.roomMirror)) return false;
     {
         // The decode table, once.
         ComPtr<ID3D12Resource> up;
@@ -3587,6 +3789,10 @@ static bool InitShaders(App& app)
     lmUav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
     lmUav.Texture2DArray.ArraySize = kRoomFaces;
     app.device->CreateUnorderedAccessView(app.roomLight.Get(), nullptr, &lmUav, CpuDesc(app, DESC_ROOM + 3));
+    D3D12_UNORDERED_ACCESS_VIEW_DESC mirrorUav{};
+    mirrorUav.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    mirrorUav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    app.device->CreateUnorderedAccessView(app.roomMirror.Get(), nullptr, &mirrorUav, CpuDesc(app, DESC_ROOM + 4));
     D3D12_SHADER_RESOURCE_VIEW_DESC lmSrv{};
     lmSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     lmSrv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -3595,6 +3801,8 @@ static bool InitShaders(App& app)
     lmSrv.Texture2DArray.ArraySize = kRoomFaces;
     app.device->CreateShaderResourceView(app.roomLight.Get(), &lmSrv, CpuDesc(app, DESC_CURVE_MAIN + 3));
     app.device->CreateShaderResourceView(app.roomLight.Get(), &lmSrv, CpuDesc(app, DESC_CURVE_TEST + 3));
+    app.device->CreateShaderResourceView(app.roomMirror.Get(), nullptr, CpuDesc(app, DESC_CURVE_MAIN + 4));
+    app.device->CreateShaderResourceView(app.roomMirror.Get(), nullptr, CpuDesc(app, DESC_CURVE_TEST + 4));
     {
         D3D12_QUERY_HEAP_DESC qd{};
         qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
@@ -3610,10 +3818,10 @@ static bool InitShaders(App& app)
         }
         else app.timeFreq = (double)freq;
     }
-    Log("InitShaders: room ready (eye %zu, look eye %zu, v10 eye %zu, light %zu, emit %zu bytes; up to %d emitters, %d x %d x %d lightmap; "
-        "%zu-byte constants)", roomEyeCs->GetBufferSize(), roomEyeLookCs->GetBufferSize(), roomEyeV10Cs->GetBufferSize(), roomLightCs->GetBufferSize(),
-        roomEmitCs->GetBufferSize(), kRoomMaxEmitters,
-        kRoomFaces, kRoomLightmap, kRoomLightmap, sizeof(RoomConstants));
+    Log("InitShaders: room ready (eye %zu, look eye %zu, v10 eye %zu, light %zu, emit %zu, mirror %zu bytes; up to %d emitters, %d x %d x %d lightmap; "
+        "%d x %d mirror picture; %zu-byte constants)", roomEyeCs->GetBufferSize(), roomEyeLookCs->GetBufferSize(), roomEyeV10Cs->GetBufferSize(),
+        roomLightCs->GetBufferSize(), roomEmitCs->GetBufferSize(), roomMirrorCs->GetBufferSize(), kRoomMaxEmitters,
+        kRoomFaces, kRoomLightmap, kRoomLightmap, kRoomMirrorW, kRoomMirrorMaxH, sizeof(RoomConstants));
 
     Log("InitShaders: exit ok (warp %zu bytes, prep %zu bytes)", warpCs->GetBufferSize(), prepCs->GetBufferSize());
     return true;
@@ -3801,17 +4009,19 @@ static void RecordWorldColour(App& app, int ring, uint32_t rgb, ID3D12Resource* 
 }
 
 // The room's light for this frame into its lightmap (UAV at rest): each emitter's
-// radiance (EMIT), then every lightmap texel (LIGHT). `geometry` (upload heap), when
-// given, is the emitters' new geometry - it also clears their smoothing history, so
-// that frame's constants must carry alpha 1.
-// With a timeBase (not UINT_MAX) it writes timestamps T1 (after EMIT and its barrier)
-// and T2 (after LIGHT and its barrier) at timeBase + 1 and + 2 of `timeHeap` (null: the
-// frame loop's). Returns false, recording nothing, when the pass cannot run.
+// radiance (EMIT), with mirrorH above 0 (the constants' mirrorH: Reflections are on) the
+// mirror picture's first mirrorH rows (MIRROR, UAV at rest), then every lightmap texel
+// (LIGHT). `geometry` (upload heap), when given, is the emitters' new geometry - it also
+// clears their smoothing history, so that frame's constants must carry alpha 1.
+// With a timeBase (not UINT_MAX) it writes timestamps T1 (after EMIT, MIRROR and their
+// barrier) and T2 (after LIGHT and its barrier) at timeBase + 1 and + 2 of `timeHeap`
+// (null: the frame loop's). Returns false, recording nothing, when the pass cannot run.
 static bool RecordRoomLight(App& app, UINT srcDescIndex, D3D12_GPU_VIRTUAL_ADDRESS constants, ID3D12Resource* geometry, UINT emitters,
-                            UINT timeBase = UINT_MAX, ID3D12QueryHeap* timeHeap = nullptr)
+                            UINT mirrorH, UINT timeBase = UINT_MAX, ID3D12QueryHeap* timeHeap = nullptr)
 {
     if (!app.roomEmitPso || !app.roomLightPso || !app.roomEmitters || !app.roomLight || !app.ambiTex) return false;
     if (constants == 0 || emitters == 0 || emitters > (UINT)kRoomMaxEmitters) return false;
+    if (mirrorH > (UINT)kRoomMirrorMaxH || (mirrorH > 0 && (!app.roomMirrorPso || !app.roomMirror))) return false;
     ID3D12QueryHeap* heap = timeBase == UINT_MAX ? nullptr : (timeHeap ? timeHeap : app.timeHeap.Get());
     if (timeBase != UINT_MAX && !heap) return false;
 
@@ -3831,10 +4041,17 @@ static bool RecordRoomLight(App& app, UINT srcDescIndex, D3D12_GPU_VIRTUAL_ADDRE
     cl->SetComputeRootDescriptorTable(2, GpuDesc(app, DESC_ROOM));
     cl->SetPipelineState(app.roomEmitPso.Get());
     cl->Dispatch(emitters, 1, 1);
-    D3D12_RESOURCE_BARRIER emitted{};
-    emitted.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    emitted.UAV.pResource = app.roomEmitters.Get();
-    cl->ResourceBarrier(1, &emitted);
+    if (mirrorH > 0)
+    {
+        cl->SetPipelineState(app.roomMirrorPso.Get());
+        cl->Dispatch(kRoomMirrorW / 8, (mirrorH + 7) / 8, 1);
+    }
+    D3D12_RESOURCE_BARRIER emitted[2]{};
+    emitted[0].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    emitted[0].UAV.pResource = app.roomEmitters.Get();
+    emitted[1].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    emitted[1].UAV.pResource = app.roomMirror.Get();
+    cl->ResourceBarrier(mirrorH > 0 ? 2 : 1, emitted);
     if (heap) cl->EndQuery(heap, D3D12_QUERY_TYPE_TIMESTAMP, timeBase + 1);
     cl->SetPipelineState(app.roomLightPso.Get());
     cl->Dispatch(kRoomLightmap / 8, kRoomLightmap / 8, kRoomFaces);
@@ -3858,8 +4075,9 @@ static ID3D12PipelineState* RoomEyePso(const App& app, const RoomConstants& rc)
 // Ray-cast the curved screen into `eyes` (UAV at rest) from `picture` (the warp's
 // output, COPY_SOURCE as RecordWarp leaves it; left that way). With eyeImg, copy
 // the result into the acquired swapchain image (RENDER_TARGET at rest).
-// `roomConstants` non-zero: the room's variant, which also reads the room's lightmap
-// (UAV at rest, a shader resource for the pass) and shows the room round the screen.
+// `roomConstants` non-zero: the room's variant, which also reads the room's lightmap and
+// mirror picture (UAV at rest, shader resources for the pass) and shows the room round
+// the screen.
 // Only the c.ew x c.eh corner of the buffers is drawn and copied (a flat screen's
 // room layer is drawn at half size).
 // With a timeBase (not UINT_MAX) it writes timestamps T3 (after the pass and its
@@ -3875,7 +4093,7 @@ static bool RecordCurvedScreen(App& app, UINT tableIndex, ID3D12Resource* pictur
     if (c.ew == 0 || c.eh == 0) return false;
     const bool room = roomConstants != 0;
     ID3D12PipelineState* eyePso = room ? (roomPso ? roomPso : app.curveRoomPso.Get()) : app.curvePso.Get();
-    if (room && (!eyePso || !app.roomLight)) return false;
+    if (room && (!eyePso || !app.roomLight || !app.roomMirror)) return false;
     ID3D12QueryHeap* heap = timeBase == UINT_MAX ? nullptr : (timeHeap ? timeHeap : app.timeHeap.Get());
     if (timeBase != UINT_MAX && !heap) return false;
 
@@ -3883,6 +4101,7 @@ static bool RecordCurvedScreen(App& app, UINT tableIndex, ID3D12Resource* pictur
     Transition(cl, picture, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     if (room) Transition(cl, app.roomLight.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    if (room) Transition(cl, app.roomMirror.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
     cl->SetDescriptorHeaps(1, heaps);
     cl->SetComputeRootSignature(room ? app.curveRoomRootSig.Get() : app.curveRootSig.Get());
@@ -3891,6 +4110,7 @@ static bool RecordCurvedScreen(App& app, UINT tableIndex, ID3D12Resource* pictur
     cl->SetComputeRootDescriptorTable(1, GpuDesc(app, tableIndex));
     if (room) cl->SetComputeRootConstantBufferView(2, roomConstants);
     cl->Dispatch((c.ew + 7) / 8, (c.eh + 7) / 8, VIEWS);
+    if (room) Transition(cl, app.roomMirror.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     if (room) Transition(cl, app.roomLight.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(cl, picture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -5894,9 +6114,31 @@ static bool CompareEyes(const char* what, const std::vector<std::vector<unsigned
 // - light: Room 40 with the room light at 50%, #FFB46B. One eye is turned round and looks
 //   up at the panel; the other is turned left, to the left wall, the floor the light falls
 //   on and (curved) the front's left wing. The floor under the panel must be lit by it.
+// The GPU's mirror picture (RGBA16F, UAV at rest) as floats: its first h rows, w wide.
+static bool ReadbackMirror(App& app, int w, int h, RoomMirror& out)
+{
+    Log("ReadbackMirror: enter (%d x %d)", w, h);
+    if (!app.roomMirror || w <= 0 || h <= 0 || w > kRoomMirrorW || h > kRoomMirrorMaxH) { Log("ReadbackMirror: FAIL no mirror or a bad size"); return false; }
+    std::vector<std::vector<unsigned char>> bytes;
+    if (!ReadbackRgba(app, app.roomMirror.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, bytes, 8) || bytes.size() != 1 ||
+        bytes[0].size() != (size_t)kRoomMirrorW * kRoomMirrorMaxH * 8)
+    { Log("ReadbackMirror: FAIL readback"); return false; }
+    out.w = w; out.h = h;
+    out.texels.resize((size_t)w * h * 4);
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++)
+        {
+            const uint16_t* hx = (const uint16_t*)(bytes[0].data() + ((size_t)j * kRoomMirrorW + i) * 8);
+            for (int ch = 0; ch < 4; ch++) out.texels[((size_t)j * w + i) * 4 + ch] = RoomHalfToFloat(hx[ch]);
+        }
+    Log("ReadbackMirror: exit ok");
+    return true;
+}
+
 static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
 {
-    if (!app.roomEmitPso || !app.curveRoomPso || !app.curveRoomLookPso || !app.curveRoomV10Pso || !app.testEyeOut || !app.roomCbMapped)
+    if (!app.roomEmitPso || !app.roomMirrorPso || !app.roomMirror || !app.curveRoomPso || !app.curveRoomLookPso || !app.curveRoomV10Pso ||
+        !app.testEyeOut || !app.roomCbMapped)
     { Log("SelfTestRoom: FAIL not built"); return false; }
     if (scene.size() != (size_t)W * H * 3) { Log("SelfTestRoom: FAIL bad scene"); return false; }
     Log("SelfTestRoom: enter");
@@ -5914,11 +6156,12 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
     RoomDecodeTable(table);
     const float width = 5.7f, height = width * (float)H / (float)W;
     const uint32_t world = 0x2A3441;
-    const int roomPercent = 40, lightPercent = 50, glassPercent = 60;
+    const int roomPercent = 40, lightPercent = 50, glassPercent = 60, reflectPercent = 40;
     bool ok = true;
 
     // Cases {flat, curved} x {plain, light, look}: plain has the v11 controls at 0; light the
-    // room light alone; look Glass 60 and the room light (the finish: frames, tiles, glass).
+    // room light alone; look Glass 60, Reflections 40 and the room light (the finish: frames,
+    // tiles, glass, the reflections and the mirror picture).
     for (int ci = 0; ci < 6; ci++)
     {
         const bool curvedCase = ci >= 3, lightCase = ci % 3 == 1, lookCase = ci % 3 == 2;
@@ -5941,15 +6184,18 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         view.glowHalfW = 0.5f * width + margin; view.glowHalfH = 0.5f * height + margin; view.dither = true; view.cyl = cyl;
         RoomLook look;
         if (lightCase || lookCase) { look.light = lightPercent; look.lightRgb = kRoomLightDefault; }
-        if (lookCase) look.glass = glassPercent;
+        if (lookCase) { look.glass = glassPercent; look.reflect = reflectPercent; }
         const RoomShading shading = MakeRoomShading(room, roomPercent, world, width * height, look);
         const RoomConstants rc = MakeRoomConstants(room, shading, layout, view, W, H, 1.0f);
         if ((lightCase || lookCase) != ((rc.flags & kRoomFlagLight) != 0) || !room.lightValid)
         { Log("SelfTestRoom[%s]: FAIL the room light is %s (panel %s)", name, (rc.flags & kRoomFlagLight) ? "on" : "off", room.lightValid ? "fits" : "missing"); return false; }
         if (lookCase != ((rc.flags & kRoomFlagFinish) != 0))
         { Log("SelfTestRoom[%s]: FAIL the finish is %s", name, (rc.flags & kRoomFlagFinish) ? "on" : "off"); return false; }
+        if (lookCase != ((rc.flags & kRoomFlagReflect) != 0) || (lookCase && (rc.mirrorW != (uint32_t)kRoomMirrorW || rc.mirrorH == 0)))
+        { Log("SelfTestRoom[%s]: FAIL the reflections are %s (mirror %u x %u)", name, (rc.flags & kRoomFlagReflect) ? "on" : "off", rc.mirrorW, rc.mirrorH); return false; }
         if (lookCase)
-            Log("SelfTestRoom[%s]: glass %d%% - side walls %d bays of %.3f m, back wall %d of %.3f m, crossbar at %.3f m; bounce albedo %.4f", name, glassPercent,
+            Log("SelfTestRoom[%s]: glass %d%%, reflections %d%% (mean coat reflectance %.4f, mirror picture %u x %u) - side walls %d bays of %.3f m, back "
+                "wall %d of %.3f m, crossbar at %.3f m; bounce albedo %.4f", name, glassPercent, reflectPercent, shading.fbar, rc.mirrorW, rc.mirrorH,
                 (int)std::lround((room.zB - room.zSide) / room.pitchSide), room.pitchSide, (int)std::lround(2.0f * room.X / room.pitchBack), room.pitchBack,
                 room.transomY, shading.rhoBar);
         Log("SelfTestRoom[%s]: room light %d%% #%06X - panel x %.2f..%.2f, z %.2f..%.2f, emitted %.3f %.3f %.3f, seen %.3f %.3f %.3f", name, look.light,
@@ -5963,7 +6209,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         WaitFence(app, app.fenceVal);
         app.cmdAlloc[0]->Reset();
         app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
-        RecordRoomLight(app, DESC_TEST_SRC, cb, app.roomGeomUp[RING].Get(), (UINT)layout.count());
+        RecordRoomLight(app, DESC_TEST_SRC, cb, app.roomGeomUp[RING].Get(), (UINT)layout.count(), rc.mirrorH);
         app.cmdList->Close();
         WaitFence(app, SubmitAndSignal(app));
 
@@ -6031,6 +6277,27 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         int lit = 0;
         for (int f = 1; f < kRoomFaces; f++) lit += facesLit[f];
 
+        // The mirror picture (look): the GPU's first mirrorH rows against RoomMirrorPicture,
+        // within half-float precision; the eye pass's reference then reads the GPU's own.
+        RoomMirror mirror;
+        size_t badMirror = 0;
+        float worstMirror = 0;
+        if (lookCase)
+        {
+            RoomMirror cpuMirror;
+            if (!RoomMirrorPicture(rgba.data(), W, H, W * 4, table, cpuMirror) || cpuMirror.w != (int)rc.mirrorW || cpuMirror.h != (int)rc.mirrorH ||
+                !ReadbackMirror(app, (int)rc.mirrorW, (int)rc.mirrorH, mirror))
+            { Log("SelfTestRoom[%s]: FAIL mirror picture", name); return false; }
+            for (size_t i = 0; i < cpuMirror.texels.size(); i++)
+            {
+                const float cpu = cpuMirror.texels[i], diff = std::fabs(mirror.texels[i] - cpu);
+                if (diff > 2e-3f * std::fabs(cpu) + 1e-5f) badMirror++;
+                if (cpu > 1e-3f) worstMirror = std::max(worstMirror, diff / cpu);
+            }
+            Log("SelfTestRoom[%s]: mirror picture %s - %d x %d of the %dx%d source, %zu of %zu values outside half precision (worst %.2e)", name,
+                badMirror == 0 ? "PASS" : "FAIL", mirror.w, mirror.h, W, H, badMirror, cpuMirror.texels.size(), worstMirror);
+        }
+
         // The room light on the floor under its panel's middle: the GPU's texel against the
         // CPU's with the lamp dark, at least 90% of the lamp's direct light (the rest is its
         // share of the bounce), and redder than blue for the warm white.
@@ -6072,7 +6339,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         const size_t total = (size_t)TEST_EYE_W * TEST_EYE_H * VIEWS, onePercent = total / 100, oneEyePercent = onePercent / VIEWS;
         CurveConstants cc;
         std::vector<std::vector<unsigned char>> got;
-        size_t bad = 0, kinds[9] = {}, eyeKinds[VIEWS][9] = {}, panelPx = 0, leftWingPx = 0;
+        size_t bad = 0, kinds[9] = {}, eyeKinds[VIEWS][9] = {}, panelPx = 0, leftWingPx = 0, reflPx[VIEWS] = {};
         int worst = 0;
         bool lookCovered = true;
         RgbaImage glowImg{ glowPx[0].data(), app.ambiW, app.ambiH, app.ambiW * 4 };
@@ -6118,7 +6385,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
             {
                 RgbaImage pic{ pictures[e].data(), W, H, W * 4 };
                 RoomEyeInputs inputs;
-                inputs.rc = &rc; inputs.picture = &pic; inputs.glow = &glowImg; inputs.light = &light;
+                inputs.rc = &rc; inputs.picture = &pic; inputs.glow = &glowImg; inputs.light = &light; inputs.mirror = &mirror;
                 float Dx[3], Dy[3];
                 if (!RoomRayDiff(cc, (int)e, Dx, Dy)) { Log("SelfTestRoom[%s]: FAIL ray differentials", name); return false; }
                 for (int y = 0; y < TEST_EYE_H; y++)
@@ -6133,6 +6400,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
                         groundPx += info.env == 3;
                         skyPx += info.env == 1;
                         horizonPx += info.env == 2;
+                        if (di == 0) reflPx[e] += info.kappaS > 0 && info.fresnel > 0;
                         float o[3], d[3], u, v, gu, gv;
                         CurveRay(cc, (int)e, x + 0.5f, y + 0.5f, o, d);
                         const int kind = RoomClassify(cc, cyl, room, view, o, d, &u, &v, &gu, &gv);
@@ -6152,11 +6420,16 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
             if (lookCase)
             {
                 const size_t frameMin = total / 500;
-                const bool covered = di == 0 ? framePx > frameMin && tilePx > onePercent : lookPanelPx > onePercent && groundPx > onePercent && skyPx > onePercent;
+                const bool covered = di == 0 ? framePx > frameMin && tilePx > onePercent && reflPx[0] > oneEyePercent && reflPx[1] > oneEyePercent
+                                             : lookPanelPx > onePercent && groundPx > onePercent && skyPx > onePercent;
                 lookCovered = lookCovered && covered;
+                char reflText[160] = "";
+                if (di == 0)
+                    snprintf(reflText, sizeof(reflText), "; the screen reflected (kappa_s > 0 and F > 0) in eye 0 %zu px, eye 1 %zu px (needed above %zu each)",
+                             reflPx[0], reflPx[1], oneEyePercent);
                 Log("SelfTestRoom[%s]: look %c %s - frames %zu px (phi > 0.5; needed above %zu), tiled floor %zu, panel %zu (kappa > 0.5), beyond the glass: "
-                    "ground %zu, sky %zu, horizon %zu (needed above %zu each: %s)", name, 'A' + di, covered ? "covered" : "FAIL not covered", framePx, frameMin,
-                    tilePx, lookPanelPx, groundPx, skyPx, horizonPx, onePercent, di == 0 ? "tiles" : "panel, ground and sky");
+                    "ground %zu, sky %zu, horizon %zu (needed above %zu each: %s)%s", name, 'A' + di, covered ? "covered" : "FAIL not covered", framePx, frameMin,
+                    tilePx, lookPanelPx, groundPx, skyPx, horizonPx, onePercent, di == 0 ? "tiles" : "panel, ground and sky", reflText);
             }
             if (app.opt.doDump)
             {
@@ -6277,7 +6550,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
                 eyeKinds[1][1 + kFaceLeft], eyeKinds[1][1 + kFaceFloor], leftWingPx);
 
         const bool caseOk = badEm == 0 && lampExact && badTexel == 0 && lit == kRoomFaces - 1 && glowLit > 0 && bad <= total * dispatches / 200 && framed && v10Ok &&
-                            floorLit && lookSame;
+                            floorLit && lookSame && badMirror == 0;
         Log("SelfTestRoom[%s]: %s - room %.2f x %.2f x %.2f m; %d emitters, %d px glow blocks (%zu differ, %zu glow blocks lit); lightmap %zu of %d texels "
             "outside half precision (worst %.2e), %d of 5 side, floor, ceiling and back faces lit; eyes %zu of %zu px differ by more than 2 bits (worst %d; "
             "allowed %zu); screen %zu, footprint %zu, front %zu, floor %zu, ceiling %zu, walls %zu, back %zu, outside %zu",
@@ -6413,8 +6686,7 @@ static const double BENCH_STEADY = 1.10, BENCH_STEADY_MS = 0.010;       // stead
 static const double BENCH_PROBE_SLOWER = 1.05, BENCH_PROBE_MS = 0.005;  // a free GPU: the probe's eye min <= its best * 1.05 + 0.005 ms
 
 // The cases of the v11 spec (section 5.2). C and F have Glass, Reflections and the room
-// light; so far Glass and the room light exist, so they draw those (`glass`, `light`) until
-// the reflections' step adds the last. A case is skipped until `ready`.
+// light. A case is skipped until `ready`.
 struct BenchCase
 {
     char id;
@@ -6422,16 +6694,16 @@ struct BenchCase
     bool room;                          // the room round the screen; else the plain curve pass
     bool curved;                        // the curved screen, at each of kBenchCurves; else the flat screen's half-size room layer
     bool v10;                           // the kept v10 eye pass (curveRoomV10Pso)
-    int glass, reflect, light;          // v11's controls, percent (reflect not drawn yet)
+    int glass, reflect, light;          // v11's controls, percent
     bool ready;
 };
 static const BenchCase kBenchCases[] = {
     { 'A', "curve only, glow on", false, true, false, 0, 0, 0, true },
     { 'B', "curve + room, new eye pass, controls 0", true, true, false, 0, 0, 0, true },
-    { 'C', "curve + room, new eye pass, glass 60 / reflections 40 / light 50 (so far glass and light)", true, true, false, 60, 40, 50, true },
+    { 'C', "curve + room, new eye pass, glass 60 / reflections 40 / light 50", true, true, false, 60, 40, 50, true },
     { 'D', "curve + room, v10 eye pass", true, true, true, 0, 0, 0, true },
     { 'E', "flat room at half size, controls 0", true, false, false, 0, 0, 0, true },
-    { 'F', "flat room at half size, glass 60 / reflections 40 / light 50 (so far glass and light)", true, false, false, 60, 40, 50, true },
+    { 'F', "flat room at half size, glass 60 / reflections 40 / light 50", true, false, false, 60, 40, 50, true },
 };
 static const int BENCH_CASES = (int)(sizeof(kBenchCases) / sizeof(kBenchCases[0]));
 
@@ -6546,10 +6818,11 @@ struct BenchGpu
 };
 
 // One benchmark frame, drawn as the frame loop draws one: T0; the room's light (EMIT,
-// T1, LIGHT, T2) when roomCb is set, else T1 and T2 at once; the eye pass (T3) and its
-// copy into the stand-in swapchain image (T4). It waits for the frame; `ms` gets emit,
-// light, eye, copy and total. No logging: it runs 330 times per case and view.
-static bool BenchFrame(App& app, BenchGpu& b, const CurveConstants& cc, D3D12_GPU_VIRTUAL_ADDRESS roomCb, UINT emitters,
+// MIRROR with mirrorH above 0, T1, LIGHT, T2) when roomCb is set, else T1 and T2 at once;
+// the eye pass (T3) and its copy into the stand-in swapchain image (T4). It waits for the
+// frame; `ms` gets emit (with the mirror), light, eye, copy and total. No logging: it runs
+// 330 times per case and view.
+static bool BenchFrame(App& app, BenchGpu& b, const CurveConstants& cc, D3D12_GPU_VIRTUAL_ADDRESS roomCb, UINT emitters, UINT mirrorH,
                        ID3D12Resource* geometry, ID3D12PipelineState* roomPso, double ms[BENCH_PASSES])
 {
     if (!ms || !b.eyes || !b.image || !b.heap || !b.readback || !b.ts || !(b.freq > 0)) return false;
@@ -6563,7 +6836,7 @@ static bool BenchFrame(App& app, BenchGpu& b, const CurveConstants& cc, D3D12_GP
     Transition(cl, t.colorOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);    // as the warp leaves it
     cl->EndQuery(b.heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
     bool recorded = true;
-    if (roomCb != 0) recorded = RecordRoomLight(app, DESC_TEST_SRC, roomCb, geometry, emitters, 0, b.heap.Get());
+    if (roomCb != 0) recorded = RecordRoomLight(app, DESC_TEST_SRC, roomCb, geometry, emitters, mirrorH, 0, b.heap.Get());
     else
     {
         cl->EndQuery(b.heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
@@ -6702,7 +6975,7 @@ static bool BenchCheck(App& app, BenchGpu& b, const BenchScene& sc, const BenchE
     Log("BenchCheck: enter (%s, %ux%u per eye, every %d px)", what, en.cc.ew, en.cc.eh, BENCH_CHECK_STEP);
 
     double ms[BENCH_PASSES];
-    if (!BenchFrame(app, b, en.cc, en.roomCb, emitters, nullptr, en.roomPso, ms)) { Log("BenchCheck: FAIL %s - the frame", what); return false; }
+    if (!BenchFrame(app, b, en.cc, en.roomCb, emitters, en.rc.mirrorH, nullptr, en.roomPso, ms)) { Log("BenchCheck: FAIL %s - the frame", what); return false; }
     RoomLightmap light;
     if (room)
     {
@@ -6714,6 +6987,9 @@ static bool BenchCheck(App& app, BenchGpu& b, const BenchScene& sc, const BenchE
             for (size_t i = 0; i < (size_t)kRoomLightmap * kRoomLightmap * 4; i++)
                 light.texels[(size_t)f * kRoomLightmap * kRoomLightmap * 4 + i] = RoomHalfToFloat(((const uint16_t*)lm[f].data())[i]);
     }
+    RoomMirror mirror;
+    if (room && en.rc.mirrorH > 0 && !ReadbackMirror(app, (int)en.rc.mirrorW, (int)en.rc.mirrorH, mirror))
+    { Log("BenchCheck: FAIL %s - mirror picture readback", what); return false; }
     std::vector<std::vector<unsigned char>> got;
     if (!ReadbackRgba(app, b.eyes.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, got) || got.size() != VIEWS)
     { Log("BenchCheck: FAIL %s - eye readback", what); return false; }
@@ -6727,7 +7003,7 @@ static bool BenchCheck(App& app, BenchGpu& b, const BenchScene& sc, const BenchE
         if (!room) return CurvedPixel(en.cc, e, x, y, cyl, pic, &glowImg, ref);
         if (bc.v10) return room_v10::RoomPixel(en.cc, cyl, *room, view, e, x, y, pic, &glowImg, light, ref);
         RoomEyeInputs inputs;
-        inputs.rc = &en.rc; inputs.picture = &pic; inputs.glow = &glowImg; inputs.light = &light;
+        inputs.rc = &en.rc; inputs.picture = &pic; inputs.glow = &glowImg; inputs.light = &light; inputs.mirror = &mirror;
         return RoomPixel(en.cc, cyl, *room, view, e, x, y, inputs, ref);
     }, &kinds, row.check);
     if (!compared) { Log("BenchCheck: FAIL %s - the reference", what); return false; }
@@ -6809,12 +7085,13 @@ static bool BenchGroup(App& app, BenchGpu& b, const BenchScene& sc, int run, int
         en.roomPso = bc.v10 ? app.curveRoomV10Pso.Get() : app.curveRoomPso.Get();
         if (!bc.room) continue;
         RoomLook look;
-        look.glass = bc.glass; look.light = bc.light;
+        look.glass = bc.glass; look.reflect = bc.reflect; look.light = bc.light;
         const RoomShading shading = MakeRoomShading(room, BENCH_ROOM, sc.world, sc.width * sc.height, look);
         en.rc = MakeRoomConstants(room, shading, layout, view, W, H, 1.0f);
         const RoomConstants& rc = en.rc;
         if (bc.light > 0 && (rc.flags & kRoomFlagLight) == 0) { Log("BenchGroup: FAIL case %c's room light is off (panel %s)", bc.id, room.lightValid ? "fits" : "missing"); return false; }
-        if ((bc.glass > 0) != ((rc.flags & kRoomFlagFinish) != 0)) { Log("BenchGroup: FAIL case %c's finish is %s", bc.id, (rc.flags & kRoomFlagFinish) ? "on" : "off"); return false; }
+        if ((bc.glass > 0 || bc.reflect > 0) != ((rc.flags & kRoomFlagFinish) != 0)) { Log("BenchGroup: FAIL case %c's finish is %s", bc.id, (rc.flags & kRoomFlagFinish) ? "on" : "off"); return false; }
+        if ((bc.reflect > 0) != ((rc.flags & kRoomFlagReflect) != 0)) { Log("BenchGroup: FAIL case %c's reflections are %s", bc.id, (rc.flags & kRoomFlagReflect) ? "on" : "off"); return false; }
         if (!bc.v10) en.roomPso = RoomEyePso(app, rc);
         memcpy(app.roomCbMapped + (size_t)slot * sizeof(RoomConstants), &rc, sizeof(rc));
         en.roomCb = app.roomCbUp->GetGPUVirtualAddress() + (UINT64)slot * sizeof(RoomConstants);
@@ -6848,7 +7125,7 @@ static bool BenchGroup(App& app, BenchGpu& b, const BenchScene& sc, int run, int
                 BenchEntry& en = entries[((size_t)i + j) % n];
                 const bool copyGeometry = geometryPending && en.roomCb != 0;
                 double ms[BENCH_PASSES];
-                if (!BenchFrame(app, b, en.cc, en.roomCb, (UINT)layout.count(), copyGeometry ? app.roomGeomUp[RING].Get() : nullptr, en.roomPso, ms))
+                if (!BenchFrame(app, b, en.cc, en.roomCb, (UINT)layout.count(), en.rc.mirrorH, copyGeometry ? app.roomGeomUp[RING].Get() : nullptr, en.roomPso, ms))
                 {
                     Log("BenchGroup: FAIL %s yaw %.0f, round %d, %s (device %s)", label, kBenchYaws[vi], i,
                         en.caseIndex < 0 ? "the probe" : kBenchCases[en.caseIndex].what, FAILED(app.device->GetDeviceRemovedReason()) ? "removed" : "ok");
@@ -6909,7 +7186,7 @@ static bool BenchGroup(App& app, BenchGpu& b, const BenchScene& sc, int run, int
 static bool BenchRoom(App& app)
 {
     if (!app.device || !app.curveRoomPso || !app.curveRoomLookPso || !app.curveRoomV10Pso || !app.roomCbMapped || !app.roomGeomMapped[RING] ||
-        !app.testTarget.colorOut || !app.ambiTex || !app.roomLight || !app.roomEmitters)
+        !app.testTarget.colorOut || !app.ambiTex || !app.roomLight || !app.roomEmitters || !app.roomMirror || !app.roomMirrorPso)
     { Log("BenchRoom: FAIL the room's passes are not built"); return false; }
     Log("BenchRoom: enter (%dx%d per eye, %d warm-up + %d timed frames per case and view, the cases of a screen drawn in turn with a probe, "
         "Room %d%%, source %dx%d, glow %dx%d)", BENCH_EYE_W, BENCH_EYE_H, BENCH_WARMUP, BENCH_FRAMES, BENCH_ROOM, W, H, app.ambiW, app.ambiH);
@@ -6938,6 +7215,7 @@ static bool BenchRoom(App& app)
     lmSrv.Texture2DArray.MipLevels = 1;
     lmSrv.Texture2DArray.ArraySize = kRoomFaces;
     dev->CreateShaderResourceView(app.roomLight.Get(), &lmSrv, CpuDesc(app, DESC_CURVE_BENCH + 3));
+    dev->CreateShaderResourceView(app.roomMirror.Get(), nullptr, CpuDesc(app, DESC_CURVE_BENCH + 4));
     {
         D3D12_QUERY_HEAP_DESC qd{};
         qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
@@ -7010,9 +7288,6 @@ static bool BenchRoom(App& app)
     {
         const BenchCase& bc = kBenchCases[ci];
         if (!bc.ready) Log("BenchRoom[%c]: skipped - %s is not ready", bc.id, bc.what);
-        else if (bc.reflect > 0)
-            Log("BenchRoom[%c]: %s - drawn with glass %d%% and the room light at %d%%; reflections %d come with the next step", bc.id, bc.what,
-                bc.glass, bc.light, bc.reflect);
     }
     for (int run = 0; run < runs && ok; run++)
         for (int g = 0; g < BENCH_GROUPS && ok; g++)
@@ -7138,6 +7413,7 @@ static bool BenchRoom(App& app)
                 const double emit = statOf('B', curvePct, 0, 0, m, nullptr), light = statOf('B', curvePct, 0, 1, m, nullptr);
                 const double d0 = statOf('D', curvePct, 0, BENCH_TOTAL, m, nullptr), bt0 = statOf('B', curvePct, 0, BENCH_TOTAL, m, nullptr);
                 const double d60 = statOf('D', curvePct, 2, BENCH_TOTAL, m, nullptr), bt60 = statOf('B', curvePct, 2, BENCH_TOTAL, m, nullptr);
+                const double ct0 = statOf('C', curvePct, 0, BENCH_TOTAL, m, nullptr), ct60 = statOf('C', curvePct, 2, BENCH_TOTAL, m, nullptr);
                 if (a0 < 0 || b0 < 0 || a60 < 0 || b60 < 0 || emit < 0 || light < 0)
                 {
                     Log("BenchRoom: acceptance at %d%% (%s) not judged - CONTENDED: (A) and (B) at yaw 0 and 60 each need a steady row, and some have none",
@@ -7152,17 +7428,20 @@ static bool BenchRoom(App& app)
                     if (d < 0 || b < 0) snprintf(out, size, "no steady row");
                     else snprintf(out, size, "%+.3f ms (%s)", b - d, b < d ? "meets" : "misses");
                 };
-                char bVsD0[48], bVsD60[48];
+                char bVsD0[48], bVsD60[48], cVsD0[48], cVsD60[48];
                 belowD(bt0, d0, bVsD0, sizeof(bVsD0));
                 belowD(bt60, d60, bVsD60, sizeof(bVsD60));
+                // Every v11 control on (C: glass, reflections and the room light) against v10 (D).
+                belowD(ct0, d0, cVsD0, sizeof(cVsD0));
+                belowD(ct60, d60, cVsD60, sizeof(cVsD60));
                 Log("BenchRoom: acceptance at %d%% (%s) - (B) eye minus (A) eye: %+.3f ms at yaw 0 (%s), %+.3f ms at yaw 60 (%s), target at most +0.25; "
                     "EMIT + LIGHT %.3f ms (%s, target at most 0.15); (B) total minus (D) total, target below 0: %s at yaw 0, %s at yaw 60; "
-                    "(C) against (D) waits for case C's reflections", curvePct, m ? "min" : "p50", gap0, gap0 <= 0.25 ? "meets" : "misses", gap60,
-                    gap60 <= 0.25 ? "meets" : "misses", emitLight, emitLight <= 0.15 ? "meets" : "misses", bVsD0, bVsD60);
+                    "(C) total minus (D) total, target below 0: %s at yaw 0, %s at yaw 60", curvePct, m ? "min" : "p50", gap0, gap0 <= 0.25 ? "meets" : "misses",
+                    gap60, gap60 <= 0.25 ? "meets" : "misses", emitLight, emitLight <= 0.15 ? "meets" : "misses", bVsD0, bVsD60, cVsD0, cVsD60);
             }
         }
-        // What the v11 look costs so far: C (and F, flat) draw Glass 60 and the room light at 50%,
-        // B (and E) the same room without them. Information, not a target.
+        // What the v11 look costs: C (and F, flat) draw Glass 60, Reflections 40 and the room light
+        // at 50%, B (and E) the same room without them. Information, not a target.
         auto lampCost = [&](char with, char without, int curvePct, bool useMin, char* out, size_t size)
         {
             if (!out || size == 0) return;
@@ -7188,10 +7467,10 @@ static bool BenchRoom(App& app)
             {
                 const int curvePct = (int)std::lround(kBenchCurves[k] * 100.0f);
                 lampCost('C', 'B', curvePct, useMin != 0, line, sizeof(line));
-                Log("BenchRoom: glass and the room light at %d%% (%s), (C) minus (B) in ms: %s", curvePct, useMin ? "min" : "p50", line);
+                Log("BenchRoom: glass, reflections and the room light at %d%% (%s), (C) minus (B) in ms: %s", curvePct, useMin ? "min" : "p50", line);
             }
             lampCost('F', 'E', 0, useMin != 0, line, sizeof(line));
-            Log("BenchRoom: glass and the room light, flat (%s), (F) minus (E) in ms: %s", useMin ? "min" : "p50", line);
+            Log("BenchRoom: glass, reflections and the room light, flat (%s), (F) minus (E) in ms: %s", useMin ? "min" : "p50", line);
         }
     }
     power.Release();
@@ -7817,7 +8096,8 @@ static void RunFrameLoop(App& app)
                         view.dither = true;
                         view.cyl = roomFlat ? Cylinder() : cylinder;
                         RoomLook look;
-                        look.glass = app.opt.roomGlass; look.light = app.opt.roomLight; look.lightRgb = app.opt.roomLightColor;
+                        look.glass = app.opt.roomGlass; look.reflect = app.opt.roomReflect; look.light = app.opt.roomLight;
+                        look.lightRgb = app.opt.roomLightColor;
                         const RoomShading shading = MakeRoomShading(room, app.opt.room, app.opt.worldColor, screen.size.width * screen.size.height, look);
                         const RoomConstants rc = MakeRoomConstants(room, shading, roomLayout, view, app.srcW, app.srcH, alpha);
                         memcpy(app.roomCbMapped + (size_t)ring * sizeof(RoomConstants), &rc, sizeof(rc));
@@ -7829,7 +8109,7 @@ static void RunFrameLoop(App& app)
                             geometry = app.roomGeomUp[ring].Get();
                             roomGeometryDirty = false;
                         }
-                        if (!RecordRoomLight(app, DESC_SRC0 + (UINT)source->index, roomCb, geometry, (UINT)roomLayout.count(),
+                        if (!RecordRoomLight(app, DESC_SRC0 + (UINT)source->index, roomCb, geometry, (UINT)roomLayout.count(), rc.mirrorH,
                                              splitTimes ? timeBase : UINT_MAX))
                             splitDone = false;
                         roomEyePso = RoomEyePso(app, rc);
@@ -7846,8 +8126,8 @@ static void RunFrameLoop(App& app)
                         {
                             roomV10Logged = true;
                             Log("RunFrameLoop: the room is drawn with the kept v10 eye pass (--room-v10-eye)%s",
-                                app.opt.roomLight > 0 || app.opt.roomGlass > 0
-                                    ? " - it ignores the room light's panel and the glass (the light is still in the lightmap)" : "");
+                                app.opt.roomLight > 0 || app.opt.roomGlass > 0 || app.opt.roomReflect > 0
+                                    ? " - it ignores the room light's panel, the glass and the reflections (the light is still in the lightmap)" : "");
                         }
                         if (!RecordCurvedScreen(app, DESC_CURVE_MAIN, target.colorOut.Get(), cc, app.eyeOut.Get(), app.eimgs[eyeImage.index].texture, roomCb,
                                                 splitTimes ? timeBase : UINT_MAX, nullptr, v10Eye ? app.curveRoomV10Pso.Get() : roomEyePso))
