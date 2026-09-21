@@ -501,6 +501,13 @@ public partial class MainWindow : Window
         bitmap.Render(this);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using (var file = File.Create(Path.Combine(output, "desktop-preview.png"))) encoder.Save(file);
+        // The curved screen in the top view, so a glance at the smoke output shows it.
+        CurveSlider.Value = 70; UpdateLayout();
+        var curvedShot = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        curvedShot.Render(this);
+        var curvedEncoder = new PngBitmapEncoder(); curvedEncoder.Frames.Add(BitmapFrame.Create(curvedShot));
+        using (var file = File.Create(Path.Combine(output, "desktop-curved.png"))) curvedEncoder.Save(file);
+        CurveSlider.Value = 0;
         SettingsScroll.ScrollToEnd(); UpdateLayout();
         var bottom = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32);
         bottom.Render(this);
