@@ -11,6 +11,7 @@
 #include "frame_timing.h"
 #include "screen_curve.h"
 #include "ambilight.h"
+#include "srgb.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -728,10 +729,30 @@ static void TestScreenCurve()
     Check(CurvedPixel(c, 0, 32, 24, cyl, pic, &glowImg, rgb) && std::fabs(rgb[0] - 200 / 255.0f) < 1e-5f && std::fabs(rgb[2] - 50 / 255.0f) < 1e-5f,
         "the middle of the eye shows the picture");
     // Pixel (2, 24) looks well beside the screen, into the glow: premultiplied glow
-    // over the world colour.
+    // over the world colour, blended in linear light as the compositor does.
     const float a80 = 80 / 255.0f;
-    Check(CurvedPixel(c, 0, 2, 24, cyl, pic, &glowImg, rgb) && std::fabs(rgb[0] - 0.1f * (1 - a80)) < 1e-5f &&
-        std::fabs(rgb[2] - (a80 + 0.3f * (1 - a80))) < 1e-5f, "beside the screen the glow lies over the world colour");
+    Check(CurvedPixel(c, 0, 2, 24, cyl, pic, &glowImg, rgb) &&
+        std::fabs(rgb[0] - LinearToSrgb(SrgbToLinear(0.1f) * (1 - a80))) < 1e-5f &&
+        std::fabs(rgb[2] - LinearToSrgb(SrgbToLinear(a80) + SrgbToLinear(0.3f) * (1 - a80))) < 1e-5f,
+        "beside the screen the glow lies over the world colour, in linear light");
+    CurveConstants stored = c;
+    stored.linearBlend = 0;
+    Check(CurvedPixel(stored, 0, 2, 24, cyl, pic, &glowImg, rgb) && std::fabs(rgb[0] - 0.1f * (1 - a80)) < 1e-5f &&
+        std::fabs(rgb[2] - (a80 + 0.3f * (1 - a80))) < 1e-5f, "a plain UNORM swapchain blends the stored values");
+    // A glow the colour of the world, premultiplied in linear light, disappears into
+    // it - the review's case: premultiplied in encoded values it made a dark ring.
+    {
+        const float w = 74 / 255.0f, alpha = 128 / 255.0f;
+        const unsigned char same = (unsigned char)lroundf(LinearToSrgb(SrgbToLinear(w) * alpha) * 255.0f);
+        std::vector<unsigned char> sameGlow(4 * 4 * 4);
+        for (size_t i = 0; i < sameGlow.size(); i += 4) { sameGlow[i] = sameGlow[i + 1] = sameGlow[i + 2] = same; sameGlow[i + 3] = 128; }
+        RgbaImage sameImg{ sameGlow.data(), 4, 4, 16 };
+        CurveConstants grey = c;
+        grey.world[0] = grey.world[1] = grey.world[2] = w;
+        float over[3];
+        Check(CurveSampleColour(grey, 1, 0.5f, 0.5f, pic, &sameImg, over) && std::fabs(over[0] - w) < 2.0f / 255.0f,
+            "a glow the colour of the world blends into it without a ring");
+    }
     Check(CurvedPixel(c, 0, 32, 0, cyl, pic, &glowImg, rgb) && rgb[0] == 0.1f && rgb[1] == 0.2f && rgb[2] == 0.3f,
         "above the glow is the world colour");
     Check(CurvedPixel(dark, 0, 2, 24, cyl, pic, nullptr, rgb) && rgb[0] == 0.1f && rgb[2] == 0.3f, "with no glow the surround is the world colour");
@@ -783,19 +804,29 @@ static void TestScreenCurve()
     Check(AmbilightPixel(a, ring.data(), 64, 48, rgba) && rgba[3] == 0, "behind the screen there is no glow");
     // Left of the screen, above and below the middle: red and blue, and softer (more
     // mixed) further out than close in.
-    auto glowAt = [&](float mx, float my, float out[4])
+    auto glowAtWith = [&](const AmbiConstants& k, float mx, float my, float out[4])
     {
-        const int gx = (int)((mx / a.rectW + 0.5f) * (float)a.gw), gy = (int)((0.5f - my / a.rectH) * (float)a.gh);
-        return AmbilightPixel(a, ring.data(), gx, gy, out);
+        const int gx = (int)((mx / k.rectW + 0.5f) * (float)k.gw), gy = (int)((0.5f - my / k.rectH) * (float)k.gh);
+        return AmbilightPixel(k, ring.data(), gx, gy, out);
     };
+    auto glowAt = [&](float mx, float my, float out[4]) { return glowAtWith(a, mx, my, out); };
     float nearTop[4], farTop[4], nearBottom[4];
     Check(glowAt(-0.5f * a.screenW - 0.15f, 0.7f, nearTop) && glowAt(-0.5f * a.screenW - 0.75f, 0.7f, farTop) &&
           glowAt(-0.5f * a.screenW - 0.15f, -0.7f, nearBottom), "glow beside the screen");
     Check(nearTop[0] > 2 * nearTop[2] && nearBottom[2] > 2 * nearBottom[0], "next to the edge the glow takes the local colour");
-    Check(farTop[0] / farTop[3] < nearTop[0] / nearTop[3] && farTop[2] / farTop[3] > nearTop[2] / nearTop[3],
-        "further out it blends more of the border: softer");
+    // Colour = the stored value back in linear light, divided by alpha.
+    auto hue = [](const float g[4], int ch) { return SrgbToLinear(g[ch]) / g[3]; };
+    Check(hue(farTop, 0) < hue(nearTop, 0) && hue(farTop, 2) > hue(nearTop, 2), "further out it blends more of the border: softer");
     Check(nearTop[3] > farTop[3] && nearTop[3] <= 0.85f, "brightness falls off, never above the strength");
-    for (int ch = 0; ch < 3; ch++) Check(nearTop[ch] <= nearTop[3] + 1e-6f, "the colour is premultiplied by its own alpha");
+    for (int ch = 0; ch < 3; ch++)
+        Check(SrgbToLinear(nearTop[ch]) <= nearTop[3] + 1e-6f, "the colour is premultiplied by its own alpha, in linear light");
+    AmbiConstants encoded = a;
+    encoded.linearBlend = 0;
+    float plain[4];
+    Check(glowAtWith(encoded, -0.5f * a.screenW - 0.15f, 0.7f, plain) &&
+          std::fabs(plain[0] - LinearToSrgb(SrgbToLinear(plain[0] / plain[3]) * plain[3])) > 1e-3f &&
+          std::fabs(LinearToSrgb(SrgbToLinear(plain[0] / plain[3]) * plain[3]) - nearTop[0]) < 1e-5f,
+        "a plain UNORM swapchain premultiplies the stored colour, an sRGB one premultiplies in linear light");
     // Strength scales brightness only.
     AmbiConstants dim = a;
     dim.intensity = 0.3f;
@@ -803,7 +834,7 @@ static void TestScreenCurve()
     Check(AmbilightPixel(dim, ring.data(), (int)((((-0.5f * a.screenW - 0.15f) / a.rectW) + 0.5f) * (float)a.gw),
                          (int)((0.5f - 0.7f / a.rectH) * (float)a.gh), dimTop) &&
           std::fabs(dimTop[3] / nearTop[3] - 0.3f / 0.85f) < 1e-4f &&
-          std::fabs(dimTop[0] / dimTop[3] - nearTop[0] / nearTop[3]) < 1e-5f, "the strength dims the glow without changing its colour");
+          std::fabs(hue(dimTop, 0) - hue(nearTop, 0)) < 1e-4f, "the strength dims the glow without changing its colour");
     // The bezel: dark right against the screen, bright a little further out.
     float touching[4], clear[4];
     Check(glowAt(-0.5f * a.screenW - 0.01f, 0.0f, touching) && glowAt(-0.5f * a.screenW - 0.2f, 0.0f, clear), "glow either side of the bezel");

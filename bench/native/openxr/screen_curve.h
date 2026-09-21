@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include "srgb.h"
 
 // Curved screen: a real cylinder, drawn for each eye from that eye's tracked
 // position by a ray-cast pass (kCurveHlsl in xrapp5.cpp) into eye buffers that
@@ -156,7 +157,8 @@ struct CurveEye                         // 5 x float4 in the constant buffer
 struct CurveConstants                   // must match cbuffer C in kCurveHlsl (56 DWORDs)
 {
     uint32_t ew = 0, eh = 0;            // eye buffer size
-    uint32_t glowOn = 0, pad0 = 0;
+    uint32_t glowOn = 0;
+    uint32_t linearBlend = 1;           // 1: sRGB swapchain - blend the glow over the world in linear light
     float radius = 0, halfWrap = 0, halfWidth = 0, halfHeight = 0;
     float glowHalfW = 0, glowHalfH = 0; // the glow's rectangle, half size: arc metres x metres
     float glowRadius = 0, pad1 = 0;     // the glow's cylinder (same axis, a little further away)
@@ -223,7 +225,8 @@ inline bool SampleRgba(const RgbaImage& img, float u, float v, float out[4])
 }
 
 // What one sample shows: the picture; the glow blended (premultiplied) over the
-// world colour; or the world colour.
+// world colour - in linear light for an sRGB swapchain, as the compositor blends the
+// flat screen's glow layer; or the world colour.
 inline bool CurveSampleColour(const CurveConstants& c, int kind, float u, float v, const RgbaImage& picture,
                               const RgbaImage* glow, float out[3])
 {
@@ -237,7 +240,9 @@ inline bool CurveSampleColour(const CurveConstants& c, int kind, float u, float 
         return true;
     }
     if (!glow || !SampleRgba(*glow, u, v, s)) return false;
-    for (int ch = 0; ch < 3; ch++) out[ch] = s[ch] + c.world[ch] * (1.0f - s[3]);
+    for (int ch = 0; ch < 3; ch++)
+        out[ch] = c.linearBlend ? LinearToSrgb(SrgbToLinear(s[ch]) + SrgbToLinear(c.world[ch]) * (1.0f - s[3]))
+                                : s[ch] + c.world[ch] * (1.0f - s[3]);
     return true;
 }
 

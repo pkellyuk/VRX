@@ -48,7 +48,7 @@ For the default screen (5.7 m wide at 3 m):
 100% wraps further than any real screen; a curved monitor is about 40° (1000R at 700 mm
 wide). A wide screen very close by would otherwise wrap past your head, so the wrap is
 reduced until the edges stay at least 55% of the screen distance away (a 10 m screen at
-1 m ends up at about 30°).
+1 m ends up at about 21°).
 
 Cost: one extra pass over both eye buffers at the recommended size (four ray casts and
 usually one texture sample per pixel), plus copying them into the swapchain. The eye
@@ -58,29 +58,48 @@ costs nothing.
 ## Ambilight
 
 A small glow texture (256 px wide) around the screen, 22% of the screen's width on
-every side (`ambilight.h`, `kAmbiHlsl`):
+every side (`ambilight.h`, `kAmbiHlsl`, built in two passes):
 
-- each glow pixel takes the nearest point on the screen's border and averages a 5x5
-  patch of the picture just inside it, so every side glows with its own colour;
-- brightness falls off with the square of the distance outside the screen, measured in
-  **metres** so the corners are not stretched, and reaches zero at the edge of the
-  glow;
+- **the ring:** 256 points evenly spaced round the screen's border, each averaging a
+  4x4 patch of the picture just inside the edge (6% of the screen's smaller side deep);
+- **the glow:** every glow pixel blends the whole ring, each point weighted
+  1 / (r^2 + s^2)^1.5 for its distance r (s = 3% of the screen's width) - how light
+  from a strip along the edge spreads across a wall. Close to the edge the nearby points
+  win, so the glow follows the local colour; further out a wider stretch of the border
+  counts, so it softens with distance. The first version took the colour of the single
+  nearest border point, which pushed every feature at the edge straight outwards as a
+  line;
+- brightness is separate from colour: it falls off with the square of the distance
+  outside the screen, measured in **metres** so the corners are round, reaches zero at
+  the edge of the glow, and is scaled by **Ambilight strength**;
 - right against the screen it rises from dark over a thin bezel (8% of the margin,
   about 10 cm on the default screen). Without the bezel, the first build made a few
   pixels at the screen's edge flicker in play. The glow was at full brightness right
   against the screen, so the compositor's filtering of the screen's border mixed game
   and glow, and the warped edge columns change from frame to frame. Against a dark
   bezel neither shows;
-- the colour is stored already multiplied by its alpha: what a compositor wants for a
-  blended layer, and also exactly right if a runtime ignores the alpha, because the
-  world behind the screen is black;
+- the colour is stored premultiplied by its alpha, and with an sRGB swapchain (what
+  SteamVR gives) premultiplied in **linear light** and encoded again. A compositor
+  decodes each layer and blends in linear light, and a review found that a glow
+  premultiplied in encoded values would have put a dark ring round a flat screen over
+  any non-black world colour (a glow the colour of the world came out 23% darker than
+  it). The curved pass blends the glow over the world colour the same way. Over black
+  the stored value is exactly right even if a runtime ignores the alpha;
 - each frame is blended 12% into the previous glow, so the surround drifts with the
-  scene instead of flickering with it.
+  scene instead of flickering with it. That history is kept at 16-bit float: in 8 bits
+  a fade to black stalled up to 4 steps short and left a tint.
 
-With a flat screen the glow is its own quad layer, submitted first and 2 cm behind the
-screen, for any compositor that sorts layers by distance. With a curved screen it is a
-flat rectangle just behind the middle of the screen in the same ray-cast pass. The
-curved screen's wrapped edges come in front of its inner part, as a real one would.
+With a flat screen the glow is its own quad layer, submitted after the world colour and
+before the screen, 2 cm behind it for any compositor that sorts layers by distance. With
+a curved screen it lies on a second cylinder round the same axis, 2 cm further away,
+laid out in the screen's own arc metres, so it wraps round with the screen; the curved
+pass draws it over the world colour.
+
+## World colour
+
+The space around the screen can be any colour instead of black. Behind a flat screen it
+is a projection layer of one colour (an 8 x 8 image per eye; none at all for black);
+a curved screen's pass fills its background with it.
 
 ## Tests
 
@@ -88,16 +107,23 @@ curved screen's wrapped edges come in front of its inner part, as a real one wou
   a fully curved screen with the glow behind it, seen by two eyes, one turned by 3°.
   0 of 98,304 pixels differ by more than 2 bits (worst 1). `--selftest --dump` writes
   both eyes to `curve-eyes.ppm`.
-- `SelfTestAmbilight` (GPU vs `AmbilightReference`): the glow agrees to the last bit.
+- `SelfTestAmbilight` (GPU vs `AmbilightReference`): the ring and the glow, blended in
+  linear light, agree to within one bit.
 - `TestScreenCurve` (`playback_test.cpp`): the cylinder, rays to the middle, the edge
   and just past it, the top, a gentle curve's precision (a 1% curve has a 467 m
-  radius), the clamp, the glow, the smoothed outline and the bezel.
+  radius), the clamp, the glow cylinder beside a curved screen, the world colour, the
+  smoothed outline, the ring, softening with distance, strength, the bezel, and a glow
+  the colour of the world disappearing into it.
+- An adversarial review (five reviewers, one lens each; two skeptics per finding) found
+  the linear-light blend, the 8-bit history stall, stale docs and three desktop issues
+  (recovering from a half-typed colour, Apply to all stopping at the first unwritable
+  profile, dragging a curved screen's ends in the top view); all are fixed.
 
 ## Limits
 
-- Both need the fixed screen. With **Screen follows my head** the picture is your whole
-  view, so there is nothing to curve and nowhere for a glow; the renderer logs that it
-  ignores them.
+- **Screen follows my head** still has a screen - it is re-placed in front of you every
+  frame - so the curve, glow and world colour work with it. Only the `--head-locked`
+  diagnostic, which makes the picture your whole view, ignores them (and logs so).
 - The curved screen is resampled once more than the flat one (from the warped picture
   into the eye buffer). At the default size the two are about the same resolution.
 - The glow is built from the captured frame, not from the warped picture, so it ignores
@@ -108,5 +134,6 @@ curved screen's wrapped edges come in front of its inner part, as a real one wou
 - `bench/native/openxr/screen_curve.h` - the cylinder, the ray casts and the CPU reference
 - `bench/native/openxr/ambilight.h` - the glow's constants and CPU reference
 - `bench/native/openxr/xrapp5.cpp` - `kCurveHlsl`, `kAmbiHlsl`, the eye buffers, the layers, the self-tests
-- `bench/native/openxr/playback_test.cpp` - `TestScreenCurve`, the v8 snapshot
-- `desktop/VRX.Desktop` - the **Screen curve** slider (with the arc in the top view) and the **Ambilight** checkbox
+- `bench/native/openxr/playback_test.cpp` - `TestScreenCurve`, the v8 and v9 snapshots
+- `bench/native/openxr/srgb.h` - the sRGB transfer function shared by both references
+- `desktop/VRX.Desktop` - the **Screen curve** slider (with the arc in the top view), the **Ambilight** checkbox and strength, the **World colour** presets and box

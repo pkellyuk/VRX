@@ -258,6 +258,7 @@ public partial class MainWindow : Window
     ];
     private const string CustomColour = "Custom";
     private bool worldSyncing;
+    private string lastWorldHex = "#000000";      // the last whole colour in the box
 
     private void FillWorldList()
     {
@@ -279,9 +280,19 @@ public partial class MainWindow : Window
     private void WorldHexChanged(object sender, TextChangedEventArgs e)
     {
         if (WorldSwatch == null || WorldList == null) return;
-        if (!Profile.TryParseColor(WorldHex.Text, out int rgb)) { WorldSwatch.Fill = Brushes.Transparent; return; }
+        if (!Profile.TryParseColor(WorldHex.Text, out int rgb))
+        {
+            // Half a colour: show it as Custom, so picking any preset - even the one
+            // that was showing - fires and puts a whole colour back.
+            WorldSwatch.Fill = Brushes.Transparent;
+            worldSyncing = true;
+            WorldList.SelectedItem = CustomColour;
+            worldSyncing = false;
+            return;
+        }
         WorldSwatch.Fill = new SolidColorBrush(Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb));
         string hex = Profile.FormatColor(rgb);
+        lastWorldHex = hex;
         string match = CustomColour;
         foreach (var preset in WorldPresets) if (preset.Hex == hex) match = preset.Name;
         worldSyncing = true;
@@ -290,33 +301,49 @@ public partial class MainWindow : Window
         SettingsChanged(sender, e);
     }
 
+    // Leaving the box with half a colour in it puts the last whole one back, so the
+    // other settings are never left unable to save.
+    private void WorldHexLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (Profile.TryParseColor(WorldHex.Text, out _)) return;
+        WorldHex.Text = lastWorldHex;
+    }
+
     // The top view shows the curve: the edges come towards the viewer (down the
     // canvas) by the sag of the arc, using the same geometry as the renderer
     // (screen_curve.h: kCurveMaxWrap 70 degrees, edges never nearer than 55 % of
     // the distance). A quadratic Bezier whose control point is one sag above the
     // ends passes exactly through the middle of the screen.
+    private double arcSagPx;                       // how far below the straight line the arc's ends are drawn
+
     private void DrawCurve(double centre, double y)
     {
         double fraction = CurveSlider.Value / 100.0;
         bool curved = fraction > 0;
         ScreenArc.Visibility = curved ? Visibility.Visible : Visibility.Collapsed;
         ScreenLine.Visibility = curved ? Visibility.Collapsed : Visibility.Visible;
+        arcSagPx = 0;
         if (!curved) return;
 
         double wrap = fraction * 70 * Math.PI / 180;
         double sag = WidthSlider.Value / wrap * (1 - Math.Cos(wrap / 2));
         sag = Math.Min(sag, DistanceSlider.Value * 0.45) * 17;
+        arcSagPx = sag;
         var figure = new PathFigure { StartPoint = new Point(ScreenLine.X1, y + sag) };
         figure.Segments.Add(new QuadraticBezierSegment(new Point(centre, y - sag), new Point(ScreenLine.X2, y + sag), true));
         var geometry = new PathGeometry();
         geometry.Figures.Add(figure);
         ScreenArc.Data = geometry;
     }
+    // Close enough to the drawn screen to drag it: the straight line, or anywhere
+    // between the middle of a curved screen and its ends, which are drawn lower.
+    private bool OverScreen(Point point) =>
+        point.X >= ScreenLine.X1 - 12 && point.X <= ScreenLine.X2 + 12 &&
+        point.Y >= ScreenLine.Y1 - 18 && point.Y <= ScreenLine.Y1 + arcSagPx + 18;
     private void PreviewDown(object sender, MouseButtonEventArgs e)
     {
         if (profile == null) return;
-        var point = e.GetPosition(Preview);
-        if (Math.Abs(point.Y - ScreenLine.Y1) > 18 || point.X < ScreenLine.X1 - 12 || point.X > ScreenLine.X2 + 12) return;
+        if (!OverScreen(e.GetPosition(Preview))) return;
         dragging = true; Preview.CaptureMouse(); e.Handled = true;
     }
     private void PreviewMove(object sender, MouseEventArgs e)
@@ -394,9 +421,12 @@ public partial class MainWindow : Window
         if (answer != MessageBoxResult.OK) { Status.Text = "Apply to all cancelled · nothing was changed"; return; }
         try
         {
-            int applied = store.ApplyToAll(profile, out int skipped);
-            Status.Text = skipped == 0 ? $"Settings applied to all {applied} saved game{(applied == 1 ? "" : "s")}" :
-                $"Settings applied to {applied} saved game{(applied == 1 ? "" : "s")} · {skipped} unreadable profile{(skipped == 1 ? "" : "s")} left unchanged";
+            int applied = store.ApplyToAll(profile, out int skipped, out int failed);
+            string text = skipped == 0 && failed == 0 ? $"Settings applied to all {applied} saved game{(applied == 1 ? "" : "s")}" :
+                $"Settings applied to {applied} saved game{(applied == 1 ? "" : "s")}";
+            if (skipped > 0) text += $" · {skipped} unreadable profile{(skipped == 1 ? "" : "s")} left unchanged";
+            if (failed > 0) text += $" · {failed} could not be written (read-only or in use) and keep their old settings";
+            Status.Text = text;
         }
         catch (Exception ex) { Status.Text = "Could not apply to all games: " + ex.Message; }
     }
@@ -505,6 +535,11 @@ public partial class MainWindow : Window
         if (ReadProfile().ScreenCurve != 40 || !ReadProfile().Ambilight) throw new Exception("The curve slider and ambilight checkbox are not mapped to settings");
         if (ScreenArc.Visibility != Visibility.Visible || ScreenLine.Visibility != Visibility.Collapsed || ScreenArc.Data == null)
             throw new Exception("A curved screen must be drawn as the arc in the top view");
+        double savedWidth = WidthSlider.Value, savedCurve = CurveSlider.Value;
+        WidthSlider.Value = 10; CurveSlider.Value = 100;
+        if (arcSagPx < 20 || !OverScreen(new Point(ScreenLine.X1 + 2, ScreenLine.Y1 + arcSagPx)) || OverScreen(new Point(ScreenLine.X1, ScreenLine.Y1 + arcSagPx + 40)))
+            throw new Exception("The ends of a curved screen must be draggable in the top view");
+        WidthSlider.Value = savedWidth; CurveSlider.Value = savedCurve;
         CurveSlider.Value = 0;
         AmbilightCheck.IsChecked = false;
         if (AmbiStrengthSlider.Value != 85 || AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength should default to 85 % and follow the ambilight checkbox");
@@ -523,6 +558,12 @@ public partial class MainWindow : Window
         bool rejected = false;
         try { ReadProfile(); } catch (InvalidDataException) { rejected = true; }
         if (!rejected) throw new Exception("A half-typed world colour must not be saved");
+        if (WorldList.SelectedItem as string != "Custom") throw new Exception("A half-typed world colour must show as Custom");
+        WorldList.SelectedItem = "Charcoal";
+        if (WorldHex.Text != "#1C1C1E") throw new Exception("Picking a preset after a half-typed colour must put a whole colour back");
+        WorldHex.Text = "#1C";
+        WorldHexLostFocus(WorldHex, new RoutedEventArgs());
+        if (WorldHex.Text != "#1C1C1E") throw new Exception("Leaving the box with half a colour must restore the last whole one");
         WorldHex.Text = "#000000";
         if (WorldList.SelectedItem as string != "Black (default)") throw new Exception("Typing a preset's colour must select the preset");
         if (SubpixelCheck.IsChecked != true) throw new Exception("The sub-pixel warp should default on");
@@ -602,7 +643,8 @@ public partial class MainWindow : Window
         string broken = Path.Combine(allStore.Root, "profiles", "broken.json");
         File.WriteAllText(broken, "{ not json");
         var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false };
-        if (allStore.ApplyToAll(chosen, out int skippedAll) != 2 || skippedAll != 1) throw new Exception("Apply to all must update both saved games and skip the unreadable one");
+        if (allStore.ApplyToAll(chosen, out int skippedAll, out int failedAll) != 2 || skippedAll != 1 || failedAll != 0)
+            throw new Exception("Apply to all must update both saved games and skip the unreadable one");
         var afterA = allStore.Load(gameA.ExecutablePath);
         var afterB = allStore.Load(gameB.ExecutablePath);
         if (afterA.Width != 8.5 || afterB.Width != 8.5 || afterA.ScreenCurve != 30 || !afterB.Ambilight || afterB.SteadyDepth || afterB.FuseModels)
@@ -611,6 +653,16 @@ public partial class MainWindow : Window
             throw new Exception("Apply to all must keep each game's own window");
         if (File.ReadAllText(broken) != "{ not json") throw new Exception("Apply to all must leave an unreadable profile untouched");
         if (File.Exists(allStore.FileFor(chosen.ExecutablePath))) throw new Exception("Apply to all must not create profiles for games that were never set up");
+        // A game whose file cannot be written (read-only) keeps its settings; the others still change.
+        var lockedFile = allStore.FileFor(gameA.ExecutablePath);
+        var otherGame = new Profile { ExecutablePath = gameB.ExecutablePath, PreferredWindowTitle = "Game B", Width = 2 };
+        allStore.Save(otherGame);
+        File.SetAttributes(lockedFile, File.GetAttributes(lockedFile) | FileAttributes.ReadOnly);
+        int appliedLocked, skippedLocked, failedLocked;
+        try { appliedLocked = allStore.ApplyToAll(new Profile { ExecutablePath = chosen.ExecutablePath, Width = 9 }, out skippedLocked, out failedLocked); }
+        finally { File.SetAttributes(lockedFile, File.GetAttributes(lockedFile) & ~FileAttributes.ReadOnly); }
+        if (appliedLocked != 1 || failedLocked != 1 || allStore.Load(gameB.ExecutablePath).Width != 9 || allStore.Load(gameA.ExecutablePath).Width != 8.5)
+            throw new Exception($"Apply to all must carry on past a locked profile (applied {appliedLocked}, skipped {skippedLocked}, failed {failedLocked})");
         if (ApplyAllButton == null) throw new Exception("The Apply to all button is missing");
 
         PutProfile(one);

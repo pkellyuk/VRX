@@ -1,6 +1,6 @@
-VRX 1.5.0 - Windows x64
+VRX 1.6.0 - Windows x64
 
-Install with VRX-Setup-1.5.0.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.6.0.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -33,13 +33,15 @@ which is very slightly sharper.
 "Screen curve" (per game, default 0%, applies live) wraps the screen around you like
 a curved television. A curved screen is drawn as a real cylinder for each eye, so its
 outline, perspective and head-movement parallax are right; the top view in the
-desktop app draws the shape. 100% is a wider wrap than any real screen. It needs the
-fixed screen (not head-follow).
+desktop app draws the shape. 100% is a wider wrap than any real screen.
 
 "Ambilight - glow around the screen" (per game, default off, applies live) spreads the
-colours at the edge of the picture into the darkness around the screen, rising from a
-thin dark bezel and fading out, like the bias lighting behind a television. It needs
-the fixed screen.
+colours at the edge of the picture softly into the darkness around the screen, rising
+from a thin dark bezel and fading out, like the bias lighting behind a television. It
+wraps round a curved screen. "Ambilight strength" sets its brightness.
+
+"World colour" (per game, default black, applies live) colours the space around the
+screen: presets or any #RRGGBB.
 
 "Apply to all" copies the settings shown to every game already set up, after an
 OK/Cancel warning. Each game keeps its own path and window.

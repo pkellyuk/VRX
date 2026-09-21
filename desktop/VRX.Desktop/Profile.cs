@@ -126,31 +126,45 @@ public sealed class ProfileStore(string root)
 
     // "Apply to all": every saved game takes these settings, keeping its own path and
     // window. A file that cannot be read, or does not belong to the game it names, is
-    // left exactly as it was and counted in `skipped`. Games not set up yet are not
-    // touched: they still start from the base settings.
-    public int ApplyToAll(Profile settings, out int skipped)
+    // left exactly as it was and counted in `skipped`; one that cannot be written
+    // (read-only, locked by another program) is counted in `failed`, and the rest
+    // still go ahead. Games not set up yet are not touched: they still start from the
+    // base settings.
+    public int ApplyToAll(Profile settings, out int skipped, out int failed)
     {
         ArgumentNullException.ThrowIfNull(settings);
         skipped = 0;
+        failed = 0;
         if (!settings.Valid()) throw new InvalidDataException("Settings are outside the allowed range or shortcut keys conflict.");
 
         int applied = 0;
         foreach (string file in SavedProfileFiles())
         {
             Profile? saved;
-            try { saved = JsonSerializer.Deserialize<Profile>(File.ReadAllText(file)); }
-            catch (Exception ex) when (ex is IOException or JsonException) { skipped++; continue; }
-            if (saved == null || string.IsNullOrWhiteSpace(saved.ExecutablePath) ||
-                !string.Equals(Path.GetFullPath(FileFor(saved.ExecutablePath)), Path.GetFullPath(file), StringComparison.OrdinalIgnoreCase))
+            try
+            {
+                saved = JsonSerializer.Deserialize<Profile>(File.ReadAllText(file));
+                if (saved == null || string.IsNullOrWhiteSpace(saved.ExecutablePath) ||
+                    !string.Equals(Path.GetFullPath(FileFor(saved.ExecutablePath)), Path.GetFullPath(file), StringComparison.OrdinalIgnoreCase))
+                {
+                    skipped++;
+                    continue;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
                 skipped++;
                 continue;
             }
-            var copy = JsonSerializer.Deserialize<Profile>(JsonSerializer.Serialize(settings))!;
-            copy.ExecutablePath = saved.ExecutablePath;
-            copy.PreferredWindowTitle = saved.PreferredWindowTitle;
-            Save(copy);
-            applied++;
+            try
+            {
+                var copy = JsonSerializer.Deserialize<Profile>(JsonSerializer.Serialize(settings))!;
+                copy.ExecutablePath = saved.ExecutablePath;
+                copy.PreferredWindowTitle = saved.PreferredWindowTitle;
+                Save(copy);
+                applied++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { failed++; }
         }
         return applied;
     }

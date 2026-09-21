@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include "srgb.h"
 
 // Ambilight: the colours at the edge of the picture spread out around the screen,
 // like the bias lighting behind a television. A small glow texture covers the
@@ -26,10 +27,14 @@
 // to the screen - at full brightness against the screen the screen's edge pixels
 // flickered in play. Strength scales it.
 //
-// The colour is stored multiplied by its alpha: what a compositor wants for a
-// blended layer, and exactly right if a runtime ignores the alpha, because the world
-// behind the screen is black. Each frame is blended into the previous glow, so it
-// drifts with the scene instead of flickering.
+// The colour is stored multiplied by its alpha - premultiplied - and, with an sRGB
+// swapchain (linearBlend), multiplied in LINEAR light and encoded again: the
+// compositor decodes each layer and blends in linear light, so a glow premultiplied
+// in encoded values darkened any non-black world colour into a ring round the
+// screen. Over black the stored value is also exactly right if a runtime ignores
+// the alpha. Each frame is blended into the previous glow (kept at 16-bit float so
+// a fade-out does not stall a few 8-bit steps short), so it drifts with the scene
+// instead of flickering.
 //
 // The taps are whole source pixels and the sums run in the same order as the
 // shader's, so this CPU reference and the GPU agree to within a bit
@@ -59,7 +64,7 @@ struct AmbiConstants                            // must match cbuffer C in kAmbi
     float soft = 0;                             // metres
     float bezel = 0;                            // fraction of the margin
     uint32_t ringN = kAmbiRing;                 // at most kAmbiRingMax: the shader keeps the ring in group-shared memory
-    uint32_t pad = 0;
+    uint32_t linearBlend = 1;                   // 1: sRGB swapchain - premultiply in linear light
 };
 
 struct AmbiRingPoint
@@ -157,7 +162,11 @@ inline bool AmbilightPixel(const AmbiConstants& c, const AmbiRingPoint* ring, in
         for (int ch = 0; ch < 3; ch++) sum[ch] += w * ring[i].rgb[ch];
     }
     if (!(sumW > 0)) return true;
-    for (int ch = 0; ch < 3; ch++) rgba[ch] = (sum[ch] / sumW) * a;
+    for (int ch = 0; ch < 3; ch++)
+    {
+        const float colour = sum[ch] / sumW;
+        rgba[ch] = c.linearBlend ? LinearToSrgb(SrgbToLinear(colour) * a) : colour * a;
+    }
     rgba[3] = a;
     return true;
 }
