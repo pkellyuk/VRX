@@ -1312,6 +1312,130 @@ static void TestRoom()
         Check(std::fabs(received / emitted - 1.0) < 0.03, "energy, curved: all the screen's light lands on the room (within 3%)");
     }
 
+    // ---- the constant buffer: 512 bytes, v10's rows as they were, v11's rows zero until their steps
+    {
+        RoomView view;
+        view.W = in.W; view.H = in.H; view.glowOn = true; view.glowHalfW = glowHalfW; view.glowHalfH = glowHalfH;
+        const RoomConstants rc = MakeRoomConstants(room, shade, layout, view, 1920, 1080, 0.5f);
+        const unsigned char* bytes = (const unsigned char*)&rc;
+        bool rest = true;
+        for (size_t i = offsetof(RoomConstants, glass); i < sizeof(RoomConstants); i++) rest = rest && bytes[i] == 0;
+        Check(sizeof(RoomConstants) == 512 && offsetof(RoomConstants, glass) == 176 && rest, "RoomConstants is 512 bytes; rows 11-31 are zero");
+        Check(rc.X == room.X && rc.zSide == room.zSide && rc.glowBlock == (uint32_t)layout.block && rc.emitters == (uint32_t)layout.count() &&
+              rc.srcW == 1920 && rc.alpha == 0.5f && rc.flags == (kRoomFlagGlow | kRoomFlagDither), "rows 0-10 carry what they carried in v10");
+    }
+
+    // ---- the HLSL's copy of the constants it shares with this header
+    {
+        const std::string defs = RoomHlslDefines();
+        auto value = [&defs](const char* name)
+        {
+            const std::string key = std::string("#define ") + name + " ";
+            const size_t at = defs.find(key);
+            if (at == std::string::npos) return std::string();
+            const size_t end = defs.find('\n', at);
+            return defs.substr(at + key.size(), end == std::string::npos ? std::string::npos : end - at - key.size());
+        };
+        const std::string pi = value("ROOM_PI"), inside = value("ROOM_INSIDE_FRONT");
+        Check(!pi.empty() && std::strtof(pi.c_str(), nullptr) == kRoomPi && std::strtof(inside.c_str(), nullptr) == kRoomInsideFront,
+            "the HLSL's floats read back as exactly the C++ values");
+        Check(value("ROOM_LIGHTMAP") == "64" && value("ROOM_FACES") == "6" && value("ROOM_FACE_FRONT") == "0" && value("ROOM_FACE_FLOOR") == "3" &&
+              value("ROOM_FACE_BACK") == "5" && value("ROOM_EMITTER_FLOAT4S") == "6" && value("ROOM_GROUP_THREADS") == "256" &&
+              value("ROOM_FLAG_CURVED") == "1u" && value("ROOM_FLAG_DITHER") == "8u" && value("ROOM_KIND_FOOTPRINT") == "7" &&
+              value("ROOM_KIND_OUTSIDE") == "8", "the HLSL's whole-number constants");
+        const std::string bayer = value("ROOM_BAYER");
+        int parsed = 0, matching = 0;
+        for (size_t at = bayer.find_first_of("0123456789"); at != std::string::npos; at = bayer.find_first_of("0123456789", at))
+        {
+            char* end = nullptr;
+            const long v = std::strtol(bayer.c_str() + at, &end, 10);
+            if (parsed < 64 && v == kRoomBayer[parsed]) matching++;
+            parsed++;
+            at = (size_t)(end - bayer.c_str());
+        }
+        Check(parsed == 64 && matching == 64 && bayer.front() == '{' && bayer.back() == '}', "the HLSL's dither matrix is room.h's");
+        Check(RoomHlslFloat(64.0f) == "64.0" && RoomHlslFloat(0.5f) == "0.5", "a whole-number float stays a float literal");
+        bool roundTrip = true;
+        const float awkward[] = { 1.0f / 3.0f, 0.1f, 1e-7f, 20.0f, 3.0e38f, -2.5e-3f, 1.45f, 0.0591f };
+        for (float v : awkward) roundTrip = roundTrip && std::strtof(RoomHlslFloat(v).c_str(), nullptr) == v;
+        Check(roundTrip, "%.9g reads back as the same float");
+    }
+
+    // ---- the kept v10 eye pass: while nothing has changed it is today's, bit for bit
+    {
+        uint32_t seed = 4242;
+        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return (float)((seed >> 8) & 0xFFFF) / 65535.0f * 2.0f - 1.0f; };
+        struct Case { const Room* r; const float* eye; };
+        const Case cases[] = { { &room, in.eye }, { &curved, in.eye }, { &closeRoom, smallIn.eye } };
+        int rays = 0, same = 0;
+        for (const Case& k : cases)
+            for (int i = 0; i < 2000; i++)
+            {
+                const float d[3] = { rnd(), rnd(), rnd() };
+                RoomHit a, b;
+                const bool ea = RoomExit(*k.r, k.eye, d, a), eb = room_v10::RoomExit(*k.r, k.eye, d, b);
+                rays++;
+                if (ea == eb && a.face == b.face && a.t == b.t && a.u == b.u && a.v == b.v && a.s == b.s && a.y == b.y) same++;
+            }
+        Check(same == rays, "room_v10::RoomExit is RoomExit (6,000 rays)");
+
+        // Two eyes, one looking at the screen and one turned 80 degrees right, over a
+        // made-up lightmap, picture and glow: every pixel identical, flat and curved.
+        const int ew = 64, eh = 48, pw = 64, ph = 36, gw = 32, gh = 24;
+        std::vector<unsigned char> pic((size_t)pw * ph * 4), glowPic((size_t)gw * gh * 4);
+        for (int y = 0; y < ph; y++)
+            for (int x = 0; x < pw; x++)
+            {
+                unsigned char* q = &pic[((size_t)y * pw + x) * 4];
+                q[0] = (unsigned char)(x * 4); q[1] = (unsigned char)(y * 7); q[2] = (unsigned char)((x * y) & 255); q[3] = 255;
+            }
+        for (int y = 0; y < gh; y++)
+            for (int x = 0; x < gw; x++)
+            {
+                unsigned char* q = &glowPic[((size_t)y * gw + x) * 4];
+                q[0] = (unsigned char)(x * 8); q[1] = 60; q[2] = (unsigned char)(y * 10); q[3] = 200;
+            }
+        RoomLightmap light;
+        light.texels.resize((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 4);
+        for (size_t i = 0; i < light.texels.size(); i++) light.texels[i] = (float)((i * 2654435761u) % 1000u) / 1000.0f * 0.3f;
+        const RgbaImage picture{ pic.data(), pw, ph, pw * 4 }, glowImg{ glowPic.data(), gw, gh, gw * 4 };
+        CurveConstants c;
+        c.ew = (uint32_t)ew; c.eh = (uint32_t)eh;
+        c.world[0] = 0.1f; c.world[1] = 0.2f; c.world[2] = 0.3f; c.world[3] = 1.0f;
+        const float yaw[2] = { 0.0f, -80.0f * kRoomPi / 180.0f };
+        for (int e = 0; e < 2; e++)
+        {
+            CurveEye& v = c.eye[e];
+            v.origin[0] = e ? 0.032f : -0.032f; v.origin[1] = 0.05f; v.origin[2] = 3.0f;
+            const float cs = std::cos(yaw[e]), sn = std::sin(yaw[e]);
+            v.row0[0] = cs; v.row0[1] = 0; v.row0[2] = sn;
+            v.row1[0] = 0; v.row1[1] = 1; v.row1[2] = 0;
+            v.row2[0] = -sn; v.row2[1] = 0; v.row2[2] = cs;
+            v.tanL = -1.0f; v.tanR = 1.0f; v.tanU = 0.75f; v.tanD = -0.75f;
+        }
+        int pixels = 0, identical = 0;
+        for (int curvedCase = 0; curvedCase < 2; curvedCase++)
+        {
+            const Room& r = curvedCase ? curved : room;
+            const Cylinder cyl = curvedCase ? curvedIn.cyl : Cylinder();
+            RoomView view;
+            view.flatLayer = !curvedCase; view.W = in.W; view.H = in.H; view.glowOn = true;
+            view.glowHalfW = 0.5f * in.W + r.margin; view.glowHalfH = 0.5f * in.H + r.margin; view.dither = true;
+            for (int e = 0; e < 2; e++)
+                for (int y = 0; y < eh; y++)
+                    for (int x = 0; x < ew; x++)
+                    {
+                        float a[3] = { -1, -1, -1 }, b[3] = { -2, -2, -2 };
+                        const bool okA = RoomPixel(c, cyl, r, view, e, x, y, picture, &glowImg, light, a);
+                        const bool okB = room_v10::RoomPixel(c, cyl, r, view, e, x, y, picture, &glowImg, light, b);
+                        pixels++;
+                        if (okA && okB && std::memcmp(a, b, sizeof(a)) == 0) identical++;
+                    }
+        }
+        if (identical != pixels) std::printf("room v10 eye pass: %d of %d pixels identical\n", identical, pixels);
+        Check(identical == pixels, "room_v10::RoomPixel is RoomPixel, flat and curved, pixel for pixel");
+    }
+
     // ---- dither, half floats, heading
     {
         double sum = 0;

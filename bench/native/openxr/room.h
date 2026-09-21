@@ -2,8 +2,11 @@
 #include <openxr/openxr.h>
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 #include "screen_curve.h"
 #include "screen_anchor.h"
@@ -58,6 +61,8 @@ static const int kRoomGlowBlock = 8;            // glow texels per side of one g
 static const int kRoomMaxGlowBlock = 64;        // the EMIT group loops over as many texels as a block has
 static const int kRoomMaxEmitters = 1024;
 static const int kRoomEmitterFloat4s = 6;       // per emitter in the GPU buffer
+static const int kRoomGroupThreads = 256;       // EMIT: threads per emitter's group, and RoomGroupSum's partial sums
+static_assert((kRoomGroupThreads & (kRoomGroupThreads - 1)) == 0, "RoomGroupSum's halving tree needs a power of two");
 static const float kRoomSideClearance = 1.0f;   // metres from the viewer to a side wall, at least
 static const float kRoomMinHalfWidth = 2.0f;    // a room at least 4 m wide
 static const float kRoomMinHeight = 2.5f;
@@ -458,18 +463,19 @@ inline void RoomPatchBox(int i, int j, const RoomEmitterLayout& l, int srcW, int
 template <typename Item>
 inline void RoomGroupSum(int count, Item item, float out[3])
 {
-    float part[256][3];
-    for (int t = 0; t < 256; t++)
+    if (!out) return;
+    float part[kRoomGroupThreads][3];
+    for (int t = 0; t < kRoomGroupThreads; t++)
     {
         part[t][0] = part[t][1] = part[t][2] = 0;
-        for (int k = t; k < count; k += 256)
+        for (int k = t; k < count; k += kRoomGroupThreads)
         {
             float v[3];
             item(k, v);
             part[t][0] += v[0]; part[t][1] += v[1]; part[t][2] += v[2];
         }
     }
-    for (int stride = 128; stride > 0; stride >>= 1)
+    for (int stride = kRoomGroupThreads / 2; stride > 0; stride >>= 1)
         for (int t = 0; t < stride; t++)
             for (int ch = 0; ch < 3; ch++) part[t][ch] += part[t + stride][ch];
     out[0] = part[0][0]; out[1] = part[0][1]; out[2] = part[0][2];
@@ -655,29 +661,48 @@ struct RoomView
 };
 
 // ------------------------------------------------------------------ constants
-// What both room shaders read (cbuffer RoomC: a root CBV, 256 bytes) - the lightmap
-// passes (kRoomHlsl) and the eye pass (kCurveHlsl with CURVE_ROOM).
+// What both room shaders read (cbuffer RoomC: a root CBV, 512 bytes) - the lightmap
+// passes (kRoomHlsl) and the eye pass (the curve shader's code, then kCurveRoomHlsl).
 static const uint32_t kRoomFlagCurved = 1;      // the front is the glow's cylinder
 static const uint32_t kRoomFlagFlatLayer = 2;   // flat screen: the compositor draws it; show its footprint
 static const uint32_t kRoomFlagGlow = 4;        // the ambilight is on
 static const uint32_t kRoomFlagDither = 8;
 
+// Rows 0-10 are v10's and kRoomCbufferHlsl declares exactly those. Rows 11-20 are v11's
+// (glass, reflections, the room light, the mirror picture and the eye pass's
+// reciprocals and screen bounds); they stay zero until the steps that fill them, and
+// the HLSL declares each row when it first reads it.
 struct RoomConstants                            // must match kRoomCbufferHlsl
 {
-    float X = 0, yF = 0, yC = 0, zB = 0;
-    float g = 0, R = 0, Rg = 0, phiA = 0;
-    float sinA = 0, cosA = 1, xa = 0, za = 0;
-    float sMax = 0, zSide = 0, glowHalfW = 0, glowHalfH = 0;
-    float rhoWall = 0, rhoFloor = 0, rhoCeiling = 0, bounceScale = 0;
-    float world[4] = { 0, 0, 0, 0 };            // linear: the house lights
-    float shadeFloor = kRoomShadeFloor, shadeCeiling = kRoomShadeCeiling, alpha = 1, screenW = 0;
-    float screenH = 0, pad0 = 0, pad1 = 0, pad2 = 0;
-    uint32_t flags = 0, gridX = 0, gridY = 0, emitters = 0;
-    uint32_t srcW = 0, srcH = 0, stride = 1, glowW = 0;
-    uint32_t glowH = 0, blocksX = 0, blocksY = 0, glowBlock = kRoomGlowBlock;
-    float pad4[20] = {};
+    float X = 0, yF = 0, yC = 0, zB = 0;                            // row 0
+    float g = 0, R = 0, Rg = 0, phiA = 0;                           // 1
+    float sinA = 0, cosA = 1, xa = 0, za = 0;                       // 2
+    float sMax = 0, zSide = 0, glowHalfW = 0, glowHalfH = 0;        // 3
+    float rhoWall = 0, rhoFloor = 0, rhoCeiling = 0, bounceScale = 0;   // 4
+    float world[4] = { 0, 0, 0, 0 };            // 5, linear: the house lights
+    float shadeFloor = kRoomShadeFloor, shadeCeiling = kRoomShadeCeiling, alpha = 1, screenW = 0;   // 6
+    float screenH = 0, pad0 = 0, pad1 = 0, pad2 = 0;                // 7
+    uint32_t flags = 0, gridX = 0, gridY = 0, emitters = 0;         // 8
+    uint32_t srcW = 0, srcH = 0, stride = 1, glowW = 0;             // 9
+    uint32_t glowH = 0, blocksX = 0, blocksY = 0, glowBlock = kRoomGlowBlock;   // 10
+    float glass = 0, reflect = 0, fbar = 0, rpad3 = 0;              // 11 (v11)
+    float pitchSide = 0, pitchBack = 0, transomY = 0, rpad4 = 0;    // 12
+    float lightX0 = 0, lightX1 = 0, lightZ0 = 0, lightZ1 = 0;       // 13
+    float lightL[4] = { 0, 0, 0, 0 };           // 14: emitted rgb, w = the panel is valid
+    float lightSeen[4] = { 0, 0, 0, 0 };        // 15: seen rgb
+    uint32_t mirrorW = 0, mirrorH = 0, upad0 = 0, upad1 = 0;        // 16
+    float invH = 0, inv2X = 0, invSide = 0, invFloorZ = 0;          // 17
+    float inv2sMax = 0, invGlowW = 0, invGlowH = 0, tanA = 0;       // 18
+    float wingS = 0, scrTanWrap = 0, scrBoxX = 0, scrBoxY = 0;      // 19
+    float scrBoxZ = 0, rpad6 = 0, rpad7 = 0, rpad8 = 0;             // 20
+    float pad5[44] = {};                                            // 21-31
 };
-static_assert(sizeof(RoomConstants) == 256, "RoomConstants is one 256-byte constant buffer");
+static_assert(sizeof(RoomConstants) == 512, "RoomConstants is one 512-byte constant buffer");
+static_assert(offsetof(RoomConstants, glowH) == 160 && offsetof(RoomConstants, glass) == 176, "rows 0-10 are v10's; row 11 starts at 176");
+static_assert(offsetof(RoomConstants, pitchSide) == 192 && offsetof(RoomConstants, lightX0) == 208 && offsetof(RoomConstants, lightL) == 224 &&
+              offsetof(RoomConstants, lightSeen) == 240 && offsetof(RoomConstants, mirrorW) == 256 && offsetof(RoomConstants, invH) == 272 &&
+              offsetof(RoomConstants, inv2sMax) == 288 && offsetof(RoomConstants, wingS) == 304 && offsetof(RoomConstants, scrBoxZ) == 320 &&
+              offsetof(RoomConstants, pad5) == 336, "rows 11-20 as in the v11 spec (section 3.5)");
 
 inline float RoomBounceScale(const RoomShading& sh)
 {
@@ -861,3 +886,219 @@ inline bool RoomPixel(const CurveConstants& c, const Cylinder& cyl, const Room& 
         for (int ch = 0; ch < 3; ch++) out[ch] += RoomDither(e, px, py);
     return true;
 }
+
+// ------------------------------------------------------------ shader constants
+// A float as an HLSL literal that reads back as exactly this float (%.9g round-trips a
+// float; a whole number gets ".0" so that it stays a float literal).
+inline std::string RoomHlslFloat(float v)
+{
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%.9g", (double)v);
+    std::string s(buf);
+    if (s.find_first_of(".eEn") == std::string::npos) s += ".0";
+    return s;
+}
+
+// The constants the room's HLSL shares with this header, as #define lines that
+// InitShaders puts in front of every room shader, so that the two cannot drift.
+inline std::string RoomHlslDefines()
+{
+    std::string s;
+    char value[32];
+    auto def = [&s](const char* name, const std::string& v)
+    {
+        s += "#define ";
+        s += name;
+        s += " ";
+        s += v;
+        s += "\n";
+    };
+    auto defInt = [&](const char* name, int v) { snprintf(value, sizeof(value), "%d", v); def(name, value); };
+    auto defUint = [&](const char* name, uint32_t v) { snprintf(value, sizeof(value), "%uu", v); def(name, value); };
+    def("ROOM_PI", RoomHlslFloat(kRoomPi));
+    def("ROOM_INSIDE_FRONT", RoomHlslFloat(kRoomInsideFront));
+    defInt("ROOM_LIGHTMAP", kRoomLightmap);
+    defInt("ROOM_FACES", kRoomFaces);
+    defInt("ROOM_FACE_FRONT", kFaceFront);
+    defInt("ROOM_FACE_LEFT", kFaceLeft);
+    defInt("ROOM_FACE_RIGHT", kFaceRight);
+    defInt("ROOM_FACE_FLOOR", kFaceFloor);
+    defInt("ROOM_FACE_CEILING", kFaceCeiling);
+    defInt("ROOM_FACE_BACK", kFaceBack);
+    defInt("ROOM_EMITTER_FLOAT4S", kRoomEmitterFloat4s);
+    defInt("ROOM_GROUP_THREADS", kRoomGroupThreads);
+    defUint("ROOM_FLAG_CURVED", kRoomFlagCurved);
+    defUint("ROOM_FLAG_FLAT_LAYER", kRoomFlagFlatLayer);
+    defUint("ROOM_FLAG_GLOW", kRoomFlagGlow);
+    defUint("ROOM_FLAG_DITHER", kRoomFlagDither);
+    defInt("ROOM_KIND_FOOTPRINT", kRoomKindFootprint);
+    defInt("ROOM_KIND_OUTSIDE", kRoomKindOutside);
+    std::string bayer = "{ ";
+    for (int i = 0; i < 64; i++)
+    {
+        snprintf(value, sizeof(value), i ? ", %d" : "%d", kRoomBayer[i]);
+        bayer += value;
+    }
+    bayer += " }";
+    def("ROOM_BAYER", bayer);
+    return s;
+}
+
+// ------------------------------------------------------------ the v10 eye pass
+// Today's (v10) classification and eye pass, kept verbatim while the new ones replace
+// them: the CPU reference of kCurveRoomV10Hlsl, which the --room-v10-eye A/B diagnostic
+// and the room benchmark's case D run. The CPU tests and the GPU self-test check them.
+// The calls inside are qualified (room_v10::): argument-dependent lookup would also
+// find today's functions of the same signature. Remove them, with kCurveRoomV10Hlsl,
+// once the headset numbers are in.
+namespace room_v10
+{
+
+inline bool RoomExit(const Room& r, const float o[3], const float d[3], RoomHit& hit)
+{
+    if (!o || !d) return false;
+    if (!RoomInside(r, o)) return false;
+
+    float best = 3.0e38f;
+    int face = -1;
+    auto consider = [&](float t, int f) { if (t > 0 && t < best) { best = t; face = f; } };
+    if (d[0] > 0) consider((r.X - o[0]) / d[0], kFaceRight);
+    if (d[0] < 0) consider((-r.X - o[0]) / d[0], kFaceLeft);
+    if (d[1] < 0) consider((r.yF - o[1]) / d[1], kFaceFloor);
+    if (d[1] > 0) consider((r.yC - o[1]) / d[1], kFaceCeiling);
+    if (d[2] > 0) consider((r.zB - o[2]) / d[2], kFaceBack);
+    float frontPhi = 0;
+    bool onArc = false;
+    if (!r.curved)
+    {
+        if (d[2] < 0) consider((-r.g - o[2]) / d[2], kFaceFront);
+    }
+    else
+    {
+        float phi = 0, y = 0;
+        if (ArcHit(r.R, r.Rg, r.phiA, 3.0e38f, o, d, &phi, &y))
+        {
+            // ArcHit returns the root; recover its t along the ray from x or z.
+            const float hx = r.Rg * std::sin(phi), hz = r.R - r.Rg * std::cos(phi);
+            const float t = std::fabs(d[0]) > std::fabs(d[2]) ? (hx - o[0]) / d[0] : (hz - o[2]) / d[2];
+            if (t > 0 && t < best) { best = t; face = kFaceFront; frontPhi = phi; onArc = true; }
+        }
+        for (int side = -1; side <= 1; side += 2)
+        {
+            const float nx = -side * r.sinA, nz = r.cosA;       // the wing's normal, into the room
+            const float px = side * r.xa, pz = r.za;
+            const float nd = nx * d[0] + nz * d[2];
+            if (!(nd < 0)) continue;
+            const float t = (nx * (px - o[0]) + nz * (pz - o[2])) / nd;
+            const float hx = o[0] + t * d[0];
+            if (side * hx < r.xa) continue;                     // on the plane's extension, not the wing
+            if (t > 0 && t < best) { best = t; face = kFaceFront; onArc = false; }
+        }
+    }
+    if (face < 0) return false;
+
+    const float p[3] = { o[0] + best * d[0], o[1] + best * d[1], o[2] + best * d[2] };
+    const float h = r.yC - r.yF;
+    hit.face = face; hit.t = best; hit.y = p[1];
+    switch (face)
+    {
+    case kFaceFront:
+        hit.s = !r.curved ? p[0] : (onArc ? r.R * frontPhi : FrontS(r, p[0]));
+        hit.u = (hit.s + r.sMax) / (2.0f * r.sMax); hit.v = (r.yC - p[1]) / h; break;
+    case kFaceLeft: case kFaceRight:
+        hit.u = (p[2] - r.zSide) / (r.zB - r.zSide); hit.v = (r.yC - p[1]) / h; break;
+    case kFaceFloor: case kFaceCeiling:
+        hit.u = (p[0] + r.X) / (2.0f * r.X); hit.v = (p[2] + r.g) / (r.zB + r.g); break;
+    default:
+        hit.u = (p[0] + r.X) / (2.0f * r.X); hit.v = (r.yC - p[1]) / h; break;
+    }
+    return true;
+}
+
+inline int RoomClassify(const CurveConstants& c, const Cylinder& cyl, const Room& r, const RoomView& view,
+                        const float o[3], const float d[3], float* u, float* v, float* gu, float* gv)
+{
+    if (!u || !v || !gu || !gv) return kRoomKindOutside;
+    *u = *v = *gu = *gv = 0;
+    if (!view.flatLayer)
+    {
+        if (CylinderHit(cyl, o, d, u, v)) return 0;
+    }
+    else if (d[2] < 0)
+    {
+        const float t = -o[2] / d[2];
+        const float hx = o[0] + t * d[0], hy = o[1] + t * d[1];
+        if (t > 0 && std::fabs(hx) <= 0.5f * view.W && std::fabs(hy) <= 0.5f * view.H) return kRoomKindFootprint;
+    }
+    RoomHit hit;
+    if (!room_v10::RoomExit(r, o, d, hit)) return kRoomKindOutside;
+    *u = hit.u; *v = hit.v;
+    if (hit.face == kFaceFront) { *gu = hit.s / (2.0f * view.glowHalfW) + 0.5f; *gv = 0.5f - hit.y / (2.0f * view.glowHalfH); }
+    (void)c;
+    return 1 + hit.face;
+}
+
+inline bool RoomSampleColour(const CurveConstants& c, const RoomView& view, int kind, float u, float v, float gu, float gv,
+                             const RgbaImage& picture, const RgbaImage* glow, const RoomLightmap& light, float out[3])
+{
+    if (!out) return false;
+    if (kind == 0)
+    {
+        float s[4];
+        if (!SampleRgba(picture, u, v, s)) return false;
+        out[0] = s[0]; out[1] = s[1]; out[2] = s[2];
+        return true;
+    }
+    if (kind == kRoomKindFootprint) { out[0] = out[1] = out[2] = 0; return true; }
+    if (kind == kRoomKindOutside) { out[0] = c.world[0]; out[1] = c.world[1]; out[2] = c.world[2]; return true; }
+    float L[3];
+    if (!light.Sample(kind - 1, u, v, L)) return false;
+    if (kind - 1 == kFaceFront && view.glowOn && glow && gu >= 0 && gu <= 1 && gv >= 0 && gv <= 1)
+    {
+        float g[4];
+        if (!SampleRgba(*glow, gu, gv, g)) return false;
+        for (int ch = 0; ch < 3; ch++) L[ch] += SrgbToLinear(g[ch]);
+    }
+    for (int ch = 0; ch < 3; ch++) out[ch] = LinearToSrgb(std::fmax(L[ch], 0.0f));
+    return true;
+}
+
+inline bool RoomPixel(const CurveConstants& c, const Cylinder& cyl, const Room& r, const RoomView& view, int e, int px, int py,
+                      const RgbaImage& picture, const RgbaImage* glow, const RoomLightmap& light, float out[3])
+{
+    if (!out) return false;
+    if (e < 0 || e > 1 || px < 0 || py < 0 || px >= (int)c.ew || py >= (int)c.eh) return false;
+    if (!view.flatLayer && !picture.data) return false;
+
+    int kind[4];
+    float uu[4], vv[4], gu[4], gv[4];
+    for (int s = 0; s < 4; s++)
+    {
+        float o[3], d[3];
+        CurveRay(c, e, (float)px + 0.5f + kCurveSubsamples[s][0], (float)py + 0.5f + kCurveSubsamples[s][1], o, d);
+        kind[s] = room_v10::RoomClassify(c, cyl, r, view, o, d, &uu[s], &vv[s], &gu[s], &gv[s]);
+    }
+    const bool agree = kind[0] == kind[1] && kind[1] == kind[2] && kind[2] == kind[3];
+    if (agree)
+    {
+        const float mu = (uu[0] + uu[1] + uu[2] + uu[3]) * 0.25f, mv = (vv[0] + vv[1] + vv[2] + vv[3]) * 0.25f;
+        const float mgu = (gu[0] + gu[1] + gu[2] + gu[3]) * 0.25f, mgv = (gv[0] + gv[1] + gv[2] + gv[3]) * 0.25f;
+        if (!room_v10::RoomSampleColour(c, view, kind[0], mu, mv, mgu, mgv, picture, glow, light, out)) return false;
+    }
+    else
+    {
+        out[0] = out[1] = out[2] = 0;
+        for (int s = 0; s < 4; s++)
+        {
+            float rgb[3];
+            if (!room_v10::RoomSampleColour(c, view, kind[s], uu[s], vv[s], gu[s], gv[s], picture, glow, light, rgb)) return false;
+            for (int ch = 0; ch < 3; ch++) out[ch] += rgb[ch] * 0.25f;
+        }
+    }
+    const bool room = kind[0] >= 1 && kind[0] <= kRoomFaces;
+    if (view.dither && agree && room)
+        for (int ch = 0; ch < 3; ch++) out[ch] += RoomDither(e, px, py);
+    return true;
+}
+
+} // namespace room_v10

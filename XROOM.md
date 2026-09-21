@@ -102,8 +102,21 @@ depend on where you look from.
      any slip between the layers is dark on dark.
 
 GPU time of the room and screen passes is measured with timestamps and logged every two
-seconds as "room + screen GPU p50/p95". The design panel estimated about 0.3 ms per
+seconds as "room + screen GPU p50/p95". With the room on, five timestamps split it by
+pass, and the line ends with each pass's p50: "emit, light, eye, copy". A curved screen
+without the room keeps its two timestamps. The first frame also logs each eye's field
+of view, in the form `--bench-fov` takes. The design panel estimated about 0.3 ms per
 frame on an RTX 3090. That is an estimate until the log shows it in the headset.
+
+`--selftest --bench-room` measures the same passes offline, with no VR session, at the
+PSVR2's 2804 x 2860 eye buffers: the curve alone (A), the curve with the room (B), the
+kept v10 eye pass (D, also `--room-v10-eye` in playback) and the flat screen's
+half-size room layer (E), each at four views (yaw 0, 30, 60 and 120 degrees, pitch -15)
+and the curved ones at 60% and 100% curve. Every case and view draws 30 frames to warm
+up and 300 timed ones. It locks the GPU clocks when Developer Mode allows (else, or
+with `--bench-boost`, it runs three times for the spread), logs min / p50 / p95 per
+pass with each view's screen, room and mixed pixel counts, spot-checks one frame per
+view against `room.h`, and writes `room-bench.csv`.
 
 ## Tests
 
