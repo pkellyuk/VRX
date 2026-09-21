@@ -11,6 +11,8 @@ VRX captures the selected game window, estimates depth, and creates a stereo
 view. All settings live in a desktop app; no in-headset UI or motion controllers
 are needed.
 
+![Helldivers 2 on a curved VRX screen in the room, seen in the headset](docs/vrx-headset.png)
+
 It is not only for games: attach to a browser window and any 2D video you play in
 it — YouTube, a streaming service, your own files — becomes 3D on the same screen.
 
