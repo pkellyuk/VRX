@@ -28,12 +28,16 @@ From using VRX day to day:
   to depth** and **Steady depth — motion vectors** gives the best experience.
 - **Second GPU:** set it as the **Depth GPU**, turn on **Fuse with Depth Anything
   V2**, and keep **Delayed to depth** with **Steady depth — motion vectors**.
+- **Steam games: turn off Desktop Game Theatre.** If you start a normal Steam game
+  while SteamVR is running, SteamVR also shows it on its own flat screen in front of
+  VRX's. In Steam, right-click the game → **Properties → General** and untick **Use
+  Desktop Game Theatre while SteamVR is active**.
 
 ## Get started
 
-Download VRX v1.7.0: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.7.0/VRX-Setup-1.7.0.exe)
-or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.0/VRX-1.7.0-win-x64.zip)
-([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.7.0); older versions on
+Download VRX v1.7.1: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.7.1/VRX-Setup-1.7.1.exe)
+or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.1/VRX-1.7.1-win-x64.zip)
+([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.7.1); older versions on
 [GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.
