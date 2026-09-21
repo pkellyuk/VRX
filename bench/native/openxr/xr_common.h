@@ -1,7 +1,6 @@
 // Shared by xrapp3 / xrapp4: OpenXR loader glue, the test scene, image loading,
 // and the CPU reference stereo warp. Include AFTER windows/d3d12/openxr/ORT/wincodec.
 #pragma once
-#include "screen_curve.h"
 
 
 // The model's fixed geometry, and therefore the render size too: a projection
@@ -287,16 +286,10 @@ static void FillHole(std::vector<int>& src, const float* nrow, int w, int x, int
 // smoothly receding surface into ~25 flat bands with a 1 px step between them, which
 // reads as ridges ("ploughed field") on uniform texture; sampling the colour at the
 // fractional source position that lands on this destination removes them.
-// curve: W entries of curved-screen geometry (screen_curve.h), or null for a flat
-// screen. It moves each column to where the cylinder projects it, adds the
-// cylinder's own disparity - unscaled, because the shape of the screen is not the
-// 3D strength of the picture - and scales each column vertically, leaving the
-// quad transparent where the picture no longer reaches its top and bottom.
 static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vector<float>& near01,
                         float eyeOffset, float focalPx, float scale, float invZNear, float invZFar,
                         float nearZ, float farZ, bool doWarp, int fillMode,
-                        unsigned char* outRGBA, float* outDepth, bool subpixel = false,
-                        const CurveColumn* curve = nullptr, float curveFocalPx = 0)
+                        unsigned char* outRGBA, float* outDepth, bool subpixel = false)
 {
     if (!outRGBA || !outDepth) return;
     if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) return;
@@ -312,27 +305,14 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
         {
             int dx = x;
             float destF = (float)x;
-            if (doWarp || curve)
+            if (doWarp)
             {
                 // Content at distance Z sits at -focal*E/Z in the eye's image
                 // relative to the cyclopean image (left eye: shifted right).
-                float shift = 0;
-                if (doWarp)
-                {
-                    const float invZ = invZFar + nrow[x] * (invZNear - invZFar);
-                    shift = scale * focalPx * eyeOffset * invZ;
-                }
-                if (!curve)
-                {
-                    destF = (float)x - shift;
-                    dx = x - (int)lroundf(shift);
-                }
-                else
-                {
-                    shift += curveFocalPx * eyeOffset * curve[x].invZ;
-                    destF = curve[x].destBase - shift;
-                    dx = (int)lroundf(destF);
-                }
+                float invZ = invZFar + nrow[x] * (invZNear - invZFar);
+                const float s = scale * focalPx * eyeOffset * invZ;
+                destF = (float)x - s;
+                dx = x - (int)lroundf(s);
             }
             if (dx < 0 || dx >= W) continue;
             if (src[dx] < 0 || nrow[x] > nrow[src[dx]]) { src[dx] = x; srcDest[dx] = destF; }
@@ -362,31 +342,16 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
                 std::min(std::max((float)s + ((float)x - srcDest[x]), 0.0f), (float)(W - 1)) : (float)s;
             const int i0 = (int)pos, i1 = i0 + 1 < W ? i0 + 1 : W - 1;
             const float fr = pos - i0;
-            // A column the curve squeezed vertically takes this row's content from
-            // further out; past the end of the source there is nothing to show.
-            const float vertMag = curve ? curve[s].vertMag : 1.0f;
-            const float ySrc = ((float)y + 0.5f - (float)H * 0.5f) / vertMag + (float)H * 0.5f - 0.5f;
-            if (ySrc < 0.0f || ySrc > (float)(H - 1))
-            {
-                crow[x * 4 + 0] = crow[x * 4 + 1] = crow[x * 4 + 2] = crow[x * 4 + 3] = 0;
-                drow[x] = (farZ / (farZ - nearZ)) * (1.0f - nearZ * invZFar);
-                continue;
-            }
-            const int j0 = (int)ySrc, j1 = j0 + 1 < H ? j0 + 1 : H - 1;
-            const float fy = ySrc - j0;
-            const size_t a = ((size_t)j0 * W + i0) * 3, b = ((size_t)j0 * W + i1) * 3;
-            const size_t c = ((size_t)j1 * W + i0) * 3, d = ((size_t)j1 * W + i1) * 3;
+            const size_t a = ((size_t)y * W + i0) * 3, b = ((size_t)y * W + i1) * 3;
             // Same arithmetic as the shader: UNORM values, lerp as c0 + f*(c1-c0),
             // then the UNORM store's round-to-nearest.
             for (int ch = 0; ch < 3; ch++)
             {
-                const float t0 = scene[a + ch] / 255.0f, t1 = scene[b + ch] / 255.0f;
-                const float b0 = scene[c + ch] / 255.0f, b1 = scene[d + ch] / 255.0f;
-                const float top = t0 + fr * (t1 - t0), bot = b0 + fr * (b1 - b0);
-                crow[x * 4 + ch] = (unsigned char)lroundf((top + fy * (bot - top)) * 255.0f);
+                const float c0 = scene[a + ch] / 255.0f, c1 = scene[b + ch] / 255.0f;
+                crow[x * 4 + ch] = (unsigned char)lroundf((c0 + fr * (c1 - c0)) * 255.0f);
             }
             crow[x * 4 + 3] = 255;
-            float invZ = invZFar + nrow[s] * (invZNear - invZFar) + (curve ? curve[s].invZ : 0.0f);
+            float invZ = invZFar + nrow[s] * (invZNear - invZFar);
             drow[x] = (farZ / (farZ - nearZ)) * (1.0f - nearZ * invZ);
         }
     }

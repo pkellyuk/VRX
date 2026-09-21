@@ -13,6 +13,11 @@
 //   * brightness falls off with the distance outside the screen, measured in
 //     METRES so the corners are not stretched, and reaches zero at the edge of
 //     the layer;
+//   * right against the screen it starts dark and rises over a thin "bezel"
+//     (kAmbiBezel of the margin). A glow at full brightness touching the screen
+//     made its edge pixels flicker in play: the compositor's filtering of the
+//     screen's border then mixes game and glow, and the warped edge columns
+//     change from frame to frame. Against a dark bezel neither shows;
 //   * the colour is stored already multiplied by that alpha, which is what a
 //     compositor wants for a blended layer and is also exactly right if the
 //     runtime ignores the alpha, because the world behind the screen is black;
@@ -27,6 +32,8 @@ static const int kAmbiTaps = 5;             // blur taps per axis (kAmbiTaps^2 i
 static const float kAmbiIntensity = 0.85f;  // brightness just outside the picture
 static const float kAmbiBlend = 0.12f;      // per frame, towards the new glow
 static const float kAmbiBlurFraction = 0.05f;   // tap spacing, as a fraction of the source width
+static const float kAmbiBezel = 0.08f;      // dark rise next to the screen, as a fraction of the margin
+static const float kAmbiBehind = 0.02f;     // metres the glow sits behind the screen
 
 struct AmbiConstants                        // must match cbuffer C in kAmbiHlsl
 {
@@ -39,6 +46,7 @@ struct AmbiConstants                        // must match cbuffer C in kAmbiHlsl
     float blend = 1;                        // 1 = no temporal smoothing
     uint32_t reset = 1;                     // 1: ignore what the glow texture already holds
     float blurPx = 0;                       // tap spacing in source pixels
+    float bezel = 0;                        // dark rise next to the screen, fraction of the margin
 };
 
 // The glow for one pixel, in premultiplied linear-in-storage RGBA (0..1).
@@ -64,7 +72,12 @@ inline bool AmbilightPixel(const AmbiConstants& c, const unsigned char* src, int
     const float dist = std::sqrt(dxm * dxm + dym * dym) / c.marginM;
     if (dist <= 0.0f || dist >= 1.0f) return true;          // inside the screen, or past the glow
 
-    const float a = (1.0f - dist) * (1.0f - dist) * c.intensity;
+    float a = (1.0f - dist) * (1.0f - dist) * c.intensity;
+    if (c.bezel > 0.0f)
+    {
+        const float tb = dist / c.bezel < 1.0f ? dist / c.bezel : 1.0f;
+        a *= tb * tb * (3.0f - 2.0f * tb);
+    }
     const float px = cx * (float)c.srcW - 0.5f;
     const float py = cy * (float)c.srcH - 0.5f;
     const int half = kAmbiTaps / 2;

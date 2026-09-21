@@ -52,7 +52,8 @@
 //            --delayed              hold the game image back by the measured depth delay, so the
 //                                   newest depth lines up with it (smooth; --paired is exact but
 //                                   updates at the depth rate). See frame_timing.h / XSYNC.md
-//            --curve=N              curve the screen: 0 flat (default) .. 100 fully wrapped
+//            --curve=N              curve the screen: 0 flat (default) .. 100 fully wrapped; a
+//                                   curved screen is ray-cast per eye (screen_curve.h, XCURVE.md)
 //            --ambilight            spill the picture's edge colours around the screen
 //            --head-locked          follow your head (default fixed screen; '=' recenters)
 //            --keep-dashboard       skip the SteamVR startup dashboard-close request
@@ -117,6 +118,7 @@ using Microsoft::WRL::ComPtr;
 #include "motion_estimator.h"
 #include "frame_timing.h"
 #include "ambilight.h"
+#include "screen_curve.h"
 
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wdx = winrt::Windows::Graphics::DirectX;
@@ -290,8 +292,6 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     uint32_t fillMode;
     float mirrorTol;
     uint32_t subpixel;
-    uint32_t curveOn;                   // 1: curved screen; the curve buffer holds the geometry
-    float curveFocal;                   // focal px for the curve's own disparity (NOT 3D-strength scaled)
 };
 
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
@@ -308,12 +308,7 @@ struct WarpTarget
     ComPtr<ID3D12Resource> colorOut;    // R8G8B8A8_TYPELESS[2], UNORDERED_ACCESS at rest
     ComPtr<ID3D12Resource> depthOut;    // R32_TYPELESS[2],      UNORDERED_ACCESS at rest
     ComPtr<ID3D12Resource> scratch;     // uint[cw*ch*2*2]: per-row scatter state
-    // Curved screen: CurveColumn[cw], rebuilt by the CPU when the screen changes so
-    // that the shader and the reference warp use bit-identical geometry.
-    ComPtr<ID3D12Resource> curveBuf;
-    ComPtr<ID3D12Resource> curveUp[RING];
-    CurveColumn* curveMapped[RING] = {};
-    UINT tableIndex = 0;                // first of 5 descriptors: near SRV, curve SRV, colour UAV, depth UAV, scratch UAV
+    UINT tableIndex = 0;                // first of 4 descriptors: near SRV, colour UAV, depth UAV, scratch UAV
 };
 
 struct RangeSmoother
@@ -479,6 +474,19 @@ struct App
     std::vector<XrSwapchainImageD3D12KHR> aimgs;
     bool ambiHistory = false;                            // false: the glow holds nothing usable yet
 
+    // Curved screen (screen_curve.h): a cylinder ray-cast for each eye into eye
+    // buffers at the runtime's recommended size, submitted as a projection layer.
+    // The swapchain and buffers are made on first use.
+    ComPtr<ID3D12RootSignature> curveRootSig;
+    ComPtr<ID3D12PipelineState> curvePso;
+    int64_t colorFormat = 0;                             // the swapchain format chosen at session start
+    int eyeW = 0, eyeH = 0;
+    XrSwapchain eyeSc = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageD3D12KHR> eimgs;
+    ComPtr<ID3D12Resource> eyeOut;                       // UNORM UAV [2]; SRGB swapchains cannot be UAVs
+    bool eyeFailed = false;                              // could not be made: the screen stays flat
+    ComPtr<ID3D12Resource> testEyeOut;                   // TEST_EYE_W x TEST_EYE_H [2]
+
     // depth handoff (triple buffer)
     DepthSlot slots[SLOTS];
     std::atomic<int> readySlot{ 1 };
@@ -540,11 +548,14 @@ struct App
 
 // descriptor heap layout
 static const UINT DESC_SRC0 = 0;                         // SRC_RING source SRVs
-static const UINT DESC_MAIN_TABLE = SRC_RING;            // 5
-static const UINT DESC_TEST_SRC = SRC_RING + 5;          // 1
-static const UINT DESC_TEST_TABLE = SRC_RING + 6;        // 5
-static const UINT DESC_AMBI_UAV = SRC_RING + 11;         // 1: the ambilight glow texture
-static const UINT DESC_COUNT = SRC_RING + 12;
+static const UINT DESC_MAIN_TABLE = SRC_RING;            // 4
+static const UINT DESC_TEST_SRC = SRC_RING + 4;          // 1
+static const UINT DESC_TEST_TABLE = SRC_RING + 5;        // 4
+static const UINT DESC_AMBI_UAV = SRC_RING + 9;          // 1: the ambilight glow texture
+static const UINT DESC_CURVE_MAIN = SRC_RING + 10;       // 3: warped pictures, glow, eye buffers (curved screen)
+static const UINT DESC_CURVE_TEST = SRC_RING + 13;       // 3: the same for the self-test
+static const UINT DESC_COUNT = SRC_RING + 16;
+static const int TEST_EYE_W = 256, TEST_EYE_H = 192;     // self-test eye buffers
 
 // The glow texture: small (the compositor stretches it over a soft gradient) and
 // the same shape as the layer, which is the screen plus a margin on every side.
@@ -1511,15 +1522,10 @@ cbuffer C : register(b0)
     uint  fillMode;     // 0 stretch, 1 mirror (see FillHole in xr_common.h)
     float mirrorTol;
     uint  subpixel;     // 1: sample at the fractional source position (no depth banding)
-    uint  curveOn;      // 1: curved screen, using curveBuf (screen_curve.h)
-    float curveFocal;   // focal px for the curve's own disparity (not 3D-strength scaled)
 };
-
-struct CurveColumnHlsl { float destBase; float invZ; float vertMag; };
 
 Texture2D<float4>        scene    : register(t0);
 StructuredBuffer<float>  nearBuf  : register(t1);   // DW x DH, 0 = far .. 1 = near
-StructuredBuffer<CurveColumnHlsl> curveBuf : register(t2);   // CW entries; identity when flat
 RWTexture2DArray<float4> outColor : register(u0);
 RWTexture2DArray<float>  outDepth : register(u1);   // D3D projective depth for nearZ/farZ
 // [0,N): source x per dest, [N,2N): its nearness, [2N,3N): where that source pixel
@@ -1564,27 +1570,13 @@ void main(uint3 id : SV_DispatchThreadID)
         float n = (doWarp != 0 || writeDepth != 0) ? NearAt(x, (int)y) : 0.0;
         int dx = x;
         float destF = (float)x;
-        if (doWarp != 0 || curveOn != 0)
+        if (doWarp != 0)
         {
-            float s = 0.0;
-            if (doWarp != 0)
-            {
-                float invZ = invZFar + n * (invZNear - invZFar);
-                s = scaleFocal * eye * invZ;
-            }
-            if (curveOn == 0)
-            {
-                int r = (s < 0.0) ? -(int)floor(-s + 0.5) : (int)floor(s + 0.5);   // lround
-                dx = x - r;
-                destF = (float)x - s;
-            }
-            else
-            {
-                // The curved surface moves this column AND has its own disparity.
-                s += curveFocal * eye * curveBuf[x].invZ;
-                destF = curveBuf[x].destBase - s;
-                dx = (destF < 0.0) ? -(int)floor(-destF + 0.5) : (int)floor(destF + 0.5);
-            }
+            float invZ = invZFar + n * (invZNear - invZFar);
+            float s = scaleFocal * eye * invZ;
+            int r = (s < 0.0) ? -(int)floor(-s + 0.5) : (int)floor(s + 0.5);   // lround
+            dx = x - r;
+            destF = (float)x - s;
         }
         if (dx >= 0 && dx < iw)
         {
@@ -1655,47 +1647,7 @@ void main(uint3 id : SV_DispatchThreadID)
     {
         int s = (int)scratch[base + x];
         float4 col;
-        bool transparent = false;
-        if (curveOn != 0)
-        {
-            // Curved: the column is also scaled vertically, so this destination row
-            // takes its colour from further out in the source - and past the end of
-            // the picture there is nothing to show, which bows the outline outwards.
-            float pos = (float)s;
-            if (subpixel != 0) pos = clamp((float)s + ((float)x - asfloat(scratch[2 * N + base + x])), 0.0, (float)(iw - 1));
-            float ySrc = ((float)y + 0.5 - (float)CH * 0.5) / curveBuf[s].vertMag + (float)CH * 0.5 - 0.5;
-            if (ySrc < 0.0 || ySrc > (float)((int)CH - 1))
-            {
-                col = float4(0, 0, 0, 0);
-                transparent = true;
-            }
-            else
-            {
-                int i0 = (int)pos;
-                int i1 = min(i0 + 1, iw - 1);
-                float fr = pos - (float)i0;
-                int j0 = (int)ySrc;
-                int j1 = min(j0 + 1, (int)CH - 1);
-                float fy = ySrc - (float)j0;
-                float4 a, b, c, d;
-                if (exactLoad != 0)
-                {
-                    a = scene.Load(int3(i0, j0, 0)); b = scene.Load(int3(i1, j0, 0));
-                    c = scene.Load(int3(i0, j1, 0)); d = scene.Load(int3(i1, j1, 0));
-                }
-                else
-                {
-                    a = scene.SampleLevel(samp, float2(((float)i0 + 0.5) / (float)CW, ((float)j0 + 0.5) / (float)CH), 0);
-                    b = scene.SampleLevel(samp, float2(((float)i1 + 0.5) / (float)CW, ((float)j0 + 0.5) / (float)CH), 0);
-                    c = scene.SampleLevel(samp, float2(((float)i0 + 0.5) / (float)CW, ((float)j1 + 0.5) / (float)CH), 0);
-                    d = scene.SampleLevel(samp, float2(((float)i1 + 0.5) / (float)CW, ((float)j1 + 0.5) / (float)CH), 0);
-                }
-                float4 top = a + fr * (b - a);
-                float4 bot = c + fr * (d - c);
-                col = top + fy * (bot - top);
-            }
-        }
-        else if (subpixel != 0)
+        if (subpixel != 0)
         {
             // The source pixel `s` lands at scratch[2N+...]; the content that lands
             // exactly here is at s + (x - that). Blended in float rather than by the
@@ -1715,7 +1667,7 @@ void main(uint3 id : SV_DispatchThreadID)
         }
         else if (exactLoad != 0) col = scene.Load(int3(s, y, 0));
         else col = scene.SampleLevel(samp, float2(((float)s + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
-        if (!transparent) col.a = 1.0;
+        col.a = 1.0;
 
         if (indicator != 0 && y >= CH / 49 && y < CH / 12 && x >= iw / 2 - iw / 17 && x < iw / 2 + iw / 17)
             col = (indicator == 1) ? float4(0, 1, 0, 1) : float4(1, 0, 0, 1);
@@ -1724,7 +1676,6 @@ void main(uint3 id : SV_DispatchThreadID)
         if (writeDepth != 0)
         {
             float invZ = invZFar + asfloat(scratch[N + base + x]) * (invZNear - invZFar);
-            if (curveOn != 0) invZ = transparent ? invZFar : invZ + curveBuf[s].invZ;
             if (depthLie != 0) invZ = (x < iw / 2) ? (1.0 / 0.5) : (1.0 / 10.0);
             outDepth[uint3(x, y, e)] = (farZ / (farZ - nearZ)) * (1.0 - nearZ * invZ);
         }
@@ -1890,6 +1841,7 @@ cbuffer C : register(b0)
     float blend;                    // towards this frame's glow (1 = no smoothing)
     uint  reset;
     float blurPx;
+    float bezel;                    // dark rise next to the screen, fraction of the margin
 };
 
 static const int HALF = 2;          // kAmbiTaps / 2
@@ -1917,6 +1869,11 @@ void main(uint3 id : SV_DispatchThreadID)
     if (dist > 0.0 && dist < 1.0)
     {
         float a = (1.0 - dist) * (1.0 - dist) * intensity;
+        if (bezel > 0.0)
+        {
+            float tb = (dist / bezel < 1.0) ? dist / bezel : 1.0;
+            a *= tb * tb * (3.0 - 2.0 * tb);
+        }
         float px = cx * (float)SRCW - 0.5;
         float py = cy * (float)SRCH - 0.5;
         float3 sum = float3(0, 0, 0);
@@ -1935,6 +1892,114 @@ void main(uint3 id : SV_DispatchThreadID)
     }
     float4 prev = glow[id.xy];
     glow[id.xy] = (reset != 0) ? result : prev + (result - prev) * blend;
+}
+)HLSL";
+
+// Curved screen: one ray per sample from the eye through its pixel, against the
+// cylinder (screen_curve.h, CylinderHit), then against the glow just behind it.
+// The same arithmetic as CurvedPixel, which SelfTestCurve compares with.
+static const char* kCurveHlsl = R"HLSL(
+cbuffer C : register(b0)
+{
+    uint  EW; uint EH; uint glowOn; uint pad0;
+    float R; float halfWrap; float halfW; float halfH;
+    float glowHalfW; float glowHalfH; float glowZ; float pad1;
+    float4 eyeData[10];             // per eye: origin, rotation rows 0..2, (tanL, tanR, tanU, tanD)
+};
+
+Texture2DArray<float4>   picture : register(t0);    // each eye's depth-warped picture
+Texture2D<float4>        glow    : register(t1);    // premultiplied ambilight glow
+RWTexture2DArray<float4> outEye  : register(u0);
+SamplerState             samp    : register(s0);
+
+static const float2 SUB[4] = { float2(-0.375, -0.125), float2(0.125, -0.375), float2(0.375, 0.125), float2(-0.125, 0.375) };
+
+void Ray(uint e, float px, float py, out float3 o, out float3 d)
+{
+    float4 tans = eyeData[e * 5 + 4];
+    float tx = tans.x + px / (float)EW * (tans.y - tans.x);
+    float ty = tans.z + py / (float)EH * (tans.w - tans.z);
+    float4 r0 = eyeData[e * 5 + 1], r1 = eyeData[e * 5 + 2], r2 = eyeData[e * 5 + 3];
+    o = eyeData[e * 5 + 0].xyz;
+    d = float3(r0.x * tx + r0.y * ty - r0.z, r1.x * tx + r1.y * ty - r1.z, r2.x * tx + r2.y * ty - r2.z);
+}
+
+bool Cylinder(float3 o, float3 d, out float2 uv)
+{
+    uv = float2(0, 0);
+    float a = d.x * d.x + d.z * d.z;
+    if (!(a > 1e-12)) return false;
+    float b = 2.0 * (o.x * d.x + (o.z - R) * d.z);
+    float c = o.x * o.x + o.z * o.z - 2.0 * o.z * R;
+    float disc = b * b - 4.0 * a * c;
+    if (disc < 0.0) return false;
+    float sq = sqrt(disc);
+    float q = -0.5 * (b + (b < 0.0 ? -sq : sq));
+    float t0 = q / a;
+    float t1 = (q != 0.0) ? c / q : t0;
+    if (t0 > t1) { float sw = t0; t0 = t1; t1 = sw; }
+    [unroll] for (int i = 0; i < 2; i++)
+    {
+        float t = (i == 0) ? t0 : t1;
+        if (!(t > 0.0)) continue;
+        float hx = o.x + t * d.x, hy = o.y + t * d.y, hz = o.z + t * d.z;
+        float toward = R - hz;
+        if (!(toward > 0.0)) continue;
+        float phi = atan2(hx, toward);
+        if (abs(phi) > halfWrap || abs(hy) > halfH) continue;
+        uv = float2((R * phi) / (2.0 * halfW) + 0.5, 0.5 - hy / (2.0 * halfH));
+        return true;
+    }
+    return false;
+}
+
+bool Glow(float3 o, float3 d, out float2 uv)
+{
+    uv = float2(0, 0);
+    if (glowOn == 0 || !(d.z < 0.0)) return false;
+    float t = (glowZ - o.z) / d.z;
+    if (!(t > 0.0)) return false;
+    float gx = o.x + t * d.x, gy = o.y + t * d.y;
+    uv = float2(gx / (2.0 * glowHalfW) + 0.5, 0.5 - gy / (2.0 * glowHalfH));
+    return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= EW || id.y >= EH) return;
+    uint e = id.z;
+
+    int kind[4];
+    float2 uv[4];
+    [unroll] for (int s = 0; s < 4; s++)
+    {
+        float3 o, d;
+        Ray(e, (float)id.x + 0.5 + SUB[s].x, (float)id.y + 0.5 + SUB[s].y, o, d);
+        float2 hit;
+        if (Cylinder(o, d, hit)) { kind[s] = 0; uv[s] = hit; }
+        else if (Glow(o, d, hit)) { kind[s] = 1; uv[s] = hit; }
+        else { kind[s] = 2; uv[s] = float2(0, 0); }
+    }
+
+    // All four agree (almost every pixel): one sample. At an edge: all four.
+    float3 col = float3(0, 0, 0);
+    if (kind[0] == kind[1] && kind[1] == kind[2] && kind[2] == kind[3])
+    {
+        float mu = (uv[0].x + uv[1].x + uv[2].x + uv[3].x) * 0.25;
+        float mv = (uv[0].y + uv[1].y + uv[2].y + uv[3].y) * 0.25;
+        if (kind[0] == 0) col = picture.SampleLevel(samp, float3(mu, mv, (float)e), 0).rgb;
+        else if (kind[0] == 1) col = glow.SampleLevel(samp, float2(mu, mv), 0).rgb;
+    }
+    else
+    {
+        [unroll] for (int k = 0; k < 4; k++)
+        {
+            if (kind[k] == 0) col += picture.SampleLevel(samp, float3(uv[k], (float)e), 0).rgb * 0.25;
+            else if (kind[k] == 1) col += glow.SampleLevel(samp, uv[k], 0).rgb * 0.25;
+        }
+    }
+    outEye[uint3(id.x, id.y, e)] = float4(col, 1.0);
 }
 )HLSL";
 
@@ -2037,10 +2102,10 @@ static bool MakeRootSig(App& app, UINT numConstants, bool uavTable, ComPtr<ID3D1
     srcRange.NumDescriptors = 1; srcRange.BaseShaderRegister = 0;
 
     D3D12_DESCRIPTOR_RANGE tbl[2]{};
-    tbl[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;     // t1 near map, t2 curve geometry
-    tbl[0].NumDescriptors = 2; tbl[0].BaseShaderRegister = 1; tbl[0].OffsetInDescriptorsFromTableStart = 0;
+    tbl[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    tbl[0].NumDescriptors = 1; tbl[0].BaseShaderRegister = 1; tbl[0].OffsetInDescriptorsFromTableStart = 0;
     tbl[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-    tbl[1].NumDescriptors = 3; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 2;
+    tbl[1].NumDescriptors = 3; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 1;
 
     D3D12_ROOT_PARAMETER params[3]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -2115,6 +2180,68 @@ static bool MakeAmbiRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
     return true;
 }
 
+// Constants, then one table: the warped pictures (t0), the glow (t1), the eye
+// buffers (u0); a linear clamping sampler for both reads.
+static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
+{
+    D3D12_DESCRIPTOR_RANGE tbl[2]{};
+    tbl[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    tbl[0].NumDescriptors = 2; tbl[0].BaseShaderRegister = 0; tbl[0].OffsetInDescriptorsFromTableStart = 0;
+    tbl[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    tbl[1].NumDescriptors = 1; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 2;
+
+    D3D12_ROOT_PARAMETER params[2]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[0].Constants.ShaderRegister = 0;
+    params[0].Constants.Num32BitValues = sizeof(CurveConstants) / 4;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[1].DescriptorTable.NumDescriptorRanges = 2;
+    params[1].DescriptorTable.pDescriptorRanges = tbl;
+
+    D3D12_STATIC_SAMPLER_DESC ss{};
+    ss.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    ss.AddressU = ss.AddressV = ss.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    ss.MaxLOD = D3D12_FLOAT32_MAX;
+    ss.ShaderRegister = 0;
+    ss.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_DESC rsd{};
+    rsd.NumParameters = 2;
+    rsd.pParameters = params;
+    rsd.NumStaticSamplers = 1;
+    rsd.pStaticSamplers = &ss;
+    ComPtr<ID3DBlob> blob, err;
+    HRESULT hr = D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
+    if (FAILED(hr)) { Log("MakeCurveRootSig: FAIL serialize: %s", err ? (const char*)err->GetBufferPointer() : "?"); return false; }
+    hr = app.device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&out));
+    if (FAILED(hr)) { Log("MakeCurveRootSig: FAIL CreateRootSignature 0x%08X", (unsigned)hr); return false; }
+    return true;
+}
+
+// SRV of a warp target's two warped pictures, for the curved pass.
+static void MakePictureSrv(App& app, ID3D12Resource* colorOut, UINT index)
+{
+    if (!colorOut) return;
+    D3D12_SHADER_RESOURCE_VIEW_DESC v{};
+    v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    v.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    v.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+    v.Texture2DArray.MipLevels = 1;
+    v.Texture2DArray.ArraySize = VIEWS;
+    app.device->CreateShaderResourceView(colorOut, &v, CpuDesc(app, index));
+}
+
+// UAV of a pair of eye buffers.
+static void MakeEyeUav(App& app, ID3D12Resource* eyes, UINT index)
+{
+    if (!eyes) return;
+    D3D12_UNORDERED_ACCESS_VIEW_DESC u{};
+    u.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    u.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+    u.Texture2DArray.ArraySize = VIEWS;
+    app.device->CreateUnorderedAccessView(eyes, nullptr, &u, CpuDesc(app, index));
+}
+
 static bool MakeWarpTarget(App& app, int cw, int ch, UINT tableIndex, WarpTarget& t)
 {
     Log("MakeWarpTarget: enter %dx%d table %u", cw, ch, tableIndex);
@@ -2129,13 +2256,6 @@ static bool MakeWarpTarget(App& app, int cw, int ch, UINT tableIndex, WarpTarget
     if (!MakeBuffer(dev, D3D12_HEAP_TYPE_DEFAULT, (UINT64)scratchElems * 4, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, t.scratch, nullptr)) return false;
 
-    const UINT64 curveBytes = (UINT64)cw * sizeof(CurveColumn);
-    if (!MakeBuffer(dev, D3D12_HEAP_TYPE_DEFAULT, curveBytes, D3D12_RESOURCE_FLAG_NONE,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, t.curveBuf, nullptr)) return false;
-    for (int i = 0; i < RING; i++)
-        if (!MakeBuffer(dev, D3D12_HEAP_TYPE_UPLOAD, curveBytes, D3D12_RESOURCE_FLAG_NONE,
-                        D3D12_RESOURCE_STATE_GENERIC_READ, t.curveUp[i], (void**)&t.curveMapped[i])) return false;
-
     D3D12_SHADER_RESOURCE_VIEW_DESC bv{};
     bv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     bv.Format = DXGI_FORMAT_UNKNOWN;
@@ -2143,24 +2263,21 @@ static bool MakeWarpTarget(App& app, int cw, int ch, UINT tableIndex, WarpTarget
     bv.Buffer.NumElements = (UINT)(W * H);
     bv.Buffer.StructureByteStride = sizeof(float);
     dev->CreateShaderResourceView(app.nearBuf.Get(), &bv, CpuDesc(app, tableIndex + 0));
-    bv.Buffer.NumElements = (UINT)cw;
-    bv.Buffer.StructureByteStride = sizeof(CurveColumn);
-    dev->CreateShaderResourceView(t.curveBuf.Get(), &bv, CpuDesc(app, tableIndex + 1));
 
     D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
     uv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     uv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
     uv.Texture2DArray.ArraySize = VIEWS;
-    dev->CreateUnorderedAccessView(t.colorOut.Get(), nullptr, &uv, CpuDesc(app, tableIndex + 2));
+    dev->CreateUnorderedAccessView(t.colorOut.Get(), nullptr, &uv, CpuDesc(app, tableIndex + 1));
     uv.Format = DXGI_FORMAT_R32_FLOAT;
-    dev->CreateUnorderedAccessView(t.depthOut.Get(), nullptr, &uv, CpuDesc(app, tableIndex + 3));
+    dev->CreateUnorderedAccessView(t.depthOut.Get(), nullptr, &uv, CpuDesc(app, tableIndex + 2));
 
     D3D12_UNORDERED_ACCESS_VIEW_DESC sv{};
     sv.Format = DXGI_FORMAT_UNKNOWN;
     sv.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
     sv.Buffer.NumElements = scratchElems;
     sv.Buffer.StructureByteStride = 4;
-    dev->CreateUnorderedAccessView(t.scratch.Get(), nullptr, &sv, CpuDesc(app, tableIndex + 4));
+    dev->CreateUnorderedAccessView(t.scratch.Get(), nullptr, &sv, CpuDesc(app, tableIndex + 3));
 
     Log("MakeWarpTarget: exit ok");
     return true;
@@ -2227,6 +2344,29 @@ static bool InitShaders(App& app)
     app.ambiHistory = false;
     Log("InitShaders: ambilight glow %dx%d (margin %.0f%% of the screen width)", app.ambiW, app.ambiH, kAmbiMargin * 100.0f);
 
+    // Curved screen: pipeline and every descriptor except the playback eye
+    // buffers, which are made when a curve is first asked for.
+    ComPtr<ID3DBlob> curveCs;
+    if (!CompileCs("curve.hlsl", kCurveHlsl, curveCs)) return false;
+    if (!MakeCurveRootSig(app, app.curveRootSig)) return false;
+    pd.pRootSignature = app.curveRootSig.Get();
+    pd.CS = { curveCs->GetBufferPointer(), curveCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.curvePso)))) { Log("InitShaders: FAIL curve PSO"); return false; }
+    D3D12_SHADER_RESOURCE_VIEW_DESC glowSrv{};
+    glowSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    glowSrv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    glowSrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    glowSrv.Texture2D.MipLevels = 1;
+    MakePictureSrv(app, app.mainTarget.colorOut.Get(), DESC_CURVE_MAIN + 0);
+    app.device->CreateShaderResourceView(app.ambiTex.Get(), &glowSrv, CpuDesc(app, DESC_CURVE_MAIN + 1));
+    MakePictureSrv(app, app.testTarget.colorOut.Get(), DESC_CURVE_TEST + 0);
+    app.device->CreateShaderResourceView(app.ambiTex.Get(), &glowSrv, CpuDesc(app, DESC_CURVE_TEST + 1));
+    if (!MakeTexture(app.device.Get(), TEST_EYE_W, TEST_EYE_H, DXGI_FORMAT_R8G8B8A8_TYPELESS, VIEWS,
+                     D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_HEAP_FLAG_NONE,
+                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.testEyeOut)) return false;
+    MakeEyeUav(app, app.testEyeOut.Get(), DESC_CURVE_TEST + 2);
+    Log("InitShaders: curved screen pass ready (%zu bytes)", curveCs->GetBufferSize());
+
     Log("InitShaders: exit ok (warp %zu bytes, prep %zu bytes)", warpCs->GetBufferSize(), prepCs->GetBufferSize());
     return true;
 }
@@ -2240,22 +2380,6 @@ static void RecordUploadNear(App& app, ID3D12Resource* upload)
     Transition(cl, app.nearBuf.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     cl->CopyBufferRegion(app.nearBuf.Get(), 0, upload, 0, (UINT64)W * H * sizeof(float));
     Transition(cl, app.nearBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-}
-
-// The curved-screen geometry for this frame -> the target's curve buffer. The
-// staging buffer belongs to this frame's ring slot, whose previous use the caller
-// has already waited for, so nothing in flight is overwritten.
-static void RecordCurveUpload(App& app, WarpTarget& t, int ring, const CurveTable& curve)
-{
-    if (ring < 0 || ring >= RING) return;
-    if (!t.curveBuf || !t.curveMapped[ring]) return;
-    if (curve.col.size() != (size_t)t.cw) return;
-
-    memcpy(t.curveMapped[ring], curve.col.data(), curve.col.size() * sizeof(CurveColumn));
-    ID3D12GraphicsCommandList* cl = app.cmdList.Get();
-    Transition(cl, t.curveBuf.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
-    cl->CopyBufferRegion(t.curveBuf.Get(), 0, t.curveUp[ring].Get(), 0, (UINT64)curve.col.size() * sizeof(CurveColumn));
-    Transition(cl, t.curveBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 }
 
 // dispatch the warp for both eyes; leaves colorOut/depthOut in COPY_SOURCE
@@ -2309,6 +2433,84 @@ static void RecordAmbilight(App& app, UINT srcDescIndex, const AmbiConstants& c,
     cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
     Transition(cl, glowImg, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
     Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+}
+
+// Rotation matrix (rows) of a unit quaternion: world <- local.
+static void QuatRows(const XrQuaternionf& q, float m[3][3])
+{
+    if (!m) return;
+    const float x = q.x, y = q.y, z = q.z, w = q.w;
+    m[0][0] = 1 - 2 * (y * y + z * z); m[0][1] = 2 * (x * y - z * w);     m[0][2] = 2 * (x * z + y * w);
+    m[1][0] = 2 * (x * y + z * w);     m[1][1] = 1 - 2 * (x * x + z * z); m[1][2] = 2 * (y * z - x * w);
+    m[2][0] = 2 * (x * z - y * w);     m[2][1] = 2 * (y * z + x * w);     m[2][2] = 1 - 2 * (x * x + y * y);
+}
+
+// The curved pass's constants: each eye's position and view rotation expressed in
+// the screen's own frame (origin at its middle, z towards the viewer), and its FOV.
+static CurveConstants MakeCurveConstants(const Cylinder& cyl, const XrPosef& screenPose, const XrPosef eyePose[VIEWS],
+                                         const XrFovf eyeFov[VIEWS], int ew, int eh, bool glowOn, float glowW, float glowH)
+{
+    CurveConstants c{};
+    if (!eyePose || !eyeFov) return c;
+    c.ew = (uint32_t)ew; c.eh = (uint32_t)eh;
+    c.radius = cyl.radius; c.halfWrap = cyl.halfWrap; c.halfWidth = cyl.halfWidth; c.halfHeight = cyl.halfHeight;
+    c.glowOn = glowOn ? 1u : 0u;
+    c.glowHalfW = glowW * 0.5f; c.glowHalfH = glowH * 0.5f;
+    c.glowZ = -kAmbiBehind;
+    float S[3][3];
+    QuatRows(screenPose.orientation, S);
+    for (uint32_t e = 0; e < VIEWS; e++)
+    {
+        float E[3][3];
+        QuatRows(eyePose[e].orientation, E);
+        CurveEye& v = c.eye[e];
+        float* rows[3] = { v.row0, v.row1, v.row2 };
+        for (int r = 0; r < 3; r++)
+            for (int k = 0; k < 3; k++)
+                rows[r][k] = S[0][r] * E[0][k] + S[1][r] * E[1][k] + S[2][r] * E[2][k];     // S^T E
+        const float rel[3] = { eyePose[e].position.x - screenPose.position.x, eyePose[e].position.y - screenPose.position.y,
+                               eyePose[e].position.z - screenPose.position.z };
+        for (int r = 0; r < 3; r++) v.origin[r] = S[0][r] * rel[0] + S[1][r] * rel[1] + S[2][r] * rel[2];
+        v.tanL = tanf(eyeFov[e].angleLeft); v.tanR = tanf(eyeFov[e].angleRight);
+        v.tanU = tanf(eyeFov[e].angleUp); v.tanD = tanf(eyeFov[e].angleDown);
+    }
+    return c;
+}
+
+// Ray-cast the curved screen into `eyes` (UAV at rest) from `picture` (the warp's
+// output, COPY_SOURCE as RecordWarp leaves it; left that way). With eyeImg, copy
+// the result into the acquired swapchain image (RENDER_TARGET at rest).
+static void RecordCurvedScreen(App& app, UINT tableIndex, ID3D12Resource* picture, const CurveConstants& c,
+                               ID3D12Resource* eyes, ID3D12Resource* eyeImg)
+{
+    if (!picture || !eyes || !app.curvePso || !app.ambiTex) return;
+    if (c.ew == 0 || c.eh == 0) return;
+
+    ID3D12GraphicsCommandList* cl = app.cmdList.Get();
+    Transition(cl, picture, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
+    cl->SetDescriptorHeaps(1, heaps);
+    cl->SetComputeRootSignature(app.curveRootSig.Get());
+    cl->SetPipelineState(app.curvePso.Get());
+    cl->SetComputeRoot32BitConstants(0, sizeof(CurveConstants) / 4, &c, 0);
+    cl->SetComputeRootDescriptorTable(1, GpuDesc(app, tableIndex));
+    cl->Dispatch((c.ew + 7) / 8, (c.eh + 7) / 8, VIEWS);
+    Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(cl, picture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    if (!eyeImg) return;
+
+    Transition(cl, eyes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    Transition(cl, eyeImg, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
+    for (UINT e = 0; e < VIEWS; e++)
+    {
+        D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dst.SubresourceIndex = e; dst.pResource = eyeImg;
+        src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; src.SubresourceIndex = e; src.pResource = eyes;
+        cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+    Transition(cl, eyeImg, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    Transition(cl, eyes, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
 // warp outputs -> the acquired swapchain images. Spec (XR_KHR_D3D12_enable):
@@ -3354,6 +3556,21 @@ static bool InitXrSession(App& app)
     for (auto f : formats) if (f == DXGI_FORMAT_D32_FLOAT) { depthFmt = f; break; }
     Log("InitXrSession: formats colour %lld depth %lld (of %u offered)", (long long)colorFmt, (long long)depthFmt, fmtCount);
     if (!colorFmt) { Log("InitXrSession: FAIL runtime offers no R8G8B8A8 colour format"); return false; }
+    app.colorFormat = colorFmt;
+
+    // The curved screen renders whole eye buffers at the runtime's recommended size.
+    uint32_t viewCount = 0;
+    XrViewConfigurationView vcv[VIEWS] = { { XR_TYPE_VIEW_CONFIGURATION_VIEW }, { XR_TYPE_VIEW_CONFIGURATION_VIEW } };
+    const XrResult vr = xrEnumViewConfigs_(app.instance, app.systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, VIEWS, &viewCount, vcv);
+    if (XR_SUCCEEDED(vr) && viewCount == VIEWS)
+    {
+        app.eyeW = (int)std::min(std::min(vcv[0].recommendedImageRectWidth, vcv[0].maxImageRectWidth), 4096u);
+        app.eyeH = (int)std::min(std::min(vcv[0].recommendedImageRectHeight, vcv[0].maxImageRectHeight), 4096u);
+        Log("InitXrSession: recommended eye buffer %ux%u (max %ux%u), curved screen uses %dx%d",
+            vcv[0].recommendedImageRectWidth, vcv[0].recommendedImageRectHeight, vcv[0].maxImageRectWidth, vcv[0].maxImageRectHeight,
+            app.eyeW, app.eyeH);
+    }
+    else Log("InitXrSession: view configuration %s (%u views) - the screen cannot curve", XRStr(vr), viewCount);
     if (!depthFmt && app.opt.submitDepth) { Log("InitXrSession: FAIL runtime offers no D32_FLOAT depth format"); return false; }
 
     XrSwapchainCreateInfo sc{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
@@ -3408,6 +3625,41 @@ static bool InitXrSession(App& app)
     xrEnumImages_(app.depthSc, dn, &dn, (XrSwapchainImageBaseHeader*)app.dimgs.data());
     if (dn == 0 || !app.dimgs[0].texture) { Log("InitXrSession: FAIL no depth swapchain images"); return false; }
     Log("InitXrSession: exit ok, depth images %u", dn);
+    return true;
+}
+
+// The curved screen's eye swapchain and buffers, made the first time a curve is
+// asked for (most players never use it). On failure the screen stays flat.
+static bool EnsureCurvedEyes(App& app)
+{
+    if (app.eyeSc != XR_NULL_HANDLE && app.eyeOut) return true;
+    if (app.eyeFailed) return false;
+    Log("EnsureCurvedEyes: enter (%dx%d per eye)", app.eyeW, app.eyeH);
+    app.eyeFailed = true;                       // until everything below succeeds
+    if (app.eyeW <= 0 || app.eyeH <= 0 || app.session == XR_NULL_HANDLE || !app.colorFormat)
+    { Log("EnsureCurvedEyes: FAIL no eye size or session - the screen stays flat"); return false; }
+
+    XrSwapchainCreateInfo sc{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
+    sc.sampleCount = 1; sc.width = (uint32_t)app.eyeW; sc.height = (uint32_t)app.eyeH; sc.faceCount = 1;
+    sc.arraySize = VIEWS; sc.mipCount = 1;
+    sc.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+    sc.format = app.colorFormat;
+    const XrResult r = xrCreateSwapchain_(app.session, &sc, &app.eyeSc);
+    if (XR_FAILED(r)) { app.eyeSc = XR_NULL_HANDLE; Log("EnsureCurvedEyes: FAIL swapchain %s - the screen stays flat", XRStr(r)); return false; }
+    uint32_t count = 0;
+    xrEnumImages_(app.eyeSc, 0, &count, nullptr);
+    app.eimgs.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR });
+    xrEnumImages_(app.eyeSc, count, &count, (XrSwapchainImageBaseHeader*)app.eimgs.data());
+    if (count == 0 || !app.eimgs[0].texture) { Log("EnsureCurvedEyes: FAIL no swapchain images - the screen stays flat"); return false; }
+
+    if (!MakeTexture(app.device.Get(), app.eyeW, app.eyeH, DXGI_FORMAT_R8G8B8A8_TYPELESS, VIEWS,
+                     D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_HEAP_FLAG_NONE,
+                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.eyeOut))
+    { Log("EnsureCurvedEyes: FAIL eye buffers - the screen stays flat"); return false; }
+    MakeEyeUav(app, app.eyeOut.Get(), DESC_CURVE_MAIN + 2);
+    app.eyeFailed = false;
+    Log("EnsureCurvedEyes: exit ok (%u swapchain images, %.1f MB of eye buffers)", count,
+        (double)app.eyeW * app.eyeH * 4 * VIEWS / (1024.0 * 1024.0));
     return true;
 }
 
@@ -3562,24 +3814,13 @@ static bool SelfTestPipeline(App& app)
     return ok;
 }
 
-// GPU warp vs the CPU reference at WxH, pixel for pixel. curveTable may be null
-// (flat screen); a curved one is uploaded for the shader and handed to the
-// reference, so both work from the same per-column numbers.
+// GPU warp vs the CPU reference at WxH, pixel for pixel.
 static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned char>& scene,
-                         const std::vector<float>& near01, const WarpConstants& cIn,
-                         const CurveTable* curveTable = nullptr)
+                         const std::vector<float>& near01, const WarpConstants& c)
 {
     if (!name) return false;
     if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) { Log("SelfTestWarp[%s]: bad input sizes", name); return false; }
-
-    const CurveTable* curved = (curveTable && curveTable->curved) ? curveTable : nullptr;
-    CurveTable flat;
-    if (!curved && !BuildCurveTable(W, 1.0f, 1.0f, 0.0f, flat)) { Log("SelfTestWarp[%s]: FAIL flat curve table", name); return false; }
-    if (curved && curved->col.size() != (size_t)W) { Log("SelfTestWarp[%s]: FAIL curve table is %zu columns, want %d", name, curved->col.size(), W); return false; }
-    WarpConstants c = cIn;
-    c.curveOn = curved ? 1u : 0u;
-    Log("SelfTestWarp[%s]: enter (doWarp %u fill %u scaleFocal %.2f eyes %.4f/%.4f curve %s)", name, c.doWarp, c.fillMode, c.scaleFocal, c.eye0, c.eye1,
-        curved ? "on" : "off");
+    Log("SelfTestWarp[%s]: enter (doWarp %u fill %u scaleFocal %.2f eyes %.4f/%.4f)", name, c.doWarp, c.fillMode, c.scaleFocal, c.eye0, c.eye1);
 
     if (!UploadTestSource(app, scene)) return false;
     ID3D12Device* dev = app.device.Get();
@@ -3603,7 +3844,6 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     app.cmdAlloc[0]->Reset();
     app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
     RecordUploadNear(app, nearUp.Get());
-    RecordCurveUpload(app, t, 0, curved ? *curved : flat);
     RecordWarp(app, t, DESC_TEST_SRC, c);
     for (UINT e = 0; e < VIEWS; e++)
     {
@@ -3631,7 +3871,7 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     for (UINT e = 0; e < VIEWS; e++)
     {
         WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode,
-                    refColor.data(), refDepth.data(), c.subpixel != 0, curved ? curved->col.data() : nullptr, c.curveFocal);
+                    refColor.data(), refDepth.data(), c.subpixel != 0);
         for (int y = 0; y < H; y++)
         {
             const unsigned char* grow = cp + cfp[e].Offset + (size_t)y * cfp[e].Footprint.RowPitch;
@@ -3644,8 +3884,7 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
                 // Sub-pixel blends two of them, and the GPU's UNORM store rounds ties
                 // to even where lroundf rounds away from zero: allow one last bit,
                 // and report the worst difference so a real error still shows.
-                // A curved screen also blends two rows, so it rounds like sub-pixel.
-                if (c.subpixel == 0 && c.curveOn == 0)
+                if (c.subpixel == 0)
                 {
                     if (memcmp(grow + x * 4, rrow + x * 4, 4) != 0) badColor++;
                 }
@@ -3667,7 +3906,7 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     const size_t tolerance = total / 2000;          // 0.05 % - rounding ties only
     bool ok = badColor <= tolerance && badDepth <= tolerance;
     Log("SelfTestWarp[%s]: exit %s - mismatches colour %zu depth %zu of %zu px (tolerance %zu)%s", name, ok ? "PASS" : "FAIL",
-        badColor, badDepth, total, tolerance, (c.subpixel || c.curveOn) ? (worstColor <= 1 ? " [blended: worst 1 bit]" : " [blended: worst > 1 bit]") : "");
+        badColor, badDepth, total, tolerance, c.subpixel ? (worstColor <= 1 ? " [sub-pixel: worst 1 bit]" : " [sub-pixel: worst > 1 bit]") : "");
     return ok;
 }
 
@@ -3954,6 +4193,7 @@ static bool SelfTestAmbilight(App& app, const std::vector<unsigned char>& scene)
     a.blend = kAmbiBlend;
     a.reset = 1;                        // no history: exactly what the reference computes
     a.blurPx = kAmbiBlurFraction * (float)W;
+    a.bezel = kAmbiBezel;
 
     ID3D12Device* dev = app.device.Get();
     D3D12_RESOURCE_DESC gd = app.ambiTex->GetDesc();
@@ -4011,6 +4251,125 @@ static bool SelfTestAmbilight(App& app, const std::vector<unsigned char>& scene)
     const bool ok = bad == 0 && lit > pixels / 10;
     Log("SelfTestAmbilight: exit %s - %zu of %zu glow pixels differ by more than one bit (worst %d), %zu lit",
         ok ? "PASS" : "FAIL", bad, pixels, worst, lit);
+    return ok;
+}
+
+// Reads back a texture array (all slices) into tightly packed RGBA rows.
+static bool ReadbackRgba(App& app, ID3D12Resource* tex, D3D12_RESOURCE_STATES state, std::vector<std::vector<unsigned char>>& out)
+{
+    if (!tex) return false;
+    D3D12_RESOURCE_DESC d = tex->GetDesc();
+    const UINT slices = d.DepthOrArraySize;
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> fp(slices);
+    UINT64 total = 0;
+    app.device->GetCopyableFootprints(&d, 0, slices, 0, fp.data(), nullptr, nullptr, &total);
+    ComPtr<ID3D12Resource> rb;
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, total, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, rb, nullptr)) return false;
+    WaitFence(app, app.fenceVal);
+    app.cmdAlloc[0]->Reset();
+    app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+    if (state != D3D12_RESOURCE_STATE_COPY_SOURCE) Transition(app.cmdList.Get(), tex, state, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    for (UINT i = 0; i < slices; i++)
+    {
+        D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dst.pResource = rb.Get(); dst.PlacedFootprint = fp[i];
+        src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; src.pResource = tex; src.SubresourceIndex = i;
+        app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+    if (state != D3D12_RESOURCE_STATE_COPY_SOURCE) Transition(app.cmdList.Get(), tex, D3D12_RESOURCE_STATE_COPY_SOURCE, state);
+    app.cmdList->Close();
+    WaitFence(app, SubmitAndSignal(app));
+    const unsigned char* mapped = nullptr;
+    if (FAILED(rb->Map(0, nullptr, (void**)&mapped)) || !mapped) return false;
+    out.assign(slices, {});
+    for (UINT i = 0; i < slices; i++)
+    {
+        out[i].resize((size_t)d.Width * d.Height * 4);
+        for (UINT y = 0; y < d.Height; y++)
+            memcpy(out[i].data() + (size_t)y * d.Width * 4, mapped + fp[i].Offset + (size_t)y * fp[i].Footprint.RowPitch, (size_t)d.Width * 4);
+    }
+    rb->Unmap(0, nullptr);
+    return true;
+}
+
+// The curved screen, GPU vs the CPU reference (CurvedPixel): the test target's
+// last warped pair on a fully curved cylinder with the glow behind it, seen by two
+// eyes, one of them turned slightly, so that position, rotation, outline, glow and
+// sampling are all exercised. The GPU filters with 8-bit weights, so a colour may
+// differ by a couple of bits; a ray exactly on the outline may land either side.
+static bool SelfTestCurve(App& app)
+{
+    if (!app.curvePso || !app.testEyeOut) { Log("SelfTestCurve: FAIL pass not built"); return false; }
+    Log("SelfTestCurve: enter (%dx%d eyes)", TEST_EYE_W, TEST_EYE_H);
+
+    const float width = 5.7f, height = width * (float)H / (float)W, distance = ScreenAnchor::distance;
+    Cylinder cyl;
+    if (!BuildCylinder(width, height, distance, 1.0f, cyl) || !cyl.curved) { Log("SelfTestCurve: FAIL cylinder"); return false; }
+    const float marginM = kAmbiMargin * width;
+    XrPosef screenPose{ { 0, 0, 0, 1 }, { 0.1f, 1.5f, -distance } };
+    XrPosef eyes[VIEWS] = { { { 0, 0, 0, 1 }, { 0.1f - 0.032f, 1.55f, 0 } }, { { 0, 0.0262f, 0, 0.99966f }, { 0.1f + 0.032f, 1.55f, 0 } } };
+    XrFovf fov[VIEWS] = { { -0.96f, 0.96f, 0.72f, -0.72f }, { -0.96f, 0.96f, 0.72f, -0.72f } };
+    const CurveConstants c = MakeCurveConstants(cyl, screenPose, eyes, fov, TEST_EYE_W, TEST_EYE_H, true,
+                                                width + 2 * marginM, height + 2 * marginM);
+
+    WaitFence(app, app.fenceVal);
+    app.cmdAlloc[0]->Reset();
+    app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+    WarpTarget& t = app.testTarget;
+    Transition(app.cmdList.Get(), t.colorOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    RecordCurvedScreen(app, DESC_CURVE_TEST, t.colorOut.Get(), c, app.testEyeOut.Get(), nullptr);
+    Transition(app.cmdList.Get(), t.colorOut.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    app.cmdList->Close();
+    WaitFence(app, SubmitAndSignal(app));
+
+    std::vector<std::vector<unsigned char>> got, pictures, glowPx;
+    if (!ReadbackRgba(app, app.testEyeOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, got) || got.size() != VIEWS ||
+        !ReadbackRgba(app, t.colorOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pictures) || pictures.size() != VIEWS ||
+        !ReadbackRgba(app, app.ambiTex.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, glowPx) || glowPx.size() != 1)
+    { Log("SelfTestCurve: FAIL readback"); return false; }
+
+    RgbaImage glowImg{ glowPx[0].data(), app.ambiW, app.ambiH, app.ambiW * 4 };
+    size_t bad = 0, onScreen = 0, onGlow = 0;
+    int worst = 0;
+    for (uint32_t e = 0; e < VIEWS; e++)
+    {
+        RgbaImage pic{ pictures[e].data(), W, H, W * 4 };
+        for (int y = 0; y < TEST_EYE_H; y++)
+            for (int x = 0; x < TEST_EYE_W; x++)
+            {
+                float ref[3];
+                if (!CurvedPixel(c, (int)e, x, y, cyl, pic, &glowImg, ref)) { Log("SelfTestCurve: FAIL reference at %d,%d", x, y); return false; }
+                float o[3], d[3], tu, tv;
+                CurveRay(c, (int)e, x + 0.5f, y + 0.5f, o, d);
+                if (CylinderHit(cyl, o, d, &tu, &tv)) onScreen++;
+                else if (GlowHit(c, o, d, &tu, &tv)) onGlow++;
+                const unsigned char* g = got[e].data() + ((size_t)y * TEST_EYE_W + x) * 4;
+                int diff = std::abs((int)g[3] - 255);
+                for (int ch = 0; ch < 3; ch++)
+                    diff = std::max(diff, std::abs((int)g[ch] - (int)lroundf(std::min(std::max(ref[ch], 0.0f), 1.0f) * 255.0f)));
+                worst = std::max(worst, diff);
+                if (diff > 2) bad++;
+            }
+    }
+    if (app.opt.doDump)
+    {
+        // Both eyes side by side (left, right), to look at the shape.
+        FILE* f = nullptr;
+        if (!fopen_s(&f, "curve-eyes.ppm", "wb") && f)
+        {
+            fprintf(f, "P6\n%d %d\n255\n", TEST_EYE_W * 2, TEST_EYE_H);
+            for (int y = 0; y < TEST_EYE_H; y++)
+                for (uint32_t e = 0; e < VIEWS; e++)
+                    for (int x = 0; x < TEST_EYE_W; x++) fwrite(got[e].data() + ((size_t)y * TEST_EYE_W + x) * 4, 1, 3, f);
+            fclose(f);
+            Log("SelfTestCurve: wrote curve-eyes.ppm");
+        }
+    }
+    const size_t total = (size_t)TEST_EYE_W * TEST_EYE_H * VIEWS;
+    const bool framed = onScreen > total / 4 && onGlow > total / 50;
+    const bool ok = bad <= total / 200 && framed;
+    Log("SelfTestCurve: exit %s - %zu of %zu px differ by more than 2 bits (worst %d; allowed %zu on the outline), %zu on the screen, %zu on the glow",
+        ok ? "PASS" : "FAIL", bad, total, worst, total / 200, onScreen, onGlow);
     return ok;
 }
 
@@ -4072,36 +4431,6 @@ static bool SelfTest(App& app)
         snprintf(name, sizeof(name), "%s synthetic+ramp x4", mn);
         ok = SelfTestWarp(app, name, synth, ramp, big) && ok;
     }
-    // Curved screen: the geometry table for a 5.7 m screen at the default distance,
-    // with a 3D strength that is deliberately not 1 so that the curve's own
-    // (unscaled) disparity and the picture's depth cannot be confused.
-    CurveTable curve;
-    if (!BuildCurveTable(W, 5.7f, ScreenAnchor::distance, 1.0f, curve) || !curve.curved)
-    {
-        Log("SelfTest: FAIL could not build the curve table");
-        ok = false;
-    }
-    else
-    {
-        Log("SelfTest: curve table 100%% -> wrap %.1f deg, quad %.2f%% taller, edge invZ %.4f, centre vertMag %.4f",
-            curve.wrapRadians * 57.2958f, (curve.heightScale - 1) * 100.0f, curve.col[0].invZ, curve.col[W / 2].vertMag);
-        for (uint32_t mode : { (uint32_t)FILL_STRETCH, (uint32_t)FILL_MIRROR })
-        {
-            WarpConstants cv = c;
-            cv.fillMode = mode;
-            cv.curveFocal = c.scaleFocal;
-            cv.scaleFocal = c.scaleFocal * 1.4f;          // 3D strength 1.4: curve focal stays separate
-            char name[64];
-            snprintf(name, sizeof(name), "%s curved synthetic+truth", mode == (uint32_t)FILL_MIRROR ? "mirror" : "stretch");
-            ok = SelfTestWarp(app, name, synth, truth, cv, &curve) && ok;
-            snprintf(name, sizeof(name), "%s curved synthetic+ramp", mode == (uint32_t)FILL_MIRROR ? "mirror" : "stretch");
-            ok = SelfTestWarp(app, name, synth, ramp, cv, &curve) && ok;
-        }
-        WarpConstants cvFlatDepth = c;                     // curve alone, no picture depth
-        cvFlatDepth.doWarp = 0;
-        cvFlatDepth.curveFocal = c.scaleFocal;
-        ok = SelfTestWarp(app, "curved no-stereo", synth, truth, cvFlatDepth, &curve) && ok;
-    }
     ok = SelfTestAmbilight(app, synth) && ok;
 
     WarpConstants off = c;
@@ -4110,6 +4439,7 @@ static bool SelfTest(App& app)
     off.writeDepth = 0;
     std::vector<float> invalidDepth((size_t)W * H, std::numeric_limits<float>::quiet_NaN());
     ok = SelfTestWarp(app, "flat-fallback-invalid-depth", synth, invalidDepth, off) && ok;
+    ok = SelfTestCurve(app) && ok;          // uses the last warped pair and the self-test glow
 
     Log("SelfTest: exit %s", ok ? "ALL PASS" : "FAILED");
     return ok;
@@ -4138,8 +4468,8 @@ static void RunFrameLoop(App& app)
     const bool useDepthSc = app.opt.submitDepth;
     WarpTarget& target = app.mainTarget;
     // Curved screen (screen_curve.h): rebuilt only when the screen itself changes.
-    CurveTable curve;
-    float curveWidth = -1, curveDistance = -1, curveFraction = -1;
+    Cylinder cylinder;
+    float curveWidth = -1, curveHeight = -1, curveDistance = -1, curveFraction = -1;
     bool headLockedNoticeLogged = false;
 
     const double period = app.opt.abSeconds > 0.0 ? app.opt.abSeconds : 6.0;
@@ -4344,27 +4674,28 @@ static void RunFrameLoop(App& app)
 
             // The curve needs a screen plane, so it belongs to the fixed screen; with
             // head-follow the picture is the whole view and there is nothing to curve.
-            // Head-follow has no screen plane, so it uses the identity table.
-            const float curveScreenDistance = app.opt.headLocked ? 1.0f :
-                (app.opt.controlPath.empty() ? ScreenAnchor::distance : desktop.distance);
-            const float curveScreenWidth = app.opt.headLocked ? 1.0f : screen.size.width;
+            const float curveScreenDistance = app.opt.controlPath.empty() ? ScreenAnchor::distance : desktop.distance;
             const float wantCurve = app.opt.headLocked ? 0.0f : app.opt.curve;
-            if (curveWidth != curveScreenWidth || curveDistance != curveScreenDistance || curveFraction != wantCurve)
+            if (app.opt.headLocked) cylinder = Cylinder();
+            else if (curveWidth != screen.size.width || curveHeight != screen.size.height ||
+                     curveDistance != curveScreenDistance || curveFraction != wantCurve)
             {
-                if (!BuildCurveTable(target.cw, curveScreenWidth, curveScreenDistance, wantCurve, curve))
+                if (!BuildCylinder(screen.size.width, screen.size.height, curveScreenDistance, wantCurve, cylinder))
                 {
-                    Log("RunFrameLoop: curve rejected (%d px, %.2f m at %.2f m, %.0f%%) - flat screen",
-                        target.cw, curveScreenWidth, curveScreenDistance, wantCurve * 100.0);
-                    BuildCurveTable(target.cw, 1.0f, 1.0f, 0.0f, curve);
+                    Log("RunFrameLoop: curve rejected (%.2f x %.2f m at %.2f m, %.0f%%) - flat screen",
+                        screen.size.width, screen.size.height, curveScreenDistance, wantCurve * 100.0);
+                    cylinder = Cylinder();
                 }
-                else if (curve.curved)
-                    Log("RunFrameLoop: screen curve %.0f%% - wrap %.1f deg, sag %.2f m, quad %.1f%% taller (%.2f m wide at %.2f m)",
-                        wantCurve * 100.0, curve.wrapRadians * 57.2958f, CurveSag(curveScreenWidth, curve.wrapRadians),
-                        (curve.heightScale - 1) * 100.0f, curveScreenWidth, curveScreenDistance);
+                else if (cylinder.curved)
+                    Log("RunFrameLoop: screen curve %.0f%% - wrap %.1f deg, radius %.2f m, edges %.2f m nearer (%.2f x %.2f m at %.2f m)",
+                        wantCurve * 100.0, cylinder.halfWrap * 2 * 57.2958f, cylinder.radius,
+                        CurveSag(screen.size.width, cylinder.halfWrap * 2), screen.size.width, screen.size.height, curveScreenDistance);
                 else if (curveFraction >= 0)
                     Log("RunFrameLoop: screen curve off (flat screen)");
-                curveWidth = curveScreenWidth; curveDistance = curveScreenDistance; curveFraction = wantCurve;
+                curveWidth = screen.size.width; curveHeight = screen.size.height;
+                curveDistance = curveScreenDistance; curveFraction = wantCurve;
             }
+            const bool curvedScreen = cylinder.curved && EnsureCurvedEyes(app);
             if (app.opt.headLocked && (app.opt.curve > 0 || app.opt.ambilight) && !headLockedNoticeLogged)
             {
                 headLockedNoticeLogged = true;
@@ -4391,16 +4722,22 @@ static void RunFrameLoop(App& app)
                         app.opt.freezePose ? ", pose re-captured and frozen" : "");
             }
 
-            XrReadyImage colorImage, depthImage;
-            bool ok = colorImage.Acquire(app.colorSc, xrAcquireImage_, xrWaitImage_);
-            if (ok && useDepthSc) ok = depthImage.Acquire(app.depthSc, xrAcquireImage_, xrWaitImage_);
-            if (!ok) { Log("RunFrameLoop: swapchain acquire/wait failed (%d, %d)",
-                (int)colorImage.result, (int)depthImage.result); app.stop = true; }
+            // A curved screen is drawn into its own eye buffers; a flat one is the
+            // warped pair itself, placed by the compositor as quads.
+            XrReadyImage colorImage, depthImage, eyeImage;
+            bool ok = curvedScreen ? eyeImage.Acquire(app.eyeSc, xrAcquireImage_, xrWaitImage_)
+                                   : colorImage.Acquire(app.colorSc, xrAcquireImage_, xrWaitImage_);
+            if (ok && useDepthSc && !curvedScreen) ok = depthImage.Acquire(app.depthSc, xrAcquireImage_, xrWaitImage_);
+            if (!ok) { Log("RunFrameLoop: swapchain acquire/wait failed (%d, %d, %d)",
+                (int)colorImage.result, (int)depthImage.result, (int)eyeImage.result); app.stop = true; }
+            // The glow: its own layer behind a flat screen, or drawn into the eye
+            // buffers behind a curved one.
             XrReadyImage glowImage;
-            const bool ambiOn = app.opt.ambilight && !app.opt.headLocked && app.ambiSc != XR_NULL_HANDLE;
-            if (ok && ambiOn && !glowImage.Acquire(app.ambiSc, xrAcquireImage_, xrWaitImage_))
+            const bool glowWanted = app.opt.ambilight && !app.opt.headLocked;
+            const bool glowLayer = glowWanted && !curvedScreen && app.ambiSc != XR_NULL_HANDLE;
+            if (ok && glowLayer && !glowImage.Acquire(app.ambiSc, xrAcquireImage_, xrWaitImage_))
                 Log("RunFrameLoop: ambilight image acquire failed (%d) - no glow this frame", (int)glowImage.result);
-            if (!ambiOn) app.ambiHistory = false;
+            if (!glowWanted) app.ambiHistory = false;
             const uint32_t cIdx = colorImage.index, dIdx = depthImage.index;
             bool drewSource = false, stereo = false, drewGlow = false;
             float glowRectW = 0, glowRectH = 0;
@@ -4498,22 +4835,19 @@ static void RunFrameLoop(App& app)
                     c.exactLoad = (app.srcW == target.cw && app.srcH == target.ch) ? 1u : 0u;
                     c.fillMode = (uint32_t)app.opt.fillMode;
                     c.mirrorTol = MIRROR_TOL;
-                    c.curveOn = curve.curved ? 1u : 0u;
-                    c.curveFocal = focalPx;              // the screen's shape, not the picture's 3D strength
-                    RecordCurveUpload(app, target, ring, curve);
                     RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c);
-                    RecordCopyToSwapchain(app, target, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
-                    RecordWarpOutputsBackToUav(app, target);
+                    if (!curvedScreen)
+                        RecordCopyToSwapchain(app, target, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
                     drewSource = true;
 
-                    if (ambiOn && glowImage.ready)
+                    if (glowWanted)
                     {
                         AmbiConstants a{};
                         a.gw = (uint32_t)app.ambiW; a.gh = (uint32_t)app.ambiH;
                         a.srcW = (uint32_t)app.srcW; a.srcH = (uint32_t)app.srcH;
                         const float marginM = kAmbiMargin * screen.size.width;
                         a.rectW = screen.size.width + 2 * marginM;
-                        a.rectH = screen.size.height * curve.heightScale + 2 * marginM;
+                        a.rectH = screen.size.height + 2 * marginM;
                         a.insetX = marginM / a.rectW;
                         a.insetY = marginM / a.rectH;
                         a.marginM = marginM;
@@ -4521,11 +4855,22 @@ static void RunFrameLoop(App& app)
                         a.blend = kAmbiBlend;
                         a.reset = app.ambiHistory ? 0u : 1u;
                         a.blurPx = kAmbiBlurFraction * (float)app.srcW;
-                        RecordAmbilight(app, DESC_SRC0 + (UINT)source->index, a, app.aimgs[glowImage.index].texture);
+                        a.bezel = kAmbiBezel;
+                        const bool toLayer = glowLayer && glowImage.ready;
+                        RecordAmbilight(app, DESC_SRC0 + (UINT)source->index, a, toLayer ? app.aimgs[glowImage.index].texture : nullptr);
                         app.ambiHistory = true;
-                        drewGlow = true;
+                        drewGlow = toLayer;
                         glowRectW = a.rectW; glowRectH = a.rectH;
                     }
+                    if (curvedScreen && eyeImage.ready)
+                    {
+                        XrPosef eyePose[VIEWS] = { views[0].pose, views[1].pose };
+                        XrFovf eyeFov[VIEWS] = { views[0].fov, views[1].fov };
+                        const CurveConstants cc = MakeCurveConstants(cylinder, screen.pose, eyePose, eyeFov, app.eyeW, app.eyeH,
+                                                                     glowWanted, glowRectW, glowRectH);
+                        RecordCurvedScreen(app, DESC_CURVE_MAIN, target.colorOut.Get(), cc, app.eyeOut.Get(), app.eimgs[eyeImage.index].texture);
+                    }
+                    RecordWarpOutputsBackToUav(app, target);
                 }
                 app.cmdList->Close();
                 UINT64 fv = SubmitAndSignal(app);
@@ -4539,8 +4884,9 @@ static void RunFrameLoop(App& app)
             }
             const bool releasedColor = colorImage.Release(xrReleaseImage_);
             const bool releasedDepth = depthImage.Release(xrReleaseImage_);
+            const bool releasedEyes = eyeImage.Release(xrReleaseImage_);
             const bool releasedGlow = glowImage.Release(xrReleaseImage_);
-            if (!releasedColor || !releasedDepth) { Log("RunFrameLoop: swapchain release failed"); ok = false; app.stop = true; }
+            if (!releasedColor || !releasedDepth || !releasedEyes) { Log("RunFrameLoop: swapchain release failed"); ok = false; app.stop = true; }
             if (!releasedGlow) { Log("RunFrameLoop: ambilight release failed - no glow this frame"); drewGlow = false; }
 
             if (ok && drewSource)
@@ -4570,10 +4916,26 @@ static void RunFrameLoop(App& app)
                 proj.viewCount = VIEWS;
                 proj.views = pviews;
                 if (app.opt.headLocked) layers[layerCount++] = (const XrCompositionLayerBaseHeader*)&proj;
+                else if (curvedScreen)
+                {
+                    // Each eye as it really was when the pass drew it, so the
+                    // compositor reprojects it correctly; the glow is already in it.
+                    for (uint32_t e = 0; e < VIEWS; e++)
+                    {
+                        pviews[e] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW };
+                        pviews[e].pose = views[e].pose;
+                        pviews[e].fov = views[e].fov;
+                        pviews[e].subImage.swapchain = app.eyeSc;
+                        pviews[e].subImage.imageRect = { {0, 0}, {app.eyeW, app.eyeH} };
+                        pviews[e].subImage.imageArrayIndex = e;
+                    }
+                    layers[layerCount++] = (const XrCompositionLayerBaseHeader*)&proj;
+                }
                 else
                 {
                     // The glow goes first: layers composite in submission order, so
-                    // the screen is drawn over the middle of it.
+                    // the screen is drawn over the middle of it. It also sits a little
+                    // behind, for any compositor that sorts layers by distance.
                     if (drewGlow)
                     {
                         glowQuad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
@@ -4583,21 +4945,23 @@ static void RunFrameLoop(App& app)
                         glowQuad.subImage.swapchain = app.ambiSc;
                         glowQuad.subImage.imageRect = { {0, 0}, {app.ambiW, app.ambiH} };
                         glowQuad.subImage.imageArrayIndex = 0;
+                        float S[3][3];
+                        QuatRows(screen.pose.orientation, S);
                         glowQuad.pose = screen.pose;
+                        glowQuad.pose.position.x -= kAmbiBehind * S[0][2];
+                        glowQuad.pose.position.y -= kAmbiBehind * S[1][2];
+                        glowQuad.pose.position.z -= kAmbiBehind * S[2][2];
                         glowQuad.size = { glowRectW, glowRectH };
                         layers[layerCount++] = (const XrCompositionLayerBaseHeader*)&glowQuad;
                     }
                     for (uint32_t e = 0; e < VIEWS; ++e)
                     {
                         quads[e] = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-                        // A curved picture leaves the top and bottom of the quad empty
-                        // near the middle: those pixels are transparent.
-                        if (curve.curved) quads[e].layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
                         quads[e].space = app.space;
                         quads[e].eyeVisibility = e == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
                         quads[e].subImage = pviews[e].subImage;
                         quads[e].pose = screen.pose;
-                        quads[e].size = { screen.size.width, screen.size.height * curve.heightScale };
+                        quads[e].size = screen.size;
                         layers[layerCount++] = (const XrCompositionLayerBaseHeader*)&quads[e];
                     }
                 }
@@ -4829,6 +5193,8 @@ static void Shutdown(App& app)
 
     if (ort) ReleaseModel(app);
     if (app.colorSc) xrDestroySwapchain_(app.colorSc);
+    if (app.eyeSc) xrDestroySwapchain_(app.eyeSc);
+    if (app.ambiSc) xrDestroySwapchain_(app.ambiSc);
     if (app.depthSc) xrDestroySwapchain_(app.depthSc);
     if (app.session) xrDestroySession_(app.session);
     if (app.instance) xrDestroyInstance_(app.instance);

@@ -613,89 +613,137 @@ static void TestForegroundRefinement()
     Check(!FuseForeground(base,local,w,h,testCrop) && base==original, "invalid crop does not corrupt base depth");
 }
 
-// Curved screen geometry (screen_curve.h): the numbers the warp shader and its CPU
-// reference both read, so the invariants they rely on are checked here.
+// Curved screen geometry (screen_curve.h): the cylinder and the ray casts that the
+// curve shader and its CPU reference (CurvedPixel) share.
 static void TestScreenCurve()
 {
-    CurveTable flat;
-    Check(BuildCurveTable(8, 5.7f, 3.0f, 0.0f, flat) && !flat.curved, "no curve is a flat screen");
-    Check(flat.col.size() == 8 && flat.heightScale == 1.0f && flat.wrapRadians == 0, "flat table is the full width");
-    for (int x = 0; x < 8; x++)
-        Check(flat.col[x].destBase == (float)x && flat.col[x].invZ == 0 && flat.col[x].vertMag == 1.0f, "flat columns are the identity");
+    Cylinder flat;
+    Check(BuildCylinder(5.7f, 3.2f, 3.0f, 0.0f, flat) && !flat.curved, "no curve is a flat screen");
+    Cylinder bad;
+    Check(!BuildCylinder(0.0f, 3.2f, 3.0f, 1.0f, bad), "a screen with no width is rejected");
+    Check(!BuildCylinder(5.7f, 0.0f, 3.0f, 1.0f, bad), "a screen with no height is rejected");
+    Check(!BuildCylinder(5.7f, 3.2f, 0.0f, 1.0f, bad), "a screen at no distance is rejected");
+    Check(!BuildCylinder(5.7f, 3.2f, 3.0f, -0.5f, bad), "a negative curve is rejected");
+    Check(!BuildCylinder(std::numeric_limits<float>::quiet_NaN(), 3.2f, 3.0f, 1.0f, bad), "an invalid width is rejected");
 
-    CurveTable bad;
-    Check(!BuildCurveTable(0, 5.7f, 3.0f, 1.0f, bad), "zero width in pixels is rejected");
-    Check(!BuildCurveTable(64, 0.0f, 3.0f, 1.0f, bad), "a screen with no width is rejected");
-    Check(!BuildCurveTable(64, 5.7f, 0.0f, 1.0f, bad), "a screen at no distance is rejected");
-    Check(!BuildCurveTable(64, 5.7f, 3.0f, -0.5f, bad), "a negative curve is rejected");
-    Check(!BuildCurveTable(64, std::numeric_limits<float>::quiet_NaN(), 3.0f, 1.0f, bad), "an invalid width is rejected");
+    const float width = 5.7f, height = 3.2f, distance = 3.0f;
+    Cylinder cyl;
+    Check(BuildCylinder(width, height, distance, 1.0f, cyl) && cyl.curved, "a full curve builds");
+    Check(std::fabs(cyl.halfWrap * 2 - kCurveMaxWrap) < 1e-5f, "a full curve uses the maximum wrap");
+    Check(std::fabs(cyl.radius * cyl.halfWrap * 2 - width) < 1e-4f, "the arc keeps the width the player chose");
 
-    const int cw = 1920;
-    CurveTable curve;
-    Check(BuildCurveTable(cw, 5.7f, 3.0f, 1.0f, curve) && curve.curved, "a full curve builds");
-    Check(std::fabs(curve.wrapRadians - kCurveMaxWrap) < 1e-5f, "a full curve uses the maximum wrap");
-    Check(curve.col.size() == (size_t)cw, "one entry per colour column");
-    // The edges stay exactly at the edges of the quad, so no content is lost.
-    // The outermost column centres land on (or just outside) the first and last
-    // pixel, so the picture still reaches both edges of the quad.
-    Check(curve.col[0].destBase <= 0.5f && curve.col[0].destBase > -1.0f, "the first column lands on the first pixel");
-    Check(curve.col[cw - 1].destBase >= (float)cw - 1.5f && curve.col[cw - 1].destBase < (float)cw, "the last column lands on the last pixel");
-    bool rising = true, compressed = true;
-    for (int x = 1; x < cw; x++) if (!(curve.col[x].destBase > curve.col[x - 1].destBase)) rising = false;
-    Check(rising, "the mapping never folds back on itself");
-    for (int x = cw / 2 - 200; x < cw / 2 + 200; x++)
-        if (!(curve.col[x].destBase - curve.col[x - 1].destBase < 1.0f)) compressed = false;
-    Check(compressed, "the middle of the picture is compressed, because the edges take more of the view");
-    // The curve's own disparity: zero in the middle, positive (nearer) at the edges.
-    Check(std::fabs(curve.col[cw / 2].invZ) < 2e-4f, "the middle of the screen keeps the screen's own distance");
-    Check(curve.col[0].invZ > 0.05f && curve.col[cw - 1].invZ > 0.05f, "both edges are nearer than the middle");
-    Check(std::fabs(curve.col[0].invZ - curve.col[cw - 1].invZ) < 1e-5f, "the curve is symmetric");
-    const float sag = CurveSag(5.7f, curve.wrapRadians);
-    // Within a pixel of the edge: the column's centre is half a pixel inside it.
-    Check(std::fabs(curve.col[0].invZ - (1.0f / (3.0f - sag) - 1.0f / 3.0f)) < 1e-3f, "the edge disparity is the sag of the arc");
-    // Vertical: 1 at the edges, smaller in the middle, and the quad grows to match.
-    Check(std::fabs(curve.col[0].vertMag - 1.0f) < 2e-3f, "the edge columns fill the quad's height");
-    Check(curve.col[cw / 2].vertMag < 1.0f && curve.col[cw / 2].vertMag > 0.6f, "the middle stops a little short");
-    Check(curve.heightScale > 1.0f && curve.heightScale < 1.2f, "the quad is a little taller when curved");
-    // The middle of the screen faces the viewer squarely, so there it must be
-    // scaled by the same amount in both directions or straight lines would shear.
-    const float middleWide = curve.col[cw / 2 + 1].destBase - curve.col[cw / 2].destBase;
-    const float middleTall = curve.heightScale * curve.col[cw / 2].vertMag;
-    Check(std::fabs(middleWide - middleTall) < 2e-3f, "the middle of the picture is scaled equally sideways and vertically");
-    // Towards the edges the surface wraps round, taking more of the view per metre
-    // of screen, so the picture is stretched there - which is what keeps the whole
-    // width inside the quad while the middle is compressed.
-    Check(curve.col[1].destBase - curve.col[0].destBase > 1.0f, "the edges are stretched to fill the quad");
+    const float viewer[3] = { 0, 0, distance };
+    float tu = 0, tv = 0;
+    const float ahead[3] = { 0, 0, -1 };
+    Check(CylinderHit(cyl, viewer, ahead, &tu, &tv) && std::fabs(tu - 0.5f) < 1e-5f && std::fabs(tv - 0.5f) < 1e-5f,
+        "straight ahead is the middle of the picture");
+    Check(!CylinderHit(flat, viewer, ahead, &tu, &tv), "a flat screen is not ray-cast");
+    Check(!CylinderHit(cyl, nullptr, ahead, &tu, &tv) && !CylinderHit(cyl, viewer, nullptr, &tu, &tv), "missing rays are rejected");
 
-    // Half the curve is gentler than a full one, in every measure.
-    CurveTable half;
-    Check(BuildCurveTable(cw, 5.7f, 3.0f, 0.5f, half) && half.curved, "half a curve builds");
-    Check(half.wrapRadians < curve.wrapRadians && half.col[0].invZ < curve.col[0].invZ &&
-          half.heightScale < curve.heightScale && half.col[cw / 2].vertMag > curve.col[cw / 2].vertMag,
-        "half the curve is gentler throughout");
+    // The real edge of the screen: where the arc ends, and nearer than the middle.
+    const float edge[3] = { cyl.radius * std::sin(cyl.halfWrap * 0.999f), 0, cyl.radius * (1 - std::cos(cyl.halfWrap * 0.999f)) };
+    Check(edge[2] > 0.5f, "the edges come well towards the viewer");
+    const float toEdge[3] = { edge[0] - viewer[0], edge[1] - viewer[1], edge[2] - viewer[2] };
+    Check(CylinderHit(cyl, viewer, toEdge, &tu, &tv) && std::fabs(tu - 0.9995f) < 1e-3f && std::fabs(tv - 0.5f) < 1e-4f,
+        "aiming at the right-hand edge lands on the right-hand edge of the picture");
+    const float pastEdge[3] = { cyl.radius * std::sin(cyl.halfWrap * 1.01f) - viewer[0], 0,
+                                cyl.radius * (1 - std::cos(cyl.halfWrap * 1.01f)) - viewer[2] };
+    Check(!CylinderHit(cyl, viewer, pastEdge, &tu, &tv), "just past the edge misses the screen");
+    // Where a flat screen's edge was, a curved one still has picture: it wraps round.
+    const float flatEdge[3] = { width * 0.5f, 0, -distance };
+    Check(CylinderHit(cyl, viewer, flatEdge, &tu, &tv) && tu < 0.97f, "the curved screen reaches further round than the flat one");
+    const float top[3] = { 0, height * 0.5f * 0.999f, -distance };
+    Check(CylinderHit(cyl, viewer, top, &tu, &tv) && tv < 0.001f && tv >= 0, "aiming at the top of the middle lands on the top row");
+    const float above[3] = { 0, height * 0.5f * 1.01f, -distance };
+    Check(!CylinderHit(cyl, viewer, above, &tu, &tv), "above the screen misses it");
+    // From one eye the middle of the picture is still where it should be.
+    const float leftEye[3] = { -0.032f, 0, distance };
+    const float toMiddle[3] = { 0.032f, 0, -distance };
+    Check(CylinderHit(cyl, leftEye, toMiddle, &tu, &tv) && std::fabs(tu - 0.5f) < 1e-5f, "either eye sees the middle at the middle");
 
-    // A wide screen very close by would otherwise wrap past the viewer's head.
-    CurveTable clamped;
-    Check(BuildCurveTable(cw, 10.0f, 1.0f, 1.0f, clamped) && clamped.curved, "a wide close screen still curves");
-    Check(clamped.wrapRadians < kCurveMaxWrap, "the wrap is reduced when the edges would come too close");
-    Check(CurveSag(10.0f, clamped.wrapRadians) <= 1.0f * (1.0f - kCurveMinDepthFraction) + 1e-4f,
-        "the edges stay in front of the viewer");
-    for (int x = 0; x < cw; x++) Check(std::isfinite(clamped.col[x].destBase) && std::isfinite(clamped.col[x].invZ), "clamped geometry stays finite");
+    // A very gentle curve has an enormous radius; the stable quadratic keeps it exact.
+    Cylinder gentle;
+    Check(BuildCylinder(width, height, distance, 0.01f, gentle) && gentle.curved && gentle.radius > 300, "a gentle curve has a huge radius");
+    Check(CylinderHit(gentle, viewer, ahead, &tu, &tv) && std::fabs(tu - 0.5f) < 1e-4f && std::fabs(tv - 0.5f) < 1e-4f,
+        "a gentle curve keeps its precision");
+    const float nearFlatEdge[3] = { width * 0.5f * 0.99f, 0, -distance };
+    Check(CylinderHit(gentle, viewer, nearFlatEdge, &tu, &tv) && std::fabs(tu - 0.995f) < 2e-3f, "a gentle curve is nearly flat");
+
+    // A wide screen very close by would wrap past the viewer's head.
+    Cylinder clamped;
+    Check(BuildCylinder(10.0f, 5.6f, 1.0f, 1.0f, clamped) && clamped.curved, "a wide close screen still curves");
+    Check(clamped.halfWrap * 2 < kCurveMaxWrap, "the wrap is reduced when the edges would come too close");
+    Check(CurveSag(10.0f, clamped.halfWrap * 2) <= 1.0f * (1.0f - kCurveMinDepthFraction) + 1e-4f, "the edges stay in front of the viewer");
+
+    // The pass: rays from an eye looking straight at the screen, and the glow behind.
+    CurveConstants c{};
+    c.ew = 64; c.eh = 48;
+    c.radius = cyl.radius; c.halfWrap = cyl.halfWrap; c.halfWidth = cyl.halfWidth; c.halfHeight = cyl.halfHeight;
+    c.glowOn = 1; c.glowHalfW = width; c.glowHalfH = height; c.glowZ = -kAmbiBehind;
+    for (int e = 0; e < 2; e++)
+    {
+        CurveEye& v = c.eye[e];
+        v.origin[0] = e == 0 ? -0.032f : 0.032f; v.origin[2] = distance;
+        v.row0[0] = 1; v.row1[1] = 1; v.row2[2] = 1;
+        v.tanL = -1.5f; v.tanR = 1.5f; v.tanU = 1.2f; v.tanD = -1.2f;
+    }
+    float o[3], d[3];
+    CurveRay(c, 0, 32, 24, o, d);
+    Check(std::fabs(d[0]) < 1e-6f && std::fabs(d[1]) < 1e-6f && d[2] == -1.0f && o[0] == -0.032f, "the middle pixel looks straight ahead from the eye");
+    CurveRay(c, 0, 0, 0, o, d);
+    Check(std::fabs(d[0] + 1.5f) < 1e-6f && std::fabs(d[1] - 1.2f) < 1e-6f, "the top-left pixel looks up and to the left");
+    float gu = 0, gv = 0;
+    const float corner[3] = { -width * 0.9f, height * 0.9f, -distance };
+    Check(GlowHit(c, viewer, corner, &gu, &gv) && gu > 0 && gu < 0.2f && gv > 0 && gv < 0.2f, "past the screen's corner is the glow's corner");
+    CurveConstants dark = c;
+    dark.glowOn = 0;
+    Check(!GlowHit(dark, viewer, corner, &gu, &gv), "no glow when the ambilight is off");
+
+    std::vector<unsigned char> picture(8 * 8 * 4, 0), glowPixels(4 * 4 * 4, 0);
+    for (size_t i = 0; i < picture.size(); i += 4) { picture[i] = 200; picture[i + 1] = 100; picture[i + 2] = 50; picture[i + 3] = 255; }
+    for (size_t i = 0; i < glowPixels.size(); i += 4) { glowPixels[i + 2] = 80; glowPixels[i + 3] = 80; }
+    RgbaImage pic{ picture.data(), 8, 8, 32 }, glowImg{ glowPixels.data(), 4, 4, 16 };
+    float rgb[3];
+    Check(CurvedPixel(c, 0, 32, 24, cyl, pic, &glowImg, rgb) && std::fabs(rgb[0] - 200 / 255.0f) < 1e-5f && std::fabs(rgb[2] - 50 / 255.0f) < 1e-5f,
+        "the middle of the eye shows the picture");
+    // Pixel (8, 8) looks above and left of the screen, into the glow.
+    Check(CurvedPixel(c, 0, 8, 8, cyl, pic, &glowImg, rgb) && rgb[0] == 0 && std::fabs(rgb[2] - 80 / 255.0f) < 1e-5f,
+        "above and beside the screen the eye sees the glow");
+    Check(CurvedPixel(c, 0, 0, 0, cyl, pic, &glowImg, rgb) && rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 0, "beyond the glow it is black");
+    Check(CurvedPixel(dark, 0, 8, 8, cyl, pic, nullptr, rgb) && rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 0, "with no glow the surround is black");
+    Check(!CurvedPixel(c, 2, 0, 0, cyl, pic, &glowImg, rgb) && !CurvedPixel(c, 0, 64, 0, cyl, pic, &glowImg, rgb), "pixels outside the eyes are rejected");
+    // Along the middle row, from the picture to the glow, there is an outline pixel
+    // that mixes the two - the smooth edge the four samples are for.
+    bool mixed = false;
+    for (int x = 32; x < 64; x++)
+        if (CurvedPixel(c, 0, x, 24, cyl, pic, &glowImg, rgb) && rgb[0] > 0.01f && rgb[0] < 200 / 255.0f - 0.01f) mixed = true;
+    Check(mixed, "the screen's outline is smoothed");
 
     // Ambilight constants: the reference refuses anything it cannot compute.
     AmbiConstants a{};
     float rgba[4] = { 0, 0, 0, 0 };
-    std::vector<unsigned char> picture(16 * 16 * 4, 200);
-    Check(!AmbilightPixel(a, picture.data(), 16 * 4, 0, 0, rgba), "the glow needs a size");
+    std::vector<unsigned char> source(16 * 16 * 4, 200);
+    Check(!AmbilightPixel(a, source.data(), 16 * 4, 0, 0, rgba), "the glow needs a size");
     a.gw = 8; a.gh = 8; a.srcW = 16; a.srcH = 16;
     a.rectW = 2; a.rectH = 2; a.marginM = 0.25f; a.insetX = 0.125f; a.insetY = 0.125f;
     a.intensity = kAmbiIntensity; a.blurPx = 1; a.reset = 1;
     Check(!AmbilightPixel(a, nullptr, 16 * 4, 0, 0, rgba), "the glow needs a picture");
-    Check(!AmbilightPixel(a, picture.data(), 4, 0, 0, rgba), "a pitch shorter than the picture is rejected");
-    Check(!AmbilightPixel(a, picture.data(), 16 * 4, 8, 0, rgba), "a pixel outside the glow is rejected");
-    Check(AmbilightPixel(a, picture.data(), 16 * 4, 4, 4, rgba) && rgba[3] == 0, "the middle of the glow is hidden by the screen");
-    Check(AmbilightPixel(a, picture.data(), 16 * 4, 0, 4, rgba) && rgba[3] > 0 && rgba[3] <= kAmbiIntensity, "the side glows, never brighter than asked");
+    Check(!AmbilightPixel(a, source.data(), 4, 0, 0, rgba), "a pitch shorter than the picture is rejected");
+    Check(!AmbilightPixel(a, source.data(), 16 * 4, 8, 0, rgba), "a pixel outside the glow is rejected");
+    Check(AmbilightPixel(a, source.data(), 16 * 4, 4, 4, rgba) && rgba[3] == 0, "the middle of the glow is hidden by the screen");
+    Check(AmbilightPixel(a, source.data(), 16 * 4, 0, 4, rgba) && rgba[3] > 0 && rgba[3] <= kAmbiIntensity, "the side glows, never brighter than asked");
     Check(rgba[0] <= rgba[3] && rgba[1] <= rgba[3] && rgba[2] <= rgba[3], "the colour is premultiplied by its own alpha");
+    // The bezel: dark right against the screen, full strength a little further out.
+    AmbiConstants bezel = a;
+    bezel.gw = 256; bezel.gh = 256; bezel.insetX = 0.25f; bezel.insetY = 0.25f; bezel.bezel = kAmbiBezel;
+    float touching[4], beyond[4], unbezelled[4];
+    Check(AmbilightPixel(bezel, source.data(), 16 * 4, 63, 128, touching) && AmbilightPixel(bezel, source.data(), 16 * 4, 56, 128, beyond),
+        "glow either side of the bezel");
+    AmbiConstants noBezel = bezel;
+    noBezel.bezel = 0;
+    Check(AmbilightPixel(noBezel, source.data(), 16 * 4, 63, 128, unbezelled), "glow without a bezel");
+    Check(touching[3] < 0.2f * unbezelled[3], "right next to the screen the glow is dark");
+    Check(beyond[3] > touching[3] * 3, "a little further out it is bright");
 }
 
 int main(int argc, char** argv)
