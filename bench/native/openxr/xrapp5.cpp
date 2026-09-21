@@ -2190,8 +2190,10 @@ void main(uint3 id : SV_DispatchThreadID)
 // the C++ values so that the two cannot drift.
 
 // RoomConstants (room.h), as a constant buffer; ROOM_REGISTER is b0 in the lightmap
-// passes and b1 in the eye pass (whose b0 is the curve's root constants). Rows 0-10;
-// the 512-byte buffer's rows 11-20 (v11) are declared as their readers arrive.
+// passes and b1 in the eye pass (whose b0 is the curve's root constants). Rows 0-10 are
+// v10's; rows 11-16 (glass, reflections, the room light, the mirror picture) keep
+// placeholder names until the steps that read them; rows 17-20 are the eye pass's
+// reciprocals and the screen's bounds. The 512-byte buffer's rows 21-31 are padding.
 static const char* kRoomCbufferHlsl = R"HLSL(
 cbuffer RoomC : register(ROOM_REGISTER)
 {
@@ -2206,6 +2208,11 @@ cbuffer RoomC : register(ROOM_REGISTER)
     uint flags; uint gridX; uint gridY; uint emitterCount;
     uint srcW; uint srcH; uint stride; uint glowW;
     uint glowH; uint blocksX; uint blocksY; uint glowBlock;
+    float4 roomRow11; float4 roomRow12; float4 roomRow13; float4 roomRow14; float4 roomRow15; uint4 roomRow16;
+    float invH; float inv2X; float invSide; float invFloorZ;
+    float inv2sMax; float invGlowW; float invGlowH; float tanA;
+    float wingS; float scrTanWrap; float scrBoxX; float scrBoxY;
+    float scrBoxZ; float rpad6; float rpad7; float rpad8;
 };
 )HLSL";
 
@@ -2413,88 +2420,207 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex)
 #endif
 )HLSL";
 
-// The room's eye pass: appended to kCurveHlsl's code before its main (so Ray, ArcHit,
-// Screen, Dec and Enc are shared), after the room's constants and geometry. room.h
-// RoomExit / RoomClassify / RoomSampleColour / RoomPixel on the CPU.
+// The room's eye pass: appended to kCurveHlsl's code before its main (so Ray, Dec and
+// Enc are shared), after the room's constants and geometry. It tests the screen and the
+// room with its own functions: kCurveHlsl's Screen and ArcHit stay as the plain pass has
+// them. room.h on the CPU: RoomScreenHit, RoomArcRoot, RoomExitFast, RoomExitOnFace,
+// RoomFillHit, RoomClassifyRay, RoomSampleColour and RoomPixel.
 static const char* kCurveRoomHlsl = R"HLSL(
 Texture2DArray<float4> lightmap : register(t2);
 
 static const int BAYER[64] = ROOM_BAYER;           // room.h kRoomBayer
 
-struct RoomHitH { int face; float u; float v; float s; float y; };
+// room.h RoomHit: the face, the surface it lies on (the face, or a curved front's wing),
+// its chart coordinates and the glow's (s, y).
+struct RoomHitH { int face; int part; float u; float v; float s; float y; };
 
-bool RoomExitH(float3 o, float3 d, out RoomHitH h)
+float3 RoomAt(float3 o, float3 d, float t)
 {
-    h.face = -1; h.u = 0.0; h.v = 0.0; h.s = 0.0; h.y = 0.0;
-    if (!InsideH(o)) return false;
-    float best = 3.0e38, t;
-    int face = -1;
-    float frontPhi = 0.0;
-    bool onArc = false;
-    if (d.x > 0.0) { t = (X - o.x) / d.x; if (t > 0.0 && t < best) { best = t; face = ROOM_FACE_RIGHT; } }
-    if (d.x < 0.0) { t = (-X - o.x) / d.x; if (t > 0.0 && t < best) { best = t; face = ROOM_FACE_LEFT; } }
-    if (d.y < 0.0) { t = (yF - o.y) / d.y; if (t > 0.0 && t < best) { best = t; face = ROOM_FACE_FLOOR; } }
-    if (d.y > 0.0) { t = (yC - o.y) / d.y; if (t > 0.0 && t < best) { best = t; face = ROOM_FACE_CEILING; } }
-    if (d.z > 0.0) { t = (zB - o.z) / d.z; if (t > 0.0 && t < best) { best = t; face = ROOM_FACE_BACK; } }
-    if ((flags & ROOM_FLAG_CURVED) == 0)
+    return float3(o.x + t * d.x, o.y + t * d.y, o.z + t * d.z);
+}
+
+// room.h FrontDepth, with the wings' slope from the constants.
+float FrontDepthR(float x)
+{
+    if ((flags & ROOM_FLAG_CURVED) == 0) return -gap;
+    float ax = abs(x);
+    if (ax <= xa) return roomR - sqrt(max(Rg * Rg - ax * ax, 0.0));
+    return za + (ax - xa) * tanA;
+}
+
+// room.h RoomArcRoot: ArcHit's quadratic, returning the root itself, with the angle
+// limit as a tangent (|hx| <= tanMax * toward) in place of an atan2 per root.
+bool RoomArcRoot(float axisZ, float rho, float tanMax, float maxY, float3 o, float3 d, out float t, out float3 h)
+{
+    t = 0.0; h = float3(0, 0, 0);
+    float a = d.x * d.x + d.z * d.z;
+    if (!(a > 1e-12)) return false;
+    float b = 2.0 * (o.x * d.x + (o.z - axisZ) * d.z);
+    float c = o.x * o.x + o.z * o.z - 2.0 * o.z * axisZ + (axisZ - rho) * (axisZ + rho);
+    float disc = b * b - 4.0 * a * c;
+    if (disc < 0.0) return false;
+    float sq = sqrt(disc);
+    float q = -0.5 * (b + (b < 0.0 ? -sq : sq));
+    float t0 = q / a;
+    float t1 = (q != 0.0) ? c / q : t0;
+    if (t0 > t1) { float sw = t0; t0 = t1; t1 = sw; }
+    [unroll] for (int i = 0; i < 2; i++)
     {
-        if (d.z < 0.0) { t = (-gap - o.z) / d.z; if (t > 0.0 && t < best) { best = t; face = ROOM_FACE_FRONT; } }
+        float tr = (i == 0) ? t0 : t1;
+        if (!(tr > 0.0)) continue;
+        float x = o.x + tr * d.x, y = o.y + tr * d.y, z = o.z + tr * d.z;
+        float toward = axisZ - z;
+        if (!(toward > 0.0) || abs(y) > maxY || abs(x) > tanMax * toward) continue;
+        t = tr; h = float3(x, y, z);
+        return true;
     }
-    else
-    {
-        float phi, yy;
-        if (ArcHit(roomR, Rg, phiA, 3.0e38, o, d, phi, yy))
-        {
-            float hx = Rg * sin(phi), hz = roomR - Rg * cos(phi);
-            t = abs(d.x) > abs(d.z) ? (hx - o.x) / d.x : (hz - o.z) / d.z;
-            if (t > 0.0 && t < best) { best = t; face = ROOM_FACE_FRONT; frontPhi = phi; onArc = true; }
-        }
-        [unroll] for (int side = -1; side <= 1; side += 2)
-        {
-            float wnx = -(float)side * sinA, wnz = cosA;
-            float wpx = (float)side * xa, wpz = za;
-            float nd = wnx * d.x + wnz * d.z;
-            if (!(nd < 0.0)) continue;
-            float tw = (wnx * (wpx - o.x) + wnz * (wpz - o.z)) / nd;
-            float hx2 = o.x + tw * d.x;
-            if ((float)side * hx2 < xa) continue;
-            if (tw > 0.0 && tw < best) { best = tw; face = ROOM_FACE_FRONT; onArc = false; }
-        }
-    }
-    if (face < 0) return false;
-    float3 p = float3(o.x + best * d.x, o.y + best * d.y, o.z + best * d.z);
-    float hgt = yC - yF;
-    h.face = face; h.y = p.y;
-    if (face == ROOM_FACE_FRONT)
-    {
-        h.s = (flags & ROOM_FLAG_CURVED) == 0 ? p.x : (onArc ? roomR * frontPhi : FrontSH(p.x));
-        h.u = (h.s + sMax) / (2.0 * sMax); h.v = (yC - p.y) / hgt;
-    }
-    else if (face == ROOM_FACE_LEFT || face == ROOM_FACE_RIGHT) { h.u = (p.z - zSide) / (zB - zSide); h.v = (yC - p.y) / hgt; }
-    else if (face == ROOM_FACE_FLOOR || face == ROOM_FACE_CEILING) { h.u = (p.x + X) / (2.0 * X); h.v = (p.z + gap) / (zB + gap); }
-    else { h.u = (p.x + X) / (2.0 * X); h.v = (yC - p.y) / hgt; }
+    return false;
+}
+
+// room.h RoomScreenHit: the slab test against the screen's box, then the quadratic with
+// the tan test, and atan2 only on a hit, for u.
+bool RoomScreenH(float3 o, float3 d, float3 invD, out float2 uv)
+{
+    uv = float2(0, 0);
+    if (!(R > 0.0)) return false;
+    float3 t1 = (float3(-scrBoxX, -scrBoxY, -ROOM_SCREEN_PAD) - o) * invD, t2 = (float3(scrBoxX, scrBoxY, scrBoxZ) - o) * invD;
+    float3 tn = min(t1, t2), tf = max(t1, t2);
+    float enter = max(max(tn.x, tn.y), tn.z), leave = min(min(tf.x, tf.y), tf.z);
+    if (!(leave >= max(enter, 0.0))) return false;
+    float t;
+    float3 h;
+    if (!RoomArcRoot(R, R, scrTanWrap, halfH, o, d, t, h)) return false;
+    float phi = atan2(h.x, R - h.z);
+    uv = float2((R * phi) / (2.0 * halfW) + 0.5, 0.5 - h.y / (2.0 * halfH));
     return true;
 }
 
-// Sample kinds: 0 picture, 1 + face, ROOM_KIND_FOOTPRINT (7) the flat screen's footprint,
-// ROOM_KIND_OUTSIDE (8) outside.
-int Classify(float3 o, float3 d, out float2 uv, out float2 guv)
+// room.h RoomWingT: the wing on `side` (-1 left, +1 right); 0 if the ray does not leave there.
+float RoomWingT(float side, float3 o, float3 d)
+{
+    float wnx = -side * sinA, wnz = cosA;
+    float nd = wnx * d.x + wnz * d.z;
+    if (!(nd < 0.0)) return 0.0;
+    float tw = (wnx * (side * xa - o.x) + wnz * (za - o.z)) / nd;
+    if (side * (o.x + tw * d.x) < xa) return 0.0;
+    return tw > 0.0 ? tw : 0.0;
+}
+
+// room.h RoomArcT: the curved front's arc.
+float RoomArcTH(float3 o, float3 d)
+{
+    float t;
+    float3 h;
+    if (!RoomArcRoot(roomR, Rg, tanA, 3.0e38, o, d, t, h)) return 0.0;
+    return t;
+}
+
+// room.h RoomFillHit: the chart coordinates of point p on surface `part`, for every path.
+void FillHitH(int part, float3 p, out RoomHitH h)
+{
+    int face = part >= ROOM_PART_WING_L ? ROOM_FACE_FRONT : part;
+    h.face = face; h.part = part; h.u = 0.0; h.v = 0.0; h.s = 0.0; h.y = p.y;
+    if (face == ROOM_FACE_FRONT)
+    {
+        if ((flags & ROOM_FLAG_CURVED) == 0) h.s = p.x;
+        else if (part == ROOM_FACE_FRONT) h.s = roomR * atan2(p.x, roomR - p.z);
+        else h.s = (part == ROOM_PART_WING_L ? -1.0 : 1.0) * (roomR * phiA + (abs(p.x) - xa) * wingS);
+        h.u = (h.s + sMax) * inv2sMax; h.v = (yC - p.y) * invH;
+    }
+    else if (face == ROOM_FACE_LEFT || face == ROOM_FACE_RIGHT) { h.u = (p.z - zSide) * invSide; h.v = (yC - p.y) * invH; }
+    else if (face == ROOM_FACE_FLOOR || face == ROOM_FACE_CEILING) { h.u = (p.x + X) * inv2X; h.v = (p.z + gap) * invFloorZ; }
+    else { h.u = (p.x + X) * inv2X; h.v = (yC - p.y) * invH; }
+}
+
+// room.h RoomExitFast: the exit, planes first; the curved front only when the box's exit
+// lies in front of it. No inside check: the caller has made it, once per thread.
+bool RoomExitFastH(float3 o, float3 d, float3 invD, out RoomHitH h)
+{
+    float best = 3.0e38, t;
+    int part = -1;
+    if (d.x > 0.0) { t = (X - o.x) * invD.x; if (t > 0.0 && t < best) { best = t; part = ROOM_FACE_RIGHT; } }
+    if (d.x < 0.0) { t = (-X - o.x) * invD.x; if (t > 0.0 && t < best) { best = t; part = ROOM_FACE_LEFT; } }
+    if (d.y < 0.0) { t = (yF - o.y) * invD.y; if (t > 0.0 && t < best) { best = t; part = ROOM_FACE_FLOOR; } }
+    if (d.y > 0.0) { t = (yC - o.y) * invD.y; if (t > 0.0 && t < best) { best = t; part = ROOM_FACE_CEILING; } }
+    if (d.z > 0.0) { t = (zB - o.z) * invD.z; if (t > 0.0 && t < best) { best = t; part = ROOM_FACE_BACK; } }
+    if ((flags & ROOM_FLAG_CURVED) == 0)
+    {
+        if (d.z < 0.0) { t = (-gap - o.z) * invD.z; if (t > 0.0 && t < best) { best = t; part = ROOM_FACE_FRONT; } }
+    }
+    else
+    {
+        bool front = part < 0;
+        if (!front)
+        {
+            float3 pb = RoomAt(o, d, best);
+            front = pb.z < FrontDepthR(pb.x);
+        }
+        if (front)
+        {
+            t = RoomArcTH(o, d); if (t > 0.0 && t < best) { best = t; part = ROOM_FACE_FRONT; }
+            t = RoomWingT(-1.0, o, d); if (t > 0.0 && t < best) { best = t; part = ROOM_PART_WING_L; }
+            t = RoomWingT(1.0, o, d); if (t > 0.0 && t < best) { best = t; part = ROOM_PART_WING_R; }
+        }
+    }
+    FillHitH(part, RoomAt(o, d, best), h);
+    return part >= 0;
+}
+
+// room.h RoomExitOnFace: the exit if it is on surface `part` - that surface's t, and a
+// check that the point lies in the room's closure there (the room is convex).
+bool RoomExitOnFaceH(int part, float3 o, float3 d, float3 invD, out RoomHitH h)
+{
+    float t = -1.0;
+    if (part == ROOM_FACE_RIGHT) { if (d.x > 0.0) t = (X - o.x) * invD.x; }
+    else if (part == ROOM_FACE_LEFT) { if (d.x < 0.0) t = (-X - o.x) * invD.x; }
+    else if (part == ROOM_FACE_FLOOR) { if (d.y < 0.0) t = (yF - o.y) * invD.y; }
+    else if (part == ROOM_FACE_CEILING) { if (d.y > 0.0) t = (yC - o.y) * invD.y; }
+    else if (part == ROOM_FACE_BACK) { if (d.z > 0.0) t = (zB - o.z) * invD.z; }
+    else if (part == ROOM_FACE_FRONT)
+    {
+        if ((flags & ROOM_FLAG_CURVED) == 0) { if (d.z < 0.0) t = (-gap - o.z) * invD.z; }
+        else t = RoomArcTH(o, d);
+    }
+    else if (part == ROOM_PART_WING_L) t = RoomWingT(-1.0, o, d);
+    else if (part == ROOM_PART_WING_R) t = RoomWingT(1.0, o, d);
+    float3 p = RoomAt(o, d, t);
+    bool closure;
+    if (part == ROOM_FACE_LEFT || part == ROOM_FACE_RIGHT) closure = p.y >= yF && p.y <= yC && p.z >= zSide && p.z <= zB;
+    else if (part == ROOM_FACE_FLOOR || part == ROOM_FACE_CEILING) closure = abs(p.x) <= X && p.z >= FrontDepthR(p.x) && p.z <= zB;
+    else closure = abs(p.x) <= X && p.y >= yF && p.y <= yC;
+    FillHitH(part, p, h);
+    return t > 0.0 && t < 3.0e38 && closure;
+}
+
+// room.h RoomClassifyRay. Sample kinds: 0 picture, 1 + face, ROOM_KIND_FOOTPRINT (7) the
+// flat screen's footprint, ROOM_KIND_OUTSIDE (8) outside. `inside`: the eye is in the room
+// (once per thread); `part`: the surface of the pixel's last full exit, -1 before one.
+int ClassifyR(float3 o, float3 d, bool inside, inout int part, out float2 uv, out float2 guv)
 {
     uv = float2(0, 0); guv = float2(0, 0);
+    float3 invD = 1.0 / d;
     if ((flags & ROOM_FLAG_FLAT_LAYER) == 0)
     {
-        if (Screen(o, d, uv)) return 0;
+        if (RoomScreenH(o, d, invD, uv)) return 0;
     }
     else if (d.z < 0.0)
     {
-        float t = -o.z / d.z;
+        float t = -o.z * invD.z;
         float hx = o.x + t * d.x, hy = o.y + t * d.y;
         if (t > 0.0 && abs(hx) <= 0.5 * screenW && abs(hy) <= 0.5 * screenH) return ROOM_KIND_FOOTPRINT;
     }
-    RoomHitH h;
-    if (!RoomExitH(o, d, h)) return ROOM_KIND_OUTSIDE;
+    if (!inside) return ROOM_KIND_OUTSIDE;
+    RoomHitH h = (RoomHitH)0;
+    bool found = false;
+    if (part >= 0) found = RoomExitOnFaceH(part, o, d, invD, h);
+    if (!found)
+    {
+        found = RoomExitFastH(o, d, invD, h);
+        if (found) part = h.part;
+    }
+    if (!found) return ROOM_KIND_OUTSIDE;
     uv = float2(h.u, h.v);
-    if (h.face == ROOM_FACE_FRONT) guv = float2(h.s / (2.0 * roomGlowHalfW) + 0.5, 0.5 - h.y / (2.0 * roomGlowHalfH));
+    if (h.face == ROOM_FACE_FRONT) guv = float2(h.s * invGlowW + 0.5, 0.5 - h.y * invGlowH);
     return 1 + h.face;
 }
 
@@ -2519,13 +2645,16 @@ void main(uint3 id : SV_DispatchThreadID)
     if (id.x >= EW || id.y >= EH) return;
     uint e = id.z;
 
+    // Every ray starts at the eye: whether it is in the room, once.
+    bool inside = InsideH(eyeData[e * 5 + 0].xyz);
+    int part = -1;
     int kind[4];
     float2 uv[4], guv[4];
     [unroll] for (int s = 0; s < 4; s++)
     {
         float3 o, d;
         Ray(e, (float)id.x + 0.5 + SUB[s].x, (float)id.y + 0.5 + SUB[s].y, o, d);
-        kind[s] = Classify(o, d, uv[s], guv[s]);
+        kind[s] = ClassifyR(o, d, inside, part, uv[s], guv[s]);
     }
     bool agree = kind[0] == kind[1] && kind[1] == kind[2] && kind[2] == kind[3];
     float3 col = float3(0, 0, 0);
@@ -5533,7 +5662,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         if (!BuildRoomEmitters(room, cyl, width, height, 0.5f * width + margin, 0.5f * height + margin, layout, em)) { Log("SelfTestRoom[%s]: FAIL emitters", name); return false; }
         RoomView view;
         view.flatLayer = !curvedCase; view.W = width; view.H = height; view.glowOn = true;
-        view.glowHalfW = 0.5f * width + margin; view.glowHalfH = 0.5f * height + margin; view.dither = true;
+        view.glowHalfW = 0.5f * width + margin; view.glowHalfH = 0.5f * height + margin; view.dither = true; view.cyl = cyl;
         const RoomShading shading = MakeRoomShading(room, 40, world, width * height);
         const RoomConstants rc = MakeRoomConstants(room, shading, layout, view, W, H, 1.0f);
         memcpy(app.roomCbMapped + (size_t)RING * sizeof(RoomConstants), &rc, sizeof(rc));
@@ -5656,8 +5785,9 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
                             kinds[1 + kFaceFloor] > onePercent && kinds[1 + kFaceCeiling] > onePercent &&
                             kinds[1 + kFaceLeft] + kinds[1 + kFaceRight] > onePercent;
         // The kept v10 eye pass on the same frame, against its own CPU copy; and how many
-        // pixels it draws differently from the current pass (none while the two are the
-        // same code; after the classification speed-ups, only float-rounding ties).
+        // pixels it draws differently from the current pass (Stage 1's classification
+        // differs from v10's only by float rounding and at exact edge ties, so a few
+        // pixels may differ by a level).
         WaitFence(app, app.fenceVal);
         app.cmdAlloc[0]->Reset();
         app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
@@ -6210,7 +6340,7 @@ static bool BenchGroup(App& app, BenchGpu& b, const BenchScene& sc, int run, int
         if (!BuildRoom(in, room) || layout.count() == 0 || !BuildRoomEmitters(room, cyl, sc.width, sc.height, sc.glowHalfW, sc.glowHalfH, layout, em))
         { Log("BenchGroup: FAIL room at %s", label); return false; }
         view.flatLayer = !curved; view.W = sc.width; view.H = sc.height; view.glowOn = true;
-        view.glowHalfW = sc.glowHalfW; view.glowHalfH = sc.glowHalfH; view.dither = true;
+        view.glowHalfW = sc.glowHalfW; view.glowHalfH = sc.glowHalfH; view.dither = true; view.cyl = cyl;
         memcpy(app.roomGeomMapped[RING], em.data(), em.size() * sizeof(RoomEmitter));
         Log("BenchGroup: %s room %.2f x %.2f x %.2f m, floor %.2f m below the eye, %s front, %d emitters (glow blocks %d px)", label, 2 * room.X,
             room.yC - room.yF, room.zB + room.g, -room.yF, room.curved ? "curved" : "flat", layout.count(), layout.block);
@@ -6545,6 +6675,7 @@ static bool BenchRoom(App& app)
                 const double a60 = statOf('A', curvePct, 2, BENCH_EYE_PASS, m, nullptr), b60 = statOf('B', curvePct, 2, BENCH_EYE_PASS, m, nullptr);
                 const double emit = statOf('B', curvePct, 0, 0, m, nullptr), light = statOf('B', curvePct, 0, 1, m, nullptr);
                 const double d0 = statOf('D', curvePct, 0, BENCH_TOTAL, m, nullptr), bt0 = statOf('B', curvePct, 0, BENCH_TOTAL, m, nullptr);
+                const double d60 = statOf('D', curvePct, 2, BENCH_TOTAL, m, nullptr), bt60 = statOf('B', curvePct, 2, BENCH_TOTAL, m, nullptr);
                 if (a0 < 0 || b0 < 0 || a60 < 0 || b60 < 0 || emit < 0 || light < 0)
                 {
                     Log("BenchRoom: acceptance at %d%% (%s) not judged - CONTENDED: (A) and (B) at yaw 0 and 60 each need a steady row, and some have none",
@@ -6552,13 +6683,19 @@ static bool BenchRoom(App& app)
                     continue;
                 }
                 const double gap0 = b0 - a0, gap60 = b60 - a60, emitLight = emit + light;
-                char dVsB[48];
-                if (d0 < 0 || bt0 < 0) snprintf(dVsB, sizeof(dVsB), "no steady row");
-                else snprintf(dVsB, sizeof(dVsB), "%+.3f ms", d0 - bt0);
+                // Stage 1's eye pass (B) against the kept v10 one (D): B's total must be below D's.
+                auto belowD = [](double b, double d, char* out, size_t size)
+                {
+                    if (d < 0 || b < 0) snprintf(out, size, "no steady row");
+                    else snprintf(out, size, "%+.3f ms (%s)", b - d, b < d ? "meets" : "misses");
+                };
+                char bVsD0[48], bVsD60[48];
+                belowD(bt0, d0, bVsD0, sizeof(bVsD0));
+                belowD(bt60, d60, bVsD60, sizeof(bVsD60));
                 Log("BenchRoom: acceptance at %d%% (%s) - (B) eye minus (A) eye: %+.3f ms at yaw 0 (%s), %+.3f ms at yaw 60 (%s), target at most +0.25; "
-                    "EMIT + LIGHT %.3f ms (%s, target at most 0.15); (D) total minus (B) total at yaw 0: %s (the same shader until Stage 1, so noise); "
+                    "EMIT + LIGHT %.3f ms (%s, target at most 0.15); (B) total minus (D) total, target below 0: %s at yaw 0, %s at yaw 60; "
                     "(C) against (D) waits for case C", curvePct, m ? "min" : "p50", gap0, gap0 <= 0.25 ? "meets" : "misses", gap60,
-                    gap60 <= 0.25 ? "meets" : "misses", emitLight, emitLight <= 0.15 ? "meets" : "misses", dVsB);
+                    gap60 <= 0.25 ? "meets" : "misses", emitLight, emitLight <= 0.15 ? "meets" : "misses", bVsD0, bVsD60);
             }
         }
     }
@@ -7172,6 +7309,7 @@ static void RunFrameLoop(App& app)
                         view.glowOn = glowWanted;
                         view.glowHalfW = 0.5f * screen.size.width + margin; view.glowHalfH = 0.5f * screen.size.height + margin;
                         view.dither = true;
+                        view.cyl = roomFlat ? Cylinder() : cylinder;
                         const RoomShading shading = MakeRoomShading(room, app.opt.room, app.opt.worldColor, screen.size.width * screen.size.height);
                         const RoomConstants rc = MakeRoomConstants(room, shading, roomLayout, view, app.srcW, app.srcH, alpha);
                         memcpy(app.roomCbMapped + (size_t)ring * sizeof(RoomConstants), &rc, sizeof(rc));

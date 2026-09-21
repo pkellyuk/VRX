@@ -94,7 +94,21 @@ depend on where you look from.
    ray hits either the curved screen or, for a flat screen, its black footprint;
    otherwise it gets the face it leaves through, with the glow on the front wall and a
    per-eye dither on room surfaces so dark walls do not band. The plain curve pass is
-   compiled from its own text, so it is unchanged.
+   compiled from its own text, so it is unchanged. Its classification (Stage 1 of v11)
+   does the same work more cheaply:
+   - whether the eye is in the room is decided once per pixel, not per ray;
+   - the screen: a slab test against the screen's box (padded 1 mm) first, then the
+     cylinder's quadratic with the angle limit as a tangent, and `atan2` only on a hit;
+   - the exit: the planes first, with one reciprocal of the ray per axis; the curved
+     front only when the box's exit lies in front of it, since the room is convex. Its
+     arc gives t straight from the quadratic's root, again with the tangent test;
+   - one full exit per pixel: the first ray that misses the screen takes it, and the
+     others only check that surface (its plane, the arc or one wing) and that the
+     point lies within the room there. At an edge they fall back to the full exit;
+   - the uniform denominators (the room's size, the glow's) are reciprocals in the
+     constants, rows 17-20, with the screen's bounds.
+
+   The results differ from v10's only by float rounding and at exact edge ties.
 4. **Layers:**
    - A **curved** screen is one projection layer, as before.
    - A **flat** screen stays the compositor's two quads. The room goes under them as a
@@ -106,7 +120,10 @@ seconds as "room + screen GPU p50/p95". With the room on, five timestamps split 
 pass, and the line ends with each pass's p50: "emit, light, eye, copy". A curved screen
 without the room keeps its two timestamps. The first frame also logs each eye's field
 of view, in the form `--bench-fov` takes. The design panel estimated about 0.3 ms per
-frame on an RTX 3090. That is an estimate until the log shows it in the headset.
+frame on an RTX 3090; the offline benchmark below measures more. On an RTX 3090 at
+boost clocks, the room and a curved screen take 1.08-1.20 ms p50 in total with Stage 1
+(the v10 eye pass: 1.37-1.99 ms), against 0.87-1.08 ms for the curved screen alone,
+across the four views and both curves. The headset's figures are still to come.
 
 `--selftest --bench-room` measures the same passes offline, with no VR session, at the
 PSVR2's 2804 x 2860 eye buffers: the curve alone (A), the curve with the room (B), the
@@ -127,11 +144,12 @@ and the curved ones at 60% and 100% curve.
   same rounds is more than 5% above its best. Other work shared the GPU then, and even
   the min is not reliable. The summary and the acceptance lines use steady rows only.
   They say "not judged" where a comparison has none, and give "meets" or "misses"
-  otherwise. SteamVR's compositor drawing for a headset in use is enough to contend
-  every curved row. For a baseline, run it with nothing else drawing on the GPU: no
-  game, and SteamVR closed or idle.
-- **Check.** One extra frame per case and view is read back and compared with
-  `room.h` at every 16th pixel. At most 0.1% of those may be more than 2 levels off.
+  otherwise. SteamVR's compositor drawing for a headset in use can contend every
+  curved row. For a baseline, run it with nothing else drawing on the GPU: no game,
+  and SteamVR closed or idle.
+- **Check.** One extra frame per case and view is read back and compared with the CPU
+  reference (`room.h`, or `screen_curve.h` for A) at every 16th pixel. At most 0.1% of
+  those may be more than 2 levels off.
   Away from any edge, where only rounding separates the GPU from `room.h` (3 levels at
   most, measured), at most 0.01% may be more than 8 levels off.
 - **Output.** It logs min / p50 / p95 per pass with each view's screen, room and mixed
@@ -157,13 +175,28 @@ and the curved ones at 60% and 100% curve.
     neighbour inside (this and the previous check both fail without the fix);
   - cases: a black picture giving nothing, the house light, mirror symmetry, red on the
     left lighting the left wall, the glow on and off, the smoothing;
+  - Stage 1 against the kept v10 code (`room_v10`):
+    - the exit on 20,000 random rays from the eye and 20,000 from points inside, in the
+      flat, 60%, 100% and shortened-arc rooms: the same face bar 0.05% ties, t within
+      1e-4 relative (the point within 1e-6 m for an exit millimetres away), u and v
+      within 1e-4;
+    - on those rays the exit's surface alone gives the identical hit and no other
+      surface claims it; rays 1 mm and 1 cm either side of every edge of the room and of
+      each arc/wing join leave where they are aimed, and the neighbouring surface
+      refuses them;
+    - the room's screen test against `CylinderHit` on 20,000 rays at curves of 1-100%:
+      the same hit or miss bar 0.05% within 1e-5 m of the outline, uv within 1e-5;
+    - the eye pass pixel by pixel on the self-test's two views, flat and curved, over a
+      lightmap lit on the CPU: every pixel within 1/255, 99.9% the same 8-bit value;
+    - the constants' rows 17-20 carry the room's reciprocals and the screen's box;
   - details: the dither, half floats, levelling, the v10 snapshot.
 - **`SelfTestRoom`**, flat and 100% curved, compares the GPU with `room.h`:
   - the emitters identical: 880 with 8-texel glow blocks (flat), 336 with 16-texel
     blocks (curved), so both block sizes run on the GPU;
   - all 24,576 lightmap texels within half-float precision (worst 9.6e-4 relative);
   - the eye pass within 2 bits, for one eye looking up at the screen and one turned to
-    a side wall and the floor;
+    a side wall and the floor; the kept v10 eye pass likewise against `room_v10`, and
+    how many pixels the two eye passes draw differently;
   - `--selftest --dump` writes `room-eyes-flat.ppm` and `room-eyes-curved.ppm`.
 
 ## Limits, and what was left out on purpose

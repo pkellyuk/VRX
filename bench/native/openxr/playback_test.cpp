@@ -891,6 +891,18 @@ static double ParallelG(double halfW, double halfH, double d)
     return 3.14159265358979 * F;
 }
 
+// The GPU self-test's head, turned yawDeg right and then pitched pitchDeg up (xrapp5.cpp
+// YawPitch), as the rows of its rotation (QuatRows); the self-test's screen is unrotated.
+static void YawPitchRows(float yawDeg, float pitchDeg, CurveEye& v)
+{
+    const float yaw = -yawDeg * kRoomPi / 180.0f, pitch = pitchDeg * kRoomPi / 180.0f;
+    const float sy = std::sin(0.5f * yaw), cy = std::cos(0.5f * yaw), sp = std::sin(0.5f * pitch), cp = std::cos(0.5f * pitch);
+    const float x = cy * sp, y = sy * cp, z = -sy * sp, w = cy * cp;
+    v.row0[0] = 1 - 2 * (y * y + z * z); v.row0[1] = 2 * (x * y - z * w);     v.row0[2] = 2 * (x * z + y * w);     v.row0[3] = 0;
+    v.row1[0] = 2 * (x * y + z * w);     v.row1[1] = 1 - 2 * (x * x + z * z); v.row1[2] = 2 * (y * z - x * w);     v.row1[3] = 0;
+    v.row2[0] = 2 * (x * z - y * w);     v.row2[1] = 2 * (y * z + x * w);     v.row2[2] = 1 - 2 * (x * x + y * y); v.row2[3] = 0;
+}
+
 static void TestRoom()
 {
     // ---- geometry: the default screen, flat
@@ -1312,17 +1324,33 @@ static void TestRoom()
         Check(std::fabs(received / emitted - 1.0) < 0.03, "energy, curved: all the screen's light lands on the room (within 3%)");
     }
 
-    // ---- the constant buffer: 512 bytes, v10's rows as they were, v11's rows zero until their steps
+    // ---- the constant buffer: 512 bytes, v10's rows as they were, rows 17-20 the eye pass's
+    // reciprocals and the screen's box, the other v11 rows zero until their steps
     {
         RoomView view;
         view.W = in.W; view.H = in.H; view.glowOn = true; view.glowHalfW = glowHalfW; view.glowHalfH = glowHalfH;
         const RoomConstants rc = MakeRoomConstants(room, shade, layout, view, 1920, 1080, 0.5f);
         const unsigned char* bytes = (const unsigned char*)&rc;
         bool rest = true;
-        for (size_t i = offsetof(RoomConstants, glass); i < sizeof(RoomConstants); i++) rest = rest && bytes[i] == 0;
-        Check(sizeof(RoomConstants) == 512 && offsetof(RoomConstants, glass) == 176 && rest, "RoomConstants is 512 bytes; rows 11-31 are zero");
+        for (size_t i = offsetof(RoomConstants, glass); i < offsetof(RoomConstants, invH); i++) rest = rest && bytes[i] == 0;
+        for (size_t i = offsetof(RoomConstants, rpad6); i < sizeof(RoomConstants); i++) rest = rest && bytes[i] == 0;
+        Check(sizeof(RoomConstants) == 512 && offsetof(RoomConstants, glass) == 176 && rest, "RoomConstants is 512 bytes; rows 11-16 and the padding from row 20 on are zero");
         Check(rc.X == room.X && rc.zSide == room.zSide && rc.glowBlock == (uint32_t)layout.block && rc.emitters == (uint32_t)layout.count() &&
               rc.srcW == 1920 && rc.alpha == 0.5f && rc.flags == (kRoomFlagGlow | kRoomFlagDither), "rows 0-10 carry what they carried in v10");
+        Check(rc.invH == 1.0f / (room.yC - room.yF) && rc.inv2X == 1.0f / (2.0f * room.X) && rc.invSide == 1.0f / (room.zB - room.zSide) &&
+              rc.invFloorZ == 1.0f / (room.zB + room.g) && rc.inv2sMax == 1.0f / (2.0f * room.sMax) && rc.invGlowW == 1.0f / (2.0f * glowHalfW) &&
+              rc.invGlowH == 1.0f / (2.0f * glowHalfH) && rc.tanA == 0 && rc.wingS == 0 && rc.scrTanWrap == 0 && rc.scrBoxX == 0 && rc.scrBoxZ == 0,
+            "a flat room's rows 17-20: its reciprocals, no wings and no screen box");
+        RoomView curvedView = view;
+        curvedView.cyl = curvedIn.cyl;
+        const RoomConstants crc = MakeRoomConstants(curved, shade, layout, curvedView, 1920, 1080, 0.5f);
+        const Cylinder& cy = curvedIn.cyl;
+        Check(crc.tanA == curved.sinA / curved.cosA && crc.wingS == curved.R / (curved.Rg * curved.cosA) && crc.invSide == 1.0f / (curved.zB - curved.zSide) &&
+              std::fabs(crc.scrTanWrap - std::tan(cy.halfWrap)) < 1e-6f && std::fabs(crc.scrBoxX - (cy.radius * std::sin(cy.halfWrap) + 1e-3f)) < 1e-5f &&
+              crc.scrBoxY == cy.halfHeight + 1e-3f && std::fabs(crc.scrBoxZ - (cy.radius * (1.0f - std::cos(cy.halfWrap)) + 1e-3f)) < 1e-5f,
+            "a curved room's rows 17-20: the wings' slope and rate, tan(halfWrap), and the screen's box padded by 1 mm");
+        Check(FrontDepth(curved, 0.9f * curved.X) == curved.za + (0.9f * curved.X - curved.xa) * (curved.sinA / curved.cosA),
+            "FrontDepth with the stored tanA is what it was when it divided");
     }
 
     // ---- the HLSL's copy of the constants it shares with this header
@@ -1361,79 +1389,325 @@ static void TestRoom()
         Check(roundTrip, "%.9g reads back as the same float");
     }
 
-    // ---- the kept v10 eye pass: while nothing has changed it is today's, bit for bit
+    // ---- Stage 1: the eye pass's classification against the kept v10 one (room_v10)
     {
-        uint32_t seed = 4242;
-        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return (float)((seed >> 8) & 0xFFFF) / 65535.0f * 2.0f - 1.0f; };
-        struct Case { const Room* r; const float* eye; };
-        const Case cases[] = { { &room, in.eye }, { &curved, in.eye }, { &closeRoom, smallIn.eye } };
-        int rays = 0, same = 0;
-        for (const Case& k : cases)
-            for (int i = 0; i < 2000; i++)
+        uint32_t seed = 20260921;
+        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return (float)(seed >> 8) / 16777215.0f * 2.0f - 1.0f; };
+        auto interior = [&](const Room& r, float p[3])
+        {
+            for (int k = 0; k < 1000; k++)
             {
+                p[0] = rnd() * r.X; p[1] = r.yF + (0.5f + 0.5f * rnd()) * (r.yC - r.yF); p[2] = -r.g + (0.5f + 0.5f * rnd()) * (r.zB + r.g);
+                if (RoomInside(r, p)) return true;
+            }
+            return false;
+        };
+        RoomInputs in60 = in;
+        Check(BuildCylinder(in.W, in.H, 3.0f, 0.6f, in60.cyl), "60% cylinder");
+        Room curved60;
+        Check(BuildRoom(in60, curved60) && curved60.curved, "the 60% curved room builds");
+        struct ExitRoom { const Room* r; const float* eye; const char* what; };
+        const ExitRoom exitRooms[] = { { &room, in.eye, "flat" }, { &curved60, in.eye, "60%" }, { &curved, in.eye, "100%" },
+                                       { &closeRoom, smallIn.eye, "shortened arc" } };
+
+        // B1: RoomExit (planes first; t straight from the arc's root; reciprocals) against v10's,
+        // 20,000 rays from the eye and 20,000 from points inside, in each room. B2 on the same
+        // rays: the exit's own surface alone (RoomExitOnFace) gives the very same hit, and no
+        // other surface claims it (bar a tie at a seam, where the points agree).
+        long rays = 0, missing = 0, faceTies = 0, farTies = 0, badT = 0, badUv = 0;
+        long onFaceSame = 0, onFaceDiffer = 0, onFaceRefused = 0, otherClaims = 0, otherWrong = 0;
+        long nearExits = 0;
+        float worstT = 0, worstUv = 0, worstPoint = 0;
+        for (const ExitRoom& k : exitRooms)
+            for (int i = 0; i < 40000; i++)
+            {
+                float o[3] = { k.eye[0], k.eye[1], k.eye[2] };
+                if (i >= 20000 && !interior(*k.r, o)) { missing++; continue; }
                 const float d[3] = { rnd(), rnd(), rnd() };
                 RoomHit a, b;
-                const bool ea = RoomExit(*k.r, k.eye, d, a), eb = room_v10::RoomExit(*k.r, k.eye, d, b);
+                const bool ea = RoomExit(*k.r, o, d, a), eb = room_v10::RoomExit(*k.r, o, d, b);
                 rays++;
-                if (ea == eb && a.face == b.face && a.t == b.t && a.u == b.u && a.v == b.v && a.s == b.s && a.y == b.y) same++;
+                if (!ea || !eb) { missing++; continue; }
+                // t within 1e-4 relative - or, for an exit a few millimetres away, the two points
+                // within 1e-6 m: both versions place an arc's point to about 2e-7 m (float), which
+                // is more than 1e-4 of a t that small.
+                const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                const float tTol = std::max(1e-4f * b.t, 1e-6f / len);
+                if (a.face != b.face)
+                {
+                    faceTies++;
+                    if (std::fabs(a.t - b.t) > tTol) farTies++;
+                }
+                else
+                {
+                    worstT = std::max(worstT, std::fabs(a.t - b.t) / b.t);
+                    worstPoint = std::max(worstPoint, std::fabs(a.t - b.t) * len);
+                    if (std::fabs(a.t - b.t) > 1e-4f * b.t) nearExits++;
+                    worstUv = std::max(worstUv, std::max(std::fabs(a.u - b.u), std::fabs(a.v - b.v)));
+                    if (std::fabs(a.t - b.t) > tTol) badT++;
+                    if (std::fabs(a.u - b.u) > 1e-4f || std::fabs(a.v - b.v) > 1e-4f) badUv++;
+                }
+                float rcp[3];
+                RoomRayRcp(d, rcp);
+                RoomHit c;
+                if (!RoomExitOnFace(*k.r, a.part, o, d, rcp, c)) onFaceRefused++;
+                else if (c.face == a.face && c.part == a.part && c.t == a.t && c.u == a.u && c.v == a.v && c.s == a.s && c.y == a.y) onFaceSame++;
+                else onFaceDiffer++;
+                for (int part = 0; part <= kRoomPartWingR; part++)
+                {
+                    RoomHit w;
+                    if (part == a.part || !RoomExitOnFace(*k.r, part, o, d, rcp, w)) continue;
+                    otherClaims++;
+                    if (std::fabs(w.t - a.t) > std::max(1e-4f * a.t, 1e-6f / len)) otherWrong++;
+                }
             }
-        Check(same == rays, "room_v10::RoomExit is RoomExit (6,000 rays)");
+        std::printf("room stage 1, B1/B2: %ld rays in 4 rooms; %ld face ties with v10 (%ld with t apart); worst t %.2e relative (%ld exits within "
+                    "millimetres beyond 1e-4, worst point %.2e m), worst u/v %.2e; own surface alone: %ld the same hit, %ld refused, %ld different; "
+                    "other surfaces claimed %ld (%ld wrongly)\n", rays, faceTies, farTies, (double)worstT, nearExits, (double)worstPoint,
+                    (double)worstUv, onFaceSame, onFaceRefused, onFaceDiffer, otherClaims, otherWrong);
+        std::fflush(stdout);     // Check aborts on a failure, and abort does not flush
+        Check(missing == 0 && rays == 4 * 40000, "B1: every ray, from the eye or inside, leaves the room in both versions");
+        Check(faceTies * 2000 <= rays && farTies == 0 && badT == 0 && badUv == 0 && nearExits * 2000 <= rays,
+            "B1: RoomExit is v10's - the same face bar 0.05% ties, t within 1e-4 relative (the point within 1e-6 m for an exit millimetres away), "
+            "u and v within 1e-4 (flat, 60%, 100%, shortened arc)");
+        Check(onFaceDiffer == 0 && onFaceRefused * 2000 <= rays && otherWrong == 0 && otherClaims * 2000 <= rays,
+            "B2: the exit's surface alone gives the identical hit, and no other surface claims the exit (bar 0.05% ties)");
 
-        // Two eyes, one looking at the screen and one turned 80 degrees right, over a
-        // made-up lightmap, picture and glow: every pixel identical, flat and curved.
-        const int ew = 64, eh = 48, pw = 64, ph = 36, gw = 32, gh = 24;
-        std::vector<unsigned char> pic((size_t)pw * ph * 4), glowPic((size_t)gw * gh * 4);
+        // B2 at the seams: rays aimed 1 mm and 1 cm either side of every edge of the room (and of
+        // each arc/wing join) leave through the surface they are aimed at, as in v10; that surface
+        // alone gives the identical hit, and the neighbouring surface refuses them.
+        long seamRays = 0, seamRight = 0;
+        int seamReported = 0;
+        for (const ExitRoom& k : exitRooms)
+        {
+            const Room& r = *k.r;
+            float origins[4][3] = { { k.eye[0], k.eye[1], k.eye[2] } };
+            bool placed = true;
+            for (int n = 1; n < 4; n++) placed = interior(r, origins[n]) && placed;
+            Check(placed, "points inside the room for the seam rays");
+            auto frontPart = [&r](float x) { return !r.curved || std::fabs(x) <= r.xa ? (int)kFaceFront : (x < 0 ? kRoomPartWingL : kRoomPartWingR); };
+            struct Target { float p[3]; int part, neighbour; };
+            std::vector<Target> targets;
+            const float deltas[2] = { 1e-3f, 1e-2f }, across[6] = { -0.97f, -0.6f, 0.0f, 0.35f, 0.8f, 0.97f };
+            for (float dl : deltas)
+                for (int f = 0; f < 6; f++)
+                {
+                    const float frac = ((float)f + 0.5f) / 6.0f;
+                    const float z = r.zSide + frac * (r.zB - r.zSide), y = r.yF + frac * (r.yC - r.yF), x = across[f] * r.X;
+                    for (float side = -1; side <= 1; side += 2)
+                    {
+                        const int wall = side < 0 ? kFaceLeft : kFaceRight;
+                        const float wx = side * r.X, in1 = side * (r.X - dl);
+                        targets.push_back({ { wx, r.yF + dl, z }, wall, kFaceFloor });                   // wall / floor
+                        targets.push_back({ { in1, r.yF, z }, kFaceFloor, wall });
+                        targets.push_back({ { wx, r.yC - dl, z }, wall, kFaceCeiling });                 // wall / ceiling
+                        targets.push_back({ { in1, r.yC, z }, kFaceCeiling, wall });
+                        targets.push_back({ { wx, y, r.zB - dl }, wall, kFaceBack });                    // wall / back
+                        targets.push_back({ { in1, y, r.zB }, kFaceBack, wall });
+                        targets.push_back({ { wx, y, r.zSide + dl }, wall, frontPart(in1) });            // wall / front
+                        targets.push_back({ { in1, y, FrontDepth(r, in1) }, frontPart(in1), wall });
+                        if (r.curved && r.xa - dl > 0 && r.xa + dl < r.X)                               // arc / wing
+                        {
+                            const float xArc = side * (r.xa - dl), xWing = side * (r.xa + dl);
+                            const int wing = side < 0 ? kRoomPartWingL : kRoomPartWingR;
+                            targets.push_back({ { xArc, y, FrontDepth(r, xArc) }, kFaceFront, wing });
+                            targets.push_back({ { xWing, y, FrontDepth(r, xWing) }, wing, kFaceFront });
+                        }
+                    }
+                    targets.push_back({ { x, r.yF, FrontDepth(r, x) + dl }, kFaceFloor, frontPart(x) });  // floor / front
+                    targets.push_back({ { x, r.yF + dl, FrontDepth(r, x) }, frontPart(x), kFaceFloor });
+                    targets.push_back({ { x, r.yC, FrontDepth(r, x) + dl }, kFaceCeiling, frontPart(x) }); // ceiling / front
+                    targets.push_back({ { x, r.yC - dl, FrontDepth(r, x) }, frontPart(x), kFaceCeiling });
+                    targets.push_back({ { x, r.yF, r.zB - dl }, kFaceFloor, kFaceBack });                // floor / back
+                    targets.push_back({ { x, r.yF + dl, r.zB }, kFaceBack, kFaceFloor });
+                    targets.push_back({ { x, r.yC, r.zB - dl }, kFaceCeiling, kFaceBack });              // ceiling / back
+                    targets.push_back({ { x, r.yC - dl, r.zB }, kFaceBack, kFaceCeiling });
+                }
+            for (const float* o : origins)
+                for (const Target& tg : targets)
+                {
+                    const float d[3] = { tg.p[0] - o[0], tg.p[1] - o[1], tg.p[2] - o[2] };
+                    float rcp[3];
+                    RoomRayRcp(d, rcp);
+                    RoomHit h, own, other, v10;
+                    const bool exits = RoomExit(r, o, d, h);
+                    const bool onOwn = RoomExitOnFace(r, tg.part, o, d, rcp, own);
+                    const bool onOther = RoomExitOnFace(r, tg.neighbour, o, d, rcp, other);
+                    const bool v10Exits = room_v10::RoomExit(r, o, d, v10);
+                    const bool right = exits && h.part == tg.part && std::fabs(h.t - 1.0f) < 1e-4f && onOwn && own.part == h.part &&
+                                       own.t == h.t && own.u == h.u && own.v == h.v && own.s == h.s && own.y == h.y && !onOther &&
+                                       v10Exits && v10.face == h.face && std::fabs(v10.u - h.u) <= 1e-4f && std::fabs(v10.v - h.v) <= 1e-4f;
+                    seamRays++;
+                    if (right) { seamRight++; continue; }
+                    if (seamReported++ < 8)
+                        std::printf("seam ray (%s room) to (%.4f, %.4f, %.4f) on part %d: exit %d part %d t %.6f; own %d; neighbour %d claims %d; v10 face %d u %.6f/%.6f v %.6f/%.6f\n",
+                                    k.what, (double)tg.p[0], (double)tg.p[1], (double)tg.p[2], tg.part, (int)exits, h.part, (double)h.t, (int)onOwn,
+                                    tg.neighbour, (int)onOther, v10.face, (double)h.u, (double)v10.u, (double)h.v, (double)v10.v);
+                }
+        }
+        std::printf("room stage 1, B2 seams: %ld of %ld rays either side of every seam right\n", seamRight, seamRays);
+        std::fflush(stdout);     // Check aborts on a failure, and abort does not flush
+        Check(seamRays > 2000 && seamRight == seamRays,
+            "B2: rays 1 mm and 1 cm either side of every seam (arc/wing, wall/floor, floor/front, ceiling/back, ...) leave where aimed, "
+            "that surface alone agrees, its neighbour refuses them, and v10 agrees");
+
+        // B3: RoomScreenHit (the box, the tan test, atan2 only on a hit) against CylinderHit, 20,000
+        // rays at curves of 1-100%: many aimed at the screen's surface out to a quarter past its
+        // outline, the rest anywhere; from points in front of it, some beside its edges.
+        const float curves[4] = { 0.01f, 0.1f, 0.6f, 1.0f };
+        long screenRays = 0, bothHit = 0, outlineTies = 0, screenWrong = 0, screenBadUv = 0;
+        float worstScreenUv = 0;
+        for (float curve : curves)
+        {
+            Cylinder cyl;
+            Check(BuildCylinder(in.W, in.H, 3.0f, curve, cyl) && cyl.curved, "a cylinder for the screen test");
+            const RoomScreenBox box = RoomScreenBounds(cyl);
+            for (int i = 0; i < 5000; i++)
+            {
+                const float o[3] = { 3.5f * rnd(), rnd(), 3.0f + 1.5f * rnd() };
+                float d[3];
+                if (i % 2 == 0)
+                {
+                    const float phi = 1.25f * cyl.halfWrap * rnd(), y = 1.25f * cyl.halfHeight * rnd();
+                    d[0] = cyl.radius * std::sin(phi) - o[0]; d[1] = y - o[1]; d[2] = cyl.radius * (1.0f - std::cos(phi)) - o[2];
+                }
+                else
+                {
+                    d[0] = rnd(); d[1] = rnd(); d[2] = rnd() - 0.5f;
+                }
+                float rcp[3];
+                RoomRayRcp(d, rcp);
+                float ua = 0, va = 0, ub = 0, vb = 0;
+                const bool a = CylinderHit(cyl, o, d, &ua, &va), b = RoomScreenHit(cyl, box, o, d, rcp, &ub, &vb);
+                screenRays++;
+                if (a && b)
+                {
+                    bothHit++;
+                    const float du = std::max(std::fabs(ua - ub), std::fabs(va - vb));
+                    worstScreenUv = std::max(worstScreenUv, du);
+                    if (du > 1e-5f) screenBadUv++;
+                }
+                else if (a != b)
+                {
+                    // Allowed only on the outline: how far the ray's crossing of the whole
+                    // cylinder lies from the screen's edge.
+                    float phi = 0, y = 0, edge = 1e9f;
+                    if (ArcHit(cyl.radius, cyl.radius, 3.1f, 1e30f, o, d, &phi, &y))
+                        edge = std::fmin(std::fabs(cyl.radius * (std::fabs(phi) - cyl.halfWrap)), std::fabs(std::fabs(y) - cyl.halfHeight));
+                    if (edge < 1e-5f) outlineTies++;
+                    else
+                    {
+                        screenWrong++;
+                        if (screenWrong <= 4)
+                            std::printf("screen test at %.0f%%: CylinderHit %d, RoomScreenHit %d, %.3e m from the outline (o %.3f %.3f %.3f, d %.4f %.4f %.4f)\n",
+                                        (double)curve * 100.0, (int)a, (int)b, (double)edge, (double)o[0], (double)o[1], (double)o[2],
+                                        (double)d[0], (double)d[1], (double)d[2]);
+                    }
+                }
+            }
+        }
+        std::printf("room stage 1, B3: %ld rays, %ld hit both, %ld differ on the outline, %ld elsewhere; worst uv %.2e\n",
+                    screenRays, bothHit, outlineTies, screenWrong, (double)worstScreenUv);
+        std::fflush(stdout);     // Check aborts on a failure, and abort does not flush
+        Check(screenRays == 20000 && bothHit > screenRays / 5 && screenWrong == 0 && outlineTies * 2000 <= screenRays && screenBadUv == 0,
+            "B3: RoomScreenHit is CylinderHit - the same hit or miss bar 0.05% within 1e-5 m of the outline, uv within 1e-5 (curves 1-100%)");
+    }
+
+    // ---- A3: the new eye pass against the kept v10 one, pixel by pixel, on the GPU self-test's
+    // two views (256 x 192; one eye looks up 20 degrees at the screen, the other turns 80 degrees
+    // right and looks 20 degrees down), flat and curved, over a lightmap the CPU lights from a
+    // made-up picture and glow.
+    {
+        const int pw = 686, ph = 392, ew = 256, eh = 192;
+        const float scrW = 5.7f, scrH = scrW * (float)ph / (float)pw;
+        int agw = 0, agh = 0;
+        AmbiSizeFor(pw, ph, &agw, &agh);
+        std::vector<unsigned char> pic((size_t)pw * ph * 4), glowPic((size_t)agw * agh * 4);
         for (int y = 0; y < ph; y++)
             for (int x = 0; x < pw; x++)
             {
                 unsigned char* q = &pic[((size_t)y * pw + x) * 4];
-                q[0] = (unsigned char)(x * 4); q[1] = (unsigned char)(y * 7); q[2] = (unsigned char)((x * y) & 255); q[3] = 255;
+                q[0] = (unsigned char)(x * 255 / pw); q[1] = (unsigned char)(y * 255 / ph); q[2] = ((x / 32 + y / 32) & 1) ? 200 : 40; q[3] = 255;
             }
-        for (int y = 0; y < gh; y++)
-            for (int x = 0; x < gw; x++)
+        for (int y = 0; y < agh; y++)
+            for (int x = 0; x < agw; x++)
             {
-                unsigned char* q = &glowPic[((size_t)y * gw + x) * 4];
-                q[0] = (unsigned char)(x * 8); q[1] = 60; q[2] = (unsigned char)(y * 10); q[3] = 200;
+                unsigned char* q = &glowPic[((size_t)y * agw + x) * 4];
+                q[0] = (unsigned char)(x * 255 / agw); q[1] = 90; q[2] = (unsigned char)(y * 255 / agh); q[3] = 180;
             }
-        RoomLightmap light;
-        light.texels.resize((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 4);
-        for (size_t i = 0; i < light.texels.size(); i++) light.texels[i] = (float)((i * 2654435761u) % 1000u) / 1000.0f * 0.3f;
-        const RgbaImage picture{ pic.data(), pw, ph, pw * 4 }, glowImg{ glowPic.data(), gw, gh, gw * 4 };
+        const RgbaImage picture{ pic.data(), pw, ph, pw * 4 }, glowImg{ glowPic.data(), agw, agh, agw * 4 };
+        const uint32_t world = 0x2A3441;
         CurveConstants c;
         c.ew = (uint32_t)ew; c.eh = (uint32_t)eh;
-        c.world[0] = 0.1f; c.world[1] = 0.2f; c.world[2] = 0.3f; c.world[3] = 1.0f;
-        const float yaw[2] = { 0.0f, -80.0f * kRoomPi / 180.0f };
+        c.world[0] = 0x2A / 255.0f; c.world[1] = 0x34 / 255.0f; c.world[2] = 0x41 / 255.0f; c.world[3] = 1.0f;
+        const float yawPitch[2][2] = { { 0.0f, 20.0f }, { 80.0f, -20.0f } };
         for (int e = 0; e < 2; e++)
         {
             CurveEye& v = c.eye[e];
-            v.origin[0] = e ? 0.032f : -0.032f; v.origin[1] = 0.05f; v.origin[2] = 3.0f;
-            const float cs = std::cos(yaw[e]), sn = std::sin(yaw[e]);
-            v.row0[0] = cs; v.row0[1] = 0; v.row0[2] = sn;
-            v.row1[0] = 0; v.row1[1] = 1; v.row1[2] = 0;
-            v.row2[0] = -sn; v.row2[1] = 0; v.row2[2] = cs;
-            v.tanL = -1.0f; v.tanR = 1.0f; v.tanU = 0.75f; v.tanD = -0.75f;
+            v.origin[0] = e ? 0.064f : 0.0f; v.origin[1] = 0.05f; v.origin[2] = 3.0f; v.origin[3] = 0;
+            YawPitchRows(yawPitch[e][0], yawPitch[e][1], v);
+            v.tanL = std::tan(-0.88f); v.tanR = std::tan(0.88f); v.tanU = std::tan(0.79f); v.tanD = std::tan(-0.79f);
         }
-        int pixels = 0, identical = 0;
+        long pixels = 0, within = 0, same8 = 0, sameFloat = 0, failed = 0;
+        float worst = 0;
+        int reported = 0;
         for (int curvedCase = 0; curvedCase < 2; curvedCase++)
         {
-            const Room& r = curvedCase ? curved : room;
-            const Cylinder cyl = curvedCase ? curvedIn.cyl : Cylinder();
+            RoomInputs rin;
+            rin.W = scrW; rin.H = scrH; rin.eye[1] = 0.05f; rin.eye[2] = 3.0f;
+            if (curvedCase) Check(BuildCylinder(scrW, scrH, 3.0f, 1.0f, rin.cyl), "A3's cylinder");
+            Room r;
+            Check(BuildRoom(rin, r), "A3's room");
+            const float margin = kAmbiMargin * scrW;
+            const RoomEmitterLayout l = RoomLayout(scrW, scrH, agw, agh, curvedCase ? 16 : kRoomGlowBlock);
+            std::vector<RoomEmitter> lem;
+            Check(BuildRoomEmitters(r, rin.cyl, scrW, scrH, 0.5f * scrW + margin, 0.5f * scrH + margin, l, lem) &&
+                  RoomEmitRadiance(l, pic.data(), pw, ph, pw * 4, glowPic.data(), agw * 4, true, 1.0f, table, lem), "A3's emitters");
+            const RoomShading sh40 = MakeRoomShading(r, 40, world, scrW * scrH);
+            RoomLightmap light;
+            light.texels.resize((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 4);
+            for (int f = 0; f < kRoomFaces; f++)
+                for (int j = 0; j < kRoomLightmap; j++)
+                    for (int i = 0; i < kRoomLightmap; i++)
+                    {
+                        float L[3] = { 0, 0, 0 };
+                        RoomTexel(r, sh40, lem, f, i, j, L);
+                        float* t = &light.texels[(((size_t)f * kRoomLightmap + j) * kRoomLightmap + i) * 4];
+                        t[0] = L[0]; t[1] = L[1]; t[2] = L[2]; t[3] = 1.0f;
+                    }
             RoomView view;
-            view.flatLayer = !curvedCase; view.W = in.W; view.H = in.H; view.glowOn = true;
-            view.glowHalfW = 0.5f * in.W + r.margin; view.glowHalfH = 0.5f * in.H + r.margin; view.dither = true;
+            view.flatLayer = !curvedCase; view.W = scrW; view.H = scrH; view.glowOn = true;
+            view.glowHalfW = 0.5f * scrW + margin; view.glowHalfH = 0.5f * scrH + margin; view.dither = true; view.cyl = rin.cyl;
             for (int e = 0; e < 2; e++)
                 for (int y = 0; y < eh; y++)
                     for (int x = 0; x < ew; x++)
                     {
                         float a[3] = { -1, -1, -1 }, b[3] = { -2, -2, -2 };
-                        const bool okA = RoomPixel(c, cyl, r, view, e, x, y, picture, &glowImg, light, a);
-                        const bool okB = room_v10::RoomPixel(c, cyl, r, view, e, x, y, picture, &glowImg, light, b);
+                        const bool okA = RoomPixel(c, rin.cyl, r, view, e, x, y, picture, &glowImg, light, a);
+                        const bool okB = room_v10::RoomPixel(c, rin.cyl, r, view, e, x, y, picture, &glowImg, light, b);
                         pixels++;
-                        if (okA && okB && std::memcmp(a, b, sizeof(a)) == 0) identical++;
+                        if (!okA || !okB) { failed++; continue; }
+                        float diff = 0;
+                        bool eq8 = true;
+                        for (int ch = 0; ch < 3; ch++)
+                        {
+                            diff = std::max(diff, std::fabs(a[ch] - b[ch]));
+                            eq8 = eq8 && lroundf(std::min(std::max(a[ch], 0.0f), 1.0f) * 255.0f) == lroundf(std::min(std::max(b[ch], 0.0f), 1.0f) * 255.0f);
+                        }
+                        worst = std::max(worst, diff);
+                        if (diff <= 1.0f / 255.0f) within++;
+                        if (eq8) same8++;
+                        if (std::memcmp(a, b, sizeof(a)) == 0) sameFloat++;
+                        if (diff > 1.0f / 255.0f && reported++ < 6)
+                            std::printf("A3: %s eye %d pixel %d,%d: new %.4f %.4f %.4f, v10 %.4f %.4f %.4f\n", curvedCase ? "curved" : "flat", e, x, y,
+                                        (double)a[0], (double)a[1], (double)a[2], (double)b[0], (double)b[1], (double)b[2]);
                     }
         }
-        if (identical != pixels) std::printf("room v10 eye pass: %d of %d pixels identical\n", identical, pixels);
-        Check(identical == pixels, "room_v10::RoomPixel is RoomPixel, flat and curved, pixel for pixel");
+        std::printf("room stage 1, A3: %ld pixels; %ld within 1/255 (worst %.2e), %ld the same 8-bit value, %ld the same float\n",
+                    pixels, within, (double)worst, same8, sameFloat);
+        std::fflush(stdout);     // Check aborts on a failure, and abort does not flush
+        Check(failed == 0 && pixels == 2L * 2 * ew * eh && within == pixels && same8 * 1000 >= pixels * 999,
+            "A3: the new eye pass is v10's to 1/255 on every pixel and to the 8-bit value on 99.9%, flat and curved, on the self-test's views");
     }
 
     // ---- dither, half floats, heading

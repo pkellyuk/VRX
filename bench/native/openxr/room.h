@@ -52,6 +52,12 @@
 //
 // All of it is computed once per frame into a small lightmap (kRoomLightmap^2 per
 // face) that both eyes sample: diffuse light does not depend on where you look from.
+//
+// EYE PASS. Four rays per pixel, as the curved screen's own pass. A ray is tested
+// against the screen's box before the screen (RoomScreenHit); one that misses it leaves
+// the room through a face found planes first, the curved front only when the box's exit
+// lies in front of it (RoomExitFast). The room is convex, so a pixel's first such ray
+// takes that full exit and its others only check its face (RoomExitOnFace).
 
 static const int kRoomFaces = 6;
 enum RoomFace { kFaceFront = 0, kFaceLeft = 1, kFaceRight = 2, kFaceFloor = 3, kFaceCeiling = 4, kFaceBack = 5 };
@@ -103,15 +109,25 @@ struct Room
     float floorWanted = 0;              // that floor (or the seated guess); yF is lower when the screen reaches below it
     bool phiReduced = false;            // the arc was shortened to keep the viewer inside
     float frontFloorArea = 0;           // floor (and ceiling) area in front of a curved front: outside the room
+    // The eye pass's reciprocals of its uniform denominators, and the wings' rates
+    // (RoomConstants rows 17-19 carry them, so the GPU divides by none of them per ray).
+    float tanA = 0;                     // sinA / cosA: the wings' slope, and the arc's angle limit as a tangent
+    float wingS = 0;                    // R / (Rg cosA): chart metres per metre of x along a wing
+    float invH = 0;                     // 1 / (yC - yF)
+    float inv2X = 0;                    // 1 / (2 X)
+    float invSide = 0;                  // 1 / (zB - zSide)
+    float invFloorZ = 0;                // 1 / (zB + g)
+    float inv2sMax = 0;                 // 1 / (2 sMax)
 };
 
-// Depth of the front wall at x (the room is z >= FrontDepth).
+// Depth of the front wall at x (the room is z >= FrontDepth). tanA is sinA / cosA, the
+// same float, so this is what it was when it divided.
 inline float FrontDepth(const Room& r, float x)
 {
     if (!r.curved) return -r.g;
     const float ax = std::fabs(x);
     if (ax <= r.xa) return r.R - std::sqrt(std::fmax(r.Rg * r.Rg - ax * ax, 0.0f));
-    return r.za + (ax - r.xa) * (r.sinA / r.cosA);
+    return r.za + (ax - r.xa) * r.tanA;
 }
 
 // The front's chart coordinate s at x: the glow's own sideways coordinate (arc metres
@@ -142,11 +158,14 @@ inline void FrontPoint(const Room& r, float s, float* x, float* z, float* nx, fl
     *nx = -sign * r.sinA; *nz = r.cosA;
 }
 
+// The front's arc runs to +-phiA (R and Rg set first); the wings carry on from its ends.
 inline void RoomSetArc(Room& r, float phiA)
 {
     r.phiA = phiA;
     r.sinA = std::sin(phiA); r.cosA = std::cos(phiA);
     r.xa = r.Rg * r.sinA; r.za = r.R - r.Rg * r.cosA;
+    r.tanA = r.sinA / r.cosA;
+    r.wingS = r.Rg * r.cosA > 0 ? r.R / (r.Rg * r.cosA) : 0.0f;
 }
 
 inline bool RoomInside(const Room& r, const float p[3])
@@ -214,6 +233,12 @@ inline bool BuildRoom(const RoomInputs& in, Room& out)
         }
         r.frontFloorArea = (float)area;
     }
+    // The eye pass's reciprocals (the denominators are positive: the room has size).
+    r.invH = 1.0f / (r.yC - r.yF);
+    r.inv2X = 1.0f / (2.0f * r.X);
+    r.invSide = 1.0f / (r.zB - r.zSide);
+    r.invFloorZ = 1.0f / (r.zB + r.g);
+    r.inv2sMax = 1.0f / (2.0f * r.sMax);
     r.valid = true;
     if (!RoomInside(r, in.eye)) return false;
     out = r;
@@ -245,68 +270,245 @@ inline bool RoomFacePoint(const Room& r, int face, float u, float v, float p[3],
 }
 
 // Where a ray from inside the room leaves it: the face, its chart coordinates and,
-// for the front wall, the glow's coordinates (s, y). Returns false if the ray starts
-// outside the room (it then sees the world colour).
-struct RoomHit { int face = -1; float t = 0, u = 0, v = 0, s = 0, y = 0; };
+// for the front wall, the glow's coordinates (s, y). `part` is the surface it leaves
+// through: the face, except that a curved front's wings are kRoomPartWingL and
+// kRoomPartWingR (its arc is kFaceFront), so that a pixel's other rays can try that
+// one surface alone (RoomExitOnFace).
+struct RoomHit { int face = -1; int part = -1; float t = 0, u = 0, v = 0, s = 0, y = 0; };
+static const int kRoomPartWingL = 6, kRoomPartWingR = 7;
 
+// 1/d per component, once per ray: the plane tests multiply by it. It is +-inf where d
+// is 0; every use of such a component is guarded by the sign of d, or is a slab bound.
+inline bool RoomRayRcp(const float d[3], float rcp[3])
+{
+    if (!d || !rcp) return false;
+    for (int k = 0; k < 3; k++) rcp[k] = 1.0f / d[k];
+    return true;
+}
+
+// A point along the ray, in one expression, so that every path reaching the same t
+// reaches the same point.
+inline void RoomAt(const float o[3], const float d[3], float t, float p[3])
+{
+    if (!o || !d || !p) return;
+    p[0] = o[0] + t * d[0]; p[1] = o[1] + t * d[1]; p[2] = o[2] + t * d[2];
+}
+
+// ArcHit's quadratic (screen_curve.h), returning the root itself: the first t > 0 on the
+// far side of the vertical cylinder of radius rho round the axis at z = axisZ, with
+// |hy| <= maxY and |hx| <= tanMax * toward. That is the angle limit as a tangent: no
+// atan2, and exact for limits under 90 degrees (the screen's halfWrap is at most 35,
+// the front's phiA at most 1.45 rad).
+inline bool RoomArcRoot(float axisZ, float rho, float tanMax, float maxY, const float o[3], const float d[3],
+                        float* t, float* hx, float* hy, float* hz)
+{
+    if (!o || !d || !t || !hx || !hy || !hz) return false;
+    if (!(rho > 0) || !(axisZ > 0)) return false;
+    const float a = d[0] * d[0] + d[2] * d[2];
+    if (!(a > 1e-12f)) return false;
+    const float b = 2.0f * (o[0] * d[0] + (o[2] - axisZ) * d[2]);
+    const float c = o[0] * o[0] + o[2] * o[2] - 2.0f * o[2] * axisZ + (axisZ - rho) * (axisZ + rho);
+    const float disc = b * b - 4.0f * a * c;
+    if (disc < 0) return false;
+    const float sq = std::sqrt(disc);
+    const float q = -0.5f * (b + (b < 0 ? -sq : sq));
+    float t0 = q / a, t1 = (q != 0) ? c / q : t0;
+    if (t0 > t1) { const float swap = t0; t0 = t1; t1 = swap; }
+    for (int i = 0; i < 2; i++)
+    {
+        const float tr = i == 0 ? t0 : t1;
+        if (!(tr > 0)) continue;
+        const float x = o[0] + tr * d[0], y = o[1] + tr * d[1], z = o[2] + tr * d[2];
+        const float toward = axisZ - z;          // > 0 on the screen's side of the axis
+        if (!(toward > 0) || std::fabs(y) > maxY || std::fabs(x) > tanMax * toward) continue;
+        *t = tr; *hx = x; *hy = y; *hz = z;
+        return true;
+    }
+    return false;
+}
+
+// A curved front's arc: where the ray leaves through it, t straight from the root.
+inline bool RoomArcT(const Room& r, const float o[3], const float d[3], float* t)
+{
+    if (!o || !d || !t || !r.curved) return false;
+    float hx, hy, hz;
+    return RoomArcRoot(r.R, r.Rg, r.tanA, 3.0e38f, o, d, t, &hx, &hy, &hz);
+}
+
+// A curved front's wing on `side` (-1 left, +1 right): the plane tangent to the arc at
+// its end, beyond that end. The ray's t there, or 0 if it does not leave through it.
+inline float RoomWingT(const Room& r, float side, const float o[3], const float d[3])
+{
+    if (!o || !d || !r.curved) return 0;
+    const float nx = -side * r.sinA, nz = r.cosA;           // the wing's normal, into the room
+    const float nd = nx * d[0] + nz * d[2];
+    if (!(nd < 0)) return 0;
+    const float t = (nx * (side * r.xa - o[0]) + nz * (r.za - o[2])) / nd;
+    if (side * (o[0] + t * d[0]) < r.xa) return 0;          // on the plane's extension, not the wing
+    return t > 0 ? t : 0.0f;
+}
+
+// A hit's face and chart coordinates from its point p on surface `part`. Every path goes
+// through here, so a ray gets the same (u, v, s, y) whichever path found its exit; the
+// uniform denominators are the room's reciprocals, and atan2 runs only for the arc.
+inline bool RoomFillHit(const Room& r, int part, float t, const float p[3], RoomHit& hit)
+{
+    if (!p || part < 0 || part > kRoomPartWingR) return false;
+    const int face = part >= kRoomPartWingL ? (int)kFaceFront : part;
+    hit.face = face; hit.part = part; hit.t = t; hit.y = p[1]; hit.s = 0;
+    switch (face)
+    {
+    case kFaceFront:
+        if (!r.curved) hit.s = p[0];
+        else if (part == kFaceFront) hit.s = r.R * std::atan2(p[0], r.R - p[2]);
+        else hit.s = (part == kRoomPartWingL ? -1.0f : 1.0f) * (r.R * r.phiA + (std::fabs(p[0]) - r.xa) * r.wingS);
+        hit.u = (hit.s + r.sMax) * r.inv2sMax; hit.v = (r.yC - p[1]) * r.invH; break;
+    case kFaceLeft: case kFaceRight:
+        hit.u = (p[2] - r.zSide) * r.invSide; hit.v = (r.yC - p[1]) * r.invH; break;
+    case kFaceFloor: case kFaceCeiling:
+        hit.u = (p[0] + r.X) * r.inv2X; hit.v = (p[2] + r.g) * r.invFloorZ; break;
+    default:
+        hit.u = (p[0] + r.X) * r.inv2X; hit.v = (r.yC - p[1]) * r.invH; break;
+    }
+    return true;
+}
+
+// Where a ray leaves the room, planes first. There is no inside check: the caller knows
+// the origin is in the room. The room is the box |x| <= X, yF <= y <= yC, z <= zB (and
+// z >= -g for a flat front) cut by z >= FrontDepth(x), which is convex (a circle's arc
+// continued by its tangents). So the box's exit is the room's unless it lies in front of
+// the front wall, and only then (or with no box exit) is a curved front tested.
+inline bool RoomExitFast(const Room& r, const float o[3], const float d[3], const float rcp[3], RoomHit& hit)
+{
+    if (!o || !d || !rcp) return false;
+    float best = 3.0e38f;
+    int part = -1;
+    auto consider = [&](float t, int p) { if (t > 0 && t < best) { best = t; part = p; } };
+    if (d[0] > 0) consider((r.X - o[0]) * rcp[0], kFaceRight);
+    if (d[0] < 0) consider((-r.X - o[0]) * rcp[0], kFaceLeft);
+    if (d[1] < 0) consider((r.yF - o[1]) * rcp[1], kFaceFloor);
+    if (d[1] > 0) consider((r.yC - o[1]) * rcp[1], kFaceCeiling);
+    if (d[2] > 0) consider((r.zB - o[2]) * rcp[2], kFaceBack);
+    if (!r.curved)
+    {
+        if (d[2] < 0) consider((-r.g - o[2]) * rcp[2], kFaceFront);
+    }
+    else
+    {
+        bool front = part < 0;
+        if (!front)
+        {
+            float p[3];
+            RoomAt(o, d, best, p);
+            front = p[2] < FrontDepth(r, p[0]);
+        }
+        if (front)
+        {
+            float t = 0;
+            if (RoomArcT(r, o, d, &t)) consider(t, kFaceFront);
+            consider(RoomWingT(r, -1.0f, o, d), kRoomPartWingL);
+            consider(RoomWingT(r, 1.0f, o, d), kRoomPartWingR);
+        }
+    }
+    if (part < 0) return false;
+    float p[3];
+    RoomAt(o, d, best, p);
+    return RoomFillHit(r, part, best, p, hit);
+}
+
+// The exit if it is on surface `part` (a RoomHit::part): that surface's t alone (one
+// multiply for a plane) and a check that the point lies in the room's closure there. The
+// room is convex, so a point on one of its bounding surfaces inside its closure is where
+// the ray leaves. False when it is not there; the caller then takes RoomExitFast.
+inline bool RoomExitOnFace(const Room& r, int part, const float o[3], const float d[3], const float rcp[3], RoomHit& hit)
+{
+    if (!o || !d || !rcp) return false;
+    float t = -1;
+    switch (part)
+    {
+    case kFaceRight:     if (d[0] > 0) t = (r.X - o[0]) * rcp[0]; break;
+    case kFaceLeft:      if (d[0] < 0) t = (-r.X - o[0]) * rcp[0]; break;
+    case kFaceFloor:     if (d[1] < 0) t = (r.yF - o[1]) * rcp[1]; break;
+    case kFaceCeiling:   if (d[1] > 0) t = (r.yC - o[1]) * rcp[1]; break;
+    case kFaceBack:      if (d[2] > 0) t = (r.zB - o[2]) * rcp[2]; break;
+    case kFaceFront:
+        if (!r.curved) { if (d[2] < 0) t = (-r.g - o[2]) * rcp[2]; }
+        else if (!RoomArcT(r, o, d, &t)) t = -1;
+        break;
+    case kRoomPartWingL: t = RoomWingT(r, -1.0f, o, d); break;
+    case kRoomPartWingR: t = RoomWingT(r, 1.0f, o, d); break;
+    default: return false;
+    }
+    if (!(t > 0 && t < 3.0e38f)) return false;
+    float p[3];
+    RoomAt(o, d, t, p);
+    bool closure = false;
+    switch (part)
+    {
+    case kFaceLeft: case kFaceRight:
+        closure = p[1] >= r.yF && p[1] <= r.yC && p[2] >= r.zSide && p[2] <= r.zB; break;
+    case kFaceFloor: case kFaceCeiling:
+        closure = std::fabs(p[0]) <= r.X && p[2] >= FrontDepth(r, p[0]) && p[2] <= r.zB; break;
+    default:                                                // the back, and the front's plane, arc or wings
+        closure = std::fabs(p[0]) <= r.X && p[1] >= r.yF && p[1] <= r.yC; break;
+    }
+    if (!closure) return false;
+    return RoomFillHit(r, part, t, p, hit);
+}
+
+// Where a ray from inside the room leaves it (RoomExitFast). Returns false if the ray
+// starts outside the room (it then sees the world colour).
 inline bool RoomExit(const Room& r, const float o[3], const float d[3], RoomHit& hit)
 {
     if (!o || !d) return false;
     if (!RoomInside(r, o)) return false;
+    float rcp[3];
+    RoomRayRcp(d, rcp);
+    return RoomExitFast(r, o, d, rcp, hit);
+}
 
-    float best = 3.0e38f;
-    int face = -1;
-    auto consider = [&](float t, int f) { if (t > 0 && t < best) { best = t; face = f; } };
-    if (d[0] > 0) consider((r.X - o[0]) / d[0], kFaceRight);
-    if (d[0] < 0) consider((-r.X - o[0]) / d[0], kFaceLeft);
-    if (d[1] < 0) consider((r.yF - o[1]) / d[1], kFaceFloor);
-    if (d[1] > 0) consider((r.yC - o[1]) / d[1], kFaceCeiling);
-    if (d[2] > 0) consider((r.zB - o[2]) / d[2], kFaceBack);
-    float frontPhi = 0;
-    bool onArc = false;
-    if (!r.curved)
-    {
-        if (d[2] < 0) consider((-r.g - o[2]) / d[2], kFaceFront);
-    }
-    else
-    {
-        float phi = 0, y = 0;
-        if (ArcHit(r.R, r.Rg, r.phiA, 3.0e38f, o, d, &phi, &y))
-        {
-            // ArcHit returns the root; recover its t along the ray from x or z.
-            const float hx = r.Rg * std::sin(phi), hz = r.R - r.Rg * std::cos(phi);
-            const float t = std::fabs(d[0]) > std::fabs(d[2]) ? (hx - o[0]) / d[0] : (hz - o[2]) / d[2];
-            if (t > 0 && t < best) { best = t; face = kFaceFront; frontPhi = phi; onArc = true; }
-        }
-        for (int side = -1; side <= 1; side += 2)
-        {
-            const float nx = -side * r.sinA, nz = r.cosA;       // the wing's normal, into the room
-            const float px = side * r.xa, pz = r.za;
-            const float nd = nx * d[0] + nz * d[2];
-            if (!(nd < 0)) continue;
-            const float t = (nx * (px - o[0]) + nz * (pz - o[2])) / nd;
-            const float hx = o[0] + t * d[0];
-            if (side * hx < r.xa) continue;                     // on the plane's extension, not the wing
-            if (t > 0 && t < best) { best = t; face = kFaceFront; onArc = false; }
-        }
-    }
-    if (face < 0) return false;
+// The curved screen's bounds, for the room's eye pass: the tangent of its half wrap, and
+// the box round it padded by kRoomScreenPad (|x| <= boxX, |y| <= boxY, -pad <= z <= boxZ).
+// MakeRoomConstants carries them to the GPU (rows 19-20) and the CPU reference computes
+// them the same way. All zero for a flat screen: the room's flat layer never tests it.
+static const float kRoomScreenPad = 1e-3f;
+struct RoomScreenBox { float tanWrap = 0, boxX = 0, boxY = 0, boxZ = 0; };
 
-    const float p[3] = { o[0] + best * d[0], o[1] + best * d[1], o[2] + best * d[2] };
-    const float h = r.yC - r.yF;
-    hit.face = face; hit.t = best; hit.y = p[1];
-    switch (face)
+inline RoomScreenBox RoomScreenBounds(const Cylinder& cyl)
+{
+    RoomScreenBox b;
+    if (!cyl.curved || !(cyl.radius > 0) || !(cyl.halfWrap > 0) || !(cyl.halfHeight > 0)) return b;
+    const double R = cyl.radius, w = cyl.halfWrap, half = std::sin(0.5 * w);
+    b.tanWrap = (float)std::tan(w);
+    b.boxX = (float)(R * std::sin(w) + kRoomScreenPad);
+    b.boxY = cyl.halfHeight + kRoomScreenPad;
+    b.boxZ = (float)(2.0 * R * half * half + kRoomScreenPad);    // R (1 - cos w), without cancelling at a gentle curve's huge R
+    return b;
+}
+
+// Where the ray meets the screen, for the room's eye pass: CylinderHit's answer, found
+// cheaper. A slab test against the screen's box first (most room rays miss it), then
+// ArcHit's quadratic with the tan test for the angle, and atan2 only on a hit, for u.
+// CylinderHit itself stays as it is for the plain curve pass.
+inline bool RoomScreenHit(const Cylinder& cyl, const RoomScreenBox& box, const float o[3], const float d[3], const float rcp[3],
+                          float* tu, float* tv)
+{
+    if (!o || !d || !rcp || !tu || !tv) return false;
+    if (!cyl.curved || !(cyl.radius > 0)) return false;
+    const float lo[3] = { -box.boxX, -box.boxY, -kRoomScreenPad }, hi[3] = { box.boxX, box.boxY, box.boxZ };
+    float tn[3], tf[3];
+    for (int k = 0; k < 3; k++)
     {
-    case kFaceFront:
-        hit.s = !r.curved ? p[0] : (onArc ? r.R * frontPhi : FrontS(r, p[0]));
-        hit.u = (hit.s + r.sMax) / (2.0f * r.sMax); hit.v = (r.yC - p[1]) / h; break;
-    case kFaceLeft: case kFaceRight:
-        hit.u = (p[2] - r.zSide) / (r.zB - r.zSide); hit.v = (r.yC - p[1]) / h; break;
-    case kFaceFloor: case kFaceCeiling:
-        hit.u = (p[0] + r.X) / (2.0f * r.X); hit.v = (p[2] + r.g) / (r.zB + r.g); break;
-    default:
-        hit.u = (p[0] + r.X) / (2.0f * r.X); hit.v = (r.yC - p[1]) / h; break;
+        const float t1 = (lo[k] - o[k]) * rcp[k], t2 = (hi[k] - o[k]) * rcp[k];
+        tn[k] = std::fmin(t1, t2); tf[k] = std::fmax(t1, t2);
     }
+    const float enter = std::fmax(std::fmax(tn[0], tn[1]), tn[2]), leave = std::fmin(std::fmin(tf[0], tf[1]), tf[2]);
+    if (!(leave >= std::fmax(enter, 0.0f))) return false;
+    float t, hx, hy, hz;
+    if (!RoomArcRoot(cyl.radius, cyl.radius, box.tanWrap, cyl.halfHeight, o, d, &t, &hx, &hy, &hz)) return false;
+    const float phi = std::atan2(hx, cyl.radius - hz);
+    *tu = (cyl.radius * phi) / (2.0f * cyl.halfWidth) + 0.5f;
+    *tv = 0.5f - hy / (2.0f * cyl.halfHeight);
     return true;
 }
 
@@ -658,7 +860,14 @@ struct RoomView
     bool glowOn = false;
     float glowHalfW = 0, glowHalfH = 0;
     bool dither = true;
+    Cylinder cyl;                       // the curved screen, whose bounds the constants carry (not curved for the flat layer)
 };
+
+// 1 / x, or 0 where x is not positive (a glow that is off may have no size).
+inline float RoomRecip(float x)
+{
+    return x > 0 ? 1.0f / x : 0.0f;
+}
 
 // ------------------------------------------------------------------ constants
 // What both room shaders read (cbuffer RoomC: a root CBV, 512 bytes) - the lightmap
@@ -668,10 +877,9 @@ static const uint32_t kRoomFlagFlatLayer = 2;   // flat screen: the compositor d
 static const uint32_t kRoomFlagGlow = 4;        // the ambilight is on
 static const uint32_t kRoomFlagDither = 8;
 
-// Rows 0-10 are v10's and kRoomCbufferHlsl declares exactly those. Rows 11-20 are v11's
-// (glass, reflections, the room light, the mirror picture and the eye pass's
-// reciprocals and screen bounds); they stay zero until the steps that fill them, and
-// the HLSL declares each row when it first reads it.
+// Rows 0-10 are v10's. Rows 11-20 are v11's: glass, reflections, the room light and the
+// mirror picture (rows 11-16, zero until the steps that fill them), and the eye pass's
+// reciprocals and screen bounds (rows 17-20). kRoomCbufferHlsl declares rows 0-20.
 struct RoomConstants                            // must match kRoomCbufferHlsl
 {
     float X = 0, yF = 0, yC = 0, zB = 0;                            // row 0
@@ -729,6 +937,13 @@ inline RoomConstants MakeRoomConstants(const Room& r, const RoomShading& sh, con
     c.srcW = (uint32_t)(srcW > 0 ? srcW : 0); c.srcH = (uint32_t)(srcH > 0 ? srcH : 0); c.stride = (uint32_t)RoomStride(srcW);
     c.glowW = (uint32_t)l.glowW; c.glowH = (uint32_t)l.glowH; c.blocksX = (uint32_t)l.blocksX; c.blocksY = (uint32_t)l.blocksY;
     c.glowBlock = (uint32_t)l.block;
+    // Rows 17-20: the eye pass's reciprocals and the screen's bounds, the same floats the
+    // CPU reference uses (the room's own, RoomRecip of the glow's size, RoomScreenBounds).
+    c.invH = r.invH; c.inv2X = r.inv2X; c.invSide = r.invSide; c.invFloorZ = r.invFloorZ;
+    c.inv2sMax = r.inv2sMax; c.invGlowW = RoomRecip(2.0f * view.glowHalfW); c.invGlowH = RoomRecip(2.0f * view.glowHalfH); c.tanA = r.tanA;
+    const RoomScreenBox box = RoomScreenBounds(view.cyl);
+    c.wingS = r.wingS; c.scrTanWrap = box.tanWrap; c.scrBoxX = box.boxX; c.scrBoxY = box.boxY;
+    c.scrBoxZ = box.boxZ;
     return c;
 }
 
@@ -796,27 +1011,69 @@ struct RoomLightmap
 // Sample kinds for the four rays: 0 picture, 1 + face, 7 footprint, 8 outside.
 static const int kRoomKindFootprint = 7, kRoomKindOutside = 8;
 
-inline int RoomClassify(const CurveConstants& c, const Cylinder& cyl, const Room& r, const RoomView& view,
-                        const float o[3], const float d[3], float* u, float* v, float* gu, float* gv)
+// What the eye pass works out once per pixel, not per ray: the screen's bounds, the
+// glow's reciprocals, and whether the eye is in the room (all four rays start at the
+// eye). `part` is the surface of the pixel's last full exit (-1 before one): a later ray
+// that misses the screen tries that surface alone (RoomExitOnFace) and takes the full
+// exit only if it is not there - one full exit per pixel, bar edges.
+struct RoomPixelState
+{
+    RoomScreenBox box;
+    float invGlowW = 0, invGlowH = 0;
+    bool inside = false;
+    int part = -1;
+};
+
+inline RoomPixelState MakeRoomPixelState(const Cylinder& cyl, const Room& r, const RoomView& view, const float eye[3])
+{
+    RoomPixelState s;
+    s.box = RoomScreenBounds(cyl);
+    s.invGlowW = RoomRecip(2.0f * view.glowHalfW);
+    s.invGlowH = RoomRecip(2.0f * view.glowHalfH);
+    s.inside = eye && RoomInside(r, eye);
+    return s;
+}
+
+// One ray of a pixel, as the eye pass classifies it (kCurveRoomHlsl ClassifyR).
+inline int RoomClassifyRay(const Cylinder& cyl, const Room& r, const RoomView& view, RoomPixelState& state,
+                           const float o[3], const float d[3], float* u, float* v, float* gu, float* gv)
 {
     if (!u || !v || !gu || !gv) return kRoomKindOutside;
     *u = *v = *gu = *gv = 0;
+    if (!o || !d) return kRoomKindOutside;
+    float rcp[3];
+    RoomRayRcp(d, rcp);
     if (!view.flatLayer)
     {
-        if (CylinderHit(cyl, o, d, u, v)) return 0;
+        if (RoomScreenHit(cyl, state.box, o, d, rcp, u, v)) return 0;
     }
     else if (d[2] < 0)
     {
-        const float t = -o[2] / d[2];
+        const float t = -o[2] * rcp[2];
         const float hx = o[0] + t * d[0], hy = o[1] + t * d[1];
         if (t > 0 && std::fabs(hx) <= 0.5f * view.W && std::fabs(hy) <= 0.5f * view.H) return kRoomKindFootprint;
     }
+    if (!state.inside) return kRoomKindOutside;
     RoomHit hit;
-    if (!RoomExit(r, o, d, hit)) return kRoomKindOutside;
+    bool found = state.part >= 0 && RoomExitOnFace(r, state.part, o, d, rcp, hit);
+    if (!found)
+    {
+        found = RoomExitFast(r, o, d, rcp, hit);
+        if (found) state.part = hit.part;
+    }
+    if (!found) return kRoomKindOutside;
     *u = hit.u; *v = hit.v;
-    if (hit.face == kFaceFront) { *gu = hit.s / (2.0f * view.glowHalfW) + 0.5f; *gv = 0.5f - hit.y / (2.0f * view.glowHalfH); }
-    (void)c;
+    if (hit.face == kFaceFront) { *gu = hit.s * state.invGlowW + 0.5f; *gv = 0.5f - hit.y * state.invGlowH; }
     return 1 + hit.face;
+}
+
+// One ray on its own (a pixel's first): whether the eye is in the room from `o` itself.
+inline int RoomClassify(const CurveConstants& c, const Cylinder& cyl, const Room& r, const RoomView& view,
+                        const float o[3], const float d[3], float* u, float* v, float* gu, float* gv)
+{
+    RoomPixelState state = MakeRoomPixelState(cyl, r, view, o);
+    (void)c;
+    return RoomClassifyRay(cyl, r, view, state, o, d, u, v, gu, gv);
 }
 
 // One sample's colour, encoded (like the picture): the picture; black; the world
@@ -847,8 +1104,9 @@ inline bool RoomSampleColour(const CurveConstants& c, const RoomView& view, int 
     return true;
 }
 
-// One eye-buffer pixel of the room pass: four rays as CurvedPixel; one sample when
-// they agree; the dither on room surfaces.
+// One eye-buffer pixel of the room pass: four rays as CurvedPixel, classified with one
+// full exit per pixel (RoomPixelState); one sample when they agree; the dither on room
+// surfaces.
 inline bool RoomPixel(const CurveConstants& c, const Cylinder& cyl, const Room& r, const RoomView& view, int e, int px, int py,
                       const RgbaImage& picture, const RgbaImage* glow, const RoomLightmap& light, float out[3])
 {
@@ -858,11 +1116,12 @@ inline bool RoomPixel(const CurveConstants& c, const Cylinder& cyl, const Room& 
 
     int kind[4];
     float uu[4], vv[4], gu[4], gv[4];
+    RoomPixelState state = MakeRoomPixelState(cyl, r, view, c.eye[e].origin);
     for (int s = 0; s < 4; s++)
     {
         float o[3], d[3];
         CurveRay(c, e, (float)px + 0.5f + kCurveSubsamples[s][0], (float)py + 0.5f + kCurveSubsamples[s][1], o, d);
-        kind[s] = RoomClassify(c, cyl, r, view, o, d, &uu[s], &vv[s], &gu[s], &gv[s]);
+        kind[s] = RoomClassifyRay(cyl, r, view, state, o, d, &uu[s], &vv[s], &gu[s], &gv[s]);
     }
     const bool agree = kind[0] == kind[1] && kind[1] == kind[2] && kind[2] == kind[3];
     if (agree)
@@ -933,6 +1192,9 @@ inline std::string RoomHlslDefines()
     defUint("ROOM_FLAG_DITHER", kRoomFlagDither);
     defInt("ROOM_KIND_FOOTPRINT", kRoomKindFootprint);
     defInt("ROOM_KIND_OUTSIDE", kRoomKindOutside);
+    defInt("ROOM_PART_WING_L", kRoomPartWingL);
+    defInt("ROOM_PART_WING_R", kRoomPartWingR);
+    def("ROOM_SCREEN_PAD", RoomHlslFloat(kRoomScreenPad));
     std::string bayer = "{ ";
     for (int i = 0; i < 64; i++)
     {
