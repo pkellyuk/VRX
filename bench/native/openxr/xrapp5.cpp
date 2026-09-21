@@ -994,24 +994,66 @@ static bool InitXrInstance(App& app)
     ci.enabledExtensionCount = 2;
     ci.enabledExtensionNames = wantExt;
 
-    XrResult r = xrCreateInstance_(&ci, &app.instance);
-    if (XR_FAILED(r)) { Log("InitXrInstance: FAIL xrCreateInstance %s (is SteamVR running?)", XRStr(r)); return false; }
-    if (!ResolveFns(app.instance)) { Log("InitXrInstance: FAIL resolving functions"); return false; }
-    PFN_xrGetInstanceProperties getProperties = nullptr;
-    if (XR_SUCCEEDED(g_getProc(app.instance, "xrGetInstanceProperties", (PFN_xrVoidFunction*)&getProperties)) && getProperties)
+    // A runtime that is still starting (SteamVR launched moments ago, by VRX or by
+    // its own OpenXR runtime) refuses the instance or the headset for a while. A live
+    // session waits for it, up to kPatience, retrying every kRetryMs and logging about
+    // once a second. The self-test does not wait: it fails at once as it always has,
+    // so it stays quick when no headset is connected.
+    const bool patient = !app.opt.selfTestOnly;
+    constexpr double kPatience = 30.0;
+    constexpr DWORD kRetryMs = 500;
+    const auto waitStart = std::chrono::steady_clock::now();
+    auto waited = [&]() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - waitStart).count(); };
+    int attempt = 0;
+    XrResult r = XR_SUCCESS;
+    for (;; ++attempt)
     {
-        XrInstanceProperties properties{ XR_TYPE_INSTANCE_PROPERTIES };
-        if (XR_SUCCEEDED(getProperties(app.instance, &properties)))
+        if (attempt > 0) Sleep(kRetryMs);
+        const bool logThis = attempt % 2 == 1;   // about once a second while waiting
+        if (app.instance == XR_NULL_HANDLE)
         {
-            app.steamVrRuntime = strstr(properties.runtimeName, "SteamVR") != nullptr;
-            Log("InitXrInstance: runtime %s", properties.runtimeName);
+            r = xrCreateInstance_(&ci, &app.instance);
+            if (XR_FAILED(r))
+            {
+                app.instance = XR_NULL_HANDLE;
+                const bool transient = r == XR_ERROR_RUNTIME_UNAVAILABLE || r == XR_ERROR_RUNTIME_FAILURE || r == XR_ERROR_INSTANCE_LOST;
+                if (!patient || !transient || waited() >= kPatience)
+                {
+                    Log("InitXrInstance: FAIL xrCreateInstance %s after %.1fs (is SteamVR running?)", XRStr(r), waited());
+                    return false;
+                }
+                if (logThis) Log("InitXrInstance: waiting for the OpenXR runtime (xrCreateInstance %s, %.0fs of %.0fs)", XRStr(r), waited(), kPatience);
+                continue;
+            }
+            if (!ResolveFns(app.instance)) { Log("InitXrInstance: FAIL resolving functions"); return false; }
+            PFN_xrGetInstanceProperties getProperties = nullptr;
+            if (XR_SUCCEEDED(g_getProc(app.instance, "xrGetInstanceProperties", (PFN_xrVoidFunction*)&getProperties)) && getProperties)
+            {
+                XrInstanceProperties properties{ XR_TYPE_INSTANCE_PROPERTIES };
+                if (XR_SUCCEEDED(getProperties(app.instance, &properties)))
+                {
+                    app.steamVrRuntime = strstr(properties.runtimeName, "SteamVR") != nullptr;
+                    Log("InitXrInstance: runtime %s (attempt %d)", properties.runtimeName, attempt + 1);
+                }
+            }
         }
-    }
 
-    XrSystemGetInfo sgi{ XR_TYPE_SYSTEM_GET_INFO };
-    sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
-    r = xrGetSystem_(app.instance, &sgi, &app.systemId);
-    if (XR_FAILED(r)) { Log("InitXrInstance: FAIL xrGetSystem %s (headset connected?)", XRStr(r)); return false; }
+        XrSystemGetInfo sgi{ XR_TYPE_SYSTEM_GET_INFO };
+        sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
+        r = xrGetSystem_(app.instance, &sgi, &app.systemId);
+        if (XR_SUCCEEDED(r)) break;
+        const bool lost = r == XR_ERROR_INSTANCE_LOST || r == XR_ERROR_RUNTIME_FAILURE;
+        const bool transient = lost || r == XR_ERROR_FORM_FACTOR_UNAVAILABLE;
+        if (!patient || !transient || waited() >= kPatience)
+        {
+            Log("InitXrInstance: FAIL xrGetSystem %s after %.1fs (headset connected?)", XRStr(r), waited());
+            return false;
+        }
+        if (logThis) Log("InitXrInstance: waiting for the headset (xrGetSystem %s, %.0fs of %.0fs)", XRStr(r), waited(), kPatience);
+        // A lost instance is no use for the next try: make a fresh one.
+        if (lost) { xrDestroyInstance_(app.instance); app.instance = XR_NULL_HANDLE; }
+    }
+    if (attempt > 0) Log("InitXrInstance: runtime ready after %.1fs (%d retries)", waited(), attempt);
 
     XrGraphicsRequirementsD3D12KHR reqs{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR };
     r = xrD3D12Reqs_(app.instance, app.systemId, &reqs);

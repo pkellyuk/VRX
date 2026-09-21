@@ -6,10 +6,11 @@ The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
 
 Requirements: Windows 10 2004 or later / Windows 11, a DirectX 12 GPU, a supported
-VR headset and an installed active OpenXR runtime. Start SteamVR and your game
-before attaching. SteamVR is the runtime tested for this release; set SteamVR as
-the active OpenXR runtime in its settings. Hardware tested: RTX 3090 (+ RTX 3060
-for depth) and PSVR2.
+VR headset and an installed active OpenXR runtime. Start your game before
+attaching. VRX starts SteamVR for you on Attach / Play if it isn't running (per
+game, on by default: "Start SteamVR if it isn't running"). SteamVR is the runtime
+tested for this release; set SteamVR as the active OpenXR runtime in its settings.
+Hardware tested: RTX 3090 (+ RTX 3060 for depth) and PSVR2.
 
 Choose the game and window, then Attach / Play. All setup stays on the desktop.
 Settings save per executable under %LOCALAPPDATA%\VRX\profiles. Logs are under

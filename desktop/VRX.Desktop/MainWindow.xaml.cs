@@ -19,6 +19,9 @@ public partial class MainWindow : Window
     private string lastExecutable = "";
     private string sessionError = "", lastEngineError = "";
     private readonly bool smoke;
+    // Set while Attach / Play waits for SteamVR to start; Stop or closing cancels it.
+    private CancellationTokenSource? steamVrWait;
+    private readonly bool startSteamVrShownByDefault;   // the checkbox as the XAML sets it (smoke test)
     private sealed record Shortcut(string Name, int Code);
     public MainWindow(bool smokeTest)
     {
@@ -27,6 +30,7 @@ public partial class MainWindow : Window
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX");
         store = new(data);
         InitializeComponent();
+        startSteamVrShownByDefault = StartSteamVrCheck.IsChecked == true;
         FillWorldList();
         FillLightColourList(Profile.DefaultRoomLightColor);
         WorldList.SelectedIndex = 0;
@@ -84,7 +88,7 @@ public partial class MainWindow : Window
     }
     private void RefreshApps()
     {
-        if (!ready || engine.Running || refreshing) return;
+        if (!ready || engine.Running || refreshing || steamVrWait != null) return;
         var old = AppList.SelectedItem as RunningApp;
         nint oldWindow = (WindowList.SelectedItem as GameWindow)?.Handle ?? 0;
         try
@@ -181,6 +185,7 @@ public partial class MainWindow : Window
         WidthSlider.Value = p.Width; DistanceSlider.Value = p.Distance; HeightSlider.Value = p.Height;
         HorizontalSlider.Value = p.Horizontal; StrengthSlider.Value = p.Strength;
         FollowCheck.IsChecked = p.Follow; StereoCheck.IsChecked = p.Stereo; DismissCheck.IsChecked = p.AutoDismiss;
+        StartSteamVrCheck.IsChecked = p.StartSteamVr;
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
         FastModelCheck.IsChecked = p.FastDepthModel;
@@ -226,7 +231,8 @@ public partial class MainWindow : Window
             SteadyDepth = SteadyCheck.IsChecked == true,
             FuseModels = FuseCheck.IsChecked == true,
             DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
-            AutoDismiss = DismissCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
+            AutoDismiss = DismissCheck.IsChecked == true, StartSteamVr = StartSteamVrCheck.IsChecked == true,
+            RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
             MenuKey = (int)(MenuKeys.SelectedValue ?? 0) };
         if (!p.Valid()) throw new InvalidDataException("Choose two different shortcut keys. Changes are not saved until the settings are valid.");
         return p;
@@ -239,7 +245,7 @@ public partial class MainWindow : Window
         {
             var p = ReadProfile(); store.Save(p); profile = p;
             if (engine.Running) engine.Update(p);
-            if (sessionError.Length == 0)
+            if (sessionError.Length == 0 && steamVrWait == null)
                 Status.Text = (engine.Running ? "Playing · saved for " : "Saved for ") + Path.GetFileName(p.ExecutablePath);
             return true;
         }
@@ -437,21 +443,87 @@ public partial class MainWindow : Window
     private void PreviewUp(object sender, MouseButtonEventArgs e) { dragging = false; Preview.ReleaseMouseCapture(); }
     private void UpdateButtons()
     {
-        bool running = engine.Running;
+        bool running = engine.Running, waiting = steamVrWait != null;
         SettingsPanel.IsEnabled = profile != null && !stopping;
-        StartButton.IsEnabled = !running && profile != null && WindowList.SelectedItem is GameWindow;
-        StopButton.IsEnabled = running && !stopping;
+        StartButton.IsEnabled = !running && !waiting && profile != null && WindowList.SelectedItem is GameWindow;
+        StopButton.IsEnabled = (running && !stopping) || waiting;
         RecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
-        AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = !running;
+        AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = !running && !waiting;
     }
-    private void StartClick(object sender, RoutedEventArgs e)
+    private async void StartClick(object sender, RoutedEventArgs e)
     {
+        if (steamVrWait != null || engine.Running) return;
         if (!SaveAndApply() || AppList.SelectedItem is not RunningApp app || WindowList.SelectedItem is not GameWindow window) return;
-        try { sessionError = lastEngineError = ""; LogBox.Clear(); engine.Start(app, window, profile!, store.Root); Status.Text = "Starting VR · " + app.Name; }
+        sessionError = lastEngineError = ""; LogBox.Clear();
+        if (!await EnsureSteamVr(profile!.StartSteamVr)) { UpdateButtons(); return; }
+        if (profile == null || closing) { UpdateButtons(); return; }
+        try { engine.Start(app, window, profile, store.Root); Status.Text = "Starting VR · " + app.Name; }
         catch (Exception ex) { sessionError = ex.Message; Status.Text = sessionError; }
         UpdateButtons();
     }
-    private async void StopClick(object sender, RoutedEventArgs e) => await StopSession();
+    private void AppendLog(string line)
+    {
+        System.Diagnostics.Debug.WriteLine(line);
+        LogBox.AppendText("[VRX] " + line + Environment.NewLine);
+        LogBox.ScrollToEnd();
+    }
+    // Before Attach / Play: when SteamVR is the OpenXR runtime and isn't running, start
+    // it (if this game allows) and wait for it without blocking the window. False means
+    // don't start the engine; Status then says why.
+    private async Task<bool> EnsureSteamVr(bool allowStart)
+    {
+        AppendLog($"EnsureSteamVr: enter, start allowed {allowStart}");
+        var (manifest, server, starting) = await Task.Run(() => (SteamVr.ActiveRuntimePath(), SteamVr.ServerRunning(), SteamVr.Starting()));
+        bool steamRuntime = SteamVr.IsSteamVrRuntime(manifest);
+        var plan = SteamVr.Decide(steamRuntime, server, starting, allowStart);
+        AppendLog($"EnsureSteamVr: OpenXR runtime {manifest ?? "(none)"} (SteamVR {steamRuntime}), vrserver {server}, starting {starting} -> {plan}");
+        if (plan == SteamVr.Plan.StartEngine) { AppendLog("EnsureSteamVr: exit, nothing to do"); return true; }
+        if (plan == SteamVr.Plan.NotRunning)
+        {
+            sessionError = "SteamVR isn't running. Start it, or tick 'Start SteamVR if it isn't running'.";
+            Status.Text = sessionError;
+            AppendLog("EnsureSteamVr: exit, SteamVR not running and not allowed to start it");
+            return false;
+        }
+        if (plan == SteamVr.Plan.Launch)
+        {
+            try { SteamVr.Launch(manifest, AppendLog); }
+            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+            {
+                sessionError = "Could not start SteamVR: " + ex.Message + ". Start it yourself, then press Attach / Play again.";
+                Status.Text = sessionError;
+                AppendLog("EnsureSteamVr: exit, launch failed: " + ex.Message);
+                return false;
+            }
+        }
+        using var wait = new CancellationTokenSource();
+        steamVrWait = wait;
+        Status.Text = "Starting SteamVR…";
+        UpdateButtons();
+        bool up;
+        try { up = await SteamVr.WaitUntilReady(SteamVr.StartTimeout, wait.Token, AppendLog); }
+        catch (OperationCanceledException)
+        {
+            if (!closing) Status.Text = "Attach / Play cancelled while SteamVR was starting";
+            AppendLog("EnsureSteamVr: exit, cancelled");
+            return false;
+        }
+        finally { steamVrWait = null; UpdateButtons(); }
+        if (!up)
+        {
+            sessionError = $"SteamVR did not start within {SteamVr.StartTimeout.TotalSeconds:F0} seconds. Start it yourself, then press Attach / Play again.";
+            Status.Text = sessionError;
+            AppendLog("EnsureSteamVr: exit, timed out");
+            return false;
+        }
+        AppendLog("EnsureSteamVr: exit, SteamVR is up");
+        return true;
+    }
+    private async void StopClick(object sender, RoutedEventArgs e)
+    {
+        if (steamVrWait != null) { steamVrWait.Cancel(); return; }
+        await StopSession();
+    }
     private async Task StopSession()
     {
         if (!engine.Running || profile == null || stopping) return;
@@ -495,7 +567,7 @@ public partial class MainWindow : Window
 
         int count = store.SavedProfileFiles().Count;
         string question = $"Apply the settings shown here to all {count} saved game{(count == 1 ? "" : "s")}?\n\n" +
-            "Every game's screen placement, 3D strength, depth options, depth GPU and shortcut keys will be replaced " +
+            "Every game's screen placement, 3D strength, depth options, depth GPU, SteamVR start and shortcut keys will be replaced " +
             "by these. Each game keeps its own path and window.\n\nThis cannot be undone. " +
             "Games you have not set up yet still start from the base settings.";
         var answer = MessageBox.Show(this, question, "Apply to all games", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
@@ -522,12 +594,62 @@ public partial class MainWindow : Window
     private async void WindowClosing(object? sender, CancelEventArgs e)
     {
         if (closing) return;
+        steamVrWait?.Cancel();
         SaveAndApply(); refreshTimer.Stop(); saveTimer.Stop();
         if (!engine.Running) return;
         e.Cancel = true;
         await StopSession();
         if (engine.Running) { Status.Text = "VRX is still stopping. Close again after it stops."; return; }
         closing = true; Close();
+    }
+    // The pure SteamVR helpers: nothing here starts, stops or waits for SteamVR.
+    private static void SteamVrHelperTests()
+    {
+        const string steamManifest = @"C:\Program Files (x86)\Steam\steamapps\common\SteamVR\steamxr_win64.json";
+        if (!SteamVr.IsSteamVrRuntime(steamManifest) || !SteamVr.IsSteamVrRuntime("\"" + steamManifest.ToUpperInvariant() + "\""))
+            throw new Exception("SteamVR's OpenXR manifest was not recognised");
+        if (SteamVr.IsSteamVrRuntime(null) || SteamVr.IsSteamVrRuntime("  ") || SteamVr.IsSteamVrRuntime(@"C:\WINDOWS\system32\MixedRealityRuntime.json") ||
+            SteamVr.IsSteamVrRuntime(@"C:\Program Files\Oculus\Support\oculus-runtime\oculus_openxr_64.json") || SteamVr.IsSteamVrRuntime(@"C:\SteamVR\steamxr_win64.txt"))
+            throw new Exception("Another OpenXR runtime was taken for SteamVR");
+        if (SteamVr.FolderFromManifest(steamManifest) != @"C:\Program Files (x86)\Steam\steamapps\common\SteamVR" ||
+            SteamVr.FolderFromManifest(@"C:\WINDOWS\system32\MixedRealityRuntime.json") != null || SteamVr.FolderFromManifest(null) != null)
+            throw new Exception("SteamVR folder from the OpenXR manifest is wrong");
+        // As SteamVR writes it (tabs, forward slashes in some entries), plus an empty and a non-string entry.
+        const string vrpath = """
+            {
+            	"config" : [ "C:\\Program Files (x86)\\Steam\\config/" ],
+            	"jsonid" : "vrpathreg",
+            	"runtime" : [ "C:\\Program Files (x86)\\Steam\\steamapps\\common\\SteamVR", "", 7, "D:\\SteamLibrary\\steamapps\\common\\SteamVR" ],
+            	"version" : 1
+            }
+            """;
+        var folders = SteamVr.ParseRuntimeFolders(vrpath);
+        if (folders.Count != 2 || folders[0] != @"C:\Program Files (x86)\Steam\steamapps\common\SteamVR" || folders[1] != @"D:\SteamLibrary\steamapps\common\SteamVR")
+            throw new Exception("openvrpaths.vrpath runtime folders parsed wrongly: " + string.Join(" | ", folders));
+        if (SteamVr.ParseRuntimeFolders(null).Count != 0 || SteamVr.ParseRuntimeFolders("{ not json").Count != 0 || SteamVr.ParseRuntimeFolders("[1, 2]").Count != 0 ||
+            SteamVr.ParseRuntimeFolders("""{"runtime": "C:\\x"}""").Count != 0 || SteamVr.ParseRuntimeFolders("""{"config": []}""").Count != 0)
+            throw new Exception("A missing or malformed openvrpaths.vrpath must give no runtime folders");
+        if (SteamVr.VrStartupPath(folders[0]) != @"C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\vrstartup.exe" ||
+            SteamVr.VrStartupPath(null) != null || SteamVr.VrStartupPath(" ") != null)
+            throw new Exception("vrstartup.exe path is wrong");
+        var candidates = SteamVr.VrStartupCandidates(vrpath, steamManifest);
+        if (candidates.Count != 2 || candidates[1] != @"D:\SteamLibrary\steamapps\common\SteamVR\bin\win64\vrstartup.exe")
+            throw new Exception("vrstartup.exe candidates must list each SteamVR folder once: " + string.Join(" | ", candidates));
+        var fromManifestOnly = SteamVr.VrStartupCandidates(null, steamManifest);
+        if (fromManifestOnly.Count != 1 || fromManifestOnly[0] != SteamVr.VrStartupPath(SteamVr.FolderFromManifest(steamManifest)) ||
+            SteamVr.VrStartupCandidates(null, null).Count != 0)
+            throw new Exception("Without openvrpaths.vrpath, vrstartup.exe must come from the OpenXR manifest's folder (or nowhere)");
+        // Decide(steamVrRuntime, serverRunning, starting, allowStart)
+        if (SteamVr.Decide(false, false, false, true) != SteamVr.Plan.StartEngine || SteamVr.Decide(false, false, false, false) != SteamVr.Plan.StartEngine ||
+            SteamVr.Decide(true, true, false, false) != SteamVr.Plan.StartEngine || SteamVr.Decide(true, true, true, true) != SteamVr.Plan.StartEngine ||
+            SteamVr.Decide(true, false, false, true) != SteamVr.Plan.Launch || SteamVr.Decide(true, false, false, false) != SteamVr.Plan.NotRunning ||
+            SteamVr.Decide(true, false, true, true) != SteamVr.Plan.WaitForStart || SteamVr.Decide(true, false, true, false) != SteamVr.Plan.WaitForStart)
+            throw new Exception("SteamVR start decision is wrong");
+        if (SteamVr.Ready(false, true, TimeSpan.FromMinutes(1)) || !SteamVr.Ready(true, true, TimeSpan.Zero) ||
+            SteamVr.Ready(true, false, SteamVr.ServerGrace - TimeSpan.FromSeconds(1)) || !SteamVr.Ready(true, false, SteamVr.ServerGrace))
+            throw new Exception("SteamVR readiness is wrong");
+        if (SteamVr.IsRunning("") || SteamVr.IsRunning("vrx-no-such-process-" + Guid.NewGuid().ToString("N")))
+            throw new Exception("A missing process was reported as running");
     }
     private async Task SmokeTest()
     {
@@ -536,7 +658,7 @@ public partial class MainWindow : Window
         var observed = RunningApps.List(false);
         File.WriteAllLines(Path.Combine(output, "enumerated-apps.txt"), observed.Select(a => $"{a.Pid} | {a.FullPath} | {string.Join("; ", a.Windows)}"));
         var one = new Profile { ExecutablePath = Path.Combine(output, "one", "game.exe"), Width = 6.25, Distance = 3.5, Height = .2, Horizontal = .4, Strength = .8, MenuKey = 0x78 };
-        var two = new Profile { ExecutablePath = Path.Combine(output, "two", "game.exe"), Width = 4, ForegroundRefinement = false, MatchFrameToDepth = true, FastDepthModel = false };
+        var two = new Profile { ExecutablePath = Path.Combine(output, "two", "game.exe"), Width = 4, ForegroundRefinement = false, MatchFrameToDepth = true, FastDepthModel = false, StartSteamVr = false };
         store.Save(one); store.Save(two);
         if (store.Load(one.ExecutablePath).Width != 6.25 || store.Load(two.ExecutablePath).Width != 4 || store.FileFor(one.ExecutablePath) == store.FileFor(two.ExecutablePath))
             throw new Exception("Executable profile isolation failed");
@@ -559,10 +681,15 @@ public partial class MainWindow : Window
         legacy.Remove("RoomLight");
         legacy.Remove("RoomLightColor");
         legacy.Remove("FuseModels");
+        legacy.Remove("StartSteamVr");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
             throw new Exception("Fast depth model must default on for old profiles and keep a per-game opt-out");
         if (!store.Load(one.ExecutablePath).ForegroundRefinement) throw new Exception("Old profiles must default foreground refinement on");
+        if (!store.Load(one.ExecutablePath).StartSteamVr) throw new Exception("Profiles saved before 'Start SteamVR' existed must load with it on");
+        if (store.Load(two.ExecutablePath).StartSteamVr) throw new Exception("'Start SteamVR' off did not round-trip per game");
+        if (!new Profile().StartSteamVr || !startSteamVrShownByDefault) throw new Exception("'Start SteamVR if it isn't running' must default on");
+        SteamVrHelperTests();
         if (store.Load(one.ExecutablePath).DepthGpu != Gpus.Same) throw new Exception("Profiles without a depth GPU must use the game's GPU");
         var three = new Profile { ExecutablePath = Path.Combine(output, "three", "game.exe") };
         store.Save(three);
@@ -767,6 +894,10 @@ public partial class MainWindow : Window
         if (ReadProfile().SteadyDepth || ReadProfile().FuseModels) throw new Exception("Steady depth checkbox is not mapped to settings");
         SteadyCheck.IsChecked = true;
         if (!ReadProfile().SteadyDepth) throw new Exception("Steady depth checkbox is not mapped to settings");
+        StartSteamVrCheck.IsChecked = false;
+        if (ReadProfile().StartSteamVr) throw new Exception("'Start SteamVR' checkbox is not mapped to settings (off)");
+        StartSteamVrCheck.IsChecked = true;
+        if (!ReadProfile().StartSteamVr) throw new Exception("'Start SteamVR' checkbox is not mapped to settings (on)");
         FuseCheck.IsChecked = true;
         if (!ReadProfile().FuseModels) throw new Exception("Fusion checkbox is not mapped to settings");
         if (!FuseCheck.IsEnabled) throw new Exception("Fusion must be available with the fast depth model");
@@ -776,10 +907,10 @@ public partial class MainWindow : Window
         // Base settings: new games start from them, existing profiles are untouched,
         // and the game's own path/window never leak into the base.
         var baseSource = new Profile { ExecutablePath = one.ExecutablePath, PreferredWindowTitle = "Example game window",
-            Width = 7.25, Distance = 2.5, Strength = 1.4, SubpixelWarp = false, DelayToDepth = true, FuseModels = true, MenuKey = 0x79 };
+            Width = 7.25, Distance = 2.5, Strength = 1.4, SubpixelWarp = false, DelayToDepth = true, FuseModels = true, MenuKey = 0x79, StartSteamVr = false };
         store.SaveBase(baseSource);
         var fresh = store.Load(Path.Combine(output, "fresh", "game.exe"));
-        if (fresh.Width != 7.25 || fresh.Strength != 1.4 || fresh.SubpixelWarp || !fresh.DelayToDepth || !fresh.FuseModels || fresh.MenuKey != 0x79)
+        if (fresh.Width != 7.25 || fresh.Strength != 1.4 || fresh.SubpixelWarp || !fresh.DelayToDepth || !fresh.FuseModels || fresh.MenuKey != 0x79 || fresh.StartSteamVr)
             throw new Exception("A new game must start from the saved base settings");
         if (fresh.ExecutablePath != Path.Combine(output, "fresh", "game.exe") || fresh.PreferredWindowTitle.Length != 0)
             throw new Exception("Base settings must not carry another game's path or window");
@@ -800,12 +931,12 @@ public partial class MainWindow : Window
         allStore.Save(gameA); allStore.Save(gameB);
         string broken = Path.Combine(allStore.Root, "profiles", "broken.json");
         File.WriteAllText(broken, "{ not json");
-        var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false };
+        var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false, StartSteamVr = false };
         if (allStore.ApplyToAll(chosen, out int skippedAll, out int failedAll) != 2 || skippedAll != 1 || failedAll != 0)
             throw new Exception("Apply to all must update both saved games and skip the unreadable one");
         var afterA = allStore.Load(gameA.ExecutablePath);
         var afterB = allStore.Load(gameB.ExecutablePath);
-        if (afterA.Width != 8.5 || afterB.Width != 8.5 || afterA.ScreenCurve != 30 || !afterB.Ambilight || afterB.SteadyDepth || afterB.FuseModels)
+        if (afterA.Width != 8.5 || afterB.Width != 8.5 || afterA.ScreenCurve != 30 || !afterB.Ambilight || afterB.SteadyDepth || afterB.FuseModels || afterA.StartSteamVr || afterB.StartSteamVr)
             throw new Exception("Apply to all did not copy the settings to every saved game");
         if (afterA.PreferredWindowTitle != "Game A" || afterB.PreferredWindowTitle != "Game B")
             throw new Exception("Apply to all must keep each game's own window");
@@ -848,6 +979,6 @@ public partial class MainWindow : Window
         if (!SaveAndApply() || Status.Text != sessionError) throw new Exception("Saving hid the session error");
         RefreshApps();
         if (Status.Text != sessionError) throw new Exception("Refreshing hid the session error");
-        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh. No VR session started.");
+        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; Start SteamVR default/round-trip/base/apply-all and SteamVR helpers; control snapshot emitted; session error survives save/refresh. No VR session started.");
     }
 }

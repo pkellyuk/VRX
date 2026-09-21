@@ -83,6 +83,10 @@ public sealed class Profile
 
     public static string FormatColor(int rgb) => "#" + (rgb & 0xFFFFFF).ToString("X6", CultureInfo.InvariantCulture);
     public bool AutoDismiss { get; set; } = true;
+    // Attach / Play starts SteamVR (when it is the OpenXR runtime) if it isn't running.
+    // Desktop only, not part of the control snapshot. On by default; profiles saved
+    // before it existed have no key, and System.Text.Json keeps this initializer for them.
+    public bool StartSteamVr { get; set; } = true;
     public int RecenterKey { get; set; } = 0xBB;
     public int MenuKey { get; set; } = 0x77;
 

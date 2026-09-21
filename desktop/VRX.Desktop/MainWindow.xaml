@@ -24,7 +24,7 @@
      <StackPanel Grid.Row="3" Margin="0,16,0,0"><TextBlock Text="Window to capture" Margin="0,0,0,6"/><ComboBox x:Name="WindowList" SelectionChanged="WindowSelected"/>
       <TextBlock x:Name="PathLabel" Text="Choose an application to get started." FontSize="11" Foreground="#9EAFC7" TextWrapping="Wrap" Margin="0,10,0,0"/>
      </StackPanel>
-     <TextBlock Grid.Row="4" Text="Settings are saved separately for each executable. Start SteamVR before playing." TextWrapping="Wrap" Foreground="#9EAFC7" FontSize="12" Margin="0,18,0,0"/>
+     <TextBlock Grid.Row="4" Text="Settings are saved separately for each executable. VRX starts SteamVR on Attach / Play unless you untick it." TextWrapping="Wrap" Foreground="#9EAFC7" FontSize="12" Margin="0,18,0,0"/>
     </Grid>
    </Border>
    <Border Grid.Column="2" Background="#192438" CornerRadius="12" Padding="22">
@@ -87,6 +87,7 @@
      <DockPanel Margin="0,8,0,2"><TextBlock Text="Depth GPU" VerticalAlignment="Center" Margin="0,0,12,0"/><ComboBox x:Name="DepthGpuList" DisplayMemberPath="Label" SelectedValuePath="Id" SelectionChanged="SettingsChanged" ToolTip="Which graphics card runs the depth model. Another card stops depth competing with the game for GPU time; the capture step sends each frame across automatically. If the chosen card is missing, VRX uses the game's GPU. Takes effect the next time you press Attach / Play; saved per game."/></DockPanel>
      <TextBlock Text="Another GPU keeps depth fast while the game uses its own card fully. Applies at the next Attach / Play." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,5"/>
      <CheckBox x:Name="DismissCheck" Content="Dismiss SteamVR menu when playback starts" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+     <CheckBox x:Name="StartSteamVrCheck" Content="Start SteamVR if it isn't running" IsChecked="True" Margin="0,4,0,0" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="On (default): Attach / Play starts SteamVR when it is your OpenXR runtime and isn't running yet, waits for it (up to 90 seconds), then starts VR. Off: VRX doesn't start SteamVR; start it yourself before Attach / Play. Other OpenXR runtimes are not affected. Saved per game."/>
      <TextBlock Text="Keyboard shortcuts" FontSize="18" FontWeight="SemiBold" Margin="0,12,0,10"/>
      <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="20"/><ColumnDefinition/></Grid.ColumnDefinitions>
       <StackPanel><TextBlock Text="Recenter" Margin="0,0,0,5"/><ComboBox x:Name="RecenterKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>

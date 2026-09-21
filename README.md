@@ -38,7 +38,8 @@ or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.0/V
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.
 
-1. Start SteamVR and set it as the active OpenXR runtime.
+1. Set SteamVR as the active OpenXR runtime. VRX starts SteamVR for you on **Attach / Play** if it isn't
+   running (per game, on by default: **Start SteamVR if it isn't running**).
 2. Start your game.
 3. Open VRX, select the game process and window, and click **Attach / Play**.
 4. Adjust screen placement, size, and stereo strength on the desktop.
