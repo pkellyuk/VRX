@@ -71,6 +71,31 @@ Everything is in linear display radiance, the space the compositor blends in.
     pixel's footprint there (from the rays' exact pixel differentials), so its edges
     are soft over about a pixel. The EMIT pass gives the room light its radiance before
     the glow's branch: as a glow block its first row would lie past the glow's last.
+- **Glass walls** (v11, `--room-glass=N` until the desktop has its controls; 0 solid ..
+  100 clear). Above 0 the finish is on (flag 16): the side walls, the back wall and the
+  ceiling become glass panes in 8 cm frames, and the floor gets 1 m tiles. The wall with
+  the screen and the floor stay solid.
+  - Frames: uprights in whole bays of about 1.5 m, one in each corner (the default room's
+    side walls have 3 bays of 1.507 m, its back wall 6 of 1.558 m), bars along the floor
+    and the ceiling, a crossbar 2.4 m above the floor when the room is at least 2.7 m
+    high, and ceiling beams in line with the uprights. The frames are opaque and show the
+    wall's own light.
+  - A pane shows (1 - T) of the wall's light plus T of what lies beyond it (T = Glass/100):
+    a sky from 1.6 x the world colour at the horizon to 0.5 x overhead, and a ground at
+    the room's floor level, 0.45 x the world colour, with a 1 m grid 50% brighter
+    (lines on x = k and z = k, like the floor's tiles) fading into the horizon's colour
+    with distance (fog over 50 m). A black world gives a glass room at night.
+  - Tiles: 1.2 cm grout lines 35% darker on x = k and z = k (one runs from the screen's
+    middle towards the viewer), and a +-3% tone per tile that fades out where a pixel
+    covers half a tile. The panel is an opaque fitting in the ceiling (unlit while the
+    room light is off).
+  - Every pattern is box-filtered over the pixel's footprint on its plane, from the rays'
+    exact pixel differentials, so none of it aliases; the flat screen's half-size layer
+    filters over its twice-as-large pixels.
+  - The bounce weighs each face's finished albedo: a pane's (1 - T) rho (clear glass
+    lets light out, so the room gets a little darker), the frames' share (about 8.5% of a
+    wall, 10% of the ceiling) at rho, the panel's area at rho, the floor's grout. With
+    Glass 0 the bounce is v10's to the bit.
 - **Direct light:** a surface point p receives E = sum L_j G_j, where G is pi times the
   point-to-patch form factor.
   - Close up it uses Lambert's exact polygon formula. A softened point light would
@@ -129,7 +154,7 @@ depend on where you look from.
 
    The eye pass is compiled twice. With `ROOM_LOOK 0` it has no code for the v11
    controls and is Stage 1's pass exactly; it draws a room whose controls are all 0.
-   With `ROOM_LOOK 1` it adds the room light's panel (and, later, Glass and
+   With `ROOM_LOOK 1` it adds the room light's panel and the glass (and, later,
    Reflections); it draws a room with any of them on (`RoomLookOn`). In one shader the
    light's code, even with the light off, cost the plain pass about 4% (curved, 60%:
    0.916 against 0.876 ms eye min), through registers. With the light on, the look pass
@@ -157,8 +182,8 @@ same with the room light at 50% (C), the kept v10 eye pass (D, also `--room-v10-
 playback) and the flat screen's half-size room layer without and with the room light
 (E, F), each at four views (yaw 0, 30, 60 and 120 degrees, pitch -15) and the curved
 ones at 60% and 100% curve. C and F are the spec's Glass 60 / Reflections 40 / Light 50
-cases; until Glass and Reflections exist they draw the room light alone, and the log
-gives what it costs (C minus B, F minus E).
+cases; until Reflections exist they draw Glass 60 and the room light at 50%, and the log
+gives what that costs (C minus B, F minus E).
 - **Interleaved.** The cases that draw the same screen (the curved one at each curve,
   or the flat one) are drawn in turn, frame by frame, the order rotating each round, so
   other work on the GPU falls on them alike. Every round also draws a probe, the curve
@@ -225,9 +250,19 @@ gives what it costs (C minus B, F minus E).
     curved), its level and colour, flag 64, every lightmap texel bit for bit v10's with
     it at 0, the bounce's mean albedo v10's bit for bit, the panel's soft edge, and the
     footprints against a central difference;
+  - glass: the frames' bays and crossbar (none in a 2.5 m room), uprights in every
+    corner; the filtered bars exactly 1 in a bar and 0 in a gap, w/P on average for any
+    footprint and smooth across an edge; the tiles' mean, their tone, their pinned hash
+    and their lines on x = k and z = k; Fresnel and its mean (the /21); the bounce
+    falling as the glass clears, every face's albedo within 0..1, the frames' mean
+    cover what the eye pass draws; beyond the glass a black world giving nothing, no
+    step at the horizon, the far ground in the horizon's colour and the ground's grid on
+    the tiles' lines; a sample on an upright, a pane, a tile and the panel; Glass 0
+    giving the lightmap's light on frames and panes alike;
   - details: the dither, half floats, levelling, the v10 snapshot.
-- **`SelfTestRoom`**, flat and 100% curved, each with the room light off and at 50%
-  (#FFB46B), compares the GPU with `room.h`:
+- **`SelfTestRoom`**, flat and 100% curved, each with the v11 controls at 0, with the
+  room light at 50% (#FFB46B), and with the look (Glass 60 and that light), compares the
+  GPU with `room.h`:
   - the emitters identical: 881 with 8-texel glow blocks (flat), 337 with 16-texel
     blocks (curved), so both block sizes run on the GPU; the room light's radiance is
     the constants' exactly;
@@ -239,8 +274,14 @@ gives what it costs (C minus B, F minus E).
     must cover at least 1% of its pixels), one turned left to the left wall, the floor
     and, curved, the front's left wing; the floor under the panel lit by at least 90% of the panel's
     direct light;
+  - with the look, two dispatches: A, the screen and the tiled floor, and the right
+    glass wall; B, the panel with the ceiling's beams and the back glass, and the left
+    glass with the ground and the horizon. From the CPU reference, frames must cover
+    over 0.2% of A's pixels and the tiles over 1%, and in B the panel, the ground and
+    the sky over 1% each;
   - `--selftest --dump` writes `room-eyes-flat.ppm`, `room-eyes-curved.ppm`,
-    `room-eyes-flat-light.ppm` and `room-eyes-curved-light.ppm`.
+    `room-eyes-flat-light.ppm`, `room-eyes-curved-light.ppm` and
+    `room-eyes-{flat,curved}-look-{a,b}.ppm`.
 
 ## Limits, and what was left out on purpose
 

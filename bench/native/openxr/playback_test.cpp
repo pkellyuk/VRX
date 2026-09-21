@@ -1639,6 +1639,288 @@ static void TestRoom()
         }
     }
 
+    // ---- the finish (v11): Glass, frames, tiles and what lies beyond the glass
+    {
+        const float A = in.W * in.H;
+        RoomView fview;
+        fview.W = in.W; fview.H = in.H; fview.glowOn = true; fview.glowHalfW = glowHalfW; fview.glowHalfH = glowHalfH;
+
+        // D2: the frames. Whole bays: 3 of 1.507 m on the default room's side walls and 6 of
+        // 1.558 m on its back wall; the crossbar 2.4 m above the floor, none in a 2.5 m room.
+        Check(std::fabs(room.pitchSide - 1.507f) < 1e-3f && std::fabs(3.0f * room.pitchSide - (room.zB - room.zSide)) < 1e-4f &&
+              std::fabs(room.pitchBack - 1.558f) < 1e-3f && std::fabs(6.0f * room.pitchBack - 2.0f * room.X) < 1e-4f,
+            "D2: the default room has 3 bays of 1.507 m on its side walls and 6 of 1.558 m on its back wall");
+        Check(room.transomY == room.yF + kRoomTransom, "D2: the default room's crossbar is 2.4 m above its floor");
+        RoomInputs lowIn;
+        lowIn.W = 1.0f; lowIn.H = 0.5625f; lowIn.eye[2] = 2.0f;
+        Room low;
+        Check(BuildRoom(lowIn, low) && std::fabs(low.yC - low.yF - kRoomMinHeight) < 1e-4f && low.transomY < -1e8f,
+            "D2: a 2.5 m high room has no crossbar");
+        RoomLook glass60;
+        glass60.glass = 60;
+        const RoomShading g60 = MakeRoomShading(room, 40, 0x2A3441, A, glass60);
+        const RoomConstants rcg = MakeRoomConstants(room, g60, layout, fview, 1920, 1080, 1.0f);
+        Check(g60.finish && (rcg.flags & kRoomFlagFinish) != 0 && rcg.glass == 0.6f && rcg.reflect == 0 && rcg.fbar == 0 && RoomLookOn(rcg) &&
+              rcg.pitchSide == room.pitchSide && rcg.pitchBack == room.pitchBack && rcg.transomY == room.transomY,
+            "Glass 60: flag 16, row 11 the glass (no reflections yet), row 12 the frames; the look eye pass");
+        {
+            const float fine = 1e-4f;
+            bool corners = true;
+            for (int k = 0; k <= 3; k++)
+            {
+                const float upright[3] = { room.X, 0.0f, room.zSide + (float)k * room.pitchSide };
+                corners = corners && RoomFrameCoverage(rcg, kFaceRight, upright, fine, fine) == 1.0f;
+            }
+            const float leftCorner[3] = { -room.X, 0.0f, room.zB }, backCorner0[3] = { -room.X, 0.0f, room.zB }, backCorner1[3] = { room.X, 0.0f, room.zB };
+            const float pane[3] = { room.X, 0.0f, room.zSide + 0.5f * room.pitchSide }, transom[3] = { room.X, room.transomY, room.zSide + 0.5f * room.pitchSide };
+            const float floorBar[3] = { room.X, room.yF + 0.01f, room.zSide + 0.5f * room.pitchSide };
+            const float beam[3] = { -room.X + 2.0f * room.pitchBack, room.yC, room.zSide + 0.5f * room.pitchSide };
+            const float ceilPane[3] = { -room.X + 1.5f * room.pitchBack, room.yC, room.zSide + 0.5f * room.pitchSide };
+            Check(corners && RoomFrameCoverage(rcg, kFaceLeft, leftCorner, fine, fine) == 1.0f && RoomFrameCoverage(rcg, kFaceBack, backCorner0, fine, fine) == 1.0f &&
+                  RoomFrameCoverage(rcg, kFaceBack, backCorner1, fine, fine) == 1.0f && RoomFrameCoverage(rcg, kFaceRight, pane, fine, fine) == 0.0f &&
+                  RoomFrameCoverage(rcg, kFaceRight, transom, fine, fine) > 0.99f && RoomFrameCoverage(rcg, kFaceRight, floorBar, fine, fine) > 0.99f &&
+                  RoomFrameCoverage(rcg, kFaceCeiling, beam, fine, fine) == 1.0f && RoomFrameCoverage(rcg, kFaceCeiling, ceilPane, fine, fine) == 0.0f,
+                "D2: uprights in both corners and every bay, the crossbar and the floor's bar on the walls, beams on the ceiling, clear panes between");
+        }
+
+        // D1: Pulse and Bar.
+        {
+            bool exact = RoomPulse(3.0f, 1.0f, 0.03f, 1e-4f) == 1.0f && RoomPulse(3.5f, 1.0f, 0.03f, 1e-4f) == 0.0f &&
+                         RoomPulse(-2.005f, 1.0f, 0.03f, 1e-4f) == 1.0f && RoomPulse(-2.4f, 1.0f, 0.03f, 1e-4f) == 0.0f &&
+                         RoomPulse(4.52f, 1.507f, 0.08f, 1e-4f) == 1.0f && RoomBar(0.01f, 0.0f, 0.08f, 1e-4f) > 0.99f && RoomBar(0.2f, 0.0f, 0.08f, 1e-4f) == 0.0f;
+            Check(exact, "D1: a 1e-4 footprint gives exactly 1 in a bar and exactly 0 in a gap (Bar: 1 to float rounding)");
+            bool mean = true;
+            for (float s0 : { 0.0f, 0.37f, -5.2f, 13.1f })
+                mean = mean && std::fabs(RoomPulse(s0, 1.0f, 0.03f, 173.3f) - 0.03f) < 0.01f * 0.03f &&
+                       std::fabs(RoomPulse(s0, 1.507f, 0.08f, 251.0f) - 0.08f / 1.507f) < 0.01f * 0.08f / 1.507f;
+            Check(mean, "D1: a large footprint (over 100 periods) gives w/P within 1%");
+            bool periodMean = true;
+            for (float f : { 1e-4f, 0.01f, 0.1f, 0.37f, 1.0f, 2.5f })
+            {
+                const int steps = 20000;
+                double sum = 0;
+                for (int i = 0; i < steps; i++) sum += RoomPulse(0.3f + ((float)i + 0.5f) * 1.507f / (float)steps, 1.507f, 0.08f, f);
+                periodMean = periodMean && std::fabs(sum / steps - 0.08 / 1.507) < 1e-4;
+            }
+            Check(periodMean, "D1: the mean over one period is w/P within 1e-4 for any footprint");
+            float worstStep = 0, prev = RoomPulse(-0.5f, 1.0f, 0.03f, 0.2f);
+            for (int i = 1; i <= 2000; i++)
+            {
+                const float v = RoomPulse(-0.5f + 0.001f * (float)i, 1.0f, 0.03f, 0.2f);
+                worstStep = std::max(worstStep, std::fabs(v - prev));
+                prev = v;
+            }
+            Check(worstStep <= 2.0f * 0.001f / 0.2f + 1e-5f, "D1: neighbouring values differ by at most 2 delta / f");
+        }
+
+        // D3: the tiles.
+        {
+            const int n = 1000;
+            double sumTau = 0, sumG = 0;
+            const float tone = 1.0f + kRoomTileVar * ((float)RoomHash(2, 5) / 65535.0f - 0.5f) * (1.0f - 2.0f * 1e-4f);
+            for (int j = 0; j < n; j++)
+                for (int i = 0; i < n; i++)
+                {
+                    const float p[3] = { 2.0f + ((float)i + 0.5f) / n, room.yF, 5.0f + ((float)j + 0.5f) / n };
+                    float g = 0;
+                    sumTau += RoomTileFactor(p, 1e-4f, 1e-4f, &g);
+                    sumG += g;
+                }
+            const double gBar = 1.0 - (1.0 - kRoomGroutW) * (1.0 - kRoomGroutW);
+            Check(std::fabs(sumTau / ((double)n * n) - (1.0 - kRoomGrout * gBar) * tone) < 1e-3 && std::fabs(sumG / ((double)n * n) - gBar) < 1e-3,
+                "D3: the fine-sampled mean of tau over a tile is (1 - 0.35 gBar) x its tone");
+            bool plain = true;
+            for (float f : { 0.5f, 0.8f, 3.0f })
+            {
+                const float p[3] = { 2.37f, room.yF, -0.61f };
+                float g = 0;
+                const float tau = RoomTileFactor(p, f, f, &g);
+                plain = plain && tau == 1.0f - kRoomGrout * g;
+            }
+            Check(plain, "D3: a footprint of 0.5 m or more gives a tone of exactly 1");
+            Check(RoomHash(0, 0) == 30847u && RoomHash(-1, 3) == 11783u && RoomHash(1023, -1024) == 10337u, "D3: the tiles' hash has its pinned values");
+            const float onLine[3] = { 0.0f, room.yF, 1.5f }, onTile[3] = { 0.5f, room.yF, 1.5f };
+            float gl = 0, gt = 0;
+            RoomTileFactor(onLine, 1e-4f, 1e-4f, &gl);
+            RoomTileFactor(onTile, 1e-4f, 1e-4f, &gt);
+            Check(gl == 1.0f && gt == 0.0f, "D3: a grout line runs along x = 0, from the screen's middle towards the viewer");
+        }
+
+        // D4: Fresnel. C6: its mean, against a double-precision midpoint rule.
+        {
+            bool fresnel = true;
+            float prev = 2.0f;
+            for (int i = 0; i <= 100; i++)
+            {
+                const float c = (float)i / 100.0f;
+                fresnel = fresnel && RoomFresnel(0.0f, c) == 0.0f;
+                const float f = RoomFresnel(0.7f, c);
+                fresnel = fresnel && f <= prev;
+                prev = f;
+            }
+            fresnel = fresnel && std::fabs(RoomFresnel(0.7f, 1.0f) - 0.6f * 0.7f) < 1e-7f && std::fabs(RoomFresnel(0.7f, 0.0f) - 0.7f) < 1e-7f;
+            Check(fresnel, "D4: Fresnel is 0 at r = 0, 0.6 r face on, r at grazing, and falls with the cosine");
+            bool mean = true;
+            for (double r : { 0.1, 0.5, 1.0 })
+            {
+                const int steps = 200000;
+                double sum = 0;
+                for (int i = 0; i < steps; i++)
+                {
+                    const double mu = ((double)i + 0.5) / steps, q = 1.0 - mu;
+                    sum += r * (kRoomGlassF0 + (1.0 - kRoomGlassF0) * q * q * q * q * q) * mu;
+                }
+                mean = mean && std::fabs(2.0 * sum / steps - (double)RoomFresnelMean((float)r)) < 1e-6;
+            }
+            Check(mean, "C6: the coat's mean reflectance is 2 x the integral of F mu, which proves the /21");
+        }
+
+        // C5: the bounce. rhoBar falls as the glass clears; every a_f stays at most 1; with the
+        // finish off a_f is the plain albedo (A2 checks rhoBar bit for bit).
+        {
+            float prev = 2.0f;
+            bool falls = true;
+            for (int gp : { 0, 25, 50, 100 })
+            {
+                RoomLook lk;
+                lk.glass = gp;
+                const RoomShading gs = MakeRoomShading(room, 50, 0, A, lk);
+                falls = falls && gs.rhoBar < prev && gs.finish == (gp > 0);
+                prev = gs.rhoBar;
+            }
+            Check(falls, "C5: the bounce's mean albedo falls as the glass clears (0, 25, 50, 100)");
+            bool bounded = true, plainOff = true;
+            for (int k = 0; k < 2; k++)
+            {
+                const Room& r = k ? curved : room;
+                for (int gp = 0; gp <= 100; gp += 10)
+                {
+                    RoomLook lk;
+                    lk.glass = gp;
+                    const RoomShading gs = MakeRoomShading(r, 100, 0, A, lk);
+                    for (int f = 0; f < kRoomFaces; f++)
+                    {
+                        const float plain = f == kFaceFloor ? gs.rhoFloor : (f == kFaceCeiling ? gs.rhoCeiling : gs.rhoWall);
+                        const float a = gs.finish ? RoomFinishAlbedo(r, gs, f, plain) : plain;
+                        bounded = bounded && a >= 0 && a <= 1.0f;
+                        if (!gs.finish) plainOff = plainOff && a == plain;
+                    }
+                }
+            }
+            Check(bounded && plainOff, "C5: every face's albedo stays within 0..1 at Room 100 for Glass 0..100, and with the finish off it is the plain albedo");
+            // The frames' mean cover against the coverage the eye pass draws, over a grid of
+            // cells each filtered over its own size (a box filter integrates exactly).
+            const float h = room.yC - room.yF, side = room.zB - room.zSide, across = 2.0f * room.X;
+            double sumWall = 0, sumCeil = 0;
+            const int n = 600;
+            for (int j = 0; j < n; j++)
+                for (int i = 0; i < n; i++)
+                {
+                    const float pw[3] = { room.X, room.yF + ((float)j + 0.5f) * h / n, room.zSide + ((float)i + 0.5f) * side / n };
+                    const float pc[3] = { -room.X + ((float)i + 0.5f) * across / n, room.yC, room.zSide + ((float)j + 0.5f) * side / n };
+                    sumWall += RoomFrameCoverage(rcg, kFaceRight, pw, side / n, h / n);
+                    sumCeil += RoomFrameCoverage(rcg, kFaceCeiling, pc, across / n, side / n);
+                }
+            Check(std::fabs(sumWall / ((double)n * n) - RoomFrameFraction(room, kFaceRight)) < 1e-4 &&
+                  std::fabs(sumCeil / ((double)n * n) - RoomFrameFraction(room, kFaceCeiling)) < 1e-4,
+                "C5: the frames' mean cover in the bounce is what the eye pass draws");
+            RoomLook g100;
+            g100.glass = 100;
+            const RoomShading s100 = MakeRoomShading(room, 50, 0, A, g100);
+            const float pane = RoomFinishAlbedo(room, s100, kFaceRight, s100.rhoWall), phiBar = RoomFrameFraction(room, kFaceRight);
+            Check(std::fabs(pane - phiBar * s100.rhoWall) < 1e-6f, "C5: clear glass keeps only its frames' share of a wall's light");
+        }
+
+        // F: beyond the glass.
+        {
+            RoomLook lk;
+            lk.glass = 60;
+            const RoomConstants dark0 = MakeRoomConstants(room, MakeRoomShading(room, 40, 0, A, lk), layout, fview, 1920, 1080, 1.0f);
+            const float o[3] = { 0.0f, 0.0f, 3.0f }, tiny[3] = { 1e-6f, 0, 0 }, tinyY[3] = { 0, 1e-6f, 0 };
+            bool dark = true;
+            for (int i = 0; i < 64; i++)
+            {
+                const float d[3] = { std::sin(0.3f * i), std::cos(0.7f * i), std::cos(0.3f * i) };
+                float env[3];
+                int kind = 0;
+                dark = dark && RoomEnvironment(dark0, o, d, tiny, tinyY, env, &kind) && env[0] == 0 && env[1] == 0 && env[2] == 0 && kind >= 1;
+            }
+            Check(dark, "F: a black world gives nothing beyond the glass");
+            const float hc = kRoomEnvHorizon * rcg.world[2];
+            const float above[3] = { 0.0f, 1e-4f, 1.0f }, below[3] = { 0.0f, -1e-4f, 1.0f };
+            float eu[3], ed[3];
+            int ku = 0, kd = 0;
+            RoomEnvironment(rcg, o, above, tiny, tinyY, eu, &ku);
+            RoomEnvironment(rcg, o, below, tiny, tinyY, ed, &kd);
+            Check(ku == 1 && std::fabs(eu[2] - ed[2]) < 0.01f * hc, "F: just above and just below the horizon differ by less than 1% of its colour");
+            const float far5[3] = { 0.0f, room.yF - o[1], 5000.0f };
+            float e5[3];
+            int k5 = 0;
+            RoomEnvironment(rcg, o, far5, tiny, tinyY, e5, &k5);
+            Check(k5 == 3 && std::fabs(e5[2] - hc) < 0.01f * hc, "F: the ground 5 km away has faded into the horizon's colour");
+            Check(std::fabs(kRoomEnvLineMean - (1.0f - (1.0f - kRoomEnvLineW) * (1.0f - kRoomEnvLineW))) < 1e-6f &&
+                  std::fabs(1.0f - (1.0f - RoomPulse(0.3f, 1.0f, kRoomEnvLineW, 10.0f)) * (1.0f - RoomPulse(7.1f, 1.0f, kRoomEnvLineW, 10.0f)) - kRoomEnvLineMean) < 1e-4f,
+                "F: the ground grid's mean cover is 0.0591, what a far footprint gives");
+            // The grid's lines lie where the floor's grout does: on x = k and z = k.
+            auto ground = [&](float x, float z, float out[3])
+            {
+                const float d[3] = { x - o[0], room.yF - o[1], z - o[2] };
+                int kind = 0;
+                return RoomEnvironment(rcg, o, d, tiny, tinyY, out, &kind) && kind == 3;
+            };
+            float onX[3], onZ[3], off[3];
+            const bool hits = ground(-7.0f, 9.5f, onX) && ground(-7.5f, 9.0f, onZ) && ground(-7.5f, 9.5f, off);
+            const float lineOn[3] = { -7.0f, room.yF, 9.5f }, lineOnZ[3] = { -7.5f, room.yF, 9.0f }, lineOff[3] = { -7.5f, room.yF, 9.5f };
+            float g1 = 0, g2 = 0, g3 = 0;
+            RoomTileFactor(lineOn, 1e-4f, 1e-4f, &g1);
+            RoomTileFactor(lineOnZ, 1e-4f, 1e-4f, &g2);
+            RoomTileFactor(lineOff, 1e-4f, 1e-4f, &g3);
+            Check(hits && onX[2] > 1.2f * off[2] && onZ[2] > 1.2f * off[2] && g1 == 1.0f && g2 == 1.0f && g3 == 0.0f,
+                "F: the ground grid's lines are on x = k and z = k, like the floor's tiles");
+        }
+
+        // The finish on a primary sample (RoomSurface): an upright shows the wall's own light,
+        // a pane mixes it with what lies beyond the glass, the floor is tiled, and the
+        // ceiling's panel is an opaque fitting; with Glass 0 the walls are the lightmap's.
+        {
+            const float o[3] = { 0.0f, 0.0f, 3.0f };
+            float Dx[3] = { 1e-5f, 0, 0 }, Dy[3] = { 0, -1e-5f, 0 };
+            const float Ld[3] = { 0.2f, 0.1f, 0.05f };
+            auto at = [&](const RoomConstants& rc, int face, float x, float y, float z, float L[3], RoomSurfaceInfo* info)
+            {
+                const float d[3] = { x - o[0], y - o[1], z - o[2] };
+                L[0] = Ld[0]; L[1] = Ld[1]; L[2] = Ld[2];
+                return RoomSurface(rc, face, o, d, Dx, Dy, L, info);
+            };
+            float Lu[3], Lp[3], Lf[3], Lc[3];
+            RoomSurfaceInfo iu, ip, ifl, ic;
+            const bool ran = at(rcg, kFaceRight, room.X, 0.0f, room.zSide + room.pitchSide, Lu, &iu) &&
+                             at(rcg, kFaceRight, room.X, 0.0f, room.zSide + 1.5f * room.pitchSide, Lp, &ip) &&
+                             at(rcg, kFaceFloor, 0.5f, room.yF, 1.5f, Lf, &ifl) &&
+                             at(rcg, kFaceCeiling, 0.5f * (room.lightX0 + room.lightX1), room.yC, 0.5f * (room.lightZ0 + room.lightZ1), Lc, &ic);
+            const float dp[3] = { room.X - o[0], -o[1], room.zSide + 1.5f * room.pitchSide - o[2] };
+            float env[3];
+            RoomEnvironment(rcg, o, dp, Dx, Dy, env, nullptr);
+            const float tone = 1.0f + kRoomTileVar * ((float)RoomHash(0, 1) / 65535.0f - 0.5f) * (1.0f - 2.0f * kRoomFootMin);
+            bool right = ran && iu.phi == 1.0f && ip.phi == 0.0f && ip.env == 1 && ifl.grout == 0.0f && ic.kappa > 0.99f;
+            for (int ch = 0; ch < 3; ch++)
+                right = right && Lu[ch] == Ld[ch] && std::fabs(Lp[ch] - (0.4f * Ld[ch] + 0.6f * env[ch])) < 1e-6f &&
+                        std::fabs(Lf[ch] - tone * Ld[ch]) < 1e-5f && std::fabs(Lc[ch] - (Ld[ch] + rcg.lightSeen[ch])) < 1e-2f * Ld[ch];
+            Check(right, "the finish: an upright shows the wall, a pane 40% wall and 60% sky, the floor its tile, the ceiling's panel the lightmap (unlit)");
+            RoomConstants clear0 = rcg;
+            clear0.glass = 0;
+            bool same = true;
+            for (int i = 0; i < 200 && same; i++)
+            {
+                const float z = room.zSide + 0.023f * (float)i, y = room.yF + 0.021f * (float)i;
+                float L[3];
+                same = at(clear0, kFaceRight, room.X, y, z, L, nullptr);
+                for (int ch = 0; ch < 3; ch++) same = same && std::fabs(L[ch] - Ld[ch]) <= 1e-6f * Ld[ch];
+            }
+            Check(same, "the finish with Glass 0: frames and panes alike are the lightmap's light");
+        }
+    }
+
     // ---- the constant buffer: 512 bytes, v10's rows as they were, rows 17-20 the eye pass's
     // reciprocals and the screen's box, the other v11 rows zero until their steps
     {
@@ -1647,11 +1929,14 @@ static void TestRoom()
         const RoomConstants rc = MakeRoomConstants(room, shade, layout, view, 1920, 1080, 0.5f);
         const unsigned char* bytes = (const unsigned char*)&rc;
         bool rest = true;
-        for (size_t i = offsetof(RoomConstants, glass); i < offsetof(RoomConstants, lightX0); i++) rest = rest && bytes[i] == 0;
+        for (size_t i = offsetof(RoomConstants, glass); i < offsetof(RoomConstants, pitchSide); i++) rest = rest && bytes[i] == 0;
+        rest = rest && rc.rpad4 == 0;
         for (size_t i = offsetof(RoomConstants, mirrorW); i < offsetof(RoomConstants, invH); i++) rest = rest && bytes[i] == 0;
         for (size_t i = offsetof(RoomConstants, rpad6); i < sizeof(RoomConstants); i++) rest = rest && bytes[i] == 0;
         Check(sizeof(RoomConstants) == 512 && offsetof(RoomConstants, glass) == 176 && rest,
-            "RoomConstants is 512 bytes; rows 11, 12 and 16 and the padding from row 20 on are zero");
+            "RoomConstants is 512 bytes; rows 11 and 16 and the padding from row 20 on are zero with the controls at 0");
+        Check(rc.pitchSide == room.pitchSide && rc.pitchBack == room.pitchBack && rc.transomY == room.transomY && !RoomLookOn(rc),
+            "row 12 carries the frames' bays and crossbar; with the controls at 0 flags 16 and 64 are clear (the plain eye pass)");
         Check(rc.X == room.X && rc.zSide == room.zSide && rc.glowBlock == (uint32_t)layout.block && rc.emitters == (uint32_t)layout.count() &&
               rc.srcW == 1920 && rc.alpha == 0.5f && rc.flags == (kRoomFlagGlow | kRoomFlagDither), "rows 0-10 carry what they carried in v10");
         Check(rc.lightX0 == room.lightX0 && rc.lightX1 == room.lightX1 && rc.lightZ0 == room.lightZ0 && rc.lightZ1 == room.lightZ1 &&
