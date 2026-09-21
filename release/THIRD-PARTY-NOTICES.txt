@@ -34,6 +34,12 @@ See licenses/Microsoft.NETCore.App-LICENSE.txt,
 Microsoft.NETCore.App-ThirdPartyNotices.txt and
 Microsoft.WindowsDesktop.App-LICENSE.txt, copied from the exact runtime packages.
 
+Microsoft HLSL shader compiler (d3dcompiler_47.dll), Windows SDK redistributable
+App-local engine/d3dcompiler_47.dll copied from the Windows SDK (Redist\D3D\x64),
+so that every PC compiles shaders with the compiler the shipped engine/shader-cache
+was built by. Distributable code under the Microsoft Windows SDK license terms
+(Windows Kits\10\Licenses\<version>\sdk_license.rtf in the SDK).
+
 Microsoft Visual C++ x64 runtime redistribution files
 App-local runtime DLLs copied from the Visual Studio redistributable directory.
 See https://visualstudio.microsoft.com/license-terms/ for Microsoft terms.

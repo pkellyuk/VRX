@@ -76,6 +76,10 @@
 //                                   runs at boost clocks; locked ones vary less)
 //            --bench-lock           lock them even while SteamVR's compositor runs (the lock
 //                                   slows the headset's frames too, so it is not the default)
+//            --warm-shader-cache=DIR  compile every compute shader into DIR's shader cache and
+//                                   exit (no VR session or GPU needed); shaders are otherwise
+//                                   read from <exe dir>\shader-cache, then
+//                                   %LOCALAPPDATA%\VRX\shader-cache (CompileCs)
 //            --head-locked          follow your head (default fixed screen; '=' recenters)
 //            --keep-dashboard       skip the SteamVR startup dashboard-close request
 //   keys:    '=' recenter; F8 dismiss SteamVR dashboard (keys also reach the game)
@@ -84,6 +88,9 @@
 #define NOMINMAX
 #include <windows.h>
 #include <tlhelp32.h>
+#include <bcrypt.h>
+#pragma comment(lib, "bcrypt.lib")
+#pragma comment(lib, "version.lib")
 #include "steamvr_dashboard.h"
 #include <unknwn.h>
 #include <winrt/Windows.Foundation.h>
@@ -120,6 +127,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -252,6 +260,7 @@ struct Options
     // name + which card of that name, or a DXGI index for diagnostics.
     GpuRequest depthGpu;
     bool listGpus = false;              // --list-gpus: print the GPUs for the desktop app and exit
+    std::wstring warmShaderCache;       // --warm-shader-cache=<folder>: compile every shader into it and exit
     // Second GPU only. true: the capture thread box-filters each frame to model size
     // and the headset GPU's copy engine sends it across (no depth work waits on its
     // graphics/compute engines). false: model-input prep on the headset GPU.
@@ -898,6 +907,12 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--xgpu-transfer=frame")) { opt->frameTransfer = true; continue; }
         if (!strcmp(a, "--xgpu-transfer=prep")) { opt->frameTransfer = false; continue; }
         if (!strcmp(a, "--list-gpus")) { opt->listGpus = true; continue; }
+        if (!strncmp(a, "--warm-shader-cache=", 20))
+        {
+            if (!a[20]) { Log("ParseArgs: --warm-shader-cache needs a folder"); return false; }
+            opt->warmShaderCache = std::wstring(winrt::to_hstring(a + 20));
+            continue;
+        }
         if (!strncmp(a, "--depth-gpu=", 12))
         {
             // Arguments arrive as UTF-8 (wmain converts); GPU names may be non-ASCII.
@@ -3222,14 +3237,304 @@ static void ReleaseFrameTransfer(App& app)
     Log("ReleaseFrameTransfer: exit");
 }
 
+// ------------------------------------------------------------------ compiled-shader cache
+// D3DCompile of the room's eye shaders takes 10 s on an idle PC and up to a minute
+// beside a running game; with the OpenXR session already created, SteamVR sees an
+// app that submits no frames for that long. So every compute shader goes through a
+// persistent cache, keyed by the SHA-256 of everything that decides the bytecode:
+// the full source text (with its generated #define prefixes), the macros (none are
+// passed; variants are #define prefixes in the text), the entry point, the target
+// profile, the compile flags, the source name and the d3dcompiler DLL's version.
+// Folders, in order: <exe dir>\shader-cache (the payload's engine\shader-cache,
+// pre-warmed by release/build-release.ps1 with --warm-shader-cache; may be
+// read-only), then %LOCALAPPDATA%\VRX\shader-cache, where misses are written.
+// A file is "VRXCSO01", the SHA-256 of the bytecode, then the bytecode; anything
+// that does not check out is ignored and the shader is compiled.
+static const char* const kShaderEntry = "main";
+static const char* const kShaderTarget = "cs_5_0";
+static const UINT kShaderFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
+static const char kShaderFileMagic[8] = { 'V', 'R', 'X', 'C', 'S', 'O', '0', '1' };
+static const size_t kShaderFileHeader = sizeof(kShaderFileMagic) + 32;
+
+struct ShaderCacheState
+{
+    std::mutex mutex;
+    bool ready = false;
+    std::vector<std::filesystem::path> readDirs;
+    std::filesystem::path writeDir;
+    std::string compilerId;
+    std::atomic<int> shaders{ 0 }, hits{ 0 }, compiled{ 0 };
+    std::atomic<long long> compileMicros{ 0 };
+};
+static ShaderCacheState g_shaderCache;
+
+static std::string PathText(const std::filesystem::path& path)
+{
+    if (path.empty()) return "(none)";
+    return winrt::to_string(path.wstring());
+}
+
+static bool Sha256(const void* data, size_t size, uint8_t (&digest)[32])
+{
+    if (!data && size) return false;
+
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) return false;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    bool ok = BCRYPT_SUCCESS(BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0));
+    if (ok && size) ok = BCRYPT_SUCCESS(BCryptHashData(hash, (PUCHAR)data, (ULONG)size, 0));
+    if (ok) ok = BCRYPT_SUCCESS(BCryptFinishHash(hash, digest, 32, 0));
+    if (hash) BCryptDestroyHash(hash);
+    BCryptCloseAlgorithmProvider(alg, 0);
+    return ok;
+}
+
+// The compiler's identity for the cache key: d3dcompiler_47.dll's file version and
+// size (a different compiler changes the key). The engine ships the Windows SDK's
+// redistributable copy next to the exe (build.bat), which the loader prefers to
+// System32's, whose version changes with Windows updates; `loadedFrom` gets the
+// loaded module's path for the log (it is not part of the key: install folders differ).
+static std::string ShaderCompilerId(std::string& loadedFrom)
+{
+    loadedFrom = "(unknown)";
+    std::string id = "D3D_COMPILER_VERSION " + std::to_string(D3D_COMPILER_VERSION);
+    HMODULE module = GetModuleHandleW(L"d3dcompiler_47.dll");
+    if (!module) return id + " (d3dcompiler_47.dll not loaded)";
+    wchar_t path[32768]{};
+    const DWORD count = GetModuleFileNameW(module, path, DWORD(std::size(path)));
+    if (!count || count >= std::size(path)) return id + " (d3dcompiler_47.dll path unknown)";
+    loadedFrom = winrt::to_string(path);
+    std::error_code ec;
+    id += " size " + std::to_string((unsigned long long)std::filesystem::file_size(path, ec));
+    DWORD handle = 0;
+    const DWORD infoSize = GetFileVersionInfoSizeW(path, &handle);
+    if (!infoSize) return id + " (no version info)";
+    std::vector<uint8_t> info(infoSize);
+    if (!GetFileVersionInfoW(path, 0, infoSize, info.data())) return id + " (no version info)";
+    VS_FIXEDFILEINFO* fixed = nullptr;
+    UINT fixedSize = 0;
+    if (!VerQueryValueW(info.data(), L"\\", (void**)&fixed, &fixedSize) || !fixed || fixedSize < sizeof(*fixed)) return id + " (no version info)";
+    char version[64];
+    snprintf(version, sizeof(version), " version %u.%u.%u.%u", HIWORD(fixed->dwFileVersionMS), LOWORD(fixed->dwFileVersionMS),
+             HIWORD(fixed->dwFileVersionLS), LOWORD(fixed->dwFileVersionLS));
+    return id + version;
+}
+
+// Cached shaders not used for this long are deleted from the user cache on start
+// (a hit refreshes the file's last-write time, see TouchCachedShader), so that old
+// versions' shaders do not pile up. Leftover temporary files from a crash go too.
+static const auto kShaderCacheMaxAge = std::chrono::hours(24 * 30);
+static const auto kShaderTouchInterval = std::chrono::hours(24);
+
+static void PruneShaderCache(const std::filesystem::path& dir)
+{
+    Log("PruneShaderCache: enter (%s)", PathText(dir).c_str());
+    if (dir.empty()) { Log("PruneShaderCache: exit - no folder"); return; }
+
+    const auto now = std::filesystem::file_time_type::clock::now();
+    int kept = 0, deleted = 0, failed = 0;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+    {
+        const auto& path = it->path();
+        const std::wstring name = path.filename().wstring();
+        const bool shader = path.extension() == L".cso";
+        const bool temp = name.find(L".tmp-") != std::wstring::npos;
+        if (!shader && !temp) continue;
+        std::error_code fileEc;
+        if (!it->is_regular_file(fileEc)) continue;
+        const auto written = std::filesystem::last_write_time(path, fileEc);
+        if (fileEc) { failed++; continue; }
+        const auto maxAge = temp ? std::chrono::duration_cast<std::filesystem::file_time_type::duration>(kShaderTouchInterval)
+                                 : std::chrono::duration_cast<std::filesystem::file_time_type::duration>(kShaderCacheMaxAge);
+        if (now - written < maxAge) { kept++; continue; }
+        if (std::filesystem::remove(path, fileEc)) deleted++;
+        else failed++;
+    }
+    if (ec) Log("PruneShaderCache: listing stopped (%s)", ec.message().c_str());
+    Log("PruneShaderCache: exit - %d kept, %d deleted (unused 30+ days, or stale temporary files), %d could not be read or deleted", kept, deleted, failed);
+}
+
+// Marks a user-cache hit as used (for PruneShaderCache): the last-write time is set
+// to now, at most once a day per file, so a normal start writes nothing.
+static void TouchCachedShader(const std::filesystem::path& file)
+{
+    if (file.empty()) return;
+
+    std::error_code ec;
+    const auto now = std::filesystem::file_time_type::clock::now();
+    const auto written = std::filesystem::last_write_time(file, ec);
+    if (ec || now - written < std::chrono::duration_cast<std::filesystem::file_time_type::duration>(kShaderTouchInterval)) return;
+    std::filesystem::last_write_time(file, now, ec);
+    if (ec) Log("ShaderCache: cannot mark %s as used (%s)", PathText(file).c_str(), ec.message().c_str());
+}
+
+// Chooses the cache folders (once, unless `only` is given). `only` is the pre-warm's
+// folder: the one place to look and to write.
+static void EnsureShaderCache(const std::filesystem::path* only = nullptr)
+{
+    std::lock_guard<std::mutex> lock(g_shaderCache.mutex);
+    if (g_shaderCache.ready && !only) return;
+
+    Log("ShaderCache: enter (%s)", only ? "pre-warm folder" : "default folders");
+    g_shaderCache.readDirs.clear();
+    g_shaderCache.writeDir.clear();
+    std::string compilerPath;
+    g_shaderCache.compilerId = ShaderCompilerId(compilerPath);
+    Log("ShaderCache: compiler loaded from %s", compilerPath.c_str());
+    std::error_code ec;
+    if (only)
+    {
+        g_shaderCache.readDirs.push_back(*only);
+        g_shaderCache.writeDir = *only;
+    }
+    else
+    {
+        try
+        {
+            const auto shipped = ExecutableDirectory() / L"shader-cache";
+            if (std::filesystem::is_directory(shipped, ec)) g_shaderCache.readDirs.push_back(shipped);
+            else Log("ShaderCache: no shipped cache at %s", PathText(shipped).c_str());
+        }
+        catch (const std::exception& e) { Log("ShaderCache: shipped cache skipped (%s)", e.what()); }
+
+        wchar_t local[32768]{};
+        const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", local, DWORD(std::size(local)));
+        if (!count || count >= std::size(local)) Log("ShaderCache: LOCALAPPDATA not set - compiled shaders will not be kept");
+        else
+        {
+            const auto user = std::filesystem::path(local) / L"VRX" / L"shader-cache";
+            std::filesystem::create_directories(user, ec);
+            if (!std::filesystem::is_directory(user, ec)) Log("ShaderCache: cannot create %s - compiled shaders will not be kept", PathText(user).c_str());
+            else
+            {
+                g_shaderCache.readDirs.push_back(user);
+                g_shaderCache.writeDir = user;
+                PruneShaderCache(user);
+            }
+        }
+    }
+    g_shaderCache.ready = true;
+    std::string dirs;
+    for (const auto& dir : g_shaderCache.readDirs) dirs += (dirs.empty() ? "" : ", ") + PathText(dir);
+    Log("ShaderCache: exit - compiler %s; look in [%s]; write to %s", g_shaderCache.compilerId.c_str(),
+        dirs.empty() ? "nothing" : dirs.c_str(), PathText(g_shaderCache.writeDir).c_str());
+}
+
+// A cached shader, or false (silently for a missing file) if it does not check out.
+static bool LoadCachedShader(const std::filesystem::path& file, ComPtr<ID3DBlob>& out)
+{
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return false;
+    in.seekg(0, std::ios::end);
+    const std::streamoff length = in.tellg();
+    in.seekg(0, std::ios::beg);
+    if (length < (std::streamoff)(kShaderFileHeader + 32) || length > (64ll << 20))
+    { Log("ShaderCache: ignoring %s - %lld bytes is not a cached shader", PathText(file).c_str(), (long long)length); return false; }
+    std::vector<char> bytes((size_t)length);
+    if (!in.read(bytes.data(), length)) { Log("ShaderCache: ignoring %s - read failed", PathText(file).c_str()); return false; }
+    if (memcmp(bytes.data(), kShaderFileMagic, sizeof(kShaderFileMagic)))
+    { Log("ShaderCache: ignoring %s - not a VRX shader file", PathText(file).c_str()); return false; }
+
+    const char* code = bytes.data() + kShaderFileHeader;
+    const size_t codeSize = bytes.size() - kShaderFileHeader;
+    uint32_t dxbcSize = 0;
+    memcpy(&dxbcSize, code + 24, sizeof(dxbcSize));
+    if (memcmp(code, "DXBC", 4) || dxbcSize != codeSize)
+    { Log("ShaderCache: ignoring %s - damaged bytecode", PathText(file).c_str()); return false; }
+    uint8_t digest[32];
+    if (!Sha256(code, codeSize, digest) || memcmp(digest, bytes.data() + sizeof(kShaderFileMagic), sizeof(digest)))
+    { Log("ShaderCache: ignoring %s - checksum mismatch", PathText(file).c_str()); return false; }
+
+    ComPtr<ID3DBlob> blob;
+    if (FAILED(D3DCreateBlob(codeSize, &blob)) || !blob) { Log("ShaderCache: ignoring %s - no memory for the blob", PathText(file).c_str()); return false; }
+    memcpy(blob->GetBufferPointer(), code, codeSize);
+    out = blob;
+    return true;
+}
+
+// Writes a compiled shader under a temporary name, then renames it into place, so
+// that a reader (or a crash) never sees half a file.
+static bool StoreCachedShader(const std::filesystem::path& dir, const std::wstring& hex, ID3DBlob* blob)
+{
+    if (dir.empty() || hex.empty() || !blob) return false;
+
+    uint8_t digest[32];
+    if (!Sha256(blob->GetBufferPointer(), blob->GetBufferSize(), digest)) { Log("ShaderCache: not saved - hash failed"); return false; }
+    const auto target = dir / (hex + L".cso");
+    const auto temp = dir / (hex + L".tmp-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetCurrentThreadId()));
+    std::error_code ec;
+    {
+        std::ofstream o(temp, std::ios::binary | std::ios::trunc);
+        o.write(kShaderFileMagic, sizeof(kShaderFileMagic));
+        o.write((const char*)digest, sizeof(digest));
+        o.write((const char*)blob->GetBufferPointer(), (std::streamsize)blob->GetBufferSize());
+        o.close();
+        if (!o) { Log("ShaderCache: not saved - cannot write %s", PathText(temp).c_str()); std::filesystem::remove(temp, ec); return false; }
+    }
+    if (!MoveFileExW(temp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        Log("ShaderCache: not saved - cannot rename to %s (error %lu)", PathText(target).c_str(), GetLastError());
+        std::filesystem::remove(temp, ec);
+        return false;
+    }
+    return true;
+}
+
+// Compiles one compute shader (entry main, cs_5_0), or loads it from the cache.
+// Re-entrant: InitShaders and the pre-warm compile on several threads.
 static bool CompileCs(const char* name, const char* src, ComPtr<ID3DBlob>& out)
 {
-    if (!name || !src) return false;
+    if (!name || !src) { Log("CompileCs: FAIL no %s", !name ? "name" : "source"); return false; }
 
+    EnsureShaderCache();
+    const auto start = std::chrono::steady_clock::now();
+    std::vector<std::filesystem::path> readDirs;
+    std::filesystem::path writeDir;
+    std::string key;
+    {
+        std::lock_guard<std::mutex> lock(g_shaderCache.mutex);
+        readDirs = g_shaderCache.readDirs;
+        writeDir = g_shaderCache.writeDir;
+        key = "vrx-shader-cache 1\ncompiler " + g_shaderCache.compilerId;
+    }
+    const size_t srcLen = strlen(src);
+    g_shaderCache.shaders++;
+    key += std::string("\nname ") + name + "\nentry " + kShaderEntry + "\ntarget " + kShaderTarget + "\nflags " + std::to_string(kShaderFlags) +
+           "\nmacros none\nsource " + std::to_string(srcLen) + "\n";
+    key.append(src, srcLen);
+    uint8_t digest[32];
+    std::wstring hex;
+    if (!Sha256(key.data(), key.size(), digest)) Log("CompileCs[%s]: cache key hash failed - compiling without the cache", name);
+    else
+    {
+        static const wchar_t kHex[] = L"0123456789abcdef";
+        for (uint8_t b : digest) { hex += kHex[b >> 4]; hex += kHex[b & 15]; }
+    }
+
+    for (const auto& dir : readDirs)
+    {
+        if (hex.empty()) break;
+        const auto file = dir / (hex + L".cso");
+        if (!LoadCachedShader(file, out)) continue;
+        g_shaderCache.hits++;
+        if (dir == writeDir) TouchCachedShader(file);
+        Log("CompileCs[%s]: from cache in %.1f ms (%zu bytes, %s)", name,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), out->GetBufferSize(), PathText(file).c_str());
+        return true;
+    }
+
+    Log("CompileCs[%s]: not cached - compiling (%zu-byte source)", name, srcLen);
     ComPtr<ID3DBlob> err;
-    HRESULT hr = D3DCompile(src, strlen(src), name, nullptr, nullptr, "main", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &out, &err);
+    HRESULT hr = D3DCompile(src, srcLen, name, nullptr, nullptr, kShaderEntry, kShaderTarget, kShaderFlags, 0, &out, &err);
     if (err && err->GetBufferSize() > 1) Log("CompileCs[%s]: compiler says: %s", name, (const char*)err->GetBufferPointer());
     if (FAILED(hr) || !out) { Log("CompileCs[%s]: FAIL 0x%08X", name, (unsigned)hr); return false; }
+    const long long micros = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+    g_shaderCache.compiled++;
+    g_shaderCache.compileMicros += micros;
+    const bool saved = !hex.empty() && StoreCachedShader(writeDir, hex, out.Get());
+    Log("CompileCs[%s]: compiled in %.2f s (%zu bytes)%s%s", name, micros * 1e-6, out->GetBufferSize(),
+        saved ? ", saved to " : ", not saved", saved ? PathText(writeDir).c_str() : "");
     return true;
 }
 
@@ -3465,9 +3770,79 @@ static bool MakeWarpTarget(App& app, int cw, int ch, UINT tableIndex, WarpTarget
     return true;
 }
 
+// The ambilight shader's ring variant (the only #define it takes).
+static std::string AmbiRingShaderText()
+{
+    return std::string("#define AMBI_RING 1\n") + kAmbiHlsl;
+}
+
+// The room's shader texts. Its eye pass is the curve shader's code up to its main,
+// then the room's; every room shader starts with the constants it shares with
+// room.h, generated from the C++ values (RoomHlslDefines). Shared by InitShaders and
+// the shader-cache pre-warm, so that both compile exactly the same text.
+struct RoomShaderTexts
+{
+    std::string eye, eyeLook, light, emit, mirror;
+    size_t defineCount = 0, defineBytes = 0;
+};
+
+static bool BuildRoomShaderTexts(RoomShaderTexts& out)
+{
+    static_assert(kRoomLightmap == 64, "kRoomHlsl hardcodes a 64 x 64 lightmap");
+    const std::string curveText(kCurveHlsl);
+    const size_t curveMain = curveText.find("[numthreads(8, 8, 1)]\nvoid main");
+    if (curveMain == std::string::npos) { Log("BuildRoomShaderTexts: FAIL the curve shader's main was not found"); return false; }
+    const std::string roomDefines = RoomHlslDefines();
+    out.defineCount = 0;
+    for (size_t at = roomDefines.find("#define "); at != std::string::npos; at = roomDefines.find("#define ", at + 1)) out.defineCount++;
+    out.defineBytes = roomDefines.size();
+    const std::string eyeHead = std::string("#define ROOM_REGISTER b1\n") + roomDefines + curveText.substr(0, curveMain) +
+                                kRoomCbufferHlsl + kRoomGeomHlsl;
+    out.eye = std::string("#define ROOM_LOOK 0\n") + eyeHead + kCurveRoomHlsl;
+    out.eyeLook = std::string("#define ROOM_LOOK 1\n") + eyeHead + kCurveRoomHlsl;
+    out.light = std::string("#define ROOM_REGISTER b0\n") + roomDefines + kRoomCbufferHlsl + kRoomGeomHlsl + kRoomHlsl;
+    out.emit = std::string("#define ROOM_EMIT 1\n") + out.light;
+    out.mirror = std::string("#define ROOM_MIRROR 1\n") + out.light;
+    return true;
+}
+
+// Every compute shader the engine can compile at run time, by the name CompileCs is
+// given - the list the pre-warm fills the cache from. A new CompileCs call must be
+// added here too, or it will compile on the first run after an install.
+struct ShaderJob
+{
+    std::string name;
+    std::string text;
+};
+
+static bool EngineShaderJobs(std::vector<ShaderJob>& out)
+{
+    Log("EngineShaderJobs: enter");
+    out.clear();
+    RoomShaderTexts room;
+    if (!BuildRoomShaderTexts(room)) { Log("EngineShaderJobs: FAIL room texts"); return false; }
+    out.push_back({ "unpack.hlsl", kUnpackHlsl });            // InitFrameTransfer (second GPU)
+    out.push_back({ "warp.hlsl", kWarpHlsl });
+    out.push_back({ "prep.hlsl", kPrepHlsl });
+    out.push_back({ "grid.hlsl", kGridHlsl });
+    out.push_back({ "ambilight.hlsl", kAmbiHlsl });
+    out.push_back({ "ambilight-ring.hlsl", AmbiRingShaderText() });
+    out.push_back({ "curve.hlsl", kCurveHlsl });
+    out.push_back({ "curve-room.hlsl", room.eye });
+    out.push_back({ "curve-room-look.hlsl", room.eyeLook });
+    out.push_back({ "room-light.hlsl", room.light });
+    out.push_back({ "room-emit.hlsl", room.emit });
+    out.push_back({ "room-mirror.hlsl", room.mirror });
+    Log("EngineShaderJobs: exit - %zu shaders", out.size());
+    return true;
+}
+
 static bool InitShaders(App& app)
 {
     Log("InitShaders: enter");
+    const auto shadersStart = std::chrono::steady_clock::now();
+    const int shadersBefore = g_shaderCache.shaders.load(), hitsBefore = g_shaderCache.hits.load(), compiledBefore = g_shaderCache.compiled.load();
+    const long long compileMicrosBefore = g_shaderCache.compileMicros.load();
 
     ComPtr<ID3DBlob> warpCs, prepCs, gridCs;
     if (!CompileCs("warp.hlsl", kWarpHlsl, warpCs)) return false;
@@ -3509,7 +3884,7 @@ static bool InitShaders(App& app)
     // Ambilight: built even when the option is off, so it can be switched live.
     static_assert(kAmbiTaps == 4 && kAmbiRingMax == 256, "kAmbiHlsl hardcodes TAPS = 4 and a 256-point shared ring");
     ComPtr<ID3DBlob> ambiCs, ambiRingCs;
-    const std::string ringSource = std::string("#define AMBI_RING 1\n") + kAmbiHlsl;
+    const std::string ringSource = AmbiRingShaderText();
     if (!CompileCs("ambilight.hlsl", kAmbiHlsl, ambiCs)) return false;
     if (!CompileCs("ambilight-ring.hlsl", ringSource.c_str(), ambiRingCs)) return false;
     if (!MakeAmbiRootSig(app, app.ambiRootSig)) return false;
@@ -3573,21 +3948,14 @@ static bool InitShaders(App& app)
     // room shader starts with the constants it shares with room.h, generated from the
     // C++ values (RoomHlslDefines).
     Log("InitShaders: room - building");
-    static_assert(kRoomLightmap == 64, "kRoomHlsl hardcodes a 64 x 64 lightmap");
-    const std::string curveText(kCurveHlsl);
-    const size_t curveMain = curveText.find("[numthreads(8, 8, 1)]\nvoid main");
-    if (curveMain == std::string::npos) { Log("InitShaders: FAIL room - the curve shader's main was not found"); return false; }
-    const std::string roomDefines = RoomHlslDefines();
-    size_t defineCount = 0;
-    for (size_t at = roomDefines.find("#define "); at != std::string::npos; at = roomDefines.find("#define ", at + 1)) defineCount++;
-    Log("InitShaders: room - %zu shared constants for the HLSL (%zu bytes of #defines)", defineCount, roomDefines.size());
-    const std::string roomEyeHead = std::string("#define ROOM_REGISTER b1\n") + roomDefines + curveText.substr(0, curveMain) +
-                                    kRoomCbufferHlsl + kRoomGeomHlsl;
-    const std::string roomEyeText = std::string("#define ROOM_LOOK 0\n") + roomEyeHead + kCurveRoomHlsl;
-    const std::string roomEyeLookText = std::string("#define ROOM_LOOK 1\n") + roomEyeHead + kCurveRoomHlsl;
-    const std::string roomLightText = std::string("#define ROOM_REGISTER b0\n") + roomDefines + kRoomCbufferHlsl + kRoomGeomHlsl + kRoomHlsl;
-    const std::string roomEmitText = std::string("#define ROOM_EMIT 1\n") + roomLightText;
-    const std::string roomMirrorText = std::string("#define ROOM_MIRROR 1\n") + roomLightText;
+    RoomShaderTexts room;
+    if (!BuildRoomShaderTexts(room)) { Log("InitShaders: FAIL room - the curve shader's main was not found"); return false; }
+    Log("InitShaders: room - %zu shared constants for the HLSL (%zu bytes of #defines)", room.defineCount, room.defineBytes);
+    const std::string& roomEyeText = room.eye;
+    const std::string& roomEyeLookText = room.eyeLook;
+    const std::string& roomLightText = room.light;
+    const std::string& roomEmitText = room.emit;
+    const std::string& roomMirrorText = room.mirror;
     ComPtr<ID3DBlob> roomEyeCs, roomEyeLookCs, roomLightCs, roomEmitCs, roomMirrorCs;
     // The eye pass with the v11 controls compiles on its own thread (D3DCompile is
     // re-entrant), so that it does not add its seconds to every start.
@@ -3699,8 +4067,59 @@ static bool InitShaders(App& app)
         roomLightCs->GetBufferSize(), roomEmitCs->GetBufferSize(), roomMirrorCs->GetBufferSize(), kRoomMaxEmitters,
         kRoomFaces, kRoomLightmap, kRoomLightmap, kRoomMirrorW, kRoomMirrorMaxH, sizeof(RoomConstants));
 
+    Log("InitShaders: %d shaders, %d from cache, %d compiled in %.1f s (compile time summed over threads; InitShaders took %.1f s)",
+        g_shaderCache.shaders.load() - shadersBefore, g_shaderCache.hits.load() - hitsBefore, g_shaderCache.compiled.load() - compiledBefore,
+        (g_shaderCache.compileMicros.load() - compileMicrosBefore) * 1e-6,
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - shadersStart).count());
     Log("InitShaders: exit ok (warp %zu bytes, prep %zu bytes)", warpCs->GetBufferSize(), prepCs->GetBufferSize());
     return true;
+}
+
+// --warm-shader-cache=<folder>: compiles every shader the engine can use into that
+// folder and exits. No D3D device, OpenXR runtime or headset is needed (D3DCompile
+// works without either); release/build-release.ps1 runs it into the payload's
+// engine\shader-cache so that the first start after an install is fast.
+static bool WarmShaderCache(const std::wstring& folder)
+{
+    Log("WarmShaderCache: enter");
+    if (folder.empty()) { Log("WarmShaderCache: FAIL no folder given"); return false; }
+
+    const auto start = std::chrono::steady_clock::now();
+    std::error_code ec;
+    const std::filesystem::path dir = std::filesystem::absolute(std::filesystem::path(folder), ec);
+    if (ec || dir.empty()) { Log("WarmShaderCache: FAIL bad folder"); return false; }
+    std::filesystem::create_directories(dir, ec);
+    if (!std::filesystem::is_directory(dir, ec)) { Log("WarmShaderCache: FAIL cannot create %s", PathText(dir).c_str()); return false; }
+    EnsureShaderCache(&dir);
+
+    std::vector<ShaderJob> jobs;
+    if (!EngineShaderJobs(jobs)) { Log("WarmShaderCache: FAIL shader list"); return false; }
+    // One thread per shader (D3DCompile is re-entrant): the build waits for the
+    // slowest shader instead of the sum.
+    std::vector<ComPtr<ID3DBlob>> blobs(jobs.size());
+    std::vector<char> ok(jobs.size(), 0);
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < jobs.size(); i++)
+    {
+        threads.emplace_back([&jobs, &blobs, &ok, i]()
+        {
+            g_threadName = "warm";
+            ok[i] = CompileCs(jobs[i].name.c_str(), jobs[i].text.c_str(), blobs[i]) ? 1 : 0;
+        });
+    }
+    for (auto& t : threads) t.join();
+
+    int failed = 0;
+    for (size_t i = 0; i < jobs.size(); i++)
+    {
+        if (ok[i]) continue;
+        failed++;
+        Log("WarmShaderCache: FAIL %s", jobs[i].name.c_str());
+    }
+    Log("WarmShaderCache: exit %s - %zu shaders, %d already cached, %d compiled (%.1f s summed), %.1f s, into %s", failed ? "FAIL" : "ok",
+        jobs.size(), g_shaderCache.hits.load(), g_shaderCache.compiled.load(), g_shaderCache.compileMicros.load() * 1e-6,
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(), PathText(dir).c_str());
+    return failed == 0;
 }
 
 // upload buffer (float[W*H]) -> nearBuf
@@ -8409,6 +8828,7 @@ int wmain(int argc, wchar_t** wideArgv)
     static App app;
     if (!ParseArgs(argc, argv.data(), &app.opt)) return 1;
     if (app.opt.listGpus) return ListGpus();
+    if (!app.opt.warmShaderCache.empty()) return WarmShaderCache(app.opt.warmShaderCache) ? 0 : 1;
     app.testDepthFailuresLeft = app.opt.testDepthFailures;
     app.foregroundEnabled = app.opt.foreground && app.opt.doWarp;
     app.steadyEnabled = app.opt.steady;
@@ -8482,8 +8902,13 @@ int wmain(int argc, wchar_t** wideArgv)
         if (!InitSource(app)) break;
         // The self-test needs the headset's GPU (from the runtime) but not a VR
         // session, so it also runs while the headset is asleep or disconnected.
-        if (!app.opt.selfTestOnly && !InitXrSession(app)) break;
+        // Shaders before the session: on a cold cache the room's shaders take 10-60 s
+        // to compile, and a created session that submits no frames for that long makes
+        // SteamVR show its dashboard and hold the session SYNCHRONIZED. InitShaders
+        // needs only the device and the presented size (InitSource), not the session.
         if (!InitShaders(app)) break;
+        if (!app.opt.selfTestOnly) Log("main: shaders ready - creating the OpenXR session");
+        if (!app.opt.selfTestOnly && !InitXrSession(app)) break;
 
         if (!SelfTest(app)) { Log("main: GPU shaders do not match the CPU reference - not presenting"); break; }
         if (app.opt.selfTestOnly)

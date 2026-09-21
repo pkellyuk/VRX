@@ -74,4 +74,18 @@ if errorlevel 1 (
 copy /y "%ORTLIB%\onnxruntime.dll" "%OUT%\" >nul
 for /d %%D in ("%USERPROFILE%\.nuget\packages\microsoft.ai.directml\*") do set DMLPKG2=%%D
 if defined DMLPKG2 if exist "!DMLPKG2!\runtimes\win-x64\native\DirectML.dll" copy /y "!DMLPKG2!\runtimes\win-x64\native\DirectML.dll" "%OUT%\" >nul
+rem The Windows SDK's redistributable shader compiler, next to the exe so that the
+rem engine loads it instead of System32's (which changes with Windows updates): the
+rem shipped shader cache is keyed by the compiler's version (xrapp5.cpp, CompileCs).
+set "D3DCOMPILER=%WindowsSdkDir%Redist\D3D\x64\d3dcompiler_47.dll"
+if not exist "%D3DCOMPILER%" set "D3DCOMPILER=%ProgramFiles(x86)%\Windows Kits\10\Redist\D3D\x64\d3dcompiler_47.dll"
+if not exist "%D3DCOMPILER%" (
+  echo BUILD FAILED ^(Windows SDK d3dcompiler_47.dll redistributable not found^)
+  exit /b 1
+)
+copy /y "%D3DCOMPILER%" "%OUT%\" >nul
+if errorlevel 1 (
+  echo BUILD FAILED ^(cannot copy d3dcompiler_47.dll^)
+  exit /b 1
+)
 echo BUILD OK: %OUT%\xrapp3.exe
