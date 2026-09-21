@@ -19,6 +19,16 @@ public partial class MainWindow : Window
     private string lastExecutable = "";
     private string sessionError = "", lastEngineError = "";
     private readonly bool smoke;
+    // Auto-attach (app-wide, AutoAttach.cs): polls the window in front twice a second.
+    private readonly DispatcherTimer autoTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    private readonly AutoAttachMachine autoMachine = new();
+    private readonly System.Diagnostics.Stopwatch autoClock = System.Diagnostics.Stopwatch.StartNew();
+    private AppSettings appSettings = new();
+    private AutoAttachOverlay? autoOverlay;
+    private ForegroundSnapshot? autoTarget;
+    private nint sessionWindow;                    // the window of the running session, for "spent"
+    private string autoSavedStatus = "", autoStatus = "";
+    private bool autoSettingsLoading;
     private sealed record Shortcut(string Name, int Code);
     public MainWindow(bool smokeTest)
     {
@@ -57,6 +67,10 @@ public partial class MainWindow : Window
         });
         engine.Exited += code => Dispatcher.InvokeAsync(() =>
         {
+            // No loops: the session's window is not auto-attached again until it has left
+            // the foreground and come back.
+            autoMachine.MarkSpent(sessionWindow);
+            sessionWindow = 0;
             sessionError = code == 0 ? "" : "VRX could not continue. " +
                 (lastEngineError.Length > 0 ? lastEngineError[(lastEngineError.LastIndexOf(']') + 1)..].Trim() : "See Session details below.");
             UpdateButtons(); RefreshApps();
@@ -65,6 +79,10 @@ public partial class MainWindow : Window
         });
         try { string last = Path.Combine(store.Root, "last-game.txt"); if (File.Exists(last)) lastExecutable = File.ReadAllText(last); }
         catch (IOException) { }
+        appSettings = store.LoadAppSettings();
+        PutAppSettings();
+        autoTimer.Tick += (_, _) => AutoAttachTick();
+        Closed += (_, _) => { autoTimer.Stop(); autoOverlay?.Close(); autoOverlay = null; };
         ready = true;
         Loaded += async (_, _) =>
         {
@@ -79,7 +97,7 @@ public partial class MainWindow : Window
                     Application.Current.Shutdown(1);
                 }
             }
-            else { refreshTimer.Start(); await LoadGpusAsync(); }
+            else { refreshTimer.Start(); UpdateAutoTimer(); await LoadGpusAsync(); }
         };
     }
     private void RefreshApps()
@@ -112,7 +130,9 @@ public partial class MainWindow : Window
     }
     private void LoadSelected()
     {
-        SaveAndApply();
+        // Only a pending change is saved: just looking at a game must not create a profile
+        // for it (auto-attach treats a game with saved settings as one set up before).
+        if (saveTimer.IsEnabled) SaveAndApply();
         profile = null; SettingsPanel.IsEnabled = false;
         var app = AppList.SelectedItem as RunningApp;
         WindowList.ItemsSource = app?.Windows;
@@ -444,12 +464,181 @@ public partial class MainWindow : Window
         RecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
         AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = !running;
     }
-    private void StartClick(object sender, RoutedEventArgs e)
+    private void StartClick(object sender, RoutedEventArgs e) => StartSession();
+    // Attach / Play, for the button and for auto-attach alike. True when the engine started.
+    private bool StartSession()
     {
-        if (!SaveAndApply() || AppList.SelectedItem is not RunningApp app || WindowList.SelectedItem is not GameWindow window) return;
-        try { sessionError = lastEngineError = ""; LogBox.Clear(); engine.Start(app, window, profile!, store.Root); Status.Text = "Starting VR · " + app.Name; }
-        catch (Exception ex) { sessionError = ex.Message; Status.Text = sessionError; }
+        if (!SaveAndApply() || AppList.SelectedItem is not RunningApp app || WindowList.SelectedItem is not GameWindow window) return false;
+        bool started = false;
+        try
+        {
+            sessionError = lastEngineError = ""; LogBox.Clear();
+            engine.Start(app, window, profile!, store.Root);
+            sessionWindow = window.Handle; started = true;
+            Status.Text = "Starting VR · " + app.Name;
+        }
+        catch (Exception ex)
+        {
+            sessionError = ex.Message; Status.Text = sessionError;
+            autoMachine.MarkSpent(window.Handle);      // not retried until it leaves the foreground and comes back
+        }
         UpdateButtons();
+        return started;
+    }
+
+    // ---- Auto-attach -------------------------------------------------------------------
+
+    private void PutAppSettings()
+    {
+        autoSettingsLoading = true;
+        AutoAttachCheck.IsChecked = appSettings.AutoAttach;
+        AutoAttachSlider.Value = AppSettings.ClampSeconds(appSettings.AutoAttachSeconds);
+        AutoAttachValue.Text = $"{(int)AutoAttachSlider.Value} s";
+        autoMachine.Seconds = appSettings.AutoAttachSeconds;
+        autoSettingsLoading = false;
+    }
+
+    private void SaveAppSettingsFromUi()
+    {
+        if (!ready || autoSettingsLoading || AutoAttachCheck == null || AutoAttachSlider == null || AutoAttachValue == null) return;
+        appSettings.AutoAttach = AutoAttachCheck.IsChecked == true;
+        appSettings.AutoAttachSeconds = AppSettings.ClampSeconds((int)Math.Round(AutoAttachSlider.Value));
+        AutoAttachValue.Text = $"{appSettings.AutoAttachSeconds} s";
+        autoMachine.Seconds = appSettings.AutoAttachSeconds;
+        System.Diagnostics.Debug.WriteLine($"[AutoAttach] settings: on {appSettings.AutoAttach}, {appSettings.AutoAttachSeconds} s");
+        try { store.SaveAppSettings(appSettings); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Status.Text = "Could not save the auto-attach setting: " + ex.Message; }
+        UpdateAutoTimer();
+    }
+
+    private void AutoAttachChanged(object sender, RoutedEventArgs e) => SaveAppSettingsFromUi();
+    private void AutoAttachSecondsChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => SaveAppSettingsFromUi();
+
+    // Polls only while auto-attach is on. Turning it off cancels a countdown. The smoke
+    // test never polls (it must not touch real windows or attach).
+    private void UpdateAutoTimer()
+    {
+        if (smoke || !ready) return;
+        if (appSettings.AutoAttach)
+        {
+            if (!autoTimer.IsEnabled) autoTimer.Start();
+            return;
+        }
+        autoTimer.Stop();
+        ApplyAutoAction(autoMachine.Step(new AutoAttachInput(false, engine.Running || stopping, 0, false, false, autoClock.Elapsed.TotalSeconds)), null);
+    }
+
+    private void AutoAttachTick()
+    {
+        if (!ready || closing || smoke) return;
+        ForegroundSnapshot? snapshot = null;
+        try { snapshot = ForegroundWindow.Read(store.HasProfile); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AutoAttach] could not read the window in front: " + ex.Message); }
+        bool qualifies = AutoAttachRules.Evaluate(snapshot, out string reason);
+        var input = new AutoAttachInput(appSettings.AutoAttach, engine.Running || stopping, snapshot?.Handle ?? 0,
+            snapshot?.IsVrx == true, qualifies, autoClock.Elapsed.TotalSeconds);
+        var action = autoMachine.Step(input);
+        if (action != AutoAttachAction.None)
+            System.Diagnostics.Debug.WriteLine($"[AutoAttach] {action}: {snapshot?.ProcessName} '{snapshot?.Title}' ({reason}), {autoMachine.Remaining} s left");
+        ApplyAutoAction(action, snapshot);
+    }
+
+    // "Attaching VRX to <game> in 5 - switch window to cancel"
+    public static string CountdownText(string? title, string? processName, int seconds)
+    {
+        string name = !string.IsNullOrWhiteSpace(title) ? title.Trim() : AutoAttachRules.BaseName(processName);
+        if (name.Length == 0) name = "the game";
+        if (name.Length > 60) name = name[..57] + "...";
+        return $"Attaching VRX to {name} in {Math.Max(0, seconds)} - switch window to cancel";
+    }
+
+    private void ApplyAutoAction(AutoAttachAction action, ForegroundSnapshot? snapshot)
+    {
+        switch (action)
+        {
+            case AutoAttachAction.Countdown:
+            {
+                if (snapshot == null) return;
+                if (autoTarget == null) autoSavedStatus = Status.Text;
+                autoTarget = snapshot;
+                autoStatus = CountdownText(snapshot.Title, snapshot.ProcessName, autoMachine.Remaining);
+                Status.Text = autoStatus;
+                try
+                {
+                    autoOverlay ??= new AutoAttachOverlay();
+                    autoOverlay.ShowOn(snapshot.Monitor, autoStatus);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    System.Diagnostics.Debug.WriteLine("[AutoAttach] overlay failed: " + ex.Message);
+                }
+                return;
+            }
+            case AutoAttachAction.Cancel:
+            {
+                HideAutoOverlay();
+                if (Status.Text == autoStatus) Status.Text = autoSavedStatus;
+                autoTarget = null;
+                autoStatus = "";
+                return;
+            }
+            case AutoAttachAction.Attach:
+            {
+                HideAutoOverlay();
+                var target = snapshot ?? autoTarget;
+                autoTarget = null;
+                autoStatus = "";
+                AutoAttachNow(target);
+                return;
+            }
+            default:
+                return;
+        }
+    }
+
+    private void HideAutoOverlay()
+    {
+        if (autoOverlay == null || !autoOverlay.IsVisible) return;
+        autoOverlay.Hide();
+    }
+
+    // At zero: pick the game and its window exactly as a manual pick would (its own profile,
+    // or the base settings for a new game), then start it through Attach / Play's path.
+    private void AutoAttachNow(ForegroundSnapshot? target)
+    {
+        System.Diagnostics.Debug.WriteLine($"[AutoAttach] attach to {target?.ProcessName} pid {target?.Pid} window {target?.Handle:X}");
+        if (target == null || target.Handle == 0) return;
+        if (engine.Running || stopping) return;
+        List<RunningApp> list;
+        try { list = RunningApps.List(ShowAll.IsChecked == true); }
+        catch (Exception ex)
+        {
+            Status.Text = "Auto-attach could not list applications: " + ex.Message;
+            autoMachine.MarkSpent(target.Handle);
+            return;
+        }
+        var app = list.FirstOrDefault(a => a.Pid == target.Pid && a.CanAttach && a.Windows.Any(w => w.Handle == target.Handle));
+        if (app == null)
+        {
+            Status.Text = $"Auto-attach: {AutoAttachRules.BaseName(target.ProcessName)} is no longer available";
+            autoMachine.MarkSpent(target.Handle);
+            return;
+        }
+        refreshing = true;
+        AppList.ItemsSource = list;
+        AppList.SelectedItem = app;
+        refreshing = false;
+        sessionError = "";
+        LoadSelected();                                 // as AppSelected does for a manual pick
+        WindowList.SelectedItem = app.Windows.First(w => w.Handle == target.Handle);
+        if (profile == null || !StartSession())
+        {
+            System.Diagnostics.Debug.WriteLine($"[AutoAttach] attach to {app.Name} failed: {Status.Text}");
+            autoMachine.MarkSpent(target.Handle);
+            return;
+        }
+        Status.Text = "Auto-attached · starting VR · " + app.Name;
+        System.Diagnostics.Debug.WriteLine($"[AutoAttach] started {app.Name}");
     }
     private async void StopClick(object sender, RoutedEventArgs e) => await StopSession();
     private async Task StopSession()
@@ -523,10 +712,11 @@ public partial class MainWindow : Window
     {
         if (closing) return;
         SaveAndApply(); refreshTimer.Stop(); saveTimer.Stop();
+        autoTimer.Stop(); HideAutoOverlay();
         if (!engine.Running) return;
         e.Cancel = true;
         await StopSession();
-        if (engine.Running) { Status.Text = "VRX is still stopping. Close again after it stops."; return; }
+        if (engine.Running) { Status.Text = "VRX is still stopping. Close again after it stops."; UpdateAutoTimer(); return; }
         closing = true; Close();
     }
     private async Task SmokeTest()
@@ -823,6 +1013,8 @@ public partial class MainWindow : Window
             throw new Exception($"Apply to all must carry on past a locked profile (applied {appliedLocked}, skipped {skippedLocked}, failed {failedLocked})");
         if (ApplyAllButton == null) throw new Exception("The Apply to all button is missing");
 
+        SmokeTestAutoAttach(output, sample, one);
+
         PutProfile(one);
         PathLabel.Text = one.ExecutablePath; Status.Text = "Preview · saved settings are isolated by executable path";
         UpdateButtons();
@@ -848,6 +1040,180 @@ public partial class MainWindow : Window
         if (!SaveAndApply() || Status.Text != sessionError) throw new Exception("Saving hid the session error");
         RefreshApps();
         if (Status.Text != sessionError) throw new Exception("Refreshing hid the session error");
-        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh. No VR session started.");
+        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach). No VR session started.");
+    }
+
+    // Auto-attach: the app settings file, the rules and the state machine, all on plain data.
+    // Nothing here reads or drives a real window, and nothing attaches.
+    private void SmokeTestAutoAttach(string output, RunningApp sample, Profile one)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(sample);
+        ArgumentNullException.ThrowIfNull(one);
+
+        // The settings file: default off / 5 s, round-trip, clamping, missing or corrupt file.
+        var appStore = new ProfileStore(Path.Combine(output, "app-settings"));
+        if (Directory.Exists(appStore.Root)) Directory.Delete(appStore.Root, true);
+        var defaults = appStore.LoadAppSettings();
+        if (defaults.AutoAttach || defaults.AutoAttachSeconds != 5) throw new Exception("Auto-attach must default off, with a 5 s countdown");
+        if (Path.GetFileName(appStore.AppSettingsFile) != "app-settings.json" || Path.GetDirectoryName(appStore.AppSettingsFile) != appStore.Root)
+            throw new Exception("App settings must live in app-settings.json in the store root");
+        appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 12 });
+        var back = appStore.LoadAppSettings();
+        if (!back.AutoAttach || back.AutoAttachSeconds != 12) throw new Exception("App settings did not round-trip");
+        appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 99 });
+        if (appStore.LoadAppSettings().AutoAttachSeconds != 30) throw new Exception("Saving must clamp the countdown to 30 s");
+        File.WriteAllText(appStore.AppSettingsFile, "{\"AutoAttach\":true,\"AutoAttachSeconds\":1}");
+        if (appStore.LoadAppSettings().AutoAttachSeconds != 3 || !appStore.LoadAppSettings().AutoAttach) throw new Exception("Loading must clamp the countdown to 3 s");
+        File.WriteAllText(appStore.AppSettingsFile, "{ not json");
+        var corrupt = appStore.LoadAppSettings();
+        if (corrupt.AutoAttach || corrupt.AutoAttachSeconds != 5) throw new Exception("A corrupt app settings file must load as the defaults");
+        File.WriteAllText(appStore.AppSettingsFile, "null");
+        if (appStore.LoadAppSettings().AutoAttach) throw new Exception("A null app settings file must load as the defaults");
+        File.WriteAllText(appStore.AppSettingsFile, "{\"AutoAttach\":true}");
+        if (appStore.LoadAppSettings().AutoAttachSeconds != 5) throw new Exception("A missing countdown must load as 5 s");
+        if (appStore.HasBase) throw new Exception("App settings must not be the base settings");
+        if (appStore.HasProfile("") || appStore.HasProfile(Path.Combine(output, "nobody", "game.exe"))) throw new Exception("HasProfile without a profile");
+        appStore.Save(new Profile { ExecutablePath = Path.Combine(output, "somebody", "game.exe") });
+        if (!appStore.HasProfile(Path.Combine(output, "somebody", "game.exe"))) throw new Exception("HasProfile with a profile");
+
+        // Qualifies: full screen / borderless, or a saved non-browser game in a window.
+        var mon = new ScreenRect(0, 0, 1920, 1080);
+        var mon2 = new ScreenRect(1920, -200, 4480, 1240);
+        var windowed = new ScreenRect(100, 100, 1380, 820);
+        var windowedClient = new ScreenRect(108, 131, 1372, 812);
+        if (!AutoAttachRules.Qualifies("Game.exe", false, mon, mon, mon, true, false)) throw new Exception("A full-screen game must qualify");
+        if (!AutoAttachRules.Qualifies("game", false, mon2, mon2, mon2, true, false)) throw new Exception("A borderless game on a second monitor must qualify");
+        if (!AutoAttachRules.Qualifies("game.exe", false, new ScreenRect(-1, -1, 1921, 1081), new ScreenRect(0, 0, 1920, 1080), mon, true, false))
+            throw new Exception("A borderless window slightly larger than its monitor must qualify");
+        if (!AutoAttachRules.Qualifies("game.exe", false, new ScreenRect(-8, -31, 1928, 1088), new ScreenRect(0, 0, 1920, 1080), mon, true, false))
+            throw new Exception("A window whose client area covers the monitor must qualify");
+        if (AutoAttachRules.Qualifies("game.exe", false, windowed, windowedClient, mon, true, false)) throw new Exception("A windowed game with no profile must not qualify");
+        if (!AutoAttachRules.Qualifies("game.exe", true, windowed, windowedClient, mon, true, false, false, out string savedReason) || savedReason != "saved profile")
+            throw new Exception("A windowed game with a saved profile must qualify");
+        foreach (string browser in new[] { "chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe", "iexplore.exe" })
+        {
+            if (AutoAttachRules.Qualifies(browser, true, windowed, windowedClient, mon, true, false)) throw new Exception($"A windowed browser ({browser}) with a profile must not qualify");
+            if (!AutoAttachRules.Qualifies(browser, false, mon, mon, mon, true, false)) throw new Exception($"A full-screen browser ({browser}) must qualify");
+        }
+        foreach (string excluded in new[] { "VRX.Desktop.exe", "xrplayer.exe", "xrapp5.exe", "steam.exe", "steamwebhelper.exe", "vrmonitor.exe", "vrserver.exe",
+            "vrcompositor.exe", "vrdashboard.exe", "vrwebhelper.exe", "vrstartup.exe", "explorer.exe", @"C:\Windows\explorer.exe", "ShellExperienceHost.exe",
+            "StartMenuExperienceHost.exe", "SearchHost.exe", "WindowsTerminal.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "conhost.exe", "", "  " })
+        {
+            if (AutoAttachRules.Qualifies(excluded, true, mon, mon, mon, true, false)) throw new Exception($"An excluded process ({excluded}) must never qualify");
+        }
+        if (AutoAttachRules.Qualifies(null, true, mon, mon, mon, true, false)) throw new Exception("No process name must not qualify");
+        if (AutoAttachRules.Qualifies("game.exe", true, mon, mon, mon, true, true)) throw new Exception("A minimized window must not qualify");
+        if (AutoAttachRules.Qualifies("game.exe", true, mon, mon, mon, false, false)) throw new Exception("An invisible window must not qualify");
+        // A normal captioned window that is maximized is not "full screen", even when it
+        // reaches over an auto-hidden taskbar; its client area below the caption is < 98 %.
+        var maxWindow = new ScreenRect(-8, -8, 1928, 1088);
+        var maxClient = new ScreenRect(0, 31, 1920, 1080);
+        if (AutoAttachRules.Qualifies("notepad.exe", false, maxWindow, maxClient, mon, true, false, true)) throw new Exception("A maximized captioned window must not count as full screen");
+        if (AutoAttachRules.Qualifies("notepad.exe", false, new ScreenRect(0, 0, 1920, 1040), new ScreenRect(0, 31, 1920, 1040), mon, true, false))
+            throw new Exception("A window above the taskbar must not count as full screen");
+        if (!AutoAttachRules.Qualifies("game.exe", true, maxWindow, maxClient, mon, true, false, true)) throw new Exception("A maximized saved game must qualify");
+        if (AutoAttachRules.CoversMonitor(mon, default) || AutoAttachRules.CoversMonitor(default, mon) || AutoAttachRules.CoversMonitor(mon2, mon))
+            throw new Exception("CoversMonitor edge cases");
+        var good = new ForegroundSnapshot(0x100, 4321, @"C:\Games\game.exe", "The Game", false, true, true, true, false, false, mon, mon, mon, false);
+        if (!AutoAttachRules.Evaluate(good, out _)) throw new Exception("A full-screen game in front must qualify");
+        if (AutoAttachRules.Evaluate(null, out _) || AutoAttachRules.Evaluate(good with { Handle = 0 }, out _) ||
+            AutoAttachRules.Evaluate(good with { IsVrx = true }, out string vrxReason) || vrxReason != "VRX is in front" ||
+            AutoAttachRules.Evaluate(good with { TopLevel = false }, out _) || AutoAttachRules.Evaluate(good with { Offerable = false }, out _) ||
+            AutoAttachRules.Evaluate(good with { Minimized = true }, out _) || AutoAttachRules.Evaluate(good with { FullPath = @"C:\Program Files\Steam\steam.exe" }, out _))
+            throw new Exception("Evaluate must refuse no window, VRX, child windows, windows RunningApps would not offer, minimized and excluded");
+        if (!RunningApps.IsExcludedExecutable("XRPLAYER.EXE") || RunningApps.IsExcludedExecutable("game.exe") || RunningApps.IsExcludedExecutable(null) ||
+            !RunningApps.IsCaptureWindow(true, 10, 10, "UnityWndClass") || RunningApps.IsCaptureWindow(true, 10, 10, "ConsoleWindowClass") ||
+            RunningApps.IsCaptureWindow(false, 10, 10, "X") || RunningApps.IsCaptureWindow(true, 0, 10, "X"))
+            throw new Exception("RunningApps' shared exclusions");
+
+        // The state machine: idle -> counting -> attach -> attached -> spent.
+        static AutoAttachInput At(nint window, double now, bool qualifies = true, bool vrx = false, bool session = false, bool enabled = true) =>
+            new(enabled, session, window, vrx, qualifies, now);
+        var m = new AutoAttachMachine { Seconds = 5 };
+        void Expect(AutoAttachAction got, AutoAttachAction wanted, AutoAttachPhase phase, string what)
+        {
+            if (got != wanted || m.Phase != phase) throw new Exception($"Auto-attach state machine, {what}: got {got}/{m.Phase}, wanted {wanted}/{phase}");
+        }
+        Expect(m.Step(At(0x100, 0, enabled: false)), AutoAttachAction.None, AutoAttachPhase.Idle, "off");
+        Expect(m.Step(At(0x100, 0)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "start");
+        if (m.Target != 0x100 || m.Remaining != 5) throw new Exception("The countdown must start at 5 for the window in front");
+        Expect(m.Step(At(0x100, 1.2)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "1.2 s");
+        if (m.Remaining != 4) throw new Exception($"After 1.2 s the countdown must show 4 (shows {m.Remaining})");
+        Expect(m.Step(At(0x100, 4.9)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "4.9 s");
+        if (m.Remaining != 1) throw new Exception("Just before zero the countdown must show 1");
+        Expect(m.Step(At(0x100, 5.0)), AutoAttachAction.Attach, AutoAttachPhase.Attached, "zero");
+        Expect(m.Step(At(0x100, 6, session: true)), AutoAttachAction.None, AutoAttachPhase.Attached, "session running");
+        m.MarkSpent(0x100);                                    // the session ended
+        Expect(m.Step(At(0x100, 7)), AutoAttachAction.None, AutoAttachPhase.Spent, "spent, still in front");
+        Expect(m.Step(At(0x999, 8, qualifies: false, vrx: true)), AutoAttachAction.None, AutoAttachPhase.Spent, "VRX in front");
+        Expect(m.Step(At(0, 8.5, qualifies: false)), AutoAttachAction.None, AutoAttachPhase.Spent, "no window in front");
+        Expect(m.Step(At(0x100, 9)), AutoAttachAction.None, AutoAttachPhase.Spent, "back from VRX: still spent");
+        Expect(m.Step(At(0x200, 10, qualifies: false)), AutoAttachAction.None, AutoAttachPhase.Idle, "another window in front");
+        Expect(m.Step(At(0x100, 11)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "refocused");
+        Expect(m.Step(At(0x200, 12, qualifies: false)), AutoAttachAction.Cancel, AutoAttachPhase.Idle, "focus change");
+        if (m.Target != 0) throw new Exception("A cancelled countdown must forget its window");
+        Expect(m.Step(At(0x100, 13)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "again");
+        Expect(m.Step(At(0x300, 14)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "another game in front");
+        if (m.Target != 0x300 || m.Remaining != 5) throw new Exception("Switching to another qualifying game must restart the countdown for it");
+        Expect(m.Step(At(0x300, 15, qualifies: false)), AutoAttachAction.Cancel, AutoAttachPhase.Idle, "minimized / closed / stops qualifying");
+        Expect(m.Step(At(0x400, 16, vrx: true)), AutoAttachAction.None, AutoAttachPhase.Idle, "VRX in front never counts");
+        Expect(m.Step(At(0x100, 17)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "counting before VRX comes to front");
+        Expect(m.Step(At(0x400, 17.5, vrx: true)), AutoAttachAction.Cancel, AutoAttachPhase.Idle, "VRX to front cancels");
+        Expect(m.Step(At(0x100, 18)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "counting before turning off");
+        Expect(m.Step(At(0x100, 19, enabled: false)), AutoAttachAction.Cancel, AutoAttachPhase.Idle, "turned off");
+        Expect(m.Step(At(0x100, 20)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "counting before a manual attach");
+        Expect(m.Step(At(0x100, 21, session: true)), AutoAttachAction.Cancel, AutoAttachPhase.Attached, "a manual attach");
+        Expect(m.Step(At(0x100, 22)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "counting before a failed attach");
+        Expect(m.Step(At(0x100, 27)), AutoAttachAction.Attach, AutoAttachPhase.Attached, "attach that fails");
+        m.MarkSpent(0x100);
+        Expect(m.Step(At(0x100, 28)), AutoAttachAction.None, AutoAttachPhase.Spent, "no retry after a failed attach");
+        Expect(m.Step(At(0x100, 60)), AutoAttachAction.None, AutoAttachPhase.Spent, "no retry later either");
+        Expect(m.Step(At(0x500, 61)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "another game while one is spent");
+        Expect(m.Step(At(0x100, 62)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "the failed one after it left the foreground");
+        m.MarkSpent(0);
+        if (m.Phase != AutoAttachPhase.Counting) throw new Exception("MarkSpent(0) must be ignored");
+        m.Seconds = 1;
+        if (m.Seconds != 3) throw new Exception("The countdown must be at least 3 s");
+        m.Seconds = 100;
+        if (m.Seconds != 30) throw new Exception("The countdown must be at most 30 s");
+
+        if (CountdownText("Half-Life 2", "hl2.exe", 5) != "Attaching VRX to Half-Life 2 in 5 - switch window to cancel" ||
+            CountdownText("", "hl2.exe", 3) != "Attaching VRX to hl2 in 3 - switch window to cancel" || !CountdownText(null, null, 1).Contains("the game"))
+            throw new Exception("Countdown text");
+
+        // The controls: on/off and the seconds, saved app-wide; the smoke test never polls.
+        var shown = store.LoadAppSettings();
+        if (AutoAttachCheck.IsChecked != shown.AutoAttach || (int)AutoAttachSlider.Value != shown.AutoAttachSeconds || AutoAttachValue.Text != $"{shown.AutoAttachSeconds} s")
+            throw new Exception("The auto-attach controls must show the saved app settings");
+        if (AutoAttachPanel.ToolTip is not string tip || !tip.Contains("full screen") || !tip.Contains("cancel"))
+            throw new Exception("The auto-attach controls need their explanation");
+        AutoAttachCheck.IsChecked = true;
+        AutoAttachSlider.Value = 12;
+        var saved = store.LoadAppSettings();
+        if (!saved.AutoAttach || saved.AutoAttachSeconds != 12 || AutoAttachValue.Text != "12 s" || autoMachine.Seconds != 12)
+            throw new Exception("The auto-attach controls are not saved");
+        if (autoTimer.IsEnabled) throw new Exception("The smoke test must never poll the window in front");
+        AutoAttachSlider.Value = 5;
+        AutoAttachCheck.IsChecked = false;
+        if (store.LoadAppSettings().AutoAttach || store.LoadAppSettings().AutoAttachSeconds != 5) throw new Exception("Turning auto-attach off is not saved");
+
+        // Just looking at games in the list must not save profiles for them (a saved profile
+        // makes a windowed game auto-attachable); changing a setting still saves.
+        var look1 = new RunningApp(2001, "look1.exe", Path.Combine(output, "unsaved", "look1.exe"), [new GameWindow(51, "Look 1")], null);
+        var look2 = new RunningApp(2002, "look2.exe", Path.Combine(output, "unsaved", "look2.exe"), [new GameWindow(52, "Look 2")], null);
+        foreach (var look in new[] { look1, look2 })
+            if (File.Exists(store.FileFor(look.FullPath))) File.Delete(store.FileFor(look.FullPath));
+        refreshing = true; AppList.ItemsSource = new[] { look1, look2 }; refreshing = false;
+        AppList.SelectedItem = look1;
+        AppList.SelectedItem = look2;
+        AppList.SelectedItem = look1;
+        if (store.HasProfile(look1.FullPath) || store.HasProfile(look2.FullPath))
+            throw new Exception("Selecting a game in the list must not save a profile for it");
+        WidthSlider.Value = 6.5;
+        if (!SaveAndApply() || !store.HasProfile(look1.FullPath) || store.HasProfile(look2.FullPath))
+            throw new Exception("Changing a setting must save the game's profile");
+        refreshing = true; AppList.ItemsSource = new[] { sample }; AppList.SelectedItem = sample; refreshing = false;
+        profile = one; PutProfile(one); WindowList.ItemsSource = sample.Windows; WindowList.SelectedIndex = 0;
     }
 }

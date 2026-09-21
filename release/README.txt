@@ -62,6 +62,16 @@ count the screen's size in metres.
 "Apply to all" copies the settings shown to every game already set up, after an
 OK/Cancel warning. Each game keeps its own path and window.
 
+"Auto-attach to the game in front" (next to Attach / Play, off by default, for all
+games) counts down - 5 seconds unless you change it (3 to 30) - and then attaches
+to the game in front, just as if you had picked it and pressed Attach / Play. A
+window counts when it fills its screen (full screen or borderless), or when it is
+a game you have set up before (web browsers only count full screen). Steam,
+SteamVR, Windows itself and VRX never count. A small banner at the top of the
+game's screen shows the countdown without taking the focus; switch to another
+window to cancel. After you stop VR, or if attaching fails, VRX leaves that window
+alone until you switch away from it and back.
+
 "Make base settings" saves the settings shown as the starting point for games you
 have not set up yet; games already set up keep their own. "Reset this profile"
 returns a game to those base settings, or to VRX's defaults if none are saved.

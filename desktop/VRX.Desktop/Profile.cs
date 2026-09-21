@@ -133,6 +133,42 @@ public sealed class ProfileStore(string root)
         catch (Exception ex) when (ex is IOException or JsonException) { }
         return new Profile();
     }
+    // App-wide settings (auto-attach), not per game.
+    public string AppSettingsFile => Path.Combine(Root, "app-settings.json");
+
+    // The saved app settings, or the defaults when the file is missing or unreadable.
+    // Out-of-range seconds are clamped.
+    public AppSettings LoadAppSettings()
+    {
+        try
+        {
+            if (!File.Exists(AppSettingsFile)) return new AppSettings();
+            var saved = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(AppSettingsFile));
+            if (saved == null) return new AppSettings();
+            saved.AutoAttachSeconds = AppSettings.ClampSeconds(saved.AutoAttachSeconds);
+            return saved;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppSettings] could not read {AppSettingsFile}: {ex.Message}; using defaults");
+            return new AppSettings();
+        }
+    }
+
+    public void SaveAppSettings(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var copy = new AppSettings { AutoAttach = settings.AutoAttach, AutoAttachSeconds = AppSettings.ClampSeconds(settings.AutoAttachSeconds) };
+        AtomicWrite(AppSettingsFile, JsonSerializer.Serialize(copy, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    // True when this executable has its own saved settings (the game has been set up).
+    public bool HasProfile(string executable)
+    {
+        if (string.IsNullOrWhiteSpace(executable)) return false;
+        return File.Exists(FileFor(executable));
+    }
+
     // Every game that has its own saved settings.
     public IReadOnlyList<string> SavedProfileFiles()
     {

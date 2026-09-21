@@ -5,6 +5,11 @@
   <Grid Margin="0,0,0,22">
    <StackPanel><StackPanel Orientation="Horizontal"><TextBlock Text="VRX" FontSize="32" FontWeight="Bold"/><TextBlock x:Name="VersionText" FontSize="15" Foreground="#76DCC6" VerticalAlignment="Bottom" Margin="10,0,0,6"/></StackPanel><TextBlock Text="Choose a game. Set up your screen." Foreground="#A5B4CC" Margin="0,3,0,0"/></StackPanel>
    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+    <StackPanel x:Name="AutoAttachPanel" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0" ToolTip="When a game is in front, VRX counts down and then attaches to it, exactly as if you had picked it and pressed Attach / Play. A window counts when it is full screen or borderless, or when it is a game you have set up before (it has saved settings; web browsers only count full screen). Steam, SteamVR, Windows itself, terminals and VRX are never attached. Switch to another window during the countdown to cancel it. After you stop VR, or if attaching fails, that window is left alone until you switch away from it and back. The countdown never starts while VRX itself is in front.">
+     <CheckBox x:Name="AutoAttachCheck" Content="Auto-attach to the game in front" VerticalAlignment="Center" Margin="0" Checked="AutoAttachChanged" Unchecked="AutoAttachChanged"/>
+     <Slider x:Name="AutoAttachSlider" Width="80" Minimum="3" Maximum="30" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" Margin="10,0,6,0" ValueChanged="AutoAttachSecondsChanged"/>
+     <TextBlock x:Name="AutoAttachValue" Text="5 s" Width="32" VerticalAlignment="Center" Foreground="#A5B4CC"/>
+    </StackPanel>
     <Button x:Name="StartButton" Content="Attach / Play" Click="StartClick" IsEnabled="False" Background="#76DCC6" FontWeight="SemiBold"/>
     <Button x:Name="StopButton" Content="Stop VR" Click="StopClick" IsEnabled="False"/>
    </StackPanel>
