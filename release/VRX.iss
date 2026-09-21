@@ -7,7 +7,7 @@
 [Setup]
 AppId={{7D3A93E4-2967-4DE9-B66E-DFDA40B744E0}
 AppName=VRX
-AppVersion=1.7.0
+AppVersion=1.7.1
 AppPublisher=VRX
 AppPublisherURL=https://github.com/pkellyuk/VRX
 DefaultDirName={localappdata}\Programs\VRX
@@ -17,7 +17,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
 OutputDir={#Artifacts}
-OutputBaseFilename=VRX-Setup-1.7.0
+OutputBaseFilename=VRX-Setup-1.7.1
 SetupIconFile=..\desktop\VRX.Desktop\Assets\vrx.ico
 UninstallDisplayIcon={app}\VRX.Desktop.exe
 Compression=lzma2/fast

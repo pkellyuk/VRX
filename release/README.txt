@@ -1,6 +1,6 @@
-VRX 1.7.0 - Windows x64
+VRX 1.7.1 - Windows x64
 
-Install with VRX-Setup-1.7.0.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.7.1.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -11,10 +11,16 @@ before attaching. SteamVR is the runtime tested for this release; set SteamVR as
 the active OpenXR runtime in its settings. Hardware tested: RTX 3090 (+ RTX 3060
 for depth) and PSVR2.
 
+Steam games: if you start a normal Steam game while SteamVR is running, SteamVR
+also shows it on its own flat screen ("Desktop Game Theatre") in front of VRX's.
+In Steam, right-click the game > Properties > General and untick "Use Desktop Game
+Theatre while SteamVR is active".
+
 Choose the game and window, then Attach / Play. All setup stays on the desktop.
 Settings save per executable under %LOCALAPPDATA%\VRX\profiles. Logs are under
 %LOCALAPPDATA%\VRX\sessions. Stop VR or close the desktop app to end playback.
-Uninstalling preserves those settings and logs.
+Uninstalling preserves those settings and logs; it removes only the compiled
+shader cache under %LOCALAPPDATA%\VRX\shader-cache.
 
 The screen stays in place by default. Equals (=) recenters it; F8 requests closing
 the SteamVR menu. Keys are configurable and also reach the game. Screen size,
@@ -111,7 +117,7 @@ if verifying the download. Do not disable Windows security features.
 
 VRX itself is free software under the GNU General Public License v3.0: see
 LICENSE. Source: https://github.com/pkellyuk/VRX
-Source for this build: https://github.com/pkellyuk/VRX/tree/v1.7.0 (the exact
+Source for this build: https://github.com/pkellyuk/VRX/tree/v1.7.1 (the exact
 commit is in BUILD.txt).
 Third-party components keep their own licenses; notices and license texts are in
 THIRD-PARTY-NOTICES.txt and the licenses folder.
