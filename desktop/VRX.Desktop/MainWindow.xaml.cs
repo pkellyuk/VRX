@@ -1032,6 +1032,25 @@ public partial class MainWindow : Window
         if (store.Load(one.ExecutablePath).AmbilightStrength != 85 || store.Load(one.ExecutablePath).WorldColor != "#000000")
             throw new Exception("Profiles saved before the glow strength and world colour existed must load at 85 % and black");
         if (store.Load(one.ExecutablePath).Room != 0) throw new Exception("Profiles saved before the room existed must load with it off");
+        // A fresh install starts with the room set up; nothing else changes, and base
+        // settings saved before the room existed keep it off.
+        string freshRoot = Path.Combine(output, "newInstall-install");
+        if (Directory.Exists(freshRoot)) Directory.Delete(freshRoot, true);
+        var newInstall = new ProfileStore(freshRoot);
+        var freshStart = newInstall.BaseSettings();
+        if (freshStart.Room != Profile.NewInstallRoom || freshStart.RoomGlass != Profile.NewInstallRoomGlass ||
+            freshStart.RoomReflections != Profile.NewInstallRoomReflections || freshStart.RoomLight != Profile.NewInstallRoomLight ||
+            freshStart.RoomLightColor != Profile.DefaultRoomLightColor)
+            throw new Exception("A newInstall install must start with the room set up (20 / 14 / 15 / 15, warm light)");
+        var plain = new Profile();
+        if (freshStart.FuseModels != plain.FuseModels || freshStart.DepthGpu != plain.DepthGpu || freshStart.ScreenCurve != plain.ScreenCurve ||
+            freshStart.Ambilight != plain.Ambilight || freshStart.DelayToDepth != plain.DelayToDepth || freshStart.Width != plain.Width)
+            throw new Exception("A newInstall install must change only the room's defaults");
+        if (newInstall.Load(Path.Combine(freshRoot, "game.exe")).Room != Profile.NewInstallRoom)
+            throw new Exception("A new game on a newInstall install must start with the room set up");
+        Directory.CreateDirectory(freshRoot);
+        File.WriteAllText(newInstall.BaseFile, "{\"Width\":5.7}");
+        if (newInstall.BaseSettings().Room != 0) throw new Exception("Base settings saved before the room existed must keep the room off");
         if (new Profile { Room = 101 }.Valid() || new Profile { Room = -1 }.Valid() || !new Profile { Room = 100 }.Valid())
             throw new Exception("Room level validation");
         var oldRoom = store.Load(one.ExecutablePath);

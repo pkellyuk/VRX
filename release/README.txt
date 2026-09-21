@@ -56,7 +56,8 @@ wraps round a curved screen. "Ambilight strength" sets its brightness.
 "World colour" (per game, default black, applies live) colours the space around the
 screen: presets or any #RRGGBB.
 
-"Room - walls lit by the screen" (per game, default off, applies live) puts you in a
+"Room - walls lit by the screen" (per game, applies live; a new install starts
+with Room 20%, Glass walls 14%, Reflections 15% and Room light 15%) puts you in a
 dark room whose walls, floor and ceiling are lit by the picture and the ambilight.
 The slider sets how pale the walls are; 30-60% looks like a cinema. The world colour
 becomes the room's house lights and the screen is kept level while the room is on.

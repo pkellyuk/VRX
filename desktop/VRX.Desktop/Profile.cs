@@ -65,6 +65,20 @@ public sealed class Profile
     // 0 off .. 100, and its colour, #RRGGBB (3000 K by default). Glass or reflections above 0
     // also show the frames and the 1 m floor tiles.
     public const string DefaultRoomLightColor = "#FFB46B";
+    // A fresh install's starting settings: VRX's defaults with a room already set up (the
+    // author's own Helldivers tuning, 2026-09-21), so a new player sees the room straight
+    // away. Only settings made from scratch start here: profiles and base settings saved
+    // before these existed keep loading with the room off, because missing JSON fields
+    // fall back to the property defaults, not to this.
+    public const int NewInstallRoom = 20, NewInstallRoomGlass = 14, NewInstallRoomReflections = 15, NewInstallRoomLight = 15;
+    public static Profile NewInstallDefaults() => new Profile
+    {
+        Room = NewInstallRoom,
+        RoomGlass = NewInstallRoomGlass,
+        RoomReflections = NewInstallRoomReflections,
+        RoomLight = NewInstallRoomLight,
+        RoomLightColor = DefaultRoomLightColor,
+    };
     public int RoomGlass { get; set; }
     public int RoomReflections { get; set; }
     public int RoomLight { get; set; }
@@ -131,7 +145,7 @@ public sealed class ProfileStore(string root)
             }
         }
         catch (Exception ex) when (ex is IOException or JsonException) { }
-        return new Profile();
+        return Profile.NewInstallDefaults();
     }
     // App-wide settings (auto-attach), not per game.
     public string AppSettingsFile => Path.Combine(Root, "app-settings.json");
