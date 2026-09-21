@@ -7602,6 +7602,30 @@ static void RunFrameLoop(App& app)
                     app.opt.room = next.room;
                     Log("Room: %d%%", next.room);
                 }
+                if (next.version >= 11)
+                {
+                    // Constants only: the lamp emitter always exists, so none of these rebuilds the room.
+                    if (app.opt.roomGlass != next.roomGlass)
+                    {
+                        app.opt.roomGlass = next.roomGlass;
+                        Log("Room glass: %d%%", next.roomGlass);
+                    }
+                    if (app.opt.roomReflect != next.roomReflect)
+                    {
+                        app.opt.roomReflect = next.roomReflect;
+                        Log("Room reflections: %d%%", next.roomReflect);
+                    }
+                    if (app.opt.roomLight != next.roomLight)
+                    {
+                        app.opt.roomLight = next.roomLight;
+                        Log("Room light: %d%%", next.roomLight);
+                    }
+                    if (app.opt.roomLightColor != (uint32_t)next.roomLightColor)
+                    {
+                        app.opt.roomLightColor = (uint32_t)next.roomLightColor;
+                        Log("Room light colour: #%06X", (unsigned)app.opt.roomLightColor);
+                    }
+                }
                 if (next.version >= 9)
                 {
                     if (app.opt.ambiStrength != next.ambiStrength)
@@ -8595,6 +8619,15 @@ int wmain(int argc, wchar_t** wideArgv)
             app.opt.ambilight = initial.ambilight != 0;
         }
         if (initial.version >= 10) app.opt.room = initial.room;
+        if (initial.version >= 11)
+        {
+            app.opt.roomGlass = initial.roomGlass;
+            app.opt.roomReflect = initial.roomReflect;
+            app.opt.roomLight = initial.roomLight;
+            app.opt.roomLightColor = (uint32_t)initial.roomLightColor;
+            Log("Desktop control: room glass %d%%, reflections %d%%, light %d%% colour #%06X", initial.roomGlass, initial.roomReflect,
+                initial.roomLight, (unsigned)app.opt.roomLightColor);
+        }
         if (initial.version >= 9)
         {
             app.opt.ambiStrength = initial.ambiStrength;

@@ -6,6 +6,17 @@ floor and ceiling are lit by the picture and the ambilight, like a television or
 cinema screen in a dark room. The slider sets how pale the walls are (0 is off; 30-60%
 looks like a cinema).
 
+Under it, v11 adds four controls, all per game, live and off by default, and all
+resting (with their values kept) while the room is off or the screen follows the head:
+**Glass walls** (0 solid .. 100 clear), **Reflections** (0 off .. 100), **Room light**
+(0 off .. 100, a soft panel in the ceiling) and **Light colour** (Warm 2700 K, Soft
+white 3000 K by default, Neutral 4000 K, Daylight 6500 K; a colour from an edited
+profile shows as "Custom (#RRGGBB)" and is kept). They reach the engine in the v11
+snapshot (`desktop_control.h`: the four values after the room level, the colour as
+0xRRGGBB); an older snapshot leaves them off. They only change constants, so moving
+them never rebuilds the room. With Glass or Reflections above 0 the floor gets 1 m
+tiles and the glass its frames, so you can count the screen's size in metres.
+
 ## How the design was chosen
 
 Three designers worked independently, each with a different priority: physical
@@ -55,8 +66,8 @@ Everything is in linear display radiance, the space the compositor blends in.
     picture needed 1,056), so the blocks grow to 16, 32 or 64 texels until everything
     fits: 16 for 4:3, 5:4, 1:1 and 9:16. A 16:9 picture keeps 8 (881 emitters, the
     room light included).
-- **The room light** (v11, `--room-light=N` and `--room-light-colour=RRGGBB` until the
-  desktop has its controls): a 2.4 x 1.6 m panel flush in the ceiling, over the viewer
+- **The room light** (v11: *Room light* and *Light colour* on the desktop,
+  `--room-light=N` and `--room-light-colour=RRGGBB` on the command line): a 2.4 x 1.6 m panel flush in the ceiling, over the viewer
   and centred 0.3 m behind the head, kept 0.3 m clear of the walls and the front (the
   default room's spans x -1.2..1.2 m and z 2.5..4.1 m). It is always the last emitter, so
   turning it up needs no rebuild; its radiance comes from the constants and is 0 while
@@ -71,7 +82,7 @@ Everything is in linear display radiance, the space the compositor blends in.
     pixel's footprint there (from the rays' exact pixel differentials), so its edges
     are soft over about a pixel. The EMIT pass gives the room light its radiance before
     the glow's branch: as a glow block its first row would lie past the glow's last.
-- **Glass walls** (v11, `--room-glass=N` until the desktop has its controls; 0 solid ..
+- **Glass walls** (v11: *Glass walls* on the desktop, `--room-glass=N`; 0 solid ..
   100 clear). Above 0 the finish is on (flag 16): the side walls, the back wall and the
   ceiling become glass panes in 8 cm frames, and the floor gets 1 m tiles. The wall with
   the screen and the floor stay solid.
@@ -96,7 +107,7 @@ Everything is in linear display radiance, the space the compositor blends in.
     lets light out, so the room gets a little darker), the frames' share (about 8.5% of a
     wall, 10% of the ceiling) at rho, the panel's area at rho, the floor's grout. With
     Glass 0 the bounce is v10's to the bit.
-- **Reflections** (v11, `--room-reflect=N` until the desktop has its controls; 0 none ..
+- **Reflections** (v11: *Reflections* on the desktop, `--room-reflect=N`; 0 none ..
   100). Above 0 the finish is on too (flag 16: frames and tiles) and flag 32 adds a coat to
   the panes and the floor. It is a coated-glass look: Schlick's Fresnel with F0 = 0.6 at
   100% (so 0.6 r face on and r at grazing), the floor half as strong and not in its grout.
@@ -153,9 +164,13 @@ depend on where you look from.
 1. **EMIT** (`kRoomHlsl` with `ROOM_EMIT`): one 256-thread group per emitter works out
    its radiance. Pixels are decoded through a 256-entry table and summed in the same
    order as the CPU reference, so the two agree exactly.
-2. **LIGHT**: one thread per lightmap texel gathers all the emitters (881 for a 16:9
+2. **MIRROR** (`kRoomHlsl` with `ROOM_MIRROR`, only with Reflections above 0): one
+   thread per texel of the mirror picture (`RoomMirrorPicture`), 128 wide and as tall as
+   the picture's aspect, each the exact mean of its source pixels. The eye pass's
+   reflections read it.
+3. **LIGHT**: one thread per lightmap texel gathers all the emitters (881 for a 16:9
    picture) through group-shared memory.
-3. **Eye pass:** the curve shader's code up to its main, then `kCurveRoomHlsl`. Each
+4. **Eye pass:** the curve shader's code up to its main, then `kCurveRoomHlsl`. Each
    ray hits either the curved screen or, for a flat screen, its black footprint;
    otherwise it gets the face it leaves through, with the glow on the front wall and a
    per-eye dither on room surfaces so dark walls do not band. The plain curve pass is
@@ -184,7 +199,7 @@ depend on where you look from.
    0.916 against 0.876 ms eye min), through registers. With the light on, the look pass
    costs 0.03-0.04 ms more than the plain one on the curved screen and 0.006-0.009 ms on
    the flat screen's half-size layer.
-4. **Layers:**
+5. **Layers:**
    - A **curved** screen is one projection layer, as before.
    - A **flat** screen stays the compositor's two quads. The room goes under them as a
      projection layer drawn at half size; the screen's footprint in it is black, so
@@ -294,7 +309,17 @@ over it at yaw 0.
     widened outline; the flat floor reflecting the mirror picture, not the black
     footprint; left-right symmetry; a furnace (every coated surface L0 gives L0); the
     bounce rising with Reflections and every albedo within 0..1;
-  - details: the dither, half floats, levelling, the v10 snapshot.
+  - details: the dither, half floats, levelling;
+  - the v11 snapshot (`TestDesktopControl`): the four values parsed, a v10 snapshot
+    leaving them off (light colour #FFB46B), and a missing colour, values outside
+    0..100, a colour outside 0..0xFFFFFF, a trailing value and `VRX 12` rejected; with
+    the desktop's own snapshot file as its argument, `playback_test` checks the C# side
+    writes v11 with the defaults.
+- **The desktop smoke test** (`VRX.Desktop --smoke-test`): the snapshot's four new
+  fields for every profile, profiles saved before v11 (or with no light colour) loading
+  with them off and #FFB46B, their validation, and the controls: resting with "Needs the
+  room" or "Needs the fixed screen", the value texts, the light colour only with the
+  light, the presets, and a custom colour shown and kept.
 - **`SelfTestRoom`**, flat and 100% curved, each with the v11 controls at 0, with the
   room light at 50% (#FFB46B), and with the look (Glass 60 and that light), compares the
   GPU with `room.h`:
@@ -334,6 +359,10 @@ over it at yaw 0.
   below it too. A raised platform (a cinema riser) so that your feet are on the virtual
   floor is the first candidate for a follow-up, once the room has been seen in the
   headset.
+- Floor tiles and frames appear only with Glass or Reflections above 0, so the plain
+  room looks as it did in v10.
+- The room light and the screen light only the room: nothing spills onto the ground
+  beyond the glass.
 - Reflections are one bounce, mono (from the source picture, unwarped) and see the
   room's other faces without their frames, tiles or reflections; the look pass with them
   costs about 0.3-0.65 ms more than the plain one on the curved screen.

@@ -28,6 +28,7 @@ public partial class MainWindow : Window
         store = new(data);
         InitializeComponent();
         FillWorldList();
+        FillLightColourList(Profile.DefaultRoomLightColor);
         WorldList.SelectedIndex = 0;
         ShowGpuChoice(Gpus.Same);
         // From <Version> in the project file, so the UI always matches the build.
@@ -188,6 +189,10 @@ public partial class MainWindow : Window
         AmbilightCheck.IsChecked = p.Ambilight;
         AmbiStrengthSlider.Value = p.AmbilightStrength;
         RoomSlider.Value = p.Room;
+        GlassSlider.Value = p.RoomGlass;
+        ReflectSlider.Value = p.RoomReflections;
+        LightSlider.Value = p.RoomLight;
+        FillLightColourList(p.RoomLightColor);
         WorldHex.Text = p.WorldColor;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
@@ -212,6 +217,10 @@ public partial class MainWindow : Window
             Ambilight = AmbilightCheck.IsChecked == true,
             AmbilightStrength = (int)Math.Round(AmbiStrengthSlider.Value),
             Room = (int)Math.Round(RoomSlider.Value),
+            RoomGlass = (int)Math.Round(GlassSlider.Value),
+            RoomReflections = (int)Math.Round(ReflectSlider.Value),
+            RoomLight = (int)Math.Round(LightSlider.Value),
+            RoomLightColor = SelectedLightColour(),
             WorldColor = Profile.TryParseColor(WorldHex.Text, out int world) ? Profile.FormatColor(world) :
                 throw new InvalidDataException("World colour must be six hex digits, like #1C1C1E. Changes are not saved until it is."),
             SteadyDepth = SteadyCheck.IsChecked == true,
@@ -237,6 +246,8 @@ public partial class MainWindow : Window
         catch (Exception ex) { Status.Text = ex.Message; return false; }
     }
     // The room needs the fixed screen: its slider rests while the screen follows the head.
+    // Glass, reflections and the room light also need the room itself; the light colour
+    // also needs the light. Resting controls keep their saved values.
     private void UpdateRoomControls()
     {
         if (RoomSlider == null || RoomValue == null || FollowCheck == null) return;
@@ -244,6 +255,18 @@ public partial class MainWindow : Window
         RoomSlider.IsEnabled = !follows;
         int room = (int)Math.Round(RoomSlider.Value);
         RoomValue.Text = follows ? "Needs the fixed screen" : room == 0 ? "Off" : $"{room} %";
+        if (GlassSlider == null || GlassValue == null || ReflectSlider == null || ReflectValue == null ||
+            LightSlider == null || LightValue == null || LightColourList == null) return;
+        bool withRoom = !follows && room > 0;
+        string resting = follows ? "Needs the fixed screen" : "Needs the room";
+        GlassSlider.IsEnabled = withRoom;
+        ReflectSlider.IsEnabled = withRoom;
+        LightSlider.IsEnabled = withRoom;
+        int glass = (int)Math.Round(GlassSlider.Value), reflect = (int)Math.Round(ReflectSlider.Value), light = (int)Math.Round(LightSlider.Value);
+        GlassValue.Text = !withRoom ? resting : glass == 0 ? "Solid" : $"{glass} % clear";
+        ReflectValue.Text = !withRoom ? resting : reflect == 0 ? "Off" : $"{reflect} %";
+        LightValue.Text = !withRoom ? resting : light == 0 ? "Off" : $"{light} %";
+        LightColourList.IsEnabled = withRoom && light > 0;
     }
     private void SettingsChanged(object sender, RoutedEventArgs e)
     {
@@ -267,6 +290,7 @@ public partial class MainWindow : Window
     [
         ("Black (default)", "#000000"), ("Charcoal", "#1C1C1E"), ("Slate", "#2A3441"), ("Midnight blue", "#0B1530"),
         ("Deep purple", "#1E0F2E"), ("Forest", "#0F2418"), ("Warm dark", "#2A1E14"), ("Cinema red", "#2B0A0A"), ("Grey", "#4A4A4A"),
+        ("Dusk", "#33415C"), ("Overcast", "#5A6270"),
     ];
     private const string CustomColour = "Custom";
     private bool worldSyncing;
@@ -311,6 +335,51 @@ public partial class MainWindow : Window
         WorldList.SelectedItem = match;
         worldSyncing = false;
         SettingsChanged(sender, e);
+    }
+
+    // Room light colours: blackbody sRGB values from the published Kelvin table. A saved
+    // colour that is no preset (an edited profile) shows as one extra "Custom (#RRGGBB)"
+    // item and is kept when saving.
+    private static readonly (string Name, string Hex)[] LightPresets =
+    [
+        ("Warm (2700 K)", "#FFA957"), ("Soft white (3000 K)", Profile.DefaultRoomLightColor), ("Neutral (4000 K)", "#FFD1A3"),
+        ("Daylight (6500 K)", "#FFF9FD"),
+    ];
+    private string? customLightHex;                // the kept non-preset colour, or null
+
+    // Lists the presets (plus the custom colour, if `hex` is none of them) and selects `hex`.
+    // An unreadable colour selects the default.
+    private void FillLightColourList(string? hex)
+    {
+        if (LightColourList == null) return;
+        string wanted = Profile.TryParseColor(hex, out int rgb) ? Profile.FormatColor(rgb) : Profile.DefaultRoomLightColor;
+        bool wasLoading = loading;
+        loading = true;                            // filling the list is not a change to save
+        LightColourList.Items.Clear();
+        customLightHex = null;
+        string? select = null;
+        foreach (var preset in LightPresets)
+        {
+            LightColourList.Items.Add(preset.Name);
+            if (preset.Hex == wanted) select = preset.Name;
+        }
+        if (select == null)
+        {
+            customLightHex = wanted;
+            select = $"Custom ({wanted})";
+            LightColourList.Items.Add(select);
+        }
+        LightColourList.SelectedItem = select;
+        loading = wasLoading;
+    }
+
+    // The selected preset's colour, or the kept custom one; the default if nothing is selected.
+    private string SelectedLightColour()
+    {
+        if (LightColourList?.SelectedItem is not string name) return Profile.DefaultRoomLightColor;
+        foreach (var preset in LightPresets)
+            if (preset.Name == name) return preset.Hex;
+        return customLightHex ?? Profile.DefaultRoomLightColor;
     }
 
     // Leaving the box with half a colour in it puts the last whole one back, so the
@@ -485,6 +554,10 @@ public partial class MainWindow : Window
         legacy.Remove("AmbilightStrength");
         legacy.Remove("WorldColor");
         legacy.Remove("Room");
+        legacy.Remove("RoomGlass");
+        legacy.Remove("RoomReflections");
+        legacy.Remove("RoomLight");
+        legacy.Remove("RoomLightColor");
         legacy.Remove("FuseModels");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
@@ -513,13 +586,15 @@ public partial class MainWindow : Window
         var curved = new Profile { ScreenCurve = 65, Ambilight = true };
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
         var roomy = new Profile { Room = 45 };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 10 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0") ||
-            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45"))
-            throw new Exception("Control snapshot must be v10 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour and the room level (see desktop_control.h)");
+        var glassy = new Profile { Room = 45, RoomGlass = 60, RoomReflections = 25, RoomLight = 40, RoomLightColor = "#FFD1A3" };
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 11 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867") ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867") ||
+            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347"))
+            throw new Exception("Control snapshot must be v11 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
@@ -531,10 +606,22 @@ public partial class MainWindow : Window
         if (store.Load(one.ExecutablePath).Room != 0) throw new Exception("Profiles saved before the room existed must load with it off");
         if (new Profile { Room = 101 }.Valid() || new Profile { Room = -1 }.Valid() || !new Profile { Room = 100 }.Valid())
             throw new Exception("Room level validation");
+        var oldRoom = store.Load(one.ExecutablePath);
+        if (oldRoom.RoomGlass != 0 || oldRoom.RoomReflections != 0 || oldRoom.RoomLight != 0 || oldRoom.RoomLightColor != "#FFB46B")
+            throw new Exception("Profiles saved before glass, reflections and the room light existed must load with them off and a soft white light colour");
+        if (new Profile { RoomGlass = 101 }.Valid() || new Profile { RoomGlass = -1 }.Valid() || !new Profile { RoomGlass = 100 }.Valid() ||
+            new Profile { RoomReflections = 101 }.Valid() || new Profile { RoomReflections = -1 }.Valid() || !new Profile { RoomReflections = 100 }.Valid() ||
+            new Profile { RoomLight = 101 }.Valid() || new Profile { RoomLight = -1 }.Valid() || !new Profile { RoomLight = 100 }.Valid() ||
+            new Profile { RoomLightColor = "#12" }.Valid() || new Profile { RoomLightColor = "#GGGGGG" }.Valid() || !new Profile { RoomLightColor = "#FFF9FD" }.Valid())
+            throw new Exception("Room glass, reflections, light and light colour validation");
         var nullColour = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(one.ExecutablePath)))!.AsObject();
         nullColour["WorldColor"] = null;
         File.WriteAllText(store.FileFor(one.ExecutablePath), nullColour.ToJsonString());
         if (store.Load(one.ExecutablePath).WorldColor != "#000000") throw new Exception("A missing world colour must load as black");
+        var nullLight = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(one.ExecutablePath)))!.AsObject();
+        nullLight["RoomLightColor"] = null;
+        File.WriteAllText(store.FileFor(one.ExecutablePath), nullLight.ToJsonString());
+        if (store.Load(one.ExecutablePath).RoomLightColor != "#FFB46B") throw new Exception("A missing room light colour must load as soft white");
         if (new Profile { WorldColor = "#12" }.Valid() || new Profile { WorldColor = "#GGGGGG" }.Valid() || new Profile { AmbilightStrength = 101 }.Valid() ||
             !new Profile { WorldColor = "2a3441" }.Valid())
             throw new Exception("Glow strength and world colour validation");
@@ -568,6 +655,51 @@ public partial class MainWindow : Window
         FollowCheck.IsChecked = false;
         if (!RoomSlider.IsEnabled) throw new Exception("The room must come back with the fixed screen");
         RoomSlider.Value = 0;
+        // Glass, reflections and the room light: they need the room and the fixed screen, and the
+        // light colour also needs the light. Resting controls keep their values.
+        if (GlassSlider.Value != 0 || ReflectSlider.Value != 0 || LightSlider.Value != 0 || GlassSlider.IsEnabled || ReflectSlider.IsEnabled ||
+            LightSlider.IsEnabled || LightColourList.IsEnabled || GlassValue.Text != "Needs the room" || ReflectValue.Text != "Needs the room" ||
+            LightValue.Text != "Needs the room")
+            throw new Exception("Glass, reflections and the room light must default off and rest without the room");
+        if (LightColourList.SelectedItem as string != "Soft white (3000 K)" || ReadProfile().RoomLightColor != "#FFB46B")
+            throw new Exception("The room light colour should default to soft white");
+        RoomSlider.Value = 45;
+        if (!GlassSlider.IsEnabled || !ReflectSlider.IsEnabled || !LightSlider.IsEnabled || LightColourList.IsEnabled ||
+            GlassValue.Text != "Solid" || ReflectValue.Text != "Off" || LightValue.Text != "Off")
+            throw new Exception("Glass, reflections and the room light must be available with the room, the light colour only with the light");
+        GlassSlider.Value = 60; ReflectSlider.Value = 25; LightSlider.Value = 50;
+        if (GlassValue.Text != "60 % clear" || ReflectValue.Text != "25 %" || LightValue.Text != "50 %" || !LightColourList.IsEnabled)
+            throw new Exception("Glass, reflections and room light value texts");
+        var roomLook = ReadProfile();
+        if (roomLook.RoomGlass != 60 || roomLook.RoomReflections != 25 || roomLook.RoomLight != 50)
+            throw new Exception("The glass, reflections and room light sliders are not mapped to settings");
+        LightColourList.SelectedItem = "Neutral (4000 K)";
+        if (ReadProfile().RoomLightColor != "#FFD1A3") throw new Exception("A room light colour preset is not mapped to settings");
+        LightColourList.SelectedItem = "Warm (2700 K)";
+        if (ReadProfile().RoomLightColor != "#FFA957") throw new Exception("The warm room light preset is not mapped to settings");
+        LightColourList.SelectedItem = "Daylight (6500 K)";
+        if (ReadProfile().RoomLightColor != "#FFF9FD") throw new Exception("The daylight room light preset is not mapped to settings");
+        FollowCheck.IsChecked = true;
+        if (GlassSlider.IsEnabled || ReflectSlider.IsEnabled || LightSlider.IsEnabled || LightColourList.IsEnabled ||
+            GlassValue.Text != "Needs the fixed screen" || ReflectValue.Text != "Needs the fixed screen" || LightValue.Text != "Needs the fixed screen")
+            throw new Exception("Glass, reflections and the room light must rest while the screen follows the head");
+        if (ReadProfile().RoomGlass != 60 || ReadProfile().RoomLight != 50 || ReadProfile().RoomLightColor != "#FFF9FD")
+            throw new Exception("Resting room controls must keep their values");
+        FollowCheck.IsChecked = false;
+        RoomSlider.Value = 0;
+        if (GlassSlider.IsEnabled || GlassValue.Text != "Needs the room" || ReadProfile().RoomReflections != 25)
+            throw new Exception("Glass, reflections and the room light must rest, keeping their values, with the room off");
+        var customLight = ReadProfile();
+        customLight.Room = 45; customLight.RoomLightColor = "#123456";
+        PutProfile(customLight);
+        if (LightColourList.SelectedItem as string != "Custom (#123456)" || !LightColourList.IsEnabled || ReadProfile().RoomLightColor != "#123456")
+            throw new Exception("A saved room light colour that is no preset must show as Custom and be kept");
+        LightColourList.SelectedItem = "Soft white (3000 K)";
+        if (ReadProfile().RoomLightColor != "#FFB46B") throw new Exception("Picking a preset after a custom room light colour");
+        PutProfile(one);
+        if (GlassSlider.Value != 0 || LightSlider.Value != 0 || LightColourList.SelectedItem as string != "Soft white (3000 K)" ||
+            LightColourList.Items.Contains("Custom (#123456)"))
+            throw new Exception("Loading another profile must put back its room look and drop the custom light colour");
         if (AmbiStrengthSlider.Value != 85 || AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength should default to 85 % and follow the ambilight checkbox");
         AmbilightCheck.IsChecked = true;
         if (!AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength must be adjustable with the ambilight on");
