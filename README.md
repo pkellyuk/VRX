@@ -1,4 +1,4 @@
-<img src="docs/vrx-logo.png" alt="VRX" width="200">
+<p align="center"><img src="docs/vrx-logo.png" alt="VRX" width="200"></p>
 
 ### [⬇ Download the latest release](https://github.com/pkellyuk/VRX/releases/latest)
 
