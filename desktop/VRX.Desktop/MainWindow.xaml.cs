@@ -332,6 +332,27 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { Status.Text = "Could not save base settings: " + ex.Message; }
     }
+    // Overwrites every saved game, so it asks first; Cancel is the default.
+    private void ApplyAllClick(object sender, RoutedEventArgs e)
+    {
+        if (profile == null) { Status.Text = "Select a game first, then apply its settings to all games."; return; }
+        if (!SaveAndApply()) return;
+
+        int count = store.SavedProfileFiles().Count;
+        string question = $"Apply the settings shown here to all {count} saved game{(count == 1 ? "" : "s")}?\n\n" +
+            "Every game's screen placement, 3D strength, depth options, depth GPU and shortcut keys will be replaced " +
+            "by these. Each game keeps its own path and window.\n\nThis cannot be undone. " +
+            "Games you have not set up yet still start from the base settings.";
+        var answer = MessageBox.Show(this, question, "Apply to all games", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (answer != MessageBoxResult.OK) { Status.Text = "Apply to all cancelled · nothing was changed"; return; }
+        try
+        {
+            int applied = store.ApplyToAll(profile, out int skipped);
+            Status.Text = skipped == 0 ? $"Settings applied to all {applied} saved game{(applied == 1 ? "" : "s")}" :
+                $"Settings applied to {applied} saved game{(applied == 1 ? "" : "s")} · {skipped} unreadable profile{(skipped == 1 ? "" : "s")} left unchanged";
+        }
+        catch (Exception ex) { Status.Text = "Could not apply to all games: " + ex.Message; }
+    }
     private void RefreshClick(object sender, RoutedEventArgs e) => RefreshApps();
     private void ShowAllChanged(object sender, RoutedEventArgs e) { if (ready) RefreshApps(); }
     private void WindowSelected(object sender, SelectionChangedEventArgs e)
@@ -491,6 +512,27 @@ public partial class MainWindow : Window
         File.Delete(store.BaseFile);
         if (store.HasBase || store.Load(Path.Combine(output, "none", "game.exe")).Width != new Profile().Width)
             throw new Exception("With no base saved, new games must use VRX's defaults");
+
+        // Apply to all: every saved game takes the settings and keeps its own path
+        // and window; an unreadable profile is skipped and left as it was.
+        var allStore = new ProfileStore(Path.Combine(output, "apply-all"));
+        if (Directory.Exists(allStore.Root)) Directory.Delete(allStore.Root, true);
+        var gameA = new Profile { ExecutablePath = Path.Combine(output, "a", "a.exe"), PreferredWindowTitle = "Game A", Width = 3 };
+        var gameB = new Profile { ExecutablePath = Path.Combine(output, "b", "b.exe"), PreferredWindowTitle = "Game B", Width = 4, FuseModels = true };
+        allStore.Save(gameA); allStore.Save(gameB);
+        string broken = Path.Combine(allStore.Root, "profiles", "broken.json");
+        File.WriteAllText(broken, "{ not json");
+        var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false };
+        if (allStore.ApplyToAll(chosen, out int skippedAll) != 2 || skippedAll != 1) throw new Exception("Apply to all must update both saved games and skip the unreadable one");
+        var afterA = allStore.Load(gameA.ExecutablePath);
+        var afterB = allStore.Load(gameB.ExecutablePath);
+        if (afterA.Width != 8.5 || afterB.Width != 8.5 || afterA.ScreenCurve != 30 || !afterB.Ambilight || afterB.SteadyDepth || afterB.FuseModels)
+            throw new Exception("Apply to all did not copy the settings to every saved game");
+        if (afterA.PreferredWindowTitle != "Game A" || afterB.PreferredWindowTitle != "Game B")
+            throw new Exception("Apply to all must keep each game's own window");
+        if (File.ReadAllText(broken) != "{ not json") throw new Exception("Apply to all must leave an unreadable profile untouched");
+        if (File.Exists(allStore.FileFor(chosen.ExecutablePath))) throw new Exception("Apply to all must not create profiles for games that were never set up");
+        if (ApplyAllButton == null) throw new Exception("The Apply to all button is missing");
 
         PutProfile(one);
         PathLabel.Text = one.ExecutablePath; Status.Text = "Preview · saved settings are isolated by executable path";

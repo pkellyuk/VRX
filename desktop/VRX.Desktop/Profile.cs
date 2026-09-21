@@ -97,6 +97,44 @@ public sealed class ProfileStore(string root)
         catch (Exception ex) when (ex is IOException or JsonException) { }
         return new Profile();
     }
+    // Every game that has its own saved settings.
+    public IReadOnlyList<string> SavedProfileFiles()
+    {
+        string folder = Path.Combine(Root, "profiles");
+        return Directory.Exists(folder) ? Directory.GetFiles(folder, "*.json") : [];
+    }
+
+    // "Apply to all": every saved game takes these settings, keeping its own path and
+    // window. A file that cannot be read, or does not belong to the game it names, is
+    // left exactly as it was and counted in `skipped`. Games not set up yet are not
+    // touched: they still start from the base settings.
+    public int ApplyToAll(Profile settings, out int skipped)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        skipped = 0;
+        if (!settings.Valid()) throw new InvalidDataException("Settings are outside the allowed range or shortcut keys conflict.");
+
+        int applied = 0;
+        foreach (string file in SavedProfileFiles())
+        {
+            Profile? saved;
+            try { saved = JsonSerializer.Deserialize<Profile>(File.ReadAllText(file)); }
+            catch (Exception ex) when (ex is IOException or JsonException) { skipped++; continue; }
+            if (saved == null || string.IsNullOrWhiteSpace(saved.ExecutablePath) ||
+                !string.Equals(Path.GetFullPath(FileFor(saved.ExecutablePath)), Path.GetFullPath(file), StringComparison.OrdinalIgnoreCase))
+            {
+                skipped++;
+                continue;
+            }
+            var copy = JsonSerializer.Deserialize<Profile>(JsonSerializer.Serialize(settings))!;
+            copy.ExecutablePath = saved.ExecutablePath;
+            copy.PreferredWindowTitle = saved.PreferredWindowTitle;
+            Save(copy);
+            applied++;
+        }
+        return applied;
+    }
+
     public string FileFor(string executable) => Path.Combine(Root, "profiles",
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(executable).ToUpperInvariant()))) + ".json");
     public Profile Load(string executable)
