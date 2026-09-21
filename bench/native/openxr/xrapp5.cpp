@@ -57,6 +57,8 @@
 //            --ambilight            spill the picture's edge colours around the screen
 //            --ambilight-strength=N the glow's brightness next to the screen, 0..100 (default 85)
 //            --world=RRGGBB         the colour around the screen (default 000000, black)
+//            --room=N               a room lit by the screen round it: 0 off (default) .. 100
+//                                   (wall brightness); needs the fixed screen (room.h, XROOM.md)
 //            --head-locked          follow your head (default fixed screen; '=' recenters)
 //            --keep-dashboard       skip the SteamVR startup dashboard-close request
 //   keys:    '=' recenter; F8 dismiss SteamVR dashboard (keys also reach the game)
@@ -506,6 +508,14 @@ struct App
     unsigned char* roomGeomMapped[RING + 1] = {};
     ComPtr<ID3D12Resource> roomCbUp;                     // RoomConstants, 256 B per frame slot + 1 for the self-test
     unsigned char* roomCbMapped = nullptr;
+    XrSpace stage = XR_NULL_HANDLE;                      // the real floor (STAGE), if the runtime has one
+
+    // GPU time of the screen/room passes, per frame slot (begin, end).
+    ComPtr<ID3D12QueryHeap> timeHeap;
+    ComPtr<ID3D12Resource> timeReadback;
+    const UINT64* timeMapped = nullptr;
+    double timeFreq = 0;
+    bool timePending[RING] = {};
 
     // World colour behind a flat screen: a projection layer of one colour (a curved
     // screen fills its own eye buffers with it instead).
@@ -785,6 +795,12 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
             continue;
         }
         if (!strcmp(a, "--ambilight")) { opt->ambilight = true; continue; }
+        if (!strncmp(a, "--room=", 7))
+        {
+            const int percent = atoi(a + 7);
+            opt->room = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+            continue;
+        }
         if (!strncmp(a, "--ambilight-strength=", 21))
         {
             const int percent = atoi(a + 21);
@@ -2995,6 +3011,21 @@ static bool InitShaders(App& app)
     lmSrv.Texture2DArray.ArraySize = kRoomFaces;
     app.device->CreateShaderResourceView(app.roomLight.Get(), &lmSrv, CpuDesc(app, DESC_CURVE_MAIN + 3));
     app.device->CreateShaderResourceView(app.roomLight.Get(), &lmSrv, CpuDesc(app, DESC_CURVE_TEST + 3));
+    {
+        D3D12_QUERY_HEAP_DESC qd{};
+        qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+        qd.Count = 2 * RING;
+        UINT64 freq = 0;
+        if (FAILED(app.device->CreateQueryHeap(&qd, IID_PPV_ARGS(&app.timeHeap))) || FAILED(app.gfxQueue->GetTimestampFrequency(&freq)) || freq == 0 ||
+            !MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, 2 * RING * sizeof(UINT64), D3D12_RESOURCE_FLAG_NONE,
+                        D3D12_RESOURCE_STATE_COPY_DEST, app.timeReadback, nullptr) ||
+            FAILED(app.timeReadback->Map(0, nullptr, (void**)&app.timeMapped)))
+        {
+            Log("InitShaders: GPU timestamps unavailable - the room's GPU time will not be reported");
+            app.timeHeap.Reset();
+        }
+        else app.timeFreq = (double)freq;
+    }
     Log("InitShaders: room ready (eye %zu, light %zu, emit %zu bytes; up to %d emitters, %d x %d x %d lightmap)",
         roomEyeCs->GetBufferSize(), roomLightCs->GetBufferSize(), roomEmitCs->GetBufferSize(), kRoomMaxEmitters,
         kRoomFaces, kRoomLightmap, kRoomLightmap);
@@ -4299,6 +4330,12 @@ static bool InitXrSession(App& app)
     rsci.poseInReferenceSpace = { {0,0,0,1}, {0,0,0} };
     r = xrCreateReferenceSpace_(app.session, &rsci, &app.space);
     if (XR_FAILED(r)) { Log("InitXrSession: FAIL xrCreateReferenceSpace %s", XRStr(r)); return false; }
+    // STAGE: its origin is on the real floor, which the room's floor uses when it can.
+    XrReferenceSpaceCreateInfo stageInfo{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
+    stageInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
+    stageInfo.poseInReferenceSpace = { {0,0,0,1}, {0,0,0} };
+    const XrResult stageResult = xrCreateReferenceSpace_(app.session, &stageInfo, &app.stage);
+    if (XR_FAILED(stageResult)) { app.stage = XR_NULL_HANDLE; Log("InitXrSession: no STAGE space (%s) - the room will guess the floor", XRStr(stageResult)); }
 
     uint32_t fmtCount = 0;
     xrEnumFormats_(app.session, 0, &fmtCount, nullptr);
@@ -5448,6 +5485,17 @@ static void RunFrameLoop(App& app)
     Cylinder cylinder;
     float curveWidth = -1, curveHeight = -1, curveDistance = -1, curveFraction = -1;
     bool headLockedNoticeLogged = false;
+    // The room (room.h): rebuilt only when the screen, the recentre point, the curve or
+    // the floor change; its light is worked out every frame.
+    Room room;
+    RoomEmitterLayout roomLayout;
+    std::vector<RoomEmitter> roomGeometry;
+    bool roomGeometryDirty = false, roomFailedLogged = false;
+    float roomKey[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+    double roomLastTime = -1;
+    float stageFloorY = NAN;                                // the real floor, LOCAL y
+    bool stageLocated = false;
+    std::vector<double> passGpuMs;                          // screen/room passes, since the last report
 
     const double period = app.opt.abSeconds > 0.0 ? app.opt.abSeconds : 6.0;
     double firstDrawTime = -1.0;
@@ -5525,6 +5573,11 @@ static void RunFrameLoop(App& app)
                         Log("Ambilight: %s", app.opt.ambilight ? "enabled" : "disabled");
                     }
                 }
+                if (next.version >= 10 && app.opt.room != next.room)
+                {
+                    app.opt.room = next.room;
+                    Log("Room: %d%%", next.room);
+                }
                 if (next.version >= 9)
                 {
                     if (app.opt.ambiStrength != next.ambiStrength)
@@ -5598,6 +5651,8 @@ static void RunFrameLoop(App& app)
         uint32_t layerCount = 0;
         XrCompositionLayerProjection worldProj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
         XrCompositionLayerProjectionView worldViews[VIEWS];
+        XrCompositionLayerProjection roomProj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
+        XrCompositionLayerProjectionView roomViews[VIEWS];
         XrCompositionLayerQuad quads[VIEWS] = {};
         XrCompositionLayerQuad glowQuad{};
         XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
@@ -5652,12 +5707,17 @@ static void RunFrameLoop(App& app)
             if (qn > 1e-6f) { sharedRot.x /= qn; sharedRot.y /= qn; sharedRot.z /= qn; sharedRot.w /= qn; }
             else sharedRot = q0;
 
+            // The room needs the screen fixed in the room, and keeps it level.
+            const bool followsHead = !app.opt.controlPath.empty() && desktop.follow;
+            const bool roomWanted = app.opt.room > 0 && !app.opt.headLocked && !followsHead;
+            screen.level = roomWanted;
             if (!app.opt.headLocked)
             {
-                if (!app.opt.controlPath.empty() && desktop.follow) screen.pending = true;
-                if (screen.Place(views[0].pose, views[1].pose, sharedRot, tanHalfX,
-                    float(target.ch) / target.cw) && !desktop.follow)
+                if (followsHead) screen.pending = true;
+                const bool placed = screen.Place(views[0].pose, views[1].pose, sharedRot, tanHalfX, float(target.ch) / target.cw);
+                if (placed && !desktop.follow)
                     Log("RunFrameLoop: screen recentered using the current headset direction");
+                if (placed) stageLocated = false;
                 if (!app.opt.controlPath.empty()) screen.Adjust(desktop.width, desktop.distance,
                     desktop.height, desktop.horizontal, float(target.ch) / target.cw);
                 // Keep size and disparity calibration stable after placement.
@@ -5689,6 +5749,75 @@ static void RunFrameLoop(App& app)
                 curveDistance = curveScreenDistance; curveFraction = wantCurve;
             }
             const bool curvedScreen = cylinder.curved && EnsureCurvedEyes(app);
+
+            // The room: built in the screen's own (level) frame round the recentre point.
+            if (roomWanted && !stageLocated)
+            {
+                stageLocated = true;
+                stageFloorY = NAN;
+                if (app.stage != XR_NULL_HANDLE)
+                {
+                    XrSpaceLocation loc{ XR_TYPE_SPACE_LOCATION };
+                    if (XR_SUCCEEDED(xrLocateSpace_(app.stage, app.space, fs.predictedDisplayTime, &loc)) &&
+                        (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT))
+                        stageFloorY = loc.pose.position.y;
+                }
+                Log("RunFrameLoop: room floor %s", std::isfinite(stageFloorY) ? "from STAGE" : "not tracked - seated guess");
+            }
+            bool roomOn = false;
+            if (roomWanted)
+            {
+                float S[3][3];
+                QuatRows(screen.pose.orientation, S);
+                const float rel[3] = { screen.origin.position.x - screen.pose.position.x, screen.origin.position.y - screen.pose.position.y,
+                                       screen.origin.position.z - screen.pose.position.z };
+                RoomInputs in;
+                in.W = screen.size.width; in.H = screen.size.height; in.cyl = cylinder;
+                for (int r = 0; r < 3; r++) in.eye[r] = S[0][r] * rel[0] + S[1][r] * rel[1] + S[2][r] * rel[2];
+                in.floorY = std::isfinite(stageFloorY) ? stageFloorY - screen.pose.position.y : NAN;
+                const float key[8] = { in.W, in.H, in.eye[0], in.eye[1], in.eye[2], std::isfinite(in.floorY) ? in.floorY : -999.0f,
+                                       cylinder.curved ? cylinder.radius : 0.0f, (float)app.ambiH };
+                bool changed = !room.valid;
+                for (int k = 0; k < 8; k++) if (std::fabs(key[k] - roomKey[k]) > 1e-4f) changed = true;
+                if (changed)
+                {
+                    memcpy(roomKey, key, sizeof(key));
+                    const float margin = kAmbiMargin * in.W;
+                    if (!BuildRoom(in, room))
+                    {
+                        room = Room();
+                        if (!roomFailedLogged) Log("RunFrameLoop: no room (viewer at %.2f, %.2f, %.2f m from the screen)", in.eye[0], in.eye[1], in.eye[2]);
+                        roomFailedLogged = true;
+                    }
+                    else
+                    {
+                        roomFailedLogged = false;
+                        roomLayout = RoomLayout(in.W, in.H, app.ambiW, app.ambiH);
+                        if (!BuildRoomEmitters(room, cylinder, in.W, in.H, 0.5f * in.W + margin, 0.5f * in.H + margin, roomLayout, roomGeometry))
+                        {
+                            room = Room();
+                            Log("RunFrameLoop: room emitters rejected (%d)", roomLayout.count());
+                        }
+                        else
+                        {
+                            roomGeometryDirty = true;
+                            Log("RunFrameLoop: room %.2f x %.2f x %.2f m, floor %.2f m below the eye (%s), %s front%s, %d emitters",
+                                2 * room.X, room.yC - room.yF, room.zB + room.g, in.eye[1] - room.yF,
+                                room.floorTracked ? "STAGE" : "seated guess", room.curved ? "curved" : "flat",
+                                room.phiReduced ? " (arc shortened to keep the viewer inside)" : "", roomLayout.count());
+                        }
+                    }
+                }
+                roomOn = room.valid && EnsureCurvedEyes(app);
+            }
+            else if (room.valid)
+            {
+                room = Room();
+                roomKey[0] = -1;
+                roomLastTime = -1;
+                Log("RunFrameLoop: room off");
+            }
+            const bool roomFlat = roomOn && !curvedScreen;
             if (app.opt.headLocked && (app.opt.curve > 0 || app.opt.ambilight || app.opt.worldColor != 0) && !headLockedNoticeLogged)
             {
                 headLockedNoticeLogged = true;
@@ -5717,9 +5846,13 @@ static void RunFrameLoop(App& app)
 
             // A curved screen is drawn into its own eye buffers; a flat one is the
             // warped pair itself, placed by the compositor as quads.
+            // With the room on, a flat screen stays the compositor's quads and the room is
+            // a projection layer under them, drawn at half size into the eye buffers.
             XrReadyImage colorImage, depthImage, eyeImage;
-            bool ok = curvedScreen ? eyeImage.Acquire(app.eyeSc, xrAcquireImage_, xrWaitImage_)
-                                   : colorImage.Acquire(app.colorSc, xrAcquireImage_, xrWaitImage_);
+            const bool needEyes = curvedScreen || roomFlat;
+            bool ok = true;
+            if (!curvedScreen) ok = colorImage.Acquire(app.colorSc, xrAcquireImage_, xrWaitImage_);
+            if (ok && needEyes) ok = eyeImage.Acquire(app.eyeSc, xrAcquireImage_, xrWaitImage_);
             if (ok && useDepthSc && !curvedScreen) ok = depthImage.Acquire(app.depthSc, xrAcquireImage_, xrWaitImage_);
             if (!ok) { Log("RunFrameLoop: swapchain acquire/wait failed (%d, %d, %d)",
                 (int)colorImage.result, (int)depthImage.result, (int)eyeImage.result); app.stop = true; }
@@ -5727,24 +5860,30 @@ static void RunFrameLoop(App& app)
             // buffers behind a curved one.
             XrReadyImage glowImage;
             const bool glowWanted = app.opt.ambilight && !app.opt.headLocked;
-            const bool glowLayer = glowWanted && !curvedScreen && app.ambiSc != XR_NULL_HANDLE;
+            const bool glowLayer = glowWanted && !curvedScreen && !roomOn && app.ambiSc != XR_NULL_HANDLE;
             if (ok && glowLayer && !glowImage.Acquire(app.ambiSc, xrAcquireImage_, xrWaitImage_))
                 Log("RunFrameLoop: ambilight image acquire failed (%d) - no glow this frame", (int)glowImage.result);
             if (!glowWanted) app.ambiHistory = false;
             // The world colour: behind a flat screen its own layer (none for black).
             XrReadyImage worldImage;
-            const bool worldLayer = app.opt.worldColor != 0 && !app.opt.headLocked && !curvedScreen && app.worldSc != XR_NULL_HANDLE;
+            const bool worldLayer = app.opt.worldColor != 0 && !app.opt.headLocked && !curvedScreen && !roomOn && app.worldSc != XR_NULL_HANDLE;
             if (ok && worldLayer && !worldImage.Acquire(app.worldSc, xrAcquireImage_, xrWaitImage_))
                 Log("RunFrameLoop: world colour image acquire failed (%d) - black this frame", (int)worldImage.result);
             bool drewWorld = false;
             const uint32_t cIdx = colorImage.index, dIdx = depthImage.index;
-            bool drewSource = false, stereo = false, drewGlow = false;
+            bool drewSource = false, stereo = false, drewGlow = false, drewRoom = false;
             float glowRectW = 0, glowRectH = 0;
 
             if (ok)
             {
                 const int ring = (int)(drawn % RING);
                 WaitFence(app, app.frameFence[ring]);
+                if (app.timePending[ring] && app.timeMapped)
+                {
+                    const UINT64* ts = app.timeMapped + 2 * ring;
+                    if (ts[1] > ts[0]) passGpuMs.push_back((double)(ts[1] - ts[0]) * 1000.0 / app.timeFreq);
+                    app.timePending[ring] = false;
+                }
                 app.cmdAlloc[ring]->Reset();
                 app.cmdList->Reset(app.cmdAlloc[ring].Get(), nullptr);
 
@@ -5854,13 +5993,51 @@ static void RunFrameLoop(App& app)
                         RecordWorldColour(app, ring, app.opt.worldColor, app.wimgs[worldImage.index].texture);
                         drewWorld = true;
                     }
-                    if (curvedScreen && eyeImage.ready)
+                    const bool timed = app.timeHeap && (curvedScreen || roomOn) && needEyes && eyeImage.ready;
+                    if (timed) app.cmdList->EndQuery(app.timeHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * ring);
+                    D3D12_GPU_VIRTUAL_ADDRESS roomCb = 0;
+                    if (roomOn && eyeImage.ready)
+                    {
+                        const double tn = NowSeconds();
+                        const bool reset = roomGeometryDirty || roomLastTime < 0;
+                        const double dt = std::min(std::max(tn - roomLastTime, 0.0), 0.25);
+                        const float alpha = reset ? 1.0f : (float)(1.0 - std::exp(-dt / kRoomLightTau));
+                        roomLastTime = tn;
+                        const float margin = kAmbiMargin * screen.size.width;
+                        RoomView view;
+                        view.flatLayer = roomFlat; view.W = screen.size.width; view.H = screen.size.height;
+                        view.glowOn = glowWanted;
+                        view.glowHalfW = 0.5f * screen.size.width + margin; view.glowHalfH = 0.5f * screen.size.height + margin;
+                        view.dither = true;
+                        const RoomShading shading = MakeRoomShading(room, app.opt.room, app.opt.worldColor, screen.size.width * screen.size.height);
+                        const RoomConstants rc = MakeRoomConstants(room, shading, roomLayout, view, app.srcW, app.srcH, alpha);
+                        memcpy(app.roomCbMapped + (size_t)ring * sizeof(RoomConstants), &rc, sizeof(rc));
+                        roomCb = app.roomCbUp->GetGPUVirtualAddress() + (UINT64)ring * sizeof(RoomConstants);
+                        ID3D12Resource* geometry = nullptr;
+                        if (roomGeometryDirty)
+                        {
+                            memcpy(app.roomGeomMapped[ring], roomGeometry.data(), roomGeometry.size() * sizeof(RoomEmitter));
+                            geometry = app.roomGeomUp[ring].Get();
+                            roomGeometryDirty = false;
+                        }
+                        RecordRoomLight(app, DESC_SRC0 + (UINT)source->index, roomCb, geometry, (UINT)roomLayout.count());
+                    }
+                    if (needEyes && eyeImage.ready)
                     {
                         XrPosef eyePose[VIEWS] = { views[0].pose, views[1].pose };
                         XrFovf eyeFov[VIEWS] = { views[0].fov, views[1].fov };
-                        const CurveConstants cc = MakeCurveConstants(cylinder, screen.pose, eyePose, eyeFov, app.eyeW, app.eyeH,
+                        const int ew = roomFlat ? app.eyeW / 2 : app.eyeW, eh = roomFlat ? app.eyeH / 2 : app.eyeH;
+                        const CurveConstants cc = MakeCurveConstants(roomFlat ? Cylinder() : cylinder, screen.pose, eyePose, eyeFov, ew, eh,
                                                                      glowWanted, glowRectW, glowRectH, app.opt.worldColor, LinearBlend(app));
-                        RecordCurvedScreen(app, DESC_CURVE_MAIN, target.colorOut.Get(), cc, app.eyeOut.Get(), app.eimgs[eyeImage.index].texture);
+                        RecordCurvedScreen(app, DESC_CURVE_MAIN, target.colorOut.Get(), cc, app.eyeOut.Get(), app.eimgs[eyeImage.index].texture, roomCb);
+                        drewRoom = roomFlat;
+                    }
+                    if (timed)
+                    {
+                        app.cmdList->EndQuery(app.timeHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * ring + 1);
+                        app.cmdList->ResolveQueryData(app.timeHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * ring, 2, app.timeReadback.Get(),
+                                                      (UINT64)2 * ring * sizeof(UINT64));
+                        app.timePending[ring] = true;
                     }
                     RecordWarpOutputsBackToUav(app, target);
                 }
@@ -5926,9 +6103,25 @@ static void RunFrameLoop(App& app)
                 }
                 else
                 {
-                    // The world colour first, then the glow, then the screen: layers
-                    // composite in submission order. The glow also sits a little
-                    // behind, for any compositor that sorts layers by distance.
+                    // The room (or else the world colour and the glow) first, then the
+                    // screen: layers composite in submission order. The glow also sits a
+                    // little behind, for any compositor that sorts layers by distance.
+                    if (drewRoom)
+                    {
+                        for (uint32_t e = 0; e < VIEWS; e++)
+                        {
+                            roomViews[e] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW };
+                            roomViews[e].pose = views[e].pose;
+                            roomViews[e].fov = views[e].fov;
+                            roomViews[e].subImage.swapchain = app.eyeSc;
+                            roomViews[e].subImage.imageRect = { {0, 0}, {app.eyeW / 2, app.eyeH / 2} };
+                            roomViews[e].subImage.imageArrayIndex = e;
+                        }
+                        roomProj.space = app.space;
+                        roomProj.viewCount = VIEWS;
+                        roomProj.views = roomViews;
+                        layers[layerCount++] = (const XrCompositionLayerBaseHeader*)&roomProj;
+                    }
                     if (drewWorld)
                     {
                         for (uint32_t e = 0; e < VIEWS; e++)
@@ -6035,6 +6228,13 @@ static void RunFrameLoop(App& app)
                 app.opt.useTruth ? " [warp uses TRUTH]" : "");
             if (app.opt.source == SourceKind::Synthetic && cur)
                 Log("       model near: back %.2f panel %.2f marker %.2f", cur->back, cur->panel, cur->marker);
+            if (!passGpuMs.empty())
+            {
+                std::sort(passGpuMs.begin(), passGpuMs.end());
+                Log("       %s GPU %.2f ms p50, %.2f ms p95 (%zu frames)", room.valid ? "room + screen" : "curved screen",
+                    passGpuMs[passGpuMs.size() / 2], passGpuMs[std::min(passGpuMs.size() - 1, passGpuMs.size() * 95 / 100)], passGpuMs.size());
+                passGpuMs.clear();
+            }
             lastReport = now; repFrames = repDrawn = repDepth = 0; repCpuMs = repAgeMs = repShownAgeMs = 0;
             lastCapFrames = capFrames;
         }
@@ -6275,6 +6475,7 @@ int wmain(int argc, wchar_t** wideArgv)
             app.opt.curve = initial.curve * 0.01f;
             app.opt.ambilight = initial.ambilight != 0;
         }
+        if (initial.version >= 10) app.opt.room = initial.room;
         if (initial.version >= 9)
         {
             app.opt.ambiStrength = initial.ambiStrength;

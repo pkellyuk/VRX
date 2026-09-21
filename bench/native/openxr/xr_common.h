@@ -60,6 +60,7 @@ XRFN(PFN_xrWaitFrame, xrWaitFrame_);
 XRFN(PFN_xrBeginFrame, xrBeginFrame_);
 XRFN(PFN_xrEndFrame, xrEndFrame_);
 XRFN(PFN_xrGetD3D12GraphicsRequirementsKHR, xrD3D12Reqs_);
+XRFN(PFN_xrLocateSpace, xrLocateSpace_);
 
 static bool ResolveFns(XrInstance inst)
 {
@@ -70,6 +71,7 @@ static bool ResolveFns(XrInstance inst)
         "xrCreateSwapchain", "xrDestroySwapchain", "xrEnumerateSwapchainImages",
         "xrAcquireSwapchainImage", "xrWaitSwapchainImage", "xrReleaseSwapchainImage",
         "xrWaitFrame", "xrBeginFrame", "xrEndFrame", "xrGetD3D12GraphicsRequirementsKHR",
+        "xrLocateSpace",
     };
     PFN_xrVoidFunction* slots[] = {
         (PFN_xrVoidFunction*)&xrDestroyInstance_, (PFN_xrVoidFunction*)&xrGetSystem_,
@@ -82,7 +84,7 @@ static bool ResolveFns(XrInstance inst)
         (PFN_xrVoidFunction*)&xrAcquireImage_, (PFN_xrVoidFunction*)&xrWaitImage_,
         (PFN_xrVoidFunction*)&xrReleaseImage_, (PFN_xrVoidFunction*)&xrWaitFrame_,
         (PFN_xrVoidFunction*)&xrBeginFrame_, (PFN_xrVoidFunction*)&xrEndFrame_,
-        (PFN_xrVoidFunction*)&xrD3D12Reqs_,
+        (PFN_xrVoidFunction*)&xrD3D12Reqs_, (PFN_xrVoidFunction*)&xrLocateSpace_,
     };
     for (int i = 0; i < (int)(sizeof(names) / sizeof(names[0])); i++)
     {

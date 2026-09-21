@@ -448,7 +448,15 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 101 0", settings), "v9 strength over 100 rejected");
     Check(!ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 16777216", settings), "v9 world colour out of range rejected");
     Check(!ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 -1", settings), "v9 negative world colour rejected");
-    Check(!ParseDesktopSettings("VRX 10 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0", settings), "a newer snapshot version is rejected");
+    Check(ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0", settings) && settings.room == 0, "v9 has no room");
+    Check(ParseDesktopSettings("VRX 10 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40", settings) && settings.room == 40, "v10 room level");
+    Check(ParseDesktopSettings("VRX 10 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 0", settings) && settings.room == 0, "v10 room off");
+    Check(ParseDesktopSettings("VRX 10 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 100", settings) && settings.room == 100, "v10 room at most");
+    Check(!ParseDesktopSettings("VRX 10 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0", settings), "v10 missing room rejected");
+    Check(!ParseDesktopSettings("VRX 10 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 101", settings), "v10 room over 100 rejected");
+    Check(!ParseDesktopSettings("VRX 10 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 -1", settings), "v10 negative room rejected");
+    Check(!ParseDesktopSettings("VRX 10 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 7", settings), "v10 trailing value rejected");
+    Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");

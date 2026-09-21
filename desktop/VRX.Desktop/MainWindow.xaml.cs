@@ -187,13 +187,14 @@ public partial class MainWindow : Window
         CurveSlider.Value = p.ScreenCurve;
         AmbilightCheck.IsChecked = p.Ambilight;
         AmbiStrengthSlider.Value = p.AmbilightStrength;
+        RoomSlider.Value = p.Room;
         WorldHex.Text = p.WorldColor;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
         ShowGpuChoice(p.DepthGpu);
         RecenterKeys.SelectedValue = p.RecenterKey; MenuKeys.SelectedValue = p.MenuKey;
         SettingsPanel.IsEnabled = true;
-        loading = false; DrawPreview();
+        loading = false; UpdateRoomControls(); DrawPreview();
     }
     private Profile ReadProfile()
     {
@@ -210,6 +211,7 @@ public partial class MainWindow : Window
             ScreenCurve = (int)Math.Round(CurveSlider.Value),
             Ambilight = AmbilightCheck.IsChecked == true,
             AmbilightStrength = (int)Math.Round(AmbiStrengthSlider.Value),
+            Room = (int)Math.Round(RoomSlider.Value),
             WorldColor = Profile.TryParseColor(WorldHex.Text, out int world) ? Profile.FormatColor(world) :
                 throw new InvalidDataException("World colour must be six hex digits, like #1C1C1E. Changes are not saved until it is."),
             SteadyDepth = SteadyCheck.IsChecked == true,
@@ -234,8 +236,18 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { Status.Text = ex.Message; return false; }
     }
+    // The room needs the fixed screen: its slider rests while the screen follows the head.
+    private void UpdateRoomControls()
+    {
+        if (RoomSlider == null || RoomValue == null || FollowCheck == null) return;
+        bool follows = FollowCheck.IsChecked == true;
+        RoomSlider.IsEnabled = !follows;
+        int room = (int)Math.Round(RoomSlider.Value);
+        RoomValue.Text = follows ? "Needs the fixed screen" : room == 0 ? "Off" : $"{room} %";
+    }
     private void SettingsChanged(object sender, RoutedEventArgs e)
     {
+        UpdateRoomControls();
         if (!ready || loading || profile == null) return;
         DrawPreview();
         // Coalesce rapid drag events, but keep delivering while the mouse is
@@ -472,6 +484,7 @@ public partial class MainWindow : Window
         legacy.Remove("Ambilight");
         legacy.Remove("AmbilightStrength");
         legacy.Remove("WorldColor");
+        legacy.Remove("Room");
         legacy.Remove("FuseModels");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
@@ -499,12 +512,14 @@ public partial class MainWindow : Window
         var wholePixel = new Profile { SubpixelWarp = false };
         var curved = new Profile { ScreenCurve = 65, Ambilight = true };
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 9 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889"))
-            throw new Exception("Control snapshot must be v9 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, and the world colour (see desktop_control.h)");
+        var roomy = new Profile { Room = 45 };
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 10 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0") ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45"))
+            throw new Exception("Control snapshot must be v10 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour and the room level (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
@@ -513,6 +528,9 @@ public partial class MainWindow : Window
             throw new Exception("Profiles saved before the curve and ambilight existed must load flat, with no glow");
         if (store.Load(one.ExecutablePath).AmbilightStrength != 85 || store.Load(one.ExecutablePath).WorldColor != "#000000")
             throw new Exception("Profiles saved before the glow strength and world colour existed must load at 85 % and black");
+        if (store.Load(one.ExecutablePath).Room != 0) throw new Exception("Profiles saved before the room existed must load with it off");
+        if (new Profile { Room = 101 }.Valid() || new Profile { Room = -1 }.Valid() || !new Profile { Room = 100 }.Valid())
+            throw new Exception("Room level validation");
         var nullColour = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(one.ExecutablePath)))!.AsObject();
         nullColour["WorldColor"] = null;
         File.WriteAllText(store.FileFor(one.ExecutablePath), nullColour.ToJsonString());
@@ -542,6 +560,14 @@ public partial class MainWindow : Window
         WidthSlider.Value = savedWidth; CurveSlider.Value = savedCurve;
         CurveSlider.Value = 0;
         AmbilightCheck.IsChecked = false;
+        if (RoomSlider.Value != 0 || RoomValue.Text != "Off" || !RoomSlider.IsEnabled) throw new Exception("The room should default off, and be available");
+        RoomSlider.Value = 45;
+        if (ReadProfile().Room != 45 || RoomValue.Text != "45 %") throw new Exception("The room slider is not mapped to settings");
+        FollowCheck.IsChecked = true;
+        if (RoomSlider.IsEnabled || RoomValue.Text != "Needs the fixed screen") throw new Exception("The room must rest while the screen follows the head");
+        FollowCheck.IsChecked = false;
+        if (!RoomSlider.IsEnabled) throw new Exception("The room must come back with the fixed screen");
+        RoomSlider.Value = 0;
         if (AmbiStrengthSlider.Value != 85 || AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength should default to 85 % and follow the ambilight checkbox");
         AmbilightCheck.IsChecked = true;
         if (!AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength must be adjustable with the ambilight on");
