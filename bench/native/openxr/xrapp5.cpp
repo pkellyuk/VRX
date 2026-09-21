@@ -121,6 +121,7 @@ using Microsoft::WRL::ComPtr;
 #include "frame_timing.h"
 #include "ambilight.h"
 #include "screen_curve.h"
+#include "room.h"
 
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wdx = winrt::Windows::Graphics::DirectX;
@@ -258,6 +259,7 @@ struct Options
     bool ambilight = false;             // spill the picture's edge colours around the screen
     int ambiStrength = kAmbiDefaultStrength;    // percent: the glow's brightness next to the screen
     uint32_t worldColor = 0;            // 0xRRGGBB around the screen (0 = black, no layer)
+    int room = 0;                       // the room lit by the screen: 0 off, 1..100 (wall brightness)
 };
 
 static const int SLOTS = 3;
@@ -493,6 +495,18 @@ struct App
     bool eyeFailed = false;                              // could not be made: the screen stays flat
     ComPtr<ID3D12Resource> testEyeOut;                   // TEST_EYE_W x TEST_EYE_H [2]
 
+    // The room (room.h, XROOM.md): made up front (small) so the option applies live
+    // and the self-test always runs; only the eye buffers are made on first use.
+    ComPtr<ID3D12RootSignature> roomRootSig, curveRoomRootSig;
+    ComPtr<ID3D12PipelineState> roomEmitPso, roomLightPso, curveRoomPso;
+    ComPtr<ID3D12Resource> roomLut;                      // float[256]: the sRGB decode
+    ComPtr<ID3D12Resource> roomEmitters;                 // float4[6 * kRoomMaxEmitters]
+    ComPtr<ID3D12Resource> roomLight;                    // RGBA16F, 6 faces x kRoomLightmap^2
+    ComPtr<ID3D12Resource> roomGeomUp[RING + 1];         // emitter geometry to copy in; [RING] is the self-test's
+    unsigned char* roomGeomMapped[RING + 1] = {};
+    ComPtr<ID3D12Resource> roomCbUp;                     // RoomConstants, 256 B per frame slot + 1 for the self-test
+    unsigned char* roomCbMapped = nullptr;
+
     // World colour behind a flat screen: a projection layer of one colour (a curved
     // screen fills its own eye buffers with it instead).
     XrSwapchain worldSc = XR_NULL_HANDLE;
@@ -566,9 +580,10 @@ static const UINT DESC_MAIN_TABLE = SRC_RING;            // 4
 static const UINT DESC_TEST_SRC = SRC_RING + 4;          // 1
 static const UINT DESC_TEST_TABLE = SRC_RING + 5;        // 4
 static const UINT DESC_AMBI_UAV = SRC_RING + 9;          // 3: the ambilight glow texture, its border ring, its history
-static const UINT DESC_CURVE_MAIN = SRC_RING + 12;       // 3: warped pictures, glow, eye buffers (curved screen)
-static const UINT DESC_CURVE_TEST = SRC_RING + 15;       // 3: the same for the self-test
-static const UINT DESC_COUNT = SRC_RING + 18;
+static const UINT DESC_CURVE_MAIN = SRC_RING + 12;       // 4: warped pictures, glow, eye buffers, room lightmap
+static const UINT DESC_CURVE_TEST = SRC_RING + 16;       // 4: the same for the self-test
+static const UINT DESC_ROOM = SRC_RING + 20;             // 4: decode table, glow, emitters (UAV), lightmap (UAV)
+static const UINT DESC_COUNT = SRC_RING + 24;
 static const int WORLD_W = 8;                            // the world colour layer: one colour needs few pixels
 static const int TEST_EYE_W = 256, TEST_EYE_H = 192;     // self-test eye buffers
 
@@ -2112,6 +2127,367 @@ void main(uint3 id : SV_DispatchThreadID)
 }
 )HLSL";
 
+// ------------------------------------------------------------------------ room
+// The room lit by the screen and the ambilight (room.h, XROOM.md). Its shaders are
+// built from pieces so that each carries exactly what it needs: the constants and
+// the geometry are shared by the lightmap passes (kRoomHlsl, compiled with ROOM_EMIT
+// for the first pass) and by the room's eye pass (kCurveHlsl's code up to its main,
+// then kCurveRoomHlsl). The plain curve pass is compiled from kCurveHlsl alone, so
+// it is exactly what it was.
+
+// RoomConstants (room.h), as a constant buffer; ROOM_REGISTER is b0 in the lightmap
+// passes and b1 in the eye pass (whose b0 is the curve's root constants).
+static const char* kRoomCbufferHlsl = R"HLSL(
+cbuffer RoomC : register(ROOM_REGISTER)
+{
+    float X; float yF; float yC; float zB;
+    float gap; float roomR; float Rg; float phiA;
+    float sinA; float cosA; float xa; float za;
+    float sMax; float zSide; float roomGlowHalfW; float roomGlowHalfH;
+    float rhoWall; float rhoFloor; float rhoCeiling; float bounceScale;
+    float4 roomWorld;
+    float shadeFloor; float shadeCeiling; float alpha; float screenW;
+    float screenH; float rpad0; float rpad1; float rpad2;
+    uint flags; uint gridX; uint gridY; uint emitterCount;
+    uint srcW; uint srcH; uint stride; uint glowW;
+    uint glowH; uint blocksX; uint blocksY; uint rpad3;
+};
+)HLSL";
+
+// The room's shape (room.h: FrontDepth, FrontS, FrontPoint, RoomFacePoint, RoomInside).
+static const char* kRoomGeomHlsl = R"HLSL(
+static const float PI = 3.14159265358979;
+
+float FrontDepthH(float x)
+{
+    if ((flags & 1) == 0) return -gap;
+    float ax = abs(x);
+    if (ax <= xa) return roomR - sqrt(max(Rg * Rg - ax * ax, 0.0));
+    return za + (ax - xa) * (sinA / cosA);
+}
+
+float FrontSH(float x)
+{
+    if ((flags & 1) == 0) return x;
+    float ax = abs(x), sgn = x < 0.0 ? -1.0 : 1.0;
+    if (ax <= xa) return sgn * roomR * asin(min(ax / Rg, 1.0));
+    return sgn * (roomR * phiA + (ax - xa) / cosA * (roomR / Rg));
+}
+
+void FrontPointH(float s, out float x, out float z, out float nx, out float nz)
+{
+    if ((flags & 1) == 0) { x = s; z = -gap; nx = 0.0; nz = 1.0; return; }
+    float sa = abs(s), sgn = s < 0.0 ? -1.0 : 1.0;
+    if (sa <= roomR * phiA)
+    {
+        float phi = sa / roomR;
+        x = sgn * Rg * sin(phi); z = roomR - Rg * cos(phi);
+        nx = -sgn * sin(phi); nz = cos(phi);
+        return;
+    }
+    float along = (sa - roomR * phiA) * (Rg / roomR);
+    x = sgn * (xa + along * cosA); z = za + along * sinA;
+    nx = -sgn * sinA; nz = cosA;
+}
+
+void FacePointH(uint face, float u, float v, out float3 p, out float3 n)
+{
+    float h = yC - yF;
+    p = float3(0, 0, 0); n = float3(0, 0, 0);
+    if (face == 0)
+    {
+        float x, z, nx, nz;
+        FrontPointH(-sMax + u * 2.0 * sMax, x, z, nx, nz);
+        p = float3(x, yC - v * h, z); n = float3(nx, 0.0, nz);
+    }
+    else if (face == 1) { p = float3(-X, yC - v * h, zSide + u * (zB - zSide)); n = float3(1, 0, 0); }
+    else if (face == 2) { p = float3(X, yC - v * h, zSide + u * (zB - zSide)); n = float3(-1, 0, 0); }
+    else if (face == 3) { p = float3(-X + u * 2.0 * X, yF, -gap + v * (zB + gap)); n = float3(0, 1, 0); }
+    else if (face == 4) { p = float3(-X + u * 2.0 * X, yC, -gap + v * (zB + gap)); n = float3(0, -1, 0); }
+    else { p = float3(-X + u * 2.0 * X, yC - v * h, zB); n = float3(0, 0, -1); }
+}
+
+bool InsideH(float3 p)
+{
+    return abs(p.x) < X && p.y > yF && p.y < yC && p.z < zB && p.z > FrontDepthH(p.x);
+}
+)HLSL";
+
+// The lightmap passes. ROOM_EMIT: one 256-thread group per emitter works out its
+// radiance (RoomEmitRadiance: exact pixel means through the decode table, summed in
+// the same order as the CPU). Otherwise: one thread per lightmap texel gathers every
+// emitter (RoomTexel), streaming them through group-shared memory.
+static const char* kRoomHlsl = R"HLSL(
+Texture2D<float4>          scene    : register(t0);
+StructuredBuffer<float>    lut      : register(t1);   // sRGB decode of each byte
+Texture2D<float4>          glow     : register(t2);   // the ambilight (8-bit, premultiplied, encoded)
+RWStructuredBuffer<float4> emit     : register(u0);   // 6 per emitter: 4 corners, normal, radiance
+RWTexture2DArray<float4>   lightmap : register(u1);   // 6 faces x 64 x 64, linear radiance
+
+float3 Decode(float3 v)
+{
+    uint3 b = (uint3)(saturate(v) * 255.0 + 0.5);
+    return float3(lut[b.x], lut[b.y], lut[b.z]);
+}
+
+#ifdef ROOM_EMIT
+groupshared float3 sPart[256];
+
+[numthreads(256, 1, 1)]
+void main(uint3 gid : SV_GroupID, uint gi : SV_GroupIndex)
+{
+    uint e = gid.x;
+    if (e >= emitterCount) return;
+    uint patches = gridX * gridY;
+    bool isScreen = e < patches;
+    float3 sum = float3(0, 0, 0);
+    uint count = 0;
+    if (isScreen)
+    {
+        uint i = e % gridX, j = e / gridX;
+        uint x0 = (i * srcW) / gridX, x1 = ((i + 1) * srcW) / gridX;
+        uint y0 = (j * srcH) / gridY, y1 = ((j + 1) * srcH) / gridY;
+        uint nx = (x1 - x0 + stride - 1) / stride, ny = (y1 - y0 + stride - 1) / stride;
+        count = nx * ny;
+        for (uint k = gi; k < count; k += 256)
+            sum += Decode(scene.Load(int3(x0 + (k % nx) * stride, y0 + (k / nx) * stride, 0)).rgb);
+    }
+    else if ((flags & 4) != 0 && emit[e * 6 + 4].w != 0.0)
+    {
+        uint b = e - patches;
+        uint gx0 = (b % blocksX) * 8, gy0 = (b / blocksX) * 8;
+        uint bw = min(8u, glowW - gx0), bh = min(8u, glowH - gy0);
+        count = bw * bh;
+        for (uint k = gi; k < count; k += 256)
+            sum += Decode(glow.Load(int3(gx0 + k % bw, gy0 + k / bw, 0)).rgb);
+    }
+    sPart[gi] = sum;
+    GroupMemoryBarrierWithGroupSync();
+    [unroll] for (uint st = 128; st > 0; st >>= 1)
+    {
+        if (gi < st) sPart[gi] += sPart[gi + st];
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (gi == 0)
+    {
+        float3 mean = count > 0 ? sPart[0] / (float)count : float3(0, 0, 0);
+        float3 L = emit[e * 6 + 5].rgb;
+        L = isScreen ? L + (mean - L) * alpha : mean;
+        emit[e * 6 + 5] = float4(L, 0.0);
+    }
+}
+#else
+groupshared float4 sEm[128 * 6];
+
+// room.h RoomLambertQuad: pi x the exact form factor to a quad.
+float LambertQuad(float3 p, float3 n, float3 c0, float3 c1, float3 c2, float3 c3)
+{
+    float3 c[4] = { c0, c1, c2, c3 };
+    float3 u[4];
+    [unroll] for (int k = 0; k < 4; k++)
+    {
+        float3 v = c[k] - p;
+        float len = sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        if (!(len > 1e-9)) return 0.0;
+        u[k] = v / len;
+    }
+    float sum = 0.0;
+    [unroll] for (int k2 = 0; k2 < 4; k2++)
+    {
+        float3 a = u[k2], b = u[(k2 + 1) & 3];
+        float cx = a.y * b.z - a.z * b.y, cy = a.z * b.x - a.x * b.z, cz = a.x * b.y - a.y * b.x;
+        float cl = sqrt(cx * cx + cy * cy + cz * cz);
+        if (!(cl > 1e-12)) continue;
+        float theta = atan2(cl, a.x * b.x + a.y * b.y + a.z * b.z);
+        sum += theta * (n.x * cx + n.y * cy + n.z * cz) / cl;
+    }
+    return 0.5 * abs(sum);
+}
+
+// room.h RoomFormFactor, for emitter m of the shared chunk.
+float FormFactorS(float3 p, float3 n, uint m)
+{
+    float4 q0 = sEm[m * 6 + 0], q1 = sEm[m * 6 + 1], q2 = sEm[m * 6 + 2], q3 = sEm[m * 6 + 3], nq = sEm[m * 6 + 4];
+    float cx = 0.5 * (q0.x + q2.x), cy = 0.5 * (q0.y + q2.y), cz = 0.5 * (q0.z + q2.z);
+    float3 v = float3(cx - p.x, cy - p.y, cz - p.z);
+    float np = n.x * v.x + n.y * v.y + n.z * v.z;
+    float nqv = -(nq.x * v.x + nq.y * v.y + nq.z * v.z);
+    if (!(np > 0.0) || !(nqv > 0.0)) return 0.0;
+    float r2 = v.x * v.x + v.y * v.y + v.z * v.z;
+    float area = q0.w, diag2 = q1.w;
+    if (r2 >= 4.0 * diag2) return area * (np * nqv / r2) / (r2 + area / PI);
+    return LambertQuad(p, n, q0.xyz, q1.xyz, q2.xyz, q3.xyz);
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex)
+{
+    uint face = id.z;
+    float3 p, n;
+    FacePointH(face, ((float)id.x + 0.5) / 64.0, ((float)id.y + 0.5) / 64.0, p, n);
+    float3 E = float3(0, 0, 0), flux = float3(0, 0, 0);
+    for (uint base = 0; base < emitterCount; base += 128)
+    {
+        uint chunk = min(128u, emitterCount - base);
+        for (uint k = gi; k < chunk * 6; k += 64) sEm[k] = emit[base * 6 + k];
+        GroupMemoryBarrierWithGroupSync();
+        for (uint m = 0; m < chunk; m++)
+        {
+            if (sEm[m * 6 + 4].w == 0.0) continue;
+            float G = FormFactorS(p, n, m);
+            float a = PI * sEm[m * 6].w;
+            float3 L = sEm[m * 6 + 5].rgb;
+            E += L * G;
+            flux += L * a;
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    float rho = face == 3 ? rhoFloor : (face == 4 ? rhoCeiling : rhoWall);
+    float shade = face == 3 ? shadeFloor : (face == 4 ? shadeCeiling : 1.0);
+    float3 Lt = (rho / PI) * (E + flux * bounceScale) + shade * roomWorld.rgb;
+    lightmap[uint3(id.x, id.y, face)] = float4(Lt, 1.0);
+}
+#endif
+)HLSL";
+
+// The room's eye pass: appended to kCurveHlsl's code before its main (so Ray, ArcHit,
+// Screen, Dec and Enc are shared), after the room's constants and geometry. room.h
+// RoomExit / RoomClassify / RoomSampleColour / RoomPixel on the CPU.
+static const char* kCurveRoomHlsl = R"HLSL(
+Texture2DArray<float4> lightmap : register(t2);
+
+static const int BAYER[64] = {
+     0, 32,  8, 40,  2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26,
+    12, 44,  4, 36, 14, 46,  6, 38, 60, 28, 52, 20, 62, 30, 54, 22,
+     3, 35, 11, 43,  1, 33,  9, 41, 51, 19, 59, 27, 49, 17, 57, 25,
+    15, 47,  7, 39, 13, 45,  5, 37, 63, 31, 55, 23, 61, 29, 53, 21 };
+
+struct RoomHitH { int face; float u; float v; float s; float y; };
+
+bool RoomExitH(float3 o, float3 d, out RoomHitH h)
+{
+    h.face = -1; h.u = 0.0; h.v = 0.0; h.s = 0.0; h.y = 0.0;
+    if (!InsideH(o)) return false;
+    float best = 3.0e38, t;
+    int face = -1;
+    float frontPhi = 0.0;
+    bool onArc = false;
+    if (d.x > 0.0) { t = (X - o.x) / d.x; if (t > 0.0 && t < best) { best = t; face = 2; } }
+    if (d.x < 0.0) { t = (-X - o.x) / d.x; if (t > 0.0 && t < best) { best = t; face = 1; } }
+    if (d.y < 0.0) { t = (yF - o.y) / d.y; if (t > 0.0 && t < best) { best = t; face = 3; } }
+    if (d.y > 0.0) { t = (yC - o.y) / d.y; if (t > 0.0 && t < best) { best = t; face = 4; } }
+    if (d.z > 0.0) { t = (zB - o.z) / d.z; if (t > 0.0 && t < best) { best = t; face = 5; } }
+    if ((flags & 1) == 0)
+    {
+        if (d.z < 0.0) { t = (-gap - o.z) / d.z; if (t > 0.0 && t < best) { best = t; face = 0; } }
+    }
+    else
+    {
+        float phi, yy;
+        if (ArcHit(roomR, Rg, phiA, 3.0e38, o, d, phi, yy))
+        {
+            float hx = Rg * sin(phi), hz = roomR - Rg * cos(phi);
+            t = abs(d.x) > abs(d.z) ? (hx - o.x) / d.x : (hz - o.z) / d.z;
+            if (t > 0.0 && t < best) { best = t; face = 0; frontPhi = phi; onArc = true; }
+        }
+        [unroll] for (int side = -1; side <= 1; side += 2)
+        {
+            float wnx = -(float)side * sinA, wnz = cosA;
+            float wpx = (float)side * xa, wpz = za;
+            float nd = wnx * d.x + wnz * d.z;
+            if (!(nd < 0.0)) continue;
+            float tw = (wnx * (wpx - o.x) + wnz * (wpz - o.z)) / nd;
+            float hx2 = o.x + tw * d.x;
+            if ((float)side * hx2 < xa) continue;
+            if (tw > 0.0 && tw < best) { best = tw; face = 0; onArc = false; }
+        }
+    }
+    if (face < 0) return false;
+    float3 p = float3(o.x + best * d.x, o.y + best * d.y, o.z + best * d.z);
+    float hgt = yC - yF;
+    h.face = face; h.y = p.y;
+    if (face == 0)
+    {
+        h.s = (flags & 1) == 0 ? p.x : (onArc ? roomR * frontPhi : FrontSH(p.x));
+        h.u = (h.s + sMax) / (2.0 * sMax); h.v = (yC - p.y) / hgt;
+    }
+    else if (face == 1 || face == 2) { h.u = (p.z - zSide) / (zB - zSide); h.v = (yC - p.y) / hgt; }
+    else if (face == 3 || face == 4) { h.u = (p.x + X) / (2.0 * X); h.v = (p.z + gap) / (zB + gap); }
+    else { h.u = (p.x + X) / (2.0 * X); h.v = (yC - p.y) / hgt; }
+    return true;
+}
+
+// Sample kinds: 0 picture, 1 + face, 7 the flat screen's footprint, 8 outside.
+int Classify(float3 o, float3 d, out float2 uv, out float2 guv)
+{
+    uv = float2(0, 0); guv = float2(0, 0);
+    if ((flags & 2) == 0)
+    {
+        if (Screen(o, d, uv)) return 0;
+    }
+    else if (d.z < 0.0)
+    {
+        float t = -o.z / d.z;
+        float hx = o.x + t * d.x, hy = o.y + t * d.y;
+        if (t > 0.0 && abs(hx) <= 0.5 * screenW && abs(hy) <= 0.5 * screenH) return 7;
+    }
+    RoomHitH h;
+    if (!RoomExitH(o, d, h)) return 8;
+    uv = float2(h.u, h.v);
+    if (h.face == 0) guv = float2(h.s / (2.0 * roomGlowHalfW) + 0.5, 0.5 - h.y / (2.0 * roomGlowHalfH));
+    return 1 + h.face;
+}
+
+float3 RoomColour(int kind, float2 uv, float2 guv, uint e)
+{
+    float3 c = world.rgb;
+    if (kind == 0) c = picture.SampleLevel(samp, float3(uv, (float)e), 0).rgb;
+    else if (kind == 7) c = float3(0, 0, 0);
+    else if (kind >= 1 && kind <= 6)
+    {
+        float3 L = lightmap.SampleLevel(samp, float3(uv, (float)(kind - 1)), 0).rgb;
+        if (kind == 1 && (flags & 4) != 0 && guv.x >= 0.0 && guv.x <= 1.0 && guv.y >= 0.0 && guv.y <= 1.0)
+            L += Dec(glow.SampleLevel(samp, guv, 0).rgb);
+        c = Enc(max(L, 0.0));
+    }
+    return c;
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= EW || id.y >= EH) return;
+    uint e = id.z;
+
+    int kind[4];
+    float2 uv[4], guv[4];
+    [unroll] for (int s = 0; s < 4; s++)
+    {
+        float3 o, d;
+        Ray(e, (float)id.x + 0.5 + SUB[s].x, (float)id.y + 0.5 + SUB[s].y, o, d);
+        kind[s] = Classify(o, d, uv[s], guv[s]);
+    }
+    bool agree = kind[0] == kind[1] && kind[1] == kind[2] && kind[2] == kind[3];
+    float3 col = float3(0, 0, 0);
+    if (agree)
+    {
+        float2 m = float2((uv[0].x + uv[1].x + uv[2].x + uv[3].x) * 0.25, (uv[0].y + uv[1].y + uv[2].y + uv[3].y) * 0.25);
+        float2 mg = float2((guv[0].x + guv[1].x + guv[2].x + guv[3].x) * 0.25, (guv[0].y + guv[1].y + guv[2].y + guv[3].y) * 0.25);
+        col = RoomColour(kind[0], m, mg, e);
+        if ((flags & 8) != 0 && kind[0] >= 1 && kind[0] <= 6)
+        {
+            uint off = e != 0 ? 4 : 0;
+            col += (((float)BAYER[((id.x + off) & 7) + ((id.y + off) & 7) * 8] + 0.5) / 64.0 - 0.5) / 255.0;
+        }
+    }
+    else
+    {
+        [unroll] for (int k = 0; k < 4; k++) col += RoomColour(kind[k], uv[k], guv[k], e) * 0.25;
+    }
+    outEye[uint3(id.x, id.y, e)] = float4(col, 1.0);
+}
+)HLSL";
+
 struct UnpackConstants                  // must match cbuffer C in kUnpackHlsl
 {
     uint32_t sw, sh, pitch, dw, dh, normalize, pad0, pad1;
@@ -2293,21 +2669,28 @@ static bool MakeAmbiRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
 
 // Constants, then one table: the warped pictures (t0), the glow (t1), the eye
 // buffers (u0); a linear clamping sampler for both reads.
-static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
+// With `room`, the table also holds the room's lightmap (t2, after the eye buffers)
+// and RoomConstants come as a root CBV (b1): 56 + 1 + 2 = 59 of 64 DWORDs.
+static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out, bool room = false)
 {
-    D3D12_DESCRIPTOR_RANGE tbl[2]{};
+    static_assert(sizeof(CurveConstants) / 4 + 1 + 2 <= 64, "curve root signature: constants + table + CBV");
+    D3D12_DESCRIPTOR_RANGE tbl[3]{};
     tbl[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     tbl[0].NumDescriptors = 2; tbl[0].BaseShaderRegister = 0; tbl[0].OffsetInDescriptorsFromTableStart = 0;
     tbl[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     tbl[1].NumDescriptors = 1; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 2;
+    tbl[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    tbl[2].NumDescriptors = 1; tbl[2].BaseShaderRegister = 2; tbl[2].OffsetInDescriptorsFromTableStart = 3;
 
-    D3D12_ROOT_PARAMETER params[2]{};
+    D3D12_ROOT_PARAMETER params[3]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants.ShaderRegister = 0;
     params[0].Constants.Num32BitValues = sizeof(CurveConstants) / 4;
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    params[1].DescriptorTable.NumDescriptorRanges = 2;
+    params[1].DescriptorTable.NumDescriptorRanges = room ? 3 : 2;
     params[1].DescriptorTable.pDescriptorRanges = tbl;
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[2].Descriptor.ShaderRegister = 1;
 
     D3D12_STATIC_SAMPLER_DESC ss{};
     ss.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -2317,7 +2700,7 @@ static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
     ss.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC rsd{};
-    rsd.NumParameters = 2;
+    rsd.NumParameters = room ? 3 : 2;
     rsd.pParameters = params;
     rsd.NumStaticSamplers = 1;
     rsd.pStaticSamplers = &ss;
@@ -2326,6 +2709,40 @@ static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
     if (FAILED(hr)) { Log("MakeCurveRootSig: FAIL serialize: %s", err ? (const char*)err->GetBufferPointer() : "?"); return false; }
     hr = app.device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&out));
     if (FAILED(hr)) { Log("MakeCurveRootSig: FAIL CreateRootSignature 0x%08X", (unsigned)hr); return false; }
+    return true;
+}
+
+// The room's lightmap passes: RoomConstants as a root CBV (b0), the picture (t0, one
+// per frame), then the decode table, glow, emitters and lightmap.
+static bool MakeRoomRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
+{
+    D3D12_DESCRIPTOR_RANGE srcRange{};
+    srcRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    srcRange.NumDescriptors = 1; srcRange.BaseShaderRegister = 0;
+    D3D12_DESCRIPTOR_RANGE tbl[2]{};
+    tbl[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    tbl[0].NumDescriptors = 2; tbl[0].BaseShaderRegister = 1; tbl[0].OffsetInDescriptorsFromTableStart = 0;
+    tbl[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    tbl[1].NumDescriptors = 2; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 2;
+
+    D3D12_ROOT_PARAMETER params[3]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].Descriptor.ShaderRegister = 0;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[1].DescriptorTable.NumDescriptorRanges = 1;
+    params[1].DescriptorTable.pDescriptorRanges = &srcRange;
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[2].DescriptorTable.NumDescriptorRanges = 2;
+    params[2].DescriptorTable.pDescriptorRanges = tbl;
+
+    D3D12_ROOT_SIGNATURE_DESC rsd{};
+    rsd.NumParameters = 3;
+    rsd.pParameters = params;
+    ComPtr<ID3DBlob> blob, err;
+    HRESULT hr = D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
+    if (FAILED(hr)) { Log("MakeRoomRootSig: FAIL serialize: %s", err ? (const char*)err->GetBufferPointer() : "?"); return false; }
+    hr = app.device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&out));
+    if (FAILED(hr)) { Log("MakeRoomRootSig: FAIL CreateRootSignature 0x%08X", (unsigned)hr); return false; }
     return true;
 }
 
@@ -2496,6 +2913,91 @@ static bool InitShaders(App& app)
                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.testEyeOut)) return false;
     MakeEyeUav(app, app.testEyeOut.Get(), DESC_CURVE_TEST + 2);
     Log("InitShaders: curved screen pass ready (%zu bytes)", curveCs->GetBufferSize());
+
+    // The room. Its eye pass is the curve shader's code up to its main, then the
+    // room's; the plain curve shader above is compiled from its own text alone.
+    Log("InitShaders: room - building");
+    static_assert(kRoomLightmap == 64, "kRoomHlsl hardcodes a 64 x 64 lightmap");
+    const std::string curveText(kCurveHlsl);
+    const size_t curveMain = curveText.find("[numthreads(8, 8, 1)]\nvoid main");
+    if (curveMain == std::string::npos) { Log("InitShaders: FAIL room - the curve shader's main was not found"); return false; }
+    const std::string roomEyeText = std::string("#define ROOM_REGISTER b1\n") + curveText.substr(0, curveMain) +
+                                    kRoomCbufferHlsl + kRoomGeomHlsl + kCurveRoomHlsl;
+    const std::string roomLightText = std::string("#define ROOM_REGISTER b0\n") + kRoomCbufferHlsl + kRoomGeomHlsl + kRoomHlsl;
+    const std::string roomEmitText = std::string("#define ROOM_EMIT 1\n") + roomLightText;
+    ComPtr<ID3DBlob> roomEyeCs, roomLightCs, roomEmitCs;
+    if (!CompileCs("curve-room.hlsl", roomEyeText.c_str(), roomEyeCs)) return false;
+    if (!CompileCs("room-light.hlsl", roomLightText.c_str(), roomLightCs)) return false;
+    if (!CompileCs("room-emit.hlsl", roomEmitText.c_str(), roomEmitCs)) return false;
+    if (!MakeCurveRootSig(app, app.curveRoomRootSig, true)) return false;
+    if (!MakeRoomRootSig(app, app.roomRootSig)) return false;
+    pd.pRootSignature = app.curveRoomRootSig.Get();
+    pd.CS = { roomEyeCs->GetBufferPointer(), roomEyeCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.curveRoomPso)))) { Log("InitShaders: FAIL room eye PSO"); return false; }
+    pd.pRootSignature = app.roomRootSig.Get();
+    pd.CS = { roomLightCs->GetBufferPointer(), roomLightCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.roomLightPso)))) { Log("InitShaders: FAIL room light PSO"); return false; }
+    pd.CS = { roomEmitCs->GetBufferPointer(), roomEmitCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.roomEmitPso)))) { Log("InitShaders: FAIL room emit PSO"); return false; }
+
+    const UINT64 emitterBytes = (UINT64)kRoomMaxEmitters * sizeof(RoomEmitter);
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, 256 * sizeof(float), D3D12_RESOURCE_FLAG_NONE,
+                    D3D12_RESOURCE_STATE_COPY_DEST, app.roomLut, nullptr)) return false;
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, emitterBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.roomEmitters, nullptr)) return false;
+    for (int i = 0; i <= RING; i++)
+        if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, emitterBytes, D3D12_RESOURCE_FLAG_NONE,
+                        D3D12_RESOURCE_STATE_GENERIC_READ, app.roomGeomUp[i], (void**)&app.roomGeomMapped[i])) return false;
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, (UINT64)(RING + 1) * sizeof(RoomConstants), D3D12_RESOURCE_FLAG_NONE,
+                    D3D12_RESOURCE_STATE_GENERIC_READ, app.roomCbUp, (void**)&app.roomCbMapped)) return false;
+    if (!MakeTexture(app.device.Get(), kRoomLightmap, kRoomLightmap, DXGI_FORMAT_R16G16B16A16_FLOAT, kRoomFaces,
+                     D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_HEAP_FLAG_NONE,
+                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.roomLight)) return false;
+    {
+        // The decode table, once.
+        ComPtr<ID3D12Resource> up;
+        float* mapped = nullptr;
+        if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, 256 * sizeof(float), D3D12_RESOURCE_FLAG_NONE,
+                        D3D12_RESOURCE_STATE_GENERIC_READ, up, (void**)&mapped) || !mapped) return false;
+        RoomDecodeTable(mapped);
+        WaitFence(app, app.fenceVal);
+        app.cmdAlloc[0]->Reset();
+        app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+        app.cmdList->CopyBufferRegion(app.roomLut.Get(), 0, up.Get(), 0, 256 * sizeof(float));
+        Transition(app.cmdList.Get(), app.roomLut.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        app.cmdList->Close();
+        WaitFence(app, SubmitAndSignal(app));
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC lutSrv{};
+    lutSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    lutSrv.Format = DXGI_FORMAT_UNKNOWN;
+    lutSrv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    lutSrv.Buffer.NumElements = 256;
+    lutSrv.Buffer.StructureByteStride = sizeof(float);
+    app.device->CreateShaderResourceView(app.roomLut.Get(), &lutSrv, CpuDesc(app, DESC_ROOM + 0));
+    app.device->CreateShaderResourceView(app.ambiTex.Get(), &glowSrv, CpuDesc(app, DESC_ROOM + 1));
+    D3D12_UNORDERED_ACCESS_VIEW_DESC emUav{};
+    emUav.Format = DXGI_FORMAT_UNKNOWN;
+    emUav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    emUav.Buffer.NumElements = kRoomMaxEmitters * kRoomEmitterFloat4s;
+    emUav.Buffer.StructureByteStride = 16;
+    app.device->CreateUnorderedAccessView(app.roomEmitters.Get(), nullptr, &emUav, CpuDesc(app, DESC_ROOM + 2));
+    D3D12_UNORDERED_ACCESS_VIEW_DESC lmUav{};
+    lmUav.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    lmUav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+    lmUav.Texture2DArray.ArraySize = kRoomFaces;
+    app.device->CreateUnorderedAccessView(app.roomLight.Get(), nullptr, &lmUav, CpuDesc(app, DESC_ROOM + 3));
+    D3D12_SHADER_RESOURCE_VIEW_DESC lmSrv{};
+    lmSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    lmSrv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    lmSrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+    lmSrv.Texture2DArray.MipLevels = 1;
+    lmSrv.Texture2DArray.ArraySize = kRoomFaces;
+    app.device->CreateShaderResourceView(app.roomLight.Get(), &lmSrv, CpuDesc(app, DESC_CURVE_MAIN + 3));
+    app.device->CreateShaderResourceView(app.roomLight.Get(), &lmSrv, CpuDesc(app, DESC_CURVE_TEST + 3));
+    Log("InitShaders: room ready (eye %zu, light %zu, emit %zu bytes; up to %d emitters, %d x %d x %d lightmap)",
+        roomEyeCs->GetBufferSize(), roomLightCs->GetBufferSize(), roomEmitCs->GetBufferSize(), kRoomMaxEmitters,
+        kRoomFaces, kRoomLightmap, kRoomLightmap);
 
     Log("InitShaders: exit ok (warp %zu bytes, prep %zu bytes)", warpCs->GetBufferSize(), prepCs->GetBufferSize());
     return true;
@@ -2682,37 +3184,85 @@ static void RecordWorldColour(App& app, int ring, uint32_t rgb, ID3D12Resource* 
     Transition(cl, img, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
 }
 
+// The room's light for this frame into its lightmap (UAV at rest): each emitter's
+// radiance (EMIT), then every lightmap texel (LIGHT). `geometry` (upload heap), when
+// given, is the emitters' new geometry - it also clears their smoothing history, so
+// that frame's constants must carry alpha 1.
+static void RecordRoomLight(App& app, UINT srcDescIndex, D3D12_GPU_VIRTUAL_ADDRESS constants, ID3D12Resource* geometry, UINT emitters)
+{
+    if (!app.roomEmitPso || !app.roomLightPso || !app.roomEmitters || !app.roomLight || !app.ambiTex) return;
+    if (constants == 0 || emitters == 0 || emitters > (UINT)kRoomMaxEmitters) return;
+
+    ID3D12GraphicsCommandList* cl = app.cmdList.Get();
+    if (geometry)
+    {
+        Transition(cl, app.roomEmitters.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+        cl->CopyBufferRegion(app.roomEmitters.Get(), 0, geometry, 0, (UINT64)emitters * sizeof(RoomEmitter));
+        Transition(cl, app.roomEmitters.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+    Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
+    cl->SetDescriptorHeaps(1, heaps);
+    cl->SetComputeRootSignature(app.roomRootSig.Get());
+    cl->SetComputeRootConstantBufferView(0, constants);
+    cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDescIndex));
+    cl->SetComputeRootDescriptorTable(2, GpuDesc(app, DESC_ROOM));
+    cl->SetPipelineState(app.roomEmitPso.Get());
+    cl->Dispatch(emitters, 1, 1);
+    D3D12_RESOURCE_BARRIER emitted{};
+    emitted.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    emitted.UAV.pResource = app.roomEmitters.Get();
+    cl->ResourceBarrier(1, &emitted);
+    cl->SetPipelineState(app.roomLightPso.Get());
+    cl->Dispatch(kRoomLightmap / 8, kRoomLightmap / 8, kRoomFaces);
+    D3D12_RESOURCE_BARRIER lit{};
+    lit.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    lit.UAV.pResource = app.roomLight.Get();
+    cl->ResourceBarrier(1, &lit);
+    Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+}
+
 // Ray-cast the curved screen into `eyes` (UAV at rest) from `picture` (the warp's
 // output, COPY_SOURCE as RecordWarp leaves it; left that way). With eyeImg, copy
 // the result into the acquired swapchain image (RENDER_TARGET at rest).
+// `roomConstants` non-zero: the room's variant, which also reads the room's lightmap
+// (UAV at rest, a shader resource for the pass) and shows the room round the screen.
+// Only the c.ew x c.eh corner of the buffers is drawn and copied (a flat screen's
+// room layer is drawn at half size).
 static void RecordCurvedScreen(App& app, UINT tableIndex, ID3D12Resource* picture, const CurveConstants& c,
-                               ID3D12Resource* eyes, ID3D12Resource* eyeImg)
+                               ID3D12Resource* eyes, ID3D12Resource* eyeImg, D3D12_GPU_VIRTUAL_ADDRESS roomConstants = 0)
 {
     if (!picture || !eyes || !app.curvePso || !app.ambiTex) return;
     if (c.ew == 0 || c.eh == 0) return;
+    const bool room = roomConstants != 0;
+    if (room && (!app.curveRoomPso || !app.roomLight)) return;
 
     ID3D12GraphicsCommandList* cl = app.cmdList.Get();
     Transition(cl, picture, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    if (room) Transition(cl, app.roomLight.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
     cl->SetDescriptorHeaps(1, heaps);
-    cl->SetComputeRootSignature(app.curveRootSig.Get());
-    cl->SetPipelineState(app.curvePso.Get());
+    cl->SetComputeRootSignature(room ? app.curveRoomRootSig.Get() : app.curveRootSig.Get());
+    cl->SetPipelineState(room ? app.curveRoomPso.Get() : app.curvePso.Get());
     cl->SetComputeRoot32BitConstants(0, sizeof(CurveConstants) / 4, &c, 0);
     cl->SetComputeRootDescriptorTable(1, GpuDesc(app, tableIndex));
+    if (room) cl->SetComputeRootConstantBufferView(2, roomConstants);
     cl->Dispatch((c.ew + 7) / 8, (c.eh + 7) / 8, VIEWS);
+    if (room) Transition(cl, app.roomLight.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(cl, picture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
     if (!eyeImg) return;
 
     Transition(cl, eyes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     Transition(cl, eyeImg, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
+    const D3D12_BOX box{ 0, 0, 0, c.ew, c.eh, 1 };
     for (UINT e = 0; e < VIEWS; e++)
     {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
         dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dst.SubresourceIndex = e; dst.pResource = eyeImg;
         src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; src.SubresourceIndex = e; src.pResource = eyes;
-        cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        cl->CopyTextureRegion(&dst, 0, 0, 0, &src, &box);
     }
     Transition(cl, eyeImg, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
     Transition(cl, eyes, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -4481,10 +5031,11 @@ static bool SelfTestAmbilight(App& app, const std::vector<unsigned char>& scene)
     return ok;
 }
 
-// Reads back a texture array (all slices) into tightly packed RGBA rows.
-static bool ReadbackRgba(App& app, ID3D12Resource* tex, D3D12_RESOURCE_STATES state, std::vector<std::vector<unsigned char>>& out)
+// Reads back a texture array (all slices) into tightly packed rows of `texelBytes`.
+static bool ReadbackRgba(App& app, ID3D12Resource* tex, D3D12_RESOURCE_STATES state, std::vector<std::vector<unsigned char>>& out,
+                         UINT texelBytes = 4)
 {
-    if (!tex) return false;
+    if (!tex || texelBytes == 0) return false;
     D3D12_RESOURCE_DESC d = tex->GetDesc();
     const UINT slices = d.DepthOrArraySize;
     std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> fp(slices);
@@ -4511,9 +5062,10 @@ static bool ReadbackRgba(App& app, ID3D12Resource* tex, D3D12_RESOURCE_STATES st
     out.assign(slices, {});
     for (UINT i = 0; i < slices; i++)
     {
-        out[i].resize((size_t)d.Width * d.Height * 4);
+        out[i].resize((size_t)d.Width * d.Height * texelBytes);
         for (UINT y = 0; y < d.Height; y++)
-            memcpy(out[i].data() + (size_t)y * d.Width * 4, mapped + fp[i].Offset + (size_t)y * fp[i].Footprint.RowPitch, (size_t)d.Width * 4);
+            memcpy(out[i].data() + (size_t)y * d.Width * texelBytes, mapped + fp[i].Offset + (size_t)y * fp[i].Footprint.RowPitch,
+                   (size_t)d.Width * texelBytes);
     }
     rb->Unmap(0, nullptr);
     return true;
@@ -4600,6 +5152,203 @@ static bool SelfTestCurve(App& app)
     return ok;
 }
 
+// The room, GPU vs room.h, for a flat and a fully curved screen: every emitter's
+// radiance (to 1e-4), every lightmap texel (half-float precision), and the eye pass
+// seen by two eyes - one looking up at the screen, one turned to a side wall and the
+// floor - compared with RoomPixel fed the GPU's own lightmap, glow and pictures.
+static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
+{
+    if (!app.roomEmitPso || !app.curveRoomPso || !app.testEyeOut || !app.roomCbMapped) { Log("SelfTestRoom: FAIL not built"); return false; }
+    if (scene.size() != (size_t)W * H * 3) { Log("SelfTestRoom: FAIL bad scene"); return false; }
+    Log("SelfTestRoom: enter");
+
+    std::vector<std::vector<unsigned char>> glowPx, pictures;
+    if (!ReadbackRgba(app, app.ambiTex.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, glowPx) || glowPx.size() != 1 ||
+        !ReadbackRgba(app, app.testTarget.colorOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, pictures) || pictures.size() != VIEWS)
+    { Log("SelfTestRoom: FAIL readback of the glow and pictures"); return false; }
+    std::vector<unsigned char> rgba((size_t)W * H * 4);
+    for (size_t i = 0; i < (size_t)W * H; i++)
+    {
+        rgba[i * 4 + 0] = scene[i * 3 + 0]; rgba[i * 4 + 1] = scene[i * 3 + 1]; rgba[i * 4 + 2] = scene[i * 3 + 2]; rgba[i * 4 + 3] = 255;
+    }
+    float table[256];
+    RoomDecodeTable(table);
+    const float width = 5.7f, height = width * (float)H / (float)W;
+    const uint32_t world = 0x2A3441;
+    bool ok = true;
+
+    for (int curvedCase = 0; curvedCase < 2; curvedCase++)
+    {
+        const char* name = curvedCase ? "curved" : "flat";
+        Cylinder cyl;
+        if (curvedCase && (!BuildCylinder(width, height, ScreenAnchor::distance, 1.0f, cyl) || !cyl.curved)) { Log("SelfTestRoom[%s]: FAIL cylinder", name); return false; }
+        RoomInputs in;
+        in.W = width; in.H = height; in.eye[1] = 0.05f; in.eye[2] = ScreenAnchor::distance; in.cyl = cyl;
+        Room room;
+        if (!BuildRoom(in, room)) { Log("SelfTestRoom[%s]: FAIL room", name); return false; }
+        const float margin = kAmbiMargin * width;
+        const RoomEmitterLayout layout = RoomLayout(width, height, app.ambiW, app.ambiH);
+        std::vector<RoomEmitter> em;
+        if (!BuildRoomEmitters(room, cyl, width, height, 0.5f * width + margin, 0.5f * height + margin, layout, em)) { Log("SelfTestRoom[%s]: FAIL emitters", name); return false; }
+        RoomView view;
+        view.flatLayer = !curvedCase; view.W = width; view.H = height; view.glowOn = true;
+        view.glowHalfW = 0.5f * width + margin; view.glowHalfH = 0.5f * height + margin; view.dither = true;
+        const RoomShading shading = MakeRoomShading(room, 40, world, width * height);
+        const RoomConstants rc = MakeRoomConstants(room, shading, layout, view, W, H, 1.0f);
+        memcpy(app.roomCbMapped + (size_t)RING * sizeof(RoomConstants), &rc, sizeof(rc));
+        memcpy(app.roomGeomMapped[RING], em.data(), em.size() * sizeof(RoomEmitter));
+        const D3D12_GPU_VIRTUAL_ADDRESS cb = app.roomCbUp->GetGPUVirtualAddress() + (UINT64)RING * sizeof(RoomConstants);
+
+        // --- the light
+        WaitFence(app, app.fenceVal);
+        app.cmdAlloc[0]->Reset();
+        app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+        RecordRoomLight(app, DESC_TEST_SRC, cb, app.roomGeomUp[RING].Get(), (UINT)layout.count());
+        app.cmdList->Close();
+        WaitFence(app, SubmitAndSignal(app));
+
+        const UINT64 emBytes = (UINT64)layout.count() * sizeof(RoomEmitter);
+        ComPtr<ID3D12Resource> rb;
+        if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, emBytes, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, rb, nullptr)) return false;
+        app.cmdAlloc[0]->Reset();
+        app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+        Transition(app.cmdList.Get(), app.roomEmitters.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        app.cmdList->CopyBufferRegion(rb.Get(), 0, app.roomEmitters.Get(), 0, emBytes);
+        Transition(app.cmdList.Get(), app.roomEmitters.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        app.cmdList->Close();
+        WaitFence(app, SubmitAndSignal(app));
+        std::vector<RoomEmitter> gpuEm(em.size());
+        {
+            const unsigned char* m = nullptr;
+            if (FAILED(rb->Map(0, nullptr, (void**)&m)) || !m) { Log("SelfTestRoom[%s]: FAIL map emitters", name); return false; }
+            memcpy(gpuEm.data(), m, (size_t)emBytes);
+            rb->Unmap(0, nullptr);
+        }
+        if (!RoomEmitRadiance(layout, rgba.data(), W, H, W * 4, glowPx[0].data(), app.ambiW * 4, true, 1.0f, table, em))
+        { Log("SelfTestRoom[%s]: FAIL CPU emitters", name); return false; }
+        size_t badEm = 0, glowLit = 0;
+        for (size_t i = 0; i < em.size(); i++)
+            for (int ch = 0; ch < 3; ch++)
+            {
+                if (std::fabs(gpuEm[i].L[ch] - em[i].L[ch]) > 1e-4f * std::fabs(em[i].L[ch]) + 1e-6f) badEm++;
+                if (i >= (size_t)layout.gridX * layout.gridY && ch == 0 && em[i].L[0] > 1e-4f) glowLit++;
+            }
+
+        std::vector<std::vector<unsigned char>> lmBytes;
+        if (!ReadbackRgba(app, app.roomLight.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, lmBytes, 8) || lmBytes.size() != (size_t)kRoomFaces)
+        { Log("SelfTestRoom[%s]: FAIL lightmap readback", name); return false; }
+        RoomLightmap light;
+        light.texels.resize((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 4);
+        size_t badTexel = 0;
+        float worstRel = 0;
+        bool facesLit[kRoomFaces] = {};
+        for (int f = 0; f < kRoomFaces; f++)
+            for (int j = 0; j < kRoomLightmap; j++)
+                for (int i = 0; i < kRoomLightmap; i++)
+                {
+                    const uint16_t* hx = (const uint16_t*)(lmBytes[f].data() + ((size_t)j * kRoomLightmap + i) * 8);
+                    float cpu[3];
+                    RoomTexel(room, shading, em, f, i, j, cpu);
+                    for (int ch = 0; ch < 4; ch++)
+                        light.texels[(((size_t)f * kRoomLightmap + j) * kRoomLightmap + i) * 4 + ch] = RoomHalfToFloat(hx[ch]);
+                    for (int ch = 0; ch < 3; ch++)
+                    {
+                        const float g = RoomHalfToFloat(hx[ch]);
+                        const float diff = std::fabs(g - cpu[ch]);
+                        if (diff > 2e-3f * std::fabs(cpu[ch]) + 1e-5f) badTexel++;
+                        if (cpu[ch] > 1e-3f) worstRel = std::max(worstRel, diff / cpu[ch]);
+                        // Lit by the screen or glow: above the face's house light alone.
+                        const float shade = f == kFaceFloor ? kRoomShadeFloor : (f == kFaceCeiling ? kRoomShadeCeiling : 1.0f);
+                        if (cpu[ch] - shade * shading.world[ch] > 1e-5f) facesLit[f] = true;
+                    }
+                }
+        // The front wall of a flat room only gets the bounce (the screen faces away and
+        // the glow lies in its own plane); every other face is lit by the screen.
+        int lit = 0;
+        for (int f = 1; f < kRoomFaces; f++) lit += facesLit[f];
+
+        // --- the eye pass
+        // Eye 0 looks up 20 degrees (the screen, front wall and ceiling); eye 1 turns 80
+        // degrees right and looks 20 degrees down (a side wall and the floor).
+        auto look = [](float yawDeg, float pitchDeg)
+        {
+            const float yaw = -yawDeg * kRoomPi / 180.0f, pitch = pitchDeg * kRoomPi / 180.0f;
+            const float sy = std::sin(0.5f * yaw), cy = std::cos(0.5f * yaw), sp = std::sin(0.5f * pitch), cp = std::cos(0.5f * pitch);
+            return XrQuaternionf{ cy * sp, sy * cp, -sy * sp, cy * cp };
+        };
+        const XrPosef screenPose{ { 0, 0, 0, 1 }, { 0, 1.5f, -ScreenAnchor::distance } };
+        XrPosef eyes[VIEWS] = { { look(0, 20), { 0, 1.55f, 0 } }, { look(80, -20), { 0.064f, 1.55f, 0 } } };
+        XrFovf fov[VIEWS] = { { -0.88f, 0.88f, 0.79f, -0.79f }, { -0.88f, 0.88f, 0.79f, -0.79f } };
+        const CurveConstants cc = MakeCurveConstants(cyl, screenPose, eyes, fov, TEST_EYE_W, TEST_EYE_H, false,
+                                                     2.0f * view.glowHalfW, 2.0f * view.glowHalfH, world, true);
+        WaitFence(app, app.fenceVal);
+        app.cmdAlloc[0]->Reset();
+        app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+        WarpTarget& t = app.testTarget;
+        Transition(app.cmdList.Get(), t.colorOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        RecordCurvedScreen(app, DESC_CURVE_TEST, t.colorOut.Get(), cc, app.testEyeOut.Get(), nullptr, cb);
+        Transition(app.cmdList.Get(), t.colorOut.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        app.cmdList->Close();
+        WaitFence(app, SubmitAndSignal(app));
+        std::vector<std::vector<unsigned char>> got;
+        if (!ReadbackRgba(app, app.testEyeOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, got) || got.size() != VIEWS)
+        { Log("SelfTestRoom[%s]: FAIL eye readback", name); return false; }
+
+        RgbaImage glowImg{ glowPx[0].data(), app.ambiW, app.ambiH, app.ambiW * 4 };
+        size_t bad = 0, kinds[9] = {};
+        int worst = 0;
+        for (uint32_t e = 0; e < VIEWS; e++)
+        {
+            RgbaImage pic{ pictures[e].data(), W, H, W * 4 };
+            for (int y = 0; y < TEST_EYE_H; y++)
+                for (int x = 0; x < TEST_EYE_W; x++)
+                {
+                    float ref[3];
+                    if (!RoomPixel(cc, cyl, room, view, (int)e, x, y, pic, &glowImg, light, ref)) { Log("SelfTestRoom[%s]: FAIL reference at %d,%d", name, x, y); return false; }
+                    float o[3], d[3], u, v, gu, gv;
+                    CurveRay(cc, (int)e, x + 0.5f, y + 0.5f, o, d);
+                    kinds[RoomClassify(cc, cyl, room, view, o, d, &u, &v, &gu, &gv)]++;
+                    const unsigned char* gp = got[e].data() + ((size_t)y * TEST_EYE_W + x) * 4;
+                    int diff = 0;
+                    for (int ch = 0; ch < 3; ch++)
+                        diff = std::max(diff, std::abs((int)gp[ch] - (int)lroundf(std::min(std::max(ref[ch], 0.0f), 1.0f) * 255.0f)));
+                    worst = std::max(worst, diff);
+                    if (diff > 2) bad++;
+                }
+        }
+        const size_t total = (size_t)TEST_EYE_W * TEST_EYE_H * VIEWS, onePercent = total / 100;
+        const bool framed = kinds[curvedCase ? 0 : kRoomKindFootprint] > onePercent && kinds[1 + kFaceFront] > onePercent &&
+                            kinds[1 + kFaceFloor] > onePercent && kinds[1 + kFaceCeiling] > onePercent &&
+                            kinds[1 + kFaceLeft] + kinds[1 + kFaceRight] > onePercent;
+        const bool caseOk = badEm == 0 && badTexel == 0 && lit == kRoomFaces - 1 && glowLit > 0 && bad <= total / 200 && framed;
+        Log("SelfTestRoom[%s]: %s - room %.2f x %.2f x %.2f m; %d emitters (%zu differ, %zu glow blocks lit); lightmap %zu of %d texels "
+            "outside half precision (worst %.2e), %d of 5 side, floor, ceiling and back faces lit by the screen; eyes %zu of %zu px differ by more than 2 bits (worst %d; "
+            "allowed %zu); screen %zu, footprint %zu, front %zu, floor %zu, ceiling %zu, walls %zu, back %zu, outside %zu",
+            name, caseOk ? "PASS" : "FAIL", 2 * room.X, room.yC - room.yF, room.zB + room.g, layout.count(), badEm, glowLit, badTexel,
+            kRoomFaces * kRoomLightmap * kRoomLightmap, worstRel, lit, bad, total, worst, total / 200, kinds[0], kinds[kRoomKindFootprint],
+            kinds[1 + kFaceFront], kinds[1 + kFaceFloor], kinds[1 + kFaceCeiling], kinds[1 + kFaceLeft] + kinds[1 + kFaceRight],
+            kinds[1 + kFaceBack], kinds[kRoomKindOutside]);
+        if (app.opt.doDump)
+        {
+            char file[64];
+            snprintf(file, sizeof(file), "room-eyes-%s.ppm", name);
+            FILE* f = nullptr;
+            if (!fopen_s(&f, file, "wb") && f)
+            {
+                fprintf(f, "P6\n%d %d\n255\n", TEST_EYE_W * 2, TEST_EYE_H);
+                for (int y = 0; y < TEST_EYE_H; y++)
+                    for (uint32_t e = 0; e < VIEWS; e++)
+                        for (int x = 0; x < TEST_EYE_W; x++) fwrite(got[e].data() + ((size_t)y * TEST_EYE_W + x) * 4, 1, 3, f);
+                fclose(f);
+                Log("SelfTestRoom[%s]: wrote %s", name, file);
+            }
+        }
+        ok = caseOk && ok;
+    }
+    Log("SelfTestRoom: exit %s", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 static bool SelfTest(App& app)
 {
     Log("SelfTest: enter");
@@ -4667,6 +5416,7 @@ static bool SelfTest(App& app)
     std::vector<float> invalidDepth((size_t)W * H, std::numeric_limits<float>::quiet_NaN());
     ok = SelfTestWarp(app, "flat-fallback-invalid-depth", synth, invalidDepth, off) && ok;
     ok = SelfTestCurve(app) && ok;          // uses the last warped pair and the self-test glow
+    ok = SelfTestRoom(app, synth) && ok;    // likewise, plus the self-test source
 
     Log("SelfTest: exit %s", ok ? "ALL PASS" : "FAILED");
     return ok;

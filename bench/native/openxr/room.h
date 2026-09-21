@@ -6,6 +6,7 @@
 #include <cstring>
 #include <vector>
 #include "screen_curve.h"
+#include "screen_anchor.h"
 #include "ambilight.h"
 #include "srgb.h"
 
@@ -301,24 +302,6 @@ inline float RoomArea(const Room& r, int face)
     }
 }
 
-// Heading only: the screen's orientation with pitch and roll removed, so the floor is
-// level. Looking straight up or down, the heading comes from the head's up vector.
-inline XrQuaternionf YawOnly(const XrQuaternionf& q)
-{
-    const float x = q.x, y = q.y, z = q.z, w = q.w;
-    // forward = q * (0, 0, -1); up = q * (0, 1, 0)
-    float fx = -(2 * (x * z + y * w)), fz = -(1 - 2 * (x * x + y * y));
-    const float fy = -(2 * (y * z - x * w));
-    if (fx * fx + fz * fz < 1e-8f)
-    {
-        const float ux = 2 * (x * y - z * w), uz = 2 * (y * z + x * w);
-        const float sign = fy < 0 ? 1.0f : -1.0f;       // looking down: the top of the head points forward
-        fx = sign * ux; fz = sign * uz;
-    }
-    const float yaw = std::atan2(-fx, -fz);
-    return { 0.0f, std::sin(0.5f * yaw), 0.0f, std::cos(0.5f * yaw) };
-}
-
 // ------------------------------------------------------------------- emitters
 // One emitter = 6 float4 in the GPU buffer: four corners (c0 carries the area, c1
 // the squared diagonal), the normal into the room (w: 1 active, 0 skipped), and the
@@ -590,6 +573,8 @@ inline RoomShading MakeRoomShading(const Room& r, int roomPercent, uint32_t worl
     return s;
 }
 
+inline float RoomBounceScale(const RoomShading& sh);
+
 // One lightmap texel's radiance (linear rgb), as the LIGHT pass computes it.
 inline bool RoomTexel(const Room& r, const RoomShading& sh, const std::vector<RoomEmitter>& emitters, int face, int i, int j, float out[3])
 {
@@ -606,10 +591,74 @@ inline bool RoomTexel(const Room& r, const RoomShading& sh, const std::vector<Ro
     }
     const float rho = face == kFaceFloor ? sh.rhoFloor : (face == kFaceCeiling ? sh.rhoCeiling : sh.rhoWall);
     const float shade = face == kFaceFloor ? kRoomShadeFloor : (face == kFaceCeiling ? kRoomShadeCeiling : 1.0f);
-    const float bounceScale = sh.rhoBar < 0.999f ? sh.rhoBar * sh.invArea / (1.0f - sh.rhoBar) : 0.0f;
+    const float bounceScale = RoomBounceScale(sh);
     for (int ch = 0; ch < 3; ch++)
         out[ch] = (rho / kRoomPi) * (E[ch] + flux[ch] * bounceScale) + shade * sh.world[ch];
     return true;
+}
+
+// The room pass's view of the screen: flat room layer (the screen itself is drawn by
+// the compositor's quads, so this layer shows its footprint in black - if the layers
+// slip against each other the gap is dark on dark), or the curved screen.
+struct RoomView
+{
+    bool flatLayer = false;
+    float W = 0, H = 0;                 // the screen, for the flat footprint
+    bool glowOn = false;
+    float glowHalfW = 0, glowHalfH = 0;
+    bool dither = true;
+};
+
+// ------------------------------------------------------------------ constants
+// What both room shaders read (cbuffer RoomC: a root CBV, 256 bytes) - the lightmap
+// passes (kRoomHlsl) and the eye pass (kCurveHlsl with CURVE_ROOM).
+static const uint32_t kRoomFlagCurved = 1;      // the front is the glow's cylinder
+static const uint32_t kRoomFlagFlatLayer = 2;   // flat screen: the compositor draws it; show its footprint
+static const uint32_t kRoomFlagGlow = 4;        // the ambilight is on
+static const uint32_t kRoomFlagDither = 8;
+
+struct RoomConstants                            // must match kRoomCbufferHlsl
+{
+    float X = 0, yF = 0, yC = 0, zB = 0;
+    float g = 0, R = 0, Rg = 0, phiA = 0;
+    float sinA = 0, cosA = 1, xa = 0, za = 0;
+    float sMax = 0, zSide = 0, glowHalfW = 0, glowHalfH = 0;
+    float rhoWall = 0, rhoFloor = 0, rhoCeiling = 0, bounceScale = 0;
+    float world[4] = { 0, 0, 0, 0 };            // linear: the house lights
+    float shadeFloor = kRoomShadeFloor, shadeCeiling = kRoomShadeCeiling, alpha = 1, screenW = 0;
+    float screenH = 0, pad0 = 0, pad1 = 0, pad2 = 0;
+    uint32_t flags = 0, gridX = 0, gridY = 0, emitters = 0;
+    uint32_t srcW = 0, srcH = 0, stride = 1, glowW = 0;
+    uint32_t glowH = 0, blocksX = 0, blocksY = 0, pad3 = 0;
+    float pad4[20] = {};
+};
+static_assert(sizeof(RoomConstants) == 256, "RoomConstants is one 256-byte constant buffer");
+
+inline float RoomBounceScale(const RoomShading& sh)
+{
+    return sh.rhoBar < 0.999f ? sh.rhoBar * sh.invArea / (1.0f - sh.rhoBar) : 0.0f;
+}
+
+// alpha: how far the screen's light moves towards this frame's picture (1: all the way).
+inline RoomConstants MakeRoomConstants(const Room& r, const RoomShading& sh, const RoomEmitterLayout& l, const RoomView& view,
+                                       int srcW, int srcH, float alpha)
+{
+    RoomConstants c;
+    if (!r.valid) return c;
+    c.X = r.X; c.yF = r.yF; c.yC = r.yC; c.zB = r.zB;
+    c.g = r.g; c.R = r.R; c.Rg = r.Rg; c.phiA = r.phiA;
+    c.sinA = r.sinA; c.cosA = r.cosA; c.xa = r.xa; c.za = r.za;
+    c.sMax = r.sMax; c.zSide = r.zSide; c.glowHalfW = view.glowHalfW; c.glowHalfH = view.glowHalfH;
+    c.rhoWall = sh.rhoWall; c.rhoFloor = sh.rhoFloor; c.rhoCeiling = sh.rhoCeiling; c.bounceScale = RoomBounceScale(sh);
+    c.world[0] = sh.world[0]; c.world[1] = sh.world[1]; c.world[2] = sh.world[2]; c.world[3] = 1;
+    c.alpha = alpha < 0 ? 0.0f : (alpha > 1 ? 1.0f : alpha);
+    c.screenW = view.W; c.screenH = view.H;
+    c.flags = (r.curved ? kRoomFlagCurved : 0) | (view.flatLayer ? kRoomFlagFlatLayer : 0) | (view.glowOn ? kRoomFlagGlow : 0) |
+              (view.dither ? kRoomFlagDither : 0);
+    c.gridX = (uint32_t)l.gridX; c.gridY = (uint32_t)l.gridY; c.emitters = (uint32_t)l.count();
+    c.srcW = (uint32_t)(srcW > 0 ? srcW : 0); c.srcH = (uint32_t)(srcH > 0 ? srcH : 0); c.stride = (uint32_t)RoomStride(srcW);
+    c.glowW = (uint32_t)l.glowW; c.glowH = (uint32_t)l.glowH; c.blocksX = (uint32_t)l.blocksX; c.blocksY = (uint32_t)l.blocksY;
+    return c;
 }
 
 // ------------------------------------------------------------------ eye pass
@@ -672,17 +721,6 @@ struct RoomLightmap
     }
 };
 
-// The room pass's view of the screen: flat room layer (the screen itself is drawn by
-// the compositor's quads, so this layer shows its footprint in black - if the layers
-// slip against each other the gap is dark on dark), or the curved screen.
-struct RoomView
-{
-    bool flatLayer = false;
-    float W = 0, H = 0;                 // the screen, for the flat footprint
-    bool glowOn = false;
-    float glowHalfW = 0, glowHalfH = 0;
-    bool dither = true;
-};
 
 // Sample kinds for the four rays: 0 picture, 1 + face, 7 footprint, 8 outside.
 static const int kRoomKindFootprint = 7, kRoomKindOutside = 8;
