@@ -26,6 +26,14 @@ try {
     Copy-Item "$nativeOutput\xrplayer.exe","$nativeOutput\openxr_loader.dll" $engine
     Copy-Item "$ortPackage\runtimes\win-x64\native\*.dll" $engine
     Copy-Item "$dmlPackage\bin\x64-win\DirectML.dll" $engine
+    # Pre-compiled shaders, so the first start after an install does not spend 10-60 s in
+    # D3DCompile with the VR session open. No headset, OpenXR runtime or GPU is needed.
+    # The cache is keyed by d3dcompiler_47.dll's version too: a PC whose Windows ships a
+    # different compiler misses it and compiles once into %LOCALAPPDATA%\VRX\shader-cache.
+    $warmLog = Join-Path $OutputRoot 'shader-cache-warm.log'
+    & "$nativeOutput\xrplayer.exe" "--warm-shader-cache=$engine\shader-cache" *> $warmLog
+    if ($LASTEXITCODE) { Get-Content $warmLog -Tail 20; throw 'Shader cache pre-warm failed' }
+    Get-Content $warmLog -Tail 1
     Copy-Item bench/models/model_fixed_686x392.onnx $models
     # Default depth model (Depth Anything V2 above is the per-game alternative); generated, not downloaded.
     $zipDepth = 'bench/models/zipdepth_faithful_fp16_672x384.onnx'
