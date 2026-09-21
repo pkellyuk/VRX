@@ -12,6 +12,7 @@
 #include "screen_curve.h"
 #include "ambilight.h"
 #include "srgb.h"
+#include "room.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -844,6 +845,344 @@ static void TestScreenCurve()
     Check(!AmbilightReference(a, source.data(), sw * 4, texture.data(), 4), "a short output pitch is rejected");
 }
 
+
+// The form factor (times pi) from (p, n) to a quad, by brute force: the quad cut into
+// k x k pieces, each cos cos A / r^2. The exact reference for RoomLambertQuad.
+static double BruteG(const float p[3], const float n[3], const float c[4][4], const float nq[3], int k)
+{
+    double sum = 0;
+    for (int a = 0; a < k; a++)
+        for (int b = 0; b < k; b++)
+        {
+            const double fu = (a + 0.5) / k, fv = (b + 0.5) / k;
+            double q[3];
+            for (int i = 0; i < 3; i++)
+                q[i] = c[0][i] + fu * (c[1][i] - c[0][i]) + fv * (c[3][i] - c[0][i]);
+            const double v[3] = { q[0] - p[0], q[1] - p[1], q[2] - p[2] };
+            const double r2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2], r = std::sqrt(r2);
+            const double cp = (n[0] * v[0] + n[1] * v[1] + n[2] * v[2]) / r, cq = -(nq[0] * v[0] + nq[1] * v[1] + nq[2] * v[2]) / r;
+            if (cp <= 0 || cq <= 0) continue;
+            double e1[3], e2[3];
+            for (int i = 0; i < 3; i++) { e1[i] = c[1][i] - c[0][i]; e2[i] = c[3][i] - c[0][i]; }
+            const double cx = e1[1] * e2[2] - e1[2] * e2[1], cy = e1[2] * e2[0] - e1[0] * e2[2], cz = e1[0] * e2[1] - e1[1] * e2[0];
+            const double dA = std::sqrt(cx * cx + cy * cy + cz * cz) / (k * k);
+            sum += cp * cq * dA / r2;
+        }
+    return sum;
+}
+
+static void Quad(RoomEmitter& e, const float c[4][3], const float n[3]) { RoomSetQuad(e, c, n); }
+
+// Point-to-rectangle form factor for a point on the axis of a parallel rectangle
+// (closed form), times pi: the golden value for the back wall's middle.
+static double ParallelG(double halfW, double halfH, double d)
+{
+    const double a = halfW / d, b = halfH / d;
+    const double F = (2.0 / 3.14159265358979) * (a / std::sqrt(1 + a * a) * std::atan(b / std::sqrt(1 + a * a)) +
+                                                  b / std::sqrt(1 + b * b) * std::atan(a / std::sqrt(1 + b * b)));
+    return 3.14159265358979 * F;
+}
+
+static void TestRoom()
+{
+    // ---- geometry: the default screen, flat
+    RoomInputs in;
+    in.W = 5.7f; in.H = 5.7f * 9.0f / 16.0f; in.eye[2] = 3.0f;
+    Room room;
+    Check(BuildRoom(in, room) && room.valid && !room.curved, "the default room builds");
+    Check(std::fabs(2 * room.X - 9.35f) < 0.01f && std::fabs(room.yC - room.yF - 4.66f) < 0.01f && std::fabs(room.zB + room.g - 4.52f) < 0.01f,
+        "the default room is 9.35 x 4.66 x 4.52 m");
+    Check(room.yF <= -0.5f * in.H - kRoomFloorBelowScreen + 1e-5f && room.yC >= 0.5f * in.H + room.margin - 1e-5f,
+        "the floor is below the screen and the whole glow fits under the ceiling");
+    Check(room.X - 0.5f * in.W >= room.margin, "the whole glow fits between the side walls");
+    Check(RoomInside(room, in.eye) && room.X - std::fabs(in.eye[0]) >= kRoomSideClearance, "the viewer is inside, clear of the walls");
+    Check(!room.floorTracked, "no tracked floor: the seated guess");
+    RoomInputs tracked = in;
+    tracked.floorY = -1.2f;
+    Room withFloor;
+    Check(BuildRoom(tracked, withFloor) && withFloor.floorTracked && withFloor.yF <= -1.2f, "a tracked floor is used, never above the screen's bottom");
+    tracked.floorY = -5.0f;
+    Check(BuildRoom(tracked, withFloor) && !withFloor.floorTracked, "an implausible tracked floor falls back to the seated guess");
+    RoomInputs offset = in;
+    offset.eye[0] = 3.0f;
+    Room wide;
+    Check(BuildRoom(offset, wide) && RoomInside(wide, offset.eye) && wide.X >= 4.0f, "a 3 m sideways offset keeps the viewer inside");
+    RoomInputs behind = in;
+    behind.eye[2] = -1.0f;
+    Room none;
+    Check(!BuildRoom(behind, none), "a viewer behind the screen has no room");
+    RoomInputs bad = in;
+    bad.W = 0;
+    Check(!BuildRoom(bad, none), "a screen with no width has no room");
+
+    // ---- geometry: the default screen at 100% curve
+    RoomInputs curvedIn = in;
+    Check(BuildCylinder(in.W, in.H, 3.0f, 1.0f, curvedIn.cyl), "cylinder");
+    Room curved;
+    Check(BuildRoom(curvedIn, curved) && curved.curved && !curved.phiReduced, "the curved room builds with the full arc");
+    Check(std::fabs(curved.phiA - (0.5f * in.W + curved.margin) / curved.R) < 1e-5f, "the front's arc reaches as far as the glow");
+    Check(std::fabs(FrontDepth(curved, 0.0f) + curved.g) < 1e-5f, "the front sits kAmbiBehind behind the screen's middle");
+    {
+        const float e = 1e-3f;
+        const float left = FrontDepth(curved, curved.xa - e), at = FrontDepth(curved, curved.xa), right = FrontDepth(curved, curved.xa + e);
+        Check(std::fabs(at - curved.za) < 1e-4f, "the arc ends where the wing starts");
+        Check(std::fabs((at - left) / e - (right - at) / e) < 2e-2f, "the arc turns into the wing smoothly (C1)");
+    }
+    Check(std::fabs(FrontS(curved, curved.xa) - curved.R * curved.phiA) < 1e-3f, "the front's chart is the glow's arc metres");
+    {
+        float x, z, nx, nz;
+        FrontPoint(curved, FrontS(curved, 2.0f), &x, &z, &nx, &nz);
+        Check(std::fabs(x - 2.0f) < 1e-3f && std::fabs(z - FrontDepth(curved, 2.0f)) < 1e-3f, "FrontPoint inverts FrontS on the arc");
+        FrontPoint(curved, FrontS(curved, 4.5f), &x, &z, &nx, &nz);
+        Check(std::fabs(x - 4.5f) < 1e-3f && std::fabs(z - FrontDepth(curved, 4.5f)) < 1e-3f, "FrontPoint inverts FrontS on a wing");
+    }
+    RoomInputs smallIn;
+    smallIn.W = 1.0f; smallIn.H = 0.5625f; smallIn.eye[0] = 3.0f; smallIn.eye[2] = 1.0f;
+    Check(BuildCylinder(1.0f, 0.5625f, 1.0f, 1.0f, smallIn.cyl), "small cylinder");
+    Room closeRoom;
+    Check(BuildRoom(smallIn, closeRoom) && closeRoom.phiReduced && RoomInside(closeRoom, smallIn.eye), "a small, close, curved screen shortens the arc and keeps the viewer inside");
+    Check(std::fmax(FrontDepth(closeRoom, 2.5f), FrontDepth(closeRoom, 3.5f)) <= 1.0f - kRoomFrontClearance + 1e-4f, "the curved front stays half a metre in front of the viewer");
+    RoomInputs gentleIn = in;
+    Check(BuildCylinder(in.W, in.H, 3.0f, 0.01f, gentleIn.cyl), "gentle cylinder");
+    Room gentle;
+    Check(BuildRoom(gentleIn, gentle) && std::fabs(FrontDepth(gentle, gentle.X) + gentle.g) < 0.05f, "a 1% curve is nearly flat");
+
+    // ---- rays
+    RoomHit hit;
+    const float ahead[3] = { 0, 0, -1 }, down[3] = { 0, -1, 0 }, up[3] = { 0, 1, 0 }, leftd[3] = { -1, 0, 0 }, rightd[3] = { 1, 0, 0 }, back[3] = { 0, 0, 1 };
+    Check(RoomExit(room, in.eye, ahead, hit) && hit.face == kFaceFront && std::fabs(hit.u - 0.5f) < 1e-5f && std::fabs(hit.s) < 1e-5f, "straight ahead is the front wall's middle");
+    Check(RoomExit(room, in.eye, down, hit) && hit.face == kFaceFloor, "down is the floor");
+    Check(RoomExit(room, in.eye, up, hit) && hit.face == kFaceCeiling, "up is the ceiling");
+    Check(RoomExit(room, in.eye, leftd, hit) && hit.face == kFaceLeft, "left is the left wall");
+    Check(RoomExit(room, in.eye, rightd, hit) && hit.face == kFaceRight, "right is the right wall");
+    Check(RoomExit(room, in.eye, back, hit) && hit.face == kFaceBack && std::fabs(hit.t - (room.zB - in.eye[2])) < 1e-4f, "behind is the back wall");
+    const float outside[3] = { 0, 0, 20 };
+    Check(!RoomExit(room, outside, ahead, hit), "a ray from outside the room has no exit");
+    const float toWing[3] = { 4.5f, 0, curved.za + (4.5f - curved.xa) * curved.sinA / curved.cosA - 3.0f };
+    Check(RoomExit(curved, in.eye, toWing, hit) && hit.face == kFaceFront && hit.s > curved.R * curved.phiA, "towards a wing is the front wall, past the arc");
+    Check(RoomExit(curved, in.eye, ahead, hit) && hit.face == kFaceFront && std::fabs(hit.s) < 1e-4f, "a curved room's front middle");
+    {
+        // Seeded random rays: every exit lies on its face and inside the room's box.
+        uint32_t seed = 12345;
+        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return (float)((seed >> 8) & 0xFFFF) / 65535.0f * 2.0f - 1.0f; };
+        int onFace = 0;
+        const Room* rooms[2] = { &room, &curved };
+        for (const Room* r : rooms)
+            for (int i = 0; i < 1000; i++)
+            {
+                const float d[3] = { rnd(), rnd(), rnd() };
+                if (!RoomExit(*r, in.eye, d, hit)) continue;
+                const float q[3] = { in.eye[0] + hit.t * d[0], in.eye[1] + hit.t * d[1], in.eye[2] + hit.t * d[2] };
+                float fp[3], fn[3];
+                RoomFacePoint(*r, hit.face, hit.u, hit.v, fp, fn);
+                const float err = std::fabs(fp[0] - q[0]) + std::fabs(fp[1] - q[1]) + std::fabs(fp[2] - q[2]);
+                const float mid[3] = { 0.5f * (in.eye[0] + q[0]), 0.5f * (in.eye[1] + q[1]), 0.5f * (in.eye[2] + q[2]) };
+                if (err < 2e-3f && hit.u >= -1e-4f && hit.u <= 1 + 1e-4f && hit.v >= -1e-4f && hit.v <= 1 + 1e-4f && RoomInside(*r, mid)) onFace++;
+            }
+        Check(onFace == 2000, "2,000 random rays each leave through a face, at its chart coordinates");
+    }
+
+    // ---- form factors
+    {
+        const float c[4][3] = { { -0.5f, 0.5f, 0 }, { 0.5f, 0.5f, 0 }, { 0.5f, -0.5f, 0 }, { -0.5f, -0.5f, 0 } };
+        const float nq[3] = { 0, 0, 1 };
+        RoomEmitter e;
+        Quad(e, c, nq);
+        Check(std::fabs(e.c[0][3] - 1.0f) < 1e-6f && std::fabs(e.c[1][3] - 2.0f) < 1e-6f, "a unit quad's area and squared diagonal");
+        struct Case { float p[3], n[3]; const char* what; };
+        const Case cases[] = {
+            { { 0, 0, 1 }, { 0, 0, -1 }, "facing, 1 m" },
+            { { 0.3f, -0.2f, 0.4f }, { 0, 0, -1 }, "facing, close and off-centre" },
+            { { 0, -0.8f, 0.6f }, { 0, 1, 0 }, "perpendicular (a floor point under a wall)" },
+            { { 0.9f, 0.1f, 0.3f }, { -1, 0, 0 }, "perpendicular, beside the corner" },
+            { { 0.2f, 0.1f, 0.05f }, { 0, 0, -1 }, "very close" },
+        };
+        for (const Case& k : cases)
+        {
+            const double brute = BruteG(k.p, k.n, e.c, nq, 600);
+            const float exact = RoomLambertQuad(k.p, k.n, e.c);
+            Check(std::fabs(exact - brute) <= 0.005 * brute + 1e-6, k.what);
+        }
+        const float onAxis[3] = { 0, 0, 2.0f * std::sqrt(2.0f) }, facing[3] = { 0, 0, -1 };
+        Check(std::fabs(RoomFormFactor(onAxis, facing, e) - RoomLambertQuad(onAxis, facing, e.c)) < 0.03f * RoomLambertQuad(onAxis, facing, e.c),
+            "the disk formula is within 3% of the exact one where it takes over");
+        const float behindIt[3] = { 0, 0, -1 }, sideways[3] = { 2, 0, 0 };
+        Check(RoomFormFactor(behindIt, nq, e) == 0 && RoomFormFactor(sideways, facing, e) == 0, "nothing from behind, nothing edge-on");
+        const float big[4][3] = { { -500, 500, 0 }, { 500, 500, 0 }, { 500, -500, 0 }, { -500, -500, 0 } };
+        RoomEmitter huge;
+        Quad(huge, big, nq);
+        const float nearIt[3] = { 0, 0, 0.01f };
+        Check(std::fabs(RoomFormFactor(nearIt, facing, huge) - kRoomPi) < 0.01f * kRoomPi, "a huge emitter gives pi (the whole hemisphere)");
+        // Golden: the back wall's middle, 4.5 m from the default screen as one quad.
+        const float hw = 2.85f, hh = 1.6031f;
+        const float scr[4][3] = { { -hw, hh, 0 }, { hw, hh, 0 }, { hw, -hh, 0 }, { -hw, -hh, 0 } };
+        RoomEmitter screen;
+        Quad(screen, scr, nq);
+        const float wall[3] = { 0, 0, 4.5f };
+        Check(std::fabs(RoomLambertQuad(wall, facing, screen.c) - ParallelG(hw, hh, 4.5)) < 1e-4, "the back wall's middle matches the closed form");
+        // Reciprocity: A1 G(1->2) = A2 G(2->1) for two small patches.
+        const float a2[4][3] = { { 1, -0.8f, 0.6f }, { 1.1f, -0.8f, 0.6f }, { 1.1f, -0.8f, 0.7f }, { 1, -0.8f, 0.7f } };
+        const float up2[3] = { 0, 1, 0 };
+        RoomEmitter floorPatch;
+        Quad(floorPatch, a2, up2);
+        // Both small against their distance, so each centre stands for its patch.
+        const float tinyQ[4][3] = { { -0.05f, 0.05f, 0 }, { 0.05f, 0.05f, 0 }, { 0.05f, -0.05f, 0 }, { -0.05f, -0.05f, 0 } };
+        RoomEmitter tiny;
+        Quad(tiny, tinyQ, nq);
+        const float pc[3] = { 1.05f, -0.8f, 0.65f }, qc[3] = { 0, 0, 0 };
+        const double g12 = floorPatch.c[0][3] * RoomLambertQuad(pc, up2, tiny.c);
+        const double g21 = tiny.c[0][3] * RoomLambertQuad(qc, nq, floorPatch.c);
+        Check(g12 > 0 && std::fabs(g12 - g21) < 0.03 * g12, "reciprocity");
+    }
+
+    // ---- emitters and light, the flat default room
+    const int glowW = 256, glowH = 178;
+    const float glowHalfW = 0.5f * in.W + room.margin, glowHalfH = 0.5f * in.H + room.margin;
+    const RoomEmitterLayout layout = RoomLayout(in.W, in.H, glowW, glowH);
+    Check(layout.gridX == 16 && layout.gridY == 9 && layout.count() <= kRoomMaxEmitters, "16 x 9 screen patches and the glow's blocks");
+    std::vector<RoomEmitter> em;
+    Check(BuildRoomEmitters(room, in.cyl, in.W, in.H, glowHalfW, glowHalfH, layout, em), "emitters build");
+    float screenArea = 0;
+    int glowActive = 0;
+    for (int i = 0; i < layout.gridX * layout.gridY; i++) screenArea += em[i].c[0][3];
+    for (size_t i = (size_t)layout.gridX * layout.gridY; i < em.size(); i++) glowActive += em[i].n[3] != 0;
+    Check(std::fabs(screenArea - in.W * in.H) < 1e-2f, "the patches cover the screen exactly");
+    Check(glowActive > 200 && glowActive < layout.blocksX * layout.blocksY, "glow blocks inside the screen or the floor are skipped");
+    float table[256];
+    RoomDecodeTable(table);
+    Check(table[0] == 0 && std::fabs(table[255] - 1.0f) < 1e-6f && std::fabs(table[128] - SrgbToLinear(128 / 255.0f)) < 1e-7f, "the decode table");
+    {
+        float simple[3] = { 0, 0, 0 }, grouped[3];
+        for (int k = 0; k < 1000; k++) simple[0] += (float)(k % 7);
+        RoomGroupSum(1000, [](int k, float v[3]) { v[0] = (float)(k % 7); v[1] = v[2] = 0; }, grouped);
+        Check(std::fabs(grouped[0] - simple[0]) < 1e-3f, "the group sum adds everything once");
+    }
+    // A white picture, glow off, black world: energy balance and the golden value.
+    const int sw = 192, sh = 108;
+    std::vector<unsigned char> white((size_t)sw * sh * 4, 255), black((size_t)sw * sh * 4, 0), glowTex((size_t)glowW * glowH * 4, 0);
+    for (size_t i = 3; i < black.size(); i += 4) black[i] = 255;
+    std::vector<RoomEmitter> lit = em;
+    Check(RoomEmitRadiance(layout, white.data(), sw, sh, sw * 4, glowTex.data(), glowW * 4, false, 1.0f, table, lit), "emit white");
+    Check(std::fabs(lit[0].L[0] - 1.0f) < 1e-6f && lit[layout.gridX * layout.gridY].L[0] == 0, "a white patch is radiance 1; the glow is off");
+    RoomShading shade = MakeRoomShading(room, 50, 0, in.W * in.H);
+    Check(std::fabs(shade.rhoWall - 0.3f) < 1e-6f && std::fabs(shade.rhoFloor - 0.18f) < 1e-6f && shade.rhoBar > 0 && shade.rhoBar < 0.3f, "albedos at Room 50%");
+    RoomShading noBounce = shade;
+    noBounce.rhoBar = 0;
+    {
+        double received = 0, emitted = kRoomPi * in.W * in.H;
+        for (int f = 0; f < kRoomFaces; f++)
+        {
+            const double texelArea = RoomArea(room, f) / (double)(kRoomLightmap * kRoomLightmap);
+            for (int j = 0; j < kRoomLightmap; j++)
+                for (int i = 0; i < kRoomLightmap; i++)
+                {
+                    float L[3];
+                    RoomTexel(room, noBounce, lit, f, i, j, L);
+                    const float rho = f == kFaceFloor ? noBounce.rhoFloor : (f == kFaceCeiling ? noBounce.rhoCeiling : noBounce.rhoWall);
+                    received += (double)L[0] * kRoomPi / rho * texelArea;       // E = L pi / rho
+                }
+        }
+        Check(std::fabs(received / emitted - 1.0) < 0.03, "energy: all the screen's light lands on the room (within 3%)");
+        // The back wall's middle, on the screen's axis: the 144 patches together
+        // against the closed form for the whole screen.
+        const float onAxis[3] = { 0, 0, room.zB }, facing[3] = { 0, 0, -1 };
+        double sumG = 0;
+        for (int i = 0; i < layout.gridX * layout.gridY; i++) sumG += RoomFormFactor(onAxis, facing, lit[i]);
+        const double golden = ParallelG(0.5 * in.W, 0.5 * in.H, room.zB);
+        Check(std::fabs(sumG - golden) < 0.02 * golden, "the back wall's middle is lit as the closed form says");
+    }
+    {
+        std::vector<RoomEmitter> dark = em;
+        RoomEmitRadiance(layout, black.data(), sw, sh, sw * 4, glowTex.data(), glowW * 4, false, 1.0f, table, dark);
+        float L[3];
+        RoomTexel(room, MakeRoomShading(room, 50, 0, in.W * in.H), dark, kFaceFloor, 10, 10, L);
+        Check(L[0] == 0 && L[1] == 0 && L[2] == 0, "a black picture and a black world light nothing");
+        const RoomShading grey = MakeRoomShading(room, 50, 0x404040, in.W * in.H);
+        RoomTexel(room, grey, dark, kFaceFloor, 10, 10, L);
+        Check(std::fabs(L[0] - kRoomShadeFloor * SrgbToLinear(64 / 255.0f)) < 1e-6f, "with the screen dark the world colour is the house light");
+        float c[3];
+        RoomTexel(room, grey, dark, kFaceCeiling, 10, 10, c);
+        Check(c[0] < L[0], "the ceiling's house light is dimmer than the floor's");
+    }
+    {
+        // Red on the left half of the picture, blue on the right: the left wall is redder.
+        std::vector<unsigned char> split = black;
+        for (int y = 0; y < sh; y++)
+            for (int x = 0; x < sw; x++) { unsigned char* q = &split[((size_t)y * sw + x) * 4]; q[x < sw / 2 ? 0 : 2] = 255; }
+        std::vector<RoomEmitter> rb = em, br = em;
+        RoomEmitRadiance(layout, split.data(), sw, sh, sw * 4, glowTex.data(), glowW * 4, false, 1.0f, table, rb);
+        float leftWall[3], rightWall[3];
+        RoomTexel(room, shade, rb, kFaceLeft, 8, 32, leftWall);
+        RoomTexel(room, shade, rb, kFaceRight, 8, 32, rightWall);
+        Check(leftWall[0] > leftWall[2] && rightWall[2] > rightWall[0], "red on the left lights the left wall red, blue the right");
+        // Mirror the picture: the lightmap mirrors (left <-> right, floor flipped).
+        std::vector<unsigned char> mirrored = split;
+        for (int y = 0; y < sh; y++)
+            for (int x = 0; x < sw; x++)
+                memcpy(&mirrored[((size_t)y * sw + x) * 4], &split[((size_t)y * sw + (sw - 1 - x)) * 4], 4);
+        RoomEmitRadiance(layout, mirrored.data(), sw, sh, sw * 4, glowTex.data(), glowW * 4, false, 1.0f, table, br);
+        float a[3], b[3], fa[3], fb[3];
+        RoomTexel(room, shade, rb, kFaceLeft, 20, 30, a);
+        RoomTexel(room, shade, br, kFaceRight, 20, 30, b);
+        RoomTexel(room, shade, rb, kFaceFloor, 5, 7, fa);
+        RoomTexel(room, shade, br, kFaceFloor, kRoomLightmap - 1 - 5, 7, fb);
+        Check(std::fabs(a[0] - b[0]) < 1e-4f * (a[0] + 1e-3f) && std::fabs(a[2] - b[2]) < 1e-4f * (a[2] + 1e-3f) &&
+              std::fabs(fa[0] - fb[0]) < 1e-4f * (fa[0] + 1e-3f), "a mirrored picture mirrors the room's light");
+    }
+    {
+        // The glow's light: blocks with glow add light near the screen; with the
+        // ambilight off they add none.
+        std::vector<unsigned char> glowing((size_t)glowW * glowH * 4, 0);
+        for (size_t i = 0; i < glowing.size(); i += 4) { glowing[i] = 200; glowing[i + 3] = 200; }
+        std::vector<RoomEmitter> withGlow = em, without = em;
+        RoomEmitRadiance(layout, black.data(), sw, sh, sw * 4, glowing.data(), glowW * 4, true, 1.0f, table, withGlow);
+        RoomEmitRadiance(layout, black.data(), sw, sh, sw * 4, glowing.data(), glowW * 4, false, 1.0f, table, without);
+        float gl[3], none3[3];
+        RoomTexel(room, shade, withGlow, kFaceFloor, 32, 2, gl);
+        RoomTexel(room, shade, without, kFaceFloor, 32, 2, none3);
+        Check(gl[0] > 0 && none3[0] == 0, "the glow lights the floor in front of the screen, and nothing when it is off");
+    }
+    {
+        // Temporal blend: alpha 1 takes the new picture; a smaller alpha moves part way.
+        std::vector<RoomEmitter> hist = em;
+        RoomEmitRadiance(layout, white.data(), sw, sh, sw * 4, glowTex.data(), glowW * 4, false, 1.0f, table, hist);
+        RoomEmitRadiance(layout, black.data(), sw, sh, sw * 4, glowTex.data(), glowW * 4, false, 0.25f, table, hist);
+        Check(std::fabs(hist[0].L[0] - 0.75f) < 1e-6f, "the screen's light blends towards a new picture");
+    }
+
+    // ---- dither, half floats, heading
+    {
+        double sum = 0;
+        bool differ = false;
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 8; x++)
+            {
+                sum += RoomDither(0, x, y);
+                if (RoomDither(0, x, y) != RoomDither(1, x, y)) differ = true;
+                Check(std::fabs(RoomDither(0, x, y)) < 0.5f / 255.0f, "the dither stays within half a step");
+            }
+        Check(std::fabs(sum) < 1e-6 && differ, "the dither averages to zero and differs between the eyes");
+    }
+    Check(RoomHalfToFloat(0x3C00) == 1.0f && RoomHalfToFloat(0x3800) == 0.5f && RoomHalfToFloat(0) == 0.0f &&
+          std::fabs(RoomHalfToFloat(0x0001) - 5.96046448e-8f) < 1e-12f && RoomHalfToFloat(0xC000) == -2.0f, "half floats");
+    {
+        const float yaw = 0.7f;
+        const XrQuaternionf pure{ 0, std::sin(0.5f * yaw), 0, std::cos(0.5f * yaw) };
+        const XrQuaternionf keep = YawOnly(pure);
+        Check(std::fabs(keep.y - pure.y) < 1e-5f && std::fabs(keep.w - pure.w) < 1e-5f, "a level heading is kept");
+        // Pitch down 30 degrees after the yaw: q = yaw * pitch.
+        const float pitch = -0.52f;
+        const float sy = std::sin(0.5f * yaw), cy = std::cos(0.5f * yaw), sp = std::sin(0.5f * pitch), cp = std::cos(0.5f * pitch);
+        const XrQuaternionf tilted{ cy * sp, sy * cp, -sy * sp, cy * cp };
+        const XrQuaternionf level = YawOnly(tilted);
+        Check(std::fabs(level.x) < 1e-6f && std::fabs(level.z) < 1e-6f && std::fabs(level.y - sy) < 1e-4f && std::fabs(level.w - cy) < 1e-4f,
+            "pitch is removed, the heading kept");
+        const XrQuaternionf straightDown{ -std::sin(0.785398f), 0, 0, std::cos(0.785398f) };
+        const XrQuaternionf fromUp = YawOnly(straightDown);
+        Check(std::fabs(fromUp.y) < 1e-5f && std::fabs(std::fabs(fromUp.w) - 1.0f) < 1e-5f, "looking straight down keeps the heading the head's top points at");
+    }
+}
+
 int main(int argc, char** argv)
 {
     TestForegroundRefinement();
@@ -867,5 +1206,6 @@ int main(int argc, char** argv)
     TestCaptureDownscale();
     TestGpuChoice();
     TestScreenCurve();
-    std::puts("PASS: curved screen geometry, ambilight constants, game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop, capture downscale, depth GPU choice");
+    TestRoom();
+    std::puts("PASS: room geometry, rays and light, curved screen geometry, ambilight constants, game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop, capture downscale, depth GPU choice");
 }
