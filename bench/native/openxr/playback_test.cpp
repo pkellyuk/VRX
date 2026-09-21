@@ -436,7 +436,17 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 101 0", settings), "v8 curve over 100 rejected");
     Check(!ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 -1 0", settings), "v8 negative curve rejected");
     Check(!ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 2", settings), "v8 invalid ambilight flag rejected");
-    Check(!ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0", settings), "a newer snapshot version is rejected");
+    Check(ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 1", settings) && settings.ambiStrength == 85 &&
+        settings.worldColor == 0, "v8 has the default glow strength and a black world");
+    Check(ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 30 1 40 2765889", settings) && settings.curve == 30 &&
+        settings.ambilight == 1 && settings.ambiStrength == 40 && settings.worldColor == 0x2A3441, "v9 glow strength and world colour");
+    Check(ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 100 16777215", settings) && settings.ambiStrength == 100 &&
+        settings.worldColor == 0xFFFFFF, "v9 extremes");
+    Check(!ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85", settings), "v9 missing world colour rejected");
+    Check(!ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 101 0", settings), "v9 strength over 100 rejected");
+    Check(!ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 16777216", settings), "v9 world colour out of range rejected");
+    Check(!ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 -1", settings), "v9 negative world colour rejected");
+    Check(!ParseDesktopSettings("VRX 10 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -679,7 +689,8 @@ static void TestScreenCurve()
     CurveConstants c{};
     c.ew = 64; c.eh = 48;
     c.radius = cyl.radius; c.halfWrap = cyl.halfWrap; c.halfWidth = cyl.halfWidth; c.halfHeight = cyl.halfHeight;
-    c.glowOn = 1; c.glowHalfW = width; c.glowHalfH = height; c.glowZ = -kAmbiBehind;
+    c.glowOn = 1; c.glowHalfW = width; c.glowHalfH = height; c.glowRadius = cyl.radius + kAmbiBehind;
+    c.world[0] = 0.1f; c.world[1] = 0.2f; c.world[2] = 0.3f;
     for (int e = 0; e < 2; e++)
     {
         CurveEye& v = c.eye[e];
@@ -692,12 +703,22 @@ static void TestScreenCurve()
     Check(std::fabs(d[0]) < 1e-6f && std::fabs(d[1]) < 1e-6f && d[2] == -1.0f && o[0] == -0.032f, "the middle pixel looks straight ahead from the eye");
     CurveRay(c, 0, 0, 0, o, d);
     Check(std::fabs(d[0] + 1.5f) < 1e-6f && std::fabs(d[1] - 1.2f) < 1e-6f, "the top-left pixel looks up and to the left");
+
+    // The glow wraps round with the screen: past the screen's edge, on a cylinder just
+    // behind it, lined up in the screen's own arc metres.
     float gu = 0, gv = 0;
-    const float corner[3] = { -width * 0.9f, height * 0.9f, -distance };
-    Check(GlowHit(c, viewer, corner, &gu, &gv) && gu > 0 && gu < 0.2f && gv > 0 && gv < 0.2f, "past the screen's corner is the glow's corner");
+    const float beyond = cyl.halfWrap + 0.5f * (c.glowHalfW - cyl.halfWidth) / cyl.radius;     // halfway into the glow sideways
+    const float glowPoint[3] = { c.glowRadius * std::sin(beyond), 0, cyl.radius - c.glowRadius * std::cos(beyond) };
+    const float toGlow[3] = { glowPoint[0] - viewer[0], glowPoint[1] - viewer[1], glowPoint[2] - viewer[2] };
+    Check(!CylinderHit(cyl, viewer, toGlow, &tu, &tv), "beside the curved screen is not the screen");
+    Check(GlowHit(c, viewer, toGlow, &gu, &gv) && std::fabs(gu - (cyl.radius * beyond / (2 * c.glowHalfW) + 0.5f)) < 1e-4f &&
+        std::fabs(gv - 0.5f) < 1e-4f, "beside the curved screen the glow follows the curve");
+    Check(glowPoint[2] > 0.5f, "the glow beside the screen curves towards the viewer with it");
+    const float straightBack[3] = { 0, 0, -1 };
+    Check(GlowHit(c, viewer, straightBack, &gu, &gv) && std::fabs(gu - 0.5f) < 1e-5f, "the glow runs behind the whole screen");
     CurveConstants dark = c;
     dark.glowOn = 0;
-    Check(!GlowHit(dark, viewer, corner, &gu, &gv), "no glow when the ambilight is off");
+    Check(!GlowHit(dark, viewer, toGlow, &gu, &gv), "no glow when the ambilight is off");
 
     std::vector<unsigned char> picture(8 * 8 * 4, 0), glowPixels(4 * 4 * 4, 0);
     for (size_t i = 0; i < picture.size(); i += 4) { picture[i] = 200; picture[i + 1] = 100; picture[i + 2] = 50; picture[i + 3] = 255; }
@@ -706,44 +727,90 @@ static void TestScreenCurve()
     float rgb[3];
     Check(CurvedPixel(c, 0, 32, 24, cyl, pic, &glowImg, rgb) && std::fabs(rgb[0] - 200 / 255.0f) < 1e-5f && std::fabs(rgb[2] - 50 / 255.0f) < 1e-5f,
         "the middle of the eye shows the picture");
-    // Pixel (8, 8) looks above and left of the screen, into the glow.
-    Check(CurvedPixel(c, 0, 8, 8, cyl, pic, &glowImg, rgb) && rgb[0] == 0 && std::fabs(rgb[2] - 80 / 255.0f) < 1e-5f,
-        "above and beside the screen the eye sees the glow");
-    Check(CurvedPixel(c, 0, 0, 0, cyl, pic, &glowImg, rgb) && rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 0, "beyond the glow it is black");
-    Check(CurvedPixel(dark, 0, 8, 8, cyl, pic, nullptr, rgb) && rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 0, "with no glow the surround is black");
+    // Pixel (2, 24) looks well beside the screen, into the glow: premultiplied glow
+    // over the world colour.
+    const float a80 = 80 / 255.0f;
+    Check(CurvedPixel(c, 0, 2, 24, cyl, pic, &glowImg, rgb) && std::fabs(rgb[0] - 0.1f * (1 - a80)) < 1e-5f &&
+        std::fabs(rgb[2] - (a80 + 0.3f * (1 - a80))) < 1e-5f, "beside the screen the glow lies over the world colour");
+    Check(CurvedPixel(c, 0, 32, 0, cyl, pic, &glowImg, rgb) && rgb[0] == 0.1f && rgb[1] == 0.2f && rgb[2] == 0.3f,
+        "above the glow is the world colour");
+    Check(CurvedPixel(dark, 0, 2, 24, cyl, pic, nullptr, rgb) && rgb[0] == 0.1f && rgb[2] == 0.3f, "with no glow the surround is the world colour");
     Check(!CurvedPixel(c, 2, 0, 0, cyl, pic, &glowImg, rgb) && !CurvedPixel(c, 0, 64, 0, cyl, pic, &glowImg, rgb), "pixels outside the eyes are rejected");
     // Along the middle row, from the picture to the glow, there is an outline pixel
     // that mixes the two - the smooth edge the four samples are for.
     bool mixed = false;
     for (int x = 32; x < 64; x++)
-        if (CurvedPixel(c, 0, x, 24, cyl, pic, &glowImg, rgb) && rgb[0] > 0.01f && rgb[0] < 200 / 255.0f - 0.01f) mixed = true;
+        if (CurvedPixel(c, 0, x, 24, cyl, pic, &glowImg, rgb) && rgb[0] > 0.1f && rgb[0] < 200 / 255.0f - 0.01f) mixed = true;
     Check(mixed, "the screen's outline is smoothed");
 
-    // Ambilight constants: the reference refuses anything it cannot compute.
+    // Ambilight: a picture whose left edge is red at the top and blue at the bottom,
+    // and white elsewhere.
+    const int sw = 64, sh = 36;
+    std::vector<unsigned char> source((size_t)sw * sh * 4, 255);
+    for (int y = 0; y < sh; y++)
+        for (int x = 0; x < 8; x++)
+        {
+            unsigned char* q = source.data() + ((size_t)y * sw + x) * 4;
+            q[0] = y < sh / 2 ? 255 : 0; q[1] = 0; q[2] = y < sh / 2 ? 0 : 255;
+        }
     AmbiConstants a{};
+    AmbiRingPoint point;
     float rgba[4] = { 0, 0, 0, 0 };
-    std::vector<unsigned char> source(16 * 16 * 4, 200);
-    Check(!AmbilightPixel(a, source.data(), 16 * 4, 0, 0, rgba), "the glow needs a size");
-    a.gw = 8; a.gh = 8; a.srcW = 16; a.srcH = 16;
-    a.rectW = 2; a.rectH = 2; a.marginM = 0.25f; a.insetX = 0.125f; a.insetY = 0.125f;
-    a.intensity = kAmbiIntensity; a.blurPx = 1; a.reset = 1;
-    Check(!AmbilightPixel(a, nullptr, 16 * 4, 0, 0, rgba), "the glow needs a picture");
-    Check(!AmbilightPixel(a, source.data(), 4, 0, 0, rgba), "a pitch shorter than the picture is rejected");
-    Check(!AmbilightPixel(a, source.data(), 16 * 4, 8, 0, rgba), "a pixel outside the glow is rejected");
-    Check(AmbilightPixel(a, source.data(), 16 * 4, 4, 4, rgba) && rgba[3] == 0, "the middle of the glow is hidden by the screen");
-    Check(AmbilightPixel(a, source.data(), 16 * 4, 0, 4, rgba) && rgba[3] > 0 && rgba[3] <= kAmbiIntensity, "the side glows, never brighter than asked");
-    Check(rgba[0] <= rgba[3] && rgba[1] <= rgba[3] && rgba[2] <= rgba[3], "the colour is premultiplied by its own alpha");
-    // The bezel: dark right against the screen, full strength a little further out.
-    AmbiConstants bezel = a;
-    bezel.gw = 256; bezel.gh = 256; bezel.insetX = 0.25f; bezel.insetY = 0.25f; bezel.bezel = kAmbiBezel;
-    float touching[4], beyond[4], unbezelled[4];
-    Check(AmbilightPixel(bezel, source.data(), 16 * 4, 63, 128, touching) && AmbilightPixel(bezel, source.data(), 16 * 4, 56, 128, beyond),
-        "glow either side of the bezel");
-    AmbiConstants noBezel = bezel;
-    noBezel.bezel = 0;
-    Check(AmbilightPixel(noBezel, source.data(), 16 * 4, 63, 128, unbezelled), "glow without a bezel");
-    Check(touching[3] < 0.2f * unbezelled[3], "right next to the screen the glow is dark");
-    Check(beyond[3] > touching[3] * 3, "a little further out it is bright");
+    Check(!AmbiConstantsUsable(a) && !BuildRingPoint(a, source.data(), sw * 4, 0, point), "the glow needs a size");
+    a.gw = 128; a.gh = 96; a.srcW = sw; a.srcH = sh;
+    a.screenW = 4.0f; a.screenH = 2.25f; a.marginM = kAmbiMargin * a.screenW;
+    a.rectW = a.screenW + 2 * a.marginM; a.rectH = a.screenH + 2 * a.marginM;
+    a.intensity = 0.85f; a.soft = kAmbiSoft * a.screenW; a.bezel = kAmbiBezel; a.ringN = kAmbiRing;
+    Check(AmbiConstantsUsable(a), "usable glow constants");
+    Check(!BuildRingPoint(a, nullptr, sw * 4, 0, point) && !BuildRingPoint(a, source.data(), 4, 0, point) &&
+          !BuildRingPoint(a, source.data(), sw * 4, kAmbiRing, point), "bad ring inputs are rejected");
+    AmbiConstants tooMany = a;
+    tooMany.ringN = kAmbiRingMax + 1;
+    Check(!AmbiConstantsUsable(tooMany), "the ring cannot outgrow the shader's shared copy");
+    std::vector<AmbiRingPoint> ring(kAmbiRing);
+    for (int i = 0; i < kAmbiRing; i++) Check(BuildRingPoint(a, source.data(), sw * 4, (uint32_t)i, ring[i]), "ring point");
+    Check(ring[0].y == 0.5f * a.screenH && ring[0].x < -0.5f * a.screenW + 0.1f, "the ring starts at the top-left corner");
+    // Ring points on the left edge see red above the middle, blue below.
+    bool leftRed = false, leftBlue = false;
+    for (const auto& r : ring)
+        if (r.x == -0.5f * a.screenW)
+        {
+            if (r.y > 0.3f && r.rgb[0] > 0.9f && r.rgb[2] < 0.1f) leftRed = true;
+            if (r.y < -0.3f && r.rgb[2] > 0.9f && r.rgb[0] < 0.1f) leftBlue = true;
+        }
+    Check(leftRed && leftBlue, "the ring samples the picture just inside each edge");
+    Check(!AmbilightPixel(a, nullptr, 0, 0, rgba) && !AmbilightPixel(a, ring.data(), 128, 0, rgba), "bad glow inputs are rejected");
+    Check(AmbilightPixel(a, ring.data(), 64, 48, rgba) && rgba[3] == 0, "behind the screen there is no glow");
+    // Left of the screen, above and below the middle: red and blue, and softer (more
+    // mixed) further out than close in.
+    auto glowAt = [&](float mx, float my, float out[4])
+    {
+        const int gx = (int)((mx / a.rectW + 0.5f) * (float)a.gw), gy = (int)((0.5f - my / a.rectH) * (float)a.gh);
+        return AmbilightPixel(a, ring.data(), gx, gy, out);
+    };
+    float nearTop[4], farTop[4], nearBottom[4];
+    Check(glowAt(-0.5f * a.screenW - 0.15f, 0.7f, nearTop) && glowAt(-0.5f * a.screenW - 0.75f, 0.7f, farTop) &&
+          glowAt(-0.5f * a.screenW - 0.15f, -0.7f, nearBottom), "glow beside the screen");
+    Check(nearTop[0] > 2 * nearTop[2] && nearBottom[2] > 2 * nearBottom[0], "next to the edge the glow takes the local colour");
+    Check(farTop[0] / farTop[3] < nearTop[0] / nearTop[3] && farTop[2] / farTop[3] > nearTop[2] / nearTop[3],
+        "further out it blends more of the border: softer");
+    Check(nearTop[3] > farTop[3] && nearTop[3] <= 0.85f, "brightness falls off, never above the strength");
+    for (int ch = 0; ch < 3; ch++) Check(nearTop[ch] <= nearTop[3] + 1e-6f, "the colour is premultiplied by its own alpha");
+    // Strength scales brightness only.
+    AmbiConstants dim = a;
+    dim.intensity = 0.3f;
+    float dimTop[4];
+    Check(AmbilightPixel(dim, ring.data(), (int)((((-0.5f * a.screenW - 0.15f) / a.rectW) + 0.5f) * (float)a.gw),
+                         (int)((0.5f - 0.7f / a.rectH) * (float)a.gh), dimTop) &&
+          std::fabs(dimTop[3] / nearTop[3] - 0.3f / 0.85f) < 1e-4f &&
+          std::fabs(dimTop[0] / dimTop[3] - nearTop[0] / nearTop[3]) < 1e-5f, "the strength dims the glow without changing its colour");
+    // The bezel: dark right against the screen, bright a little further out.
+    float touching[4], clear[4];
+    Check(glowAt(-0.5f * a.screenW - 0.01f, 0.0f, touching) && glowAt(-0.5f * a.screenW - 0.2f, 0.0f, clear), "glow either side of the bezel");
+    Check(touching[3] < 0.25f * clear[3], "right next to the screen the glow is dark");
+    std::vector<unsigned char> texture((size_t)a.gw * a.gh * 4);
+    Check(AmbilightReference(a, source.data(), sw * 4, texture.data(), (int)a.gw * 4), "the whole glow");
+    Check(!AmbilightReference(a, source.data(), sw * 4, texture.data(), 4), "a short output pitch is rejected");
 }
 
 int main(int argc, char** argv)

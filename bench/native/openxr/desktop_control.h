@@ -23,6 +23,8 @@ struct DesktopSettings
     int subpixel = 1;   // v7: sub-pixel warp (no depth banding), live; v1-v6 keep it on
     int curve = 0;      // v8: curved screen, 0 flat .. 100 fully wrapped, live
     int ambilight = 0;  // v8: glow around the screen from the picture's edges, live
+    int ambiStrength = 85;  // v9: the glow's brightness next to the screen, percent, live
+    int worldColor = 0;     // v9: 0xRRGGBB around the screen (0 = black), live
 };
 
 inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& result)
@@ -39,11 +41,13 @@ inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& resul
     if (version >= 6 && !(input >> s.delayed)) return false;
     if (version >= 7 && !(input >> s.subpixel)) return false;
     if (version >= 8 && !(input >> s.curve >> s.ambilight)) return false;
+    if (version >= 9 && !(input >> s.ambiStrength >> s.worldColor)) return false;
     s.version = version;
     if (input >> tail) return false;
     auto between = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
-    if (magic != "VRX" || version < 1 || version > 8 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
+    if (magic != "VRX" || version < 1 || version > 9 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
         s.subpixel < 0 || s.subpixel > 1 || s.curve < 0 || s.curve > 100 || s.ambilight < 0 || s.ambilight > 1 ||
+        s.ambiStrength < 0 || s.ambiStrength > 100 || s.worldColor < 0 || s.worldColor > 0xFFFFFF ||
         !between(s.width, 1, 10) || !between(s.distance, 1, 8) ||
         !between(s.height, -2, 2) || !between(s.horizontal, -3, 3) || !between(s.strength, 0, 2) ||
         s.follow < 0 || s.follow > 1 || s.stereo < 0 || s.stereo > 1 || s.autoDismiss < 0 || s.autoDismiss > 1 ||

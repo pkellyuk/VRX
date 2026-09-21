@@ -27,6 +27,8 @@ public partial class MainWindow : Window
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX");
         store = new(data);
         InitializeComponent();
+        FillWorldList();
+        WorldList.SelectedIndex = 0;
         ShowGpuChoice(Gpus.Same);
         // From <Version> in the project file, so the UI always matches the build.
         VersionText.Text = DisplayVersion();
@@ -184,6 +186,8 @@ public partial class MainWindow : Window
         SubpixelCheck.IsChecked = p.SubpixelWarp;
         CurveSlider.Value = p.ScreenCurve;
         AmbilightCheck.IsChecked = p.Ambilight;
+        AmbiStrengthSlider.Value = p.AmbilightStrength;
+        WorldHex.Text = p.WorldColor;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
         ShowGpuChoice(p.DepthGpu);
@@ -205,6 +209,9 @@ public partial class MainWindow : Window
             SubpixelWarp = SubpixelCheck.IsChecked == true,
             ScreenCurve = (int)Math.Round(CurveSlider.Value),
             Ambilight = AmbilightCheck.IsChecked == true,
+            AmbilightStrength = (int)Math.Round(AmbiStrengthSlider.Value),
+            WorldColor = Profile.TryParseColor(WorldHex.Text, out int world) ? Profile.FormatColor(world) :
+                throw new InvalidDataException("World colour must be six hex digits, like #1C1C1E. Changes are not saved until it is."),
             SteadyDepth = SteadyCheck.IsChecked == true,
             FuseModels = FuseCheck.IsChecked == true,
             DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
@@ -241,6 +248,46 @@ public partial class MainWindow : Window
         ScreenLine.X1 = centre - WidthSlider.Value * 10; ScreenLine.X2 = centre + WidthSlider.Value * 10;
         ScreenLine.Y1 = ScreenLine.Y2 = y;
         DrawCurve(centre, y);
+    }
+
+    // World colour presets; anything else is "Custom" and typed as #RRGGBB.
+    private static readonly (string Name, string Hex)[] WorldPresets =
+    [
+        ("Black (default)", "#000000"), ("Charcoal", "#1C1C1E"), ("Slate", "#2A3441"), ("Midnight blue", "#0B1530"),
+        ("Deep purple", "#1E0F2E"), ("Forest", "#0F2418"), ("Warm dark", "#2A1E14"), ("Cinema red", "#2B0A0A"), ("Grey", "#4A4A4A"),
+    ];
+    private const string CustomColour = "Custom";
+    private bool worldSyncing;
+
+    private void FillWorldList()
+    {
+        WorldList.Items.Clear();
+        foreach (var preset in WorldPresets) WorldList.Items.Add(preset.Name);
+        WorldList.Items.Add(CustomColour);
+    }
+
+    // A preset picked: its colour goes into the box (Custom keeps whatever is there).
+    private void WorldListChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (worldSyncing || WorldList.SelectedItem is not string name || name == CustomColour) return;
+        foreach (var preset in WorldPresets)
+            if (preset.Name == name) { WorldHex.Text = preset.Hex; return; }
+    }
+
+    // The box changed: show the colour, point the list at its preset (or Custom) and
+    // save - but only once it is a whole colour, so typing does not save half of one.
+    private void WorldHexChanged(object sender, TextChangedEventArgs e)
+    {
+        if (WorldSwatch == null || WorldList == null) return;
+        if (!Profile.TryParseColor(WorldHex.Text, out int rgb)) { WorldSwatch.Fill = Brushes.Transparent; return; }
+        WorldSwatch.Fill = new SolidColorBrush(Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb));
+        string hex = Profile.FormatColor(rgb);
+        string match = CustomColour;
+        foreach (var preset in WorldPresets) if (preset.Hex == hex) match = preset.Name;
+        worldSyncing = true;
+        WorldList.SelectedItem = match;
+        worldSyncing = false;
+        SettingsChanged(sender, e);
     }
 
     // The top view shows the curve: the edges come towards the viewer (down the
@@ -393,6 +440,8 @@ public partial class MainWindow : Window
         legacy.Remove("SubpixelWarp");
         legacy.Remove("ScreenCurve");
         legacy.Remove("Ambilight");
+        legacy.Remove("AmbilightStrength");
+        legacy.Remove("WorldColor");
         legacy.Remove("FuseModels");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
@@ -419,18 +468,30 @@ public partial class MainWindow : Window
         var matchedWins = new Profile { DelayToDepth = true, MatchFrameToDepth = true };
         var wholePixel = new Profile { SubpixelWarp = false };
         var curved = new Profile { ScreenCurve = 65, Ambilight = true };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 8 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1"))
-            throw new Exception("Control snapshot must be v8 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage and the ambilight flag (see desktop_control.h)");
+        var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 9 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889"))
+            throw new Exception("Control snapshot must be v9 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, and the world colour (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
             throw new Exception("Profiles saved before the sub-pixel warp existed must load with it on");
         if (store.Load(one.ExecutablePath).ScreenCurve != 0 || store.Load(one.ExecutablePath).Ambilight)
             throw new Exception("Profiles saved before the curve and ambilight existed must load flat, with no glow");
+        if (store.Load(one.ExecutablePath).AmbilightStrength != 85 || store.Load(one.ExecutablePath).WorldColor != "#000000")
+            throw new Exception("Profiles saved before the glow strength and world colour existed must load at 85 % and black");
+        var nullColour = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(one.ExecutablePath)))!.AsObject();
+        nullColour["WorldColor"] = null;
+        File.WriteAllText(store.FileFor(one.ExecutablePath), nullColour.ToJsonString());
+        if (store.Load(one.ExecutablePath).WorldColor != "#000000") throw new Exception("A missing world colour must load as black");
+        if (new Profile { WorldColor = "#12" }.Valid() || new Profile { WorldColor = "#GGGGGG" }.Valid() || new Profile { AmbilightStrength = 101 }.Valid() ||
+            !new Profile { WorldColor = "2a3441" }.Valid())
+            throw new Exception("Glow strength and world colour validation");
+        if (!Profile.TryParseColor("#2A3441", out int slate) || slate != 0x2A3441 || Profile.FormatColor(slate) != "#2A3441")
+            throw new Exception("World colour parsing");
         one.MatchFrameToDepth = false;
         var sample = new RunningApp(1234, "game.exe", one.ExecutablePath, [new GameWindow(42, "Example game window")], null);
         refreshing = true; AppList.ItemsSource = new[] { sample }; AppList.SelectedItem = sample; refreshing = false;
@@ -446,6 +507,24 @@ public partial class MainWindow : Window
             throw new Exception("A curved screen must be drawn as the arc in the top view");
         CurveSlider.Value = 0;
         AmbilightCheck.IsChecked = false;
+        if (AmbiStrengthSlider.Value != 85 || AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength should default to 85 % and follow the ambilight checkbox");
+        AmbilightCheck.IsChecked = true;
+        if (!AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength must be adjustable with the ambilight on");
+        AmbiStrengthSlider.Value = 40;
+        if (ReadProfile().AmbilightStrength != 40) throw new Exception("The glow strength slider is not mapped to settings");
+        AmbiStrengthSlider.Value = 85;
+        AmbilightCheck.IsChecked = false;
+        if (WorldHex.Text != "#000000" || WorldList.SelectedItem as string != "Black (default)") throw new Exception("The world should default to black");
+        WorldList.SelectedItem = "Slate";
+        if (WorldHex.Text != "#2A3441" || ReadProfile().WorldColor != "#2A3441") throw new Exception("A world colour preset is not mapped to settings");
+        WorldHex.Text = "#123456";
+        if (WorldList.SelectedItem as string != "Custom" || ReadProfile().WorldColor != "#123456") throw new Exception("A typed world colour must show as Custom and save");
+        WorldHex.Text = "#12";
+        bool rejected = false;
+        try { ReadProfile(); } catch (InvalidDataException) { rejected = true; }
+        if (!rejected) throw new Exception("A half-typed world colour must not be saved");
+        WorldHex.Text = "#000000";
+        if (WorldList.SelectedItem as string != "Black (default)") throw new Exception("Typing a preset's colour must select the preset");
         if (SubpixelCheck.IsChecked != true) throw new Exception("The sub-pixel warp should default on");
         SubpixelCheck.IsChecked = false;
         if (ReadProfile().SubpixelWarp) throw new Exception("Sub-pixel warp checkbox is not mapped to settings");

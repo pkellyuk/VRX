@@ -55,6 +55,8 @@
 //            --curve=N              curve the screen: 0 flat (default) .. 100 fully wrapped; a
 //                                   curved screen is ray-cast per eye (screen_curve.h, XCURVE.md)
 //            --ambilight            spill the picture's edge colours around the screen
+//            --ambilight-strength=N the glow's brightness next to the screen, 0..100 (default 85)
+//            --world=RRGGBB         the colour around the screen (default 000000, black)
 //            --head-locked          follow your head (default fixed screen; '=' recenters)
 //            --keep-dashboard       skip the SteamVR startup dashboard-close request
 //   keys:    '=' recenter; F8 dismiss SteamVR dashboard (keys also reach the game)
@@ -254,6 +256,8 @@ struct Options
     bool subpixel = true;               // sub-pixel warp (no depth banding); --whole-pixel restores the old warp
     float curve = 0.0f;                 // curved screen: 0 flat .. 1 fully wrapped (screen_curve.h)
     bool ambilight = false;             // spill the picture's edge colours around the screen
+    int ambiStrength = kAmbiDefaultStrength;    // percent: the glow's brightness next to the screen
+    uint32_t worldColor = 0;            // 0xRRGGBB around the screen (0 = black, no layer)
 };
 
 static const int SLOTS = 3;
@@ -467,7 +471,8 @@ struct App
     // Ambilight (ambilight.h): one small glow texture, kept between frames so the
     // surround can drift, copied into its own quad layer behind the screen.
     ComPtr<ID3D12RootSignature> ambiRootSig;
-    ComPtr<ID3D12PipelineState> ambiPso;
+    ComPtr<ID3D12PipelineState> ambiPso, ambiRingPso;
+    ComPtr<ID3D12Resource> ambiRing;                     // float4[2 * kAmbiRingMax]: the border ring
     ComPtr<ID3D12Resource> ambiTex;
     int ambiW = 0, ambiH = 0;
     XrSwapchain ambiSc = XR_NULL_HANDLE;
@@ -486,6 +491,14 @@ struct App
     ComPtr<ID3D12Resource> eyeOut;                       // UNORM UAV [2]; SRGB swapchains cannot be UAVs
     bool eyeFailed = false;                              // could not be made: the screen stays flat
     ComPtr<ID3D12Resource> testEyeOut;                   // TEST_EYE_W x TEST_EYE_H [2]
+
+    // World colour behind a flat screen: a projection layer of one colour (a curved
+    // screen fills its own eye buffers with it instead).
+    XrSwapchain worldSc = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageD3D12KHR> wimgs;
+    ComPtr<ID3D12Resource> worldUp[RING];                // UPLOAD, one per frame slot
+    unsigned char* worldMapped[RING] = {};
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT worldFp[VIEWS] = {};
 
     // depth handoff (triple buffer)
     DepthSlot slots[SLOTS];
@@ -551,10 +564,11 @@ static const UINT DESC_SRC0 = 0;                         // SRC_RING source SRVs
 static const UINT DESC_MAIN_TABLE = SRC_RING;            // 4
 static const UINT DESC_TEST_SRC = SRC_RING + 4;          // 1
 static const UINT DESC_TEST_TABLE = SRC_RING + 5;        // 4
-static const UINT DESC_AMBI_UAV = SRC_RING + 9;          // 1: the ambilight glow texture
-static const UINT DESC_CURVE_MAIN = SRC_RING + 10;       // 3: warped pictures, glow, eye buffers (curved screen)
-static const UINT DESC_CURVE_TEST = SRC_RING + 13;       // 3: the same for the self-test
-static const UINT DESC_COUNT = SRC_RING + 16;
+static const UINT DESC_AMBI_UAV = SRC_RING + 9;          // 2: the ambilight glow texture, then its border ring
+static const UINT DESC_CURVE_MAIN = SRC_RING + 11;       // 3: warped pictures, glow, eye buffers (curved screen)
+static const UINT DESC_CURVE_TEST = SRC_RING + 14;       // 3: the same for the self-test
+static const UINT DESC_COUNT = SRC_RING + 17;
+static const int WORLD_W = 8;                            // the world colour layer: one colour needs few pixels
 static const int TEST_EYE_W = 256, TEST_EYE_H = 192;     // self-test eye buffers
 
 // The glow texture: small (the compositor stretches it over a soft gradient) and
@@ -755,6 +769,22 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
             continue;
         }
         if (!strcmp(a, "--ambilight")) { opt->ambilight = true; continue; }
+        if (!strncmp(a, "--ambilight-strength=", 21))
+        {
+            const int percent = atoi(a + 21);
+            opt->ambiStrength = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+            continue;
+        }
+        if (!strncmp(a, "--world=", 8))
+        {
+            const char* hex = a + 8;
+            if (*hex == '#') hex++;
+            char* end = nullptr;
+            const unsigned long rgb = strtoul(hex, &end, 16);
+            if (!end || *end || end - hex != 6) { printf("bad --world=RRGGBB: %s\n", a); return false; }
+            opt->worldColor = (uint32_t)rgb;
+            continue;
+        }
         if (!strcmp(a, "--truth")) { opt->useTruth = true; continue; }
         if (!strcmp(a, "--dump")) { opt->doDump = true; continue; }
         if (!strcmp(a, "--paired")) { opt->paired = true; continue; }
@@ -1831,39 +1861,78 @@ void main(uint3 id : SV_DispatchThreadID)
 // Source picture -> the glow texture around the screen (see ambilight.h, which
 // holds the same arithmetic as the CPU reference SelfTestAmbilight compares with).
 static const char* kAmbiHlsl = R"HLSL(
+// Compiled twice: with AMBI_RING defined it builds the ring (one thread per point),
+// without it the glow (one thread per glow pixel). See ambilight.h.
 cbuffer C : register(b0)
 {
     uint  GW; uint GH; uint SRCW; uint SRCH;
-    float insetX; float insetY;     // where the screen sits inside the glow rect
-    float rectW; float rectH;       // the glow rect in metres: an isotropic falloff
-    float marginM;
-    float intensity;
-    float blend;                    // towards this frame's glow (1 = no smoothing)
-    uint  reset;
-    float blurPx;
-    float bezel;                    // dark rise next to the screen, fraction of the margin
+    float rectW; float rectH; float screenW; float screenH;
+    float marginM; float intensity; float blend; uint reset;
+    float soft; float bezel; uint ringN; uint pad;
 };
 
-static const int HALF = 2;          // kAmbiTaps / 2
-static const float TAPS = 25.0;     // kAmbiTaps * kAmbiTaps
+static const int TAPS = 4;          // kAmbiTaps
+static const float DEPTH = 0.06;    // kAmbiDepth
 
-Texture2D<float4>   scene : register(t0);
-RWTexture2D<float4> glow  : register(u0);
+Texture2D<float4>          scene : register(t0);
+RWTexture2D<float4>        glow  : register(u0);
+RWStructuredBuffer<float4> ring  : register(u1);   // per point: colour, then position (x, y)
 
-[numthreads(8, 8, 1)]
+void Place(uint i, out float x, out float y, out float tx, out float ty, out float nx, out float ny)
+{
+    float W = screenW, H = screenH;
+    float s = ((float)i + 0.5) / (float)ringN * (2.0 * (W + H));
+    tx = 0; ty = 0; nx = 0; ny = 0;
+    if (s < W) { x = -0.5 * W + s; y = 0.5 * H; tx = 1; ny = -1; return; }
+    s -= W;
+    if (s < H) { x = 0.5 * W; y = 0.5 * H - s; ty = -1; nx = -1; return; }
+    s -= H;
+    if (s < W) { x = 0.5 * W - s; y = -0.5 * H; tx = -1; ny = 1; return; }
+    s -= W;
+    x = -0.5 * W; y = -0.5 * H + s; ty = 1; nx = 1;
+}
+
+#ifdef AMBI_RING
+[numthreads(64, 1, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
+    uint i = id.x;
+    if (i >= ringN) return;
+    float x, y, tx, ty, nx, ny;
+    Place(i, x, y, tx, ty, nx, ny);
+    float spacing = 2.0 * (screenW + screenH) / (float)ringN;
+    float depth = DEPTH * (screenW < screenH ? screenW : screenH);
+    float3 sum = float3(0, 0, 0);
+    [unroll] for (int j = 0; j < TAPS; j++)
+    {
+        [unroll] for (int k = 0; k < TAPS; k++)
+        {
+            float along = (((float)k + 0.5) / (float)TAPS - 0.5) * spacing;
+            float inw = ((float)j + 0.5) / (float)TAPS * depth;
+            float qx = x + tx * along + nx * inw, qy = y + ty * along + ny * inw;
+            int px = clamp((int)floor((qx / screenW + 0.5) * (float)SRCW - 0.5 + 0.5), 0, (int)SRCW - 1);
+            int py = clamp((int)floor((0.5 - qy / screenH) * (float)SRCH - 0.5 + 0.5), 0, (int)SRCH - 1);
+            sum += scene.Load(int3(px, py, 0)).rgb;
+        }
+    }
+    ring[i * 2] = float4(sum / (float)(TAPS * TAPS), 0);
+    ring[i * 2 + 1] = float4(x, y, 0, 0);
+}
+#else
+groupshared float4 sRing[2 * 256];  // kAmbiRingMax
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex)
+{
+    for (uint k = gi; k < ringN * 2; k += 64) sRing[k] = ring[k];
+    GroupMemoryBarrierWithGroupSync();
     if (id.x >= GW || id.y >= GH) return;
 
-    float u = ((float)id.x + 0.5) / (float)GW;
-    float v = ((float)id.y + 0.5) / (float)GH;
-    float sx = (u - insetX) / (1.0 - 2.0 * insetX);      // 0..1 across the screen
-    float sy = (v - insetY) / (1.0 - 2.0 * insetY);
-    float cx = clamp(sx, 0.0, 1.0);                      // nearest point on the screen
-    float cy = clamp(sy, 0.0, 1.0);
-    float dxm = (sx - cx) * (rectW * (1.0 - 2.0 * insetX));
-    float dym = (sy - cy) * (rectH * (1.0 - 2.0 * insetY));
-    float dist = sqrt(dxm * dxm + dym * dym) / marginM;
+    float px = (((float)id.x + 0.5) / (float)GW - 0.5) * rectW;
+    float py = (0.5 - ((float)id.y + 0.5) / (float)GH) * rectH;
+    float ox = abs(px) - 0.5 * screenW, oy = abs(py) - 0.5 * screenH;
+    float dx = ox > 0.0 ? ox : 0.0, dy = oy > 0.0 ? oy : 0.0;
+    float dist = sqrt(dx * dx + dy * dy) / marginM;
 
     float4 result = float4(0, 0, 0, 0);
     if (dist > 0.0 && dist < 1.0)
@@ -1874,25 +1943,28 @@ void main(uint3 id : SV_DispatchThreadID)
             float tb = (dist / bezel < 1.0) ? dist / bezel : 1.0;
             a *= tb * tb * (3.0 - 2.0 * tb);
         }
-        float px = cx * (float)SRCW - 0.5;
-        float py = cy * (float)SRCH - 0.5;
+        // Every border point lights this one, the nearest most: the glow follows the
+        // local colour next to the screen and softens further out.
+        float soft2 = soft * soft;
+        float sumW = 0.0;
         float3 sum = float3(0, 0, 0);
-        [unroll] for (int j = -HALF; j <= HALF; j++)
+        [loop] for (uint i = 0; i < ringN; i++)
         {
-            [unroll] for (int i = -HALF; i <= HALF; i++)
-            {
-                int xi = clamp((int)floor(px + (float)i * blurPx + 0.5), 0, (int)SRCW - 1);
-                int yi = clamp((int)floor(py + (float)j * blurPx + 0.5), 0, (int)SRCH - 1);
-                sum += scene.Load(int3(xi, yi, 0)).rgb;
-            }
+            float4 pos = sRing[i * 2 + 1];
+            float rx = px - pos.x, ry = py - pos.y;
+            float r2 = rx * rx + ry * ry + soft2;
+            float w = 1.0 / (r2 * sqrt(r2));
+            sumW += w;
+            sum += w * sRing[i * 2].rgb;
         }
         // Premultiplied: right for a blended layer, and right over black if the
         // runtime ignores the alpha.
-        result = float4((sum / TAPS) * a, a);
+        if (sumW > 0.0) result = float4((sum / sumW) * a, a);
     }
     float4 prev = glow[id.xy];
     glow[id.xy] = (reset != 0) ? result : prev + (result - prev) * blend;
 }
+#endif
 )HLSL";
 
 // Curved screen: one ray per sample from the eye through its pixel, against the
@@ -1903,7 +1975,8 @@ cbuffer C : register(b0)
 {
     uint  EW; uint EH; uint glowOn; uint pad0;
     float R; float halfWrap; float halfW; float halfH;
-    float glowHalfW; float glowHalfH; float glowZ; float pad1;
+    float glowHalfW; float glowHalfH; float glowRadius; float pad1;
+    float4 world;                   // the world colour (rgb), as stored
     float4 eyeData[10];             // per eye: origin, rotation rows 0..2, (tanL, tanR, tanU, tanD)
 };
 
@@ -1924,13 +1997,15 @@ void Ray(uint e, float px, float py, out float3 o, out float3 d)
     d = float3(r0.x * tx + r0.y * ty - r0.z, r1.x * tx + r1.y * ty - r1.z, r2.x * tx + r2.y * ty - r2.z);
 }
 
-bool Cylinder(float3 o, float3 d, out float2 uv)
+// ArcHit in screen_curve.h: the first hit on a vertical cylinder of radius rho round
+// the axis at z = axisZ, on the far side, within the angle and height limits.
+bool ArcHit(float axisZ, float rho, float maxPhi, float maxY, float3 o, float3 d, out float phi, out float y)
 {
-    uv = float2(0, 0);
+    phi = 0; y = 0;
     float a = d.x * d.x + d.z * d.z;
     if (!(a > 1e-12)) return false;
-    float b = 2.0 * (o.x * d.x + (o.z - R) * d.z);
-    float c = o.x * o.x + o.z * o.z - 2.0 * o.z * R;
+    float b = 2.0 * (o.x * d.x + (o.z - axisZ) * d.z);
+    float c = o.x * o.x + o.z * o.z - 2.0 * o.z * axisZ + (axisZ - rho) * (axisZ + rho);
     float disc = b * b - 4.0 * a * c;
     if (disc < 0.0) return false;
     float sq = sqrt(disc);
@@ -1943,25 +2018,46 @@ bool Cylinder(float3 o, float3 d, out float2 uv)
         float t = (i == 0) ? t0 : t1;
         if (!(t > 0.0)) continue;
         float hx = o.x + t * d.x, hy = o.y + t * d.y, hz = o.z + t * d.z;
-        float toward = R - hz;
+        float toward = axisZ - hz;
         if (!(toward > 0.0)) continue;
-        float phi = atan2(hx, toward);
-        if (abs(phi) > halfWrap || abs(hy) > halfH) continue;
-        uv = float2((R * phi) / (2.0 * halfW) + 0.5, 0.5 - hy / (2.0 * halfH));
+        float angle = atan2(hx, toward);
+        if (abs(angle) > maxPhi || abs(hy) > maxY) continue;
+        phi = angle; y = hy;
         return true;
     }
     return false;
 }
 
+bool Screen(float3 o, float3 d, out float2 uv)
+{
+    uv = float2(0, 0);
+    float phi, y;
+    if (!ArcHit(R, R, halfWrap, halfH, o, d, phi, y)) return false;
+    uv = float2((R * phi) / (2.0 * halfW) + 0.5, 0.5 - y / (2.0 * halfH));
+    return true;
+}
+
 bool Glow(float3 o, float3 d, out float2 uv)
 {
     uv = float2(0, 0);
-    if (glowOn == 0 || !(d.z < 0.0)) return false;
-    float t = (glowZ - o.z) / d.z;
-    if (!(t > 0.0)) return false;
-    float gx = o.x + t * d.x, gy = o.y + t * d.y;
-    uv = float2(gx / (2.0 * glowHalfW) + 0.5, 0.5 - gy / (2.0 * glowHalfH));
-    return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
+    if (glowOn == 0) return false;
+    float phi, y;
+    if (!ArcHit(R, glowRadius, glowHalfW / R, glowHalfH, o, d, phi, y)) return false;
+    uv = float2((R * phi) / (2.0 * glowHalfW) + 0.5, 0.5 - y / (2.0 * glowHalfH));
+    return true;
+}
+
+// CurveSampleColour: the picture; the glow over the world colour; or the world.
+float3 Colour(int kind, float2 uv, uint e)
+{
+    float3 c = world.rgb;
+    if (kind == 0) c = picture.SampleLevel(samp, float3(uv, (float)e), 0).rgb;
+    else if (kind == 1)
+    {
+        float4 g = glow.SampleLevel(samp, uv, 0);
+        c = g.rgb + world.rgb * (1.0 - g.a);
+    }
+    return c;
 }
 
 [numthreads(8, 8, 1)]
@@ -1977,7 +2073,7 @@ void main(uint3 id : SV_DispatchThreadID)
         float3 o, d;
         Ray(e, (float)id.x + 0.5 + SUB[s].x, (float)id.y + 0.5 + SUB[s].y, o, d);
         float2 hit;
-        if (Cylinder(o, d, hit)) { kind[s] = 0; uv[s] = hit; }
+        if (Screen(o, d, hit)) { kind[s] = 0; uv[s] = hit; }
         else if (Glow(o, d, hit)) { kind[s] = 1; uv[s] = hit; }
         else { kind[s] = 2; uv[s] = float2(0, 0); }
     }
@@ -1988,16 +2084,11 @@ void main(uint3 id : SV_DispatchThreadID)
     {
         float mu = (uv[0].x + uv[1].x + uv[2].x + uv[3].x) * 0.25;
         float mv = (uv[0].y + uv[1].y + uv[2].y + uv[3].y) * 0.25;
-        if (kind[0] == 0) col = picture.SampleLevel(samp, float3(mu, mv, (float)e), 0).rgb;
-        else if (kind[0] == 1) col = glow.SampleLevel(samp, float2(mu, mv), 0).rgb;
+        col = Colour(kind[0], float2(mu, mv), e);
     }
     else
     {
-        [unroll] for (int k = 0; k < 4; k++)
-        {
-            if (kind[k] == 0) col += picture.SampleLevel(samp, float3(uv[k], (float)e), 0).rgb * 0.25;
-            else if (kind[k] == 1) col += glow.SampleLevel(samp, uv[k], 0).rgb * 0.25;
-        }
+        [unroll] for (int k = 0; k < 4; k++) col += Colour(kind[k], uv[k], e) * 0.25;
     }
     outEye[uint3(id.x, id.y, e)] = float4(col, 1.0);
 }
@@ -2146,8 +2237,9 @@ static bool MakeRootSig(App& app, UINT numConstants, bool uavTable, ComPtr<ID3D1
     return true;
 }
 
-// Constants, the source picture (t0) and the glow texture (u0). The glow is both
-// read and written, one thread per pixel, so the temporal blend needs no copy.
+// Constants, the source picture (t0), the glow texture (u0) and the border ring (u1).
+// The glow is both read and written, one thread per pixel, so the temporal blend
+// needs no copy.
 static bool MakeAmbiRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
 {
     D3D12_DESCRIPTOR_RANGE srcRange{};
@@ -2156,7 +2248,7 @@ static bool MakeAmbiRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
 
     D3D12_DESCRIPTOR_RANGE glowRange{};
     glowRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-    glowRange.NumDescriptors = 1; glowRange.BaseShaderRegister = 0;
+    glowRange.NumDescriptors = 2; glowRange.BaseShaderRegister = 0;         // u0 glow, u1 ring
 
     D3D12_ROOT_PARAMETER params[3]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -2325,13 +2417,25 @@ static bool InitShaders(App& app)
     MakeTextureSrv(app, app.testSrc.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, DESC_TEST_SRC);
 
     // Ambilight: built even when the option is off, so it can be switched live.
-    static_assert(kAmbiTaps == 5, "kAmbiHlsl hardcodes HALF = 2 and TAPS = 25");
-    ComPtr<ID3DBlob> ambiCs;
+    static_assert(kAmbiTaps == 4 && kAmbiRingMax == 256, "kAmbiHlsl hardcodes TAPS = 4 and a 256-point shared ring");
+    ComPtr<ID3DBlob> ambiCs, ambiRingCs;
+    const std::string ringSource = std::string("#define AMBI_RING 1\n") + kAmbiHlsl;
     if (!CompileCs("ambilight.hlsl", kAmbiHlsl, ambiCs)) return false;
+    if (!CompileCs("ambilight-ring.hlsl", ringSource.c_str(), ambiRingCs)) return false;
     if (!MakeAmbiRootSig(app, app.ambiRootSig)) return false;
     pd.pRootSignature = app.ambiRootSig.Get();
     pd.CS = { ambiCs->GetBufferPointer(), ambiCs->GetBufferSize() };
     if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.ambiPso)))) { Log("InitShaders: FAIL ambilight PSO"); return false; }
+    pd.CS = { ambiRingCs->GetBufferPointer(), ambiRingCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.ambiRingPso)))) { Log("InitShaders: FAIL ambilight ring PSO"); return false; }
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, (UINT64)2 * kAmbiRingMax * 16, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.ambiRing, nullptr)) return false;
+    D3D12_UNORDERED_ACCESS_VIEW_DESC rv{};
+    rv.Format = DXGI_FORMAT_UNKNOWN;
+    rv.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    rv.Buffer.NumElements = 2 * kAmbiRingMax;
+    rv.Buffer.StructureByteStride = 16;
+    app.device->CreateUnorderedAccessView(app.ambiRing.Get(), nullptr, &rv, CpuDesc(app, DESC_AMBI_UAV + 1));
     AmbiSizeFor(app.colorW, app.colorH, &app.ambiW, &app.ambiH);
     if (app.ambiW <= 0 || app.ambiH <= 0) { Log("InitShaders: FAIL ambilight size (colour %dx%d)", app.colorW, app.colorH); return false; }
     if (!MakeTexture(app.device.Get(), app.ambiW, app.ambiH, DXGI_FORMAT_R8G8B8A8_TYPELESS, 1,
@@ -2409,17 +2513,23 @@ static void RecordWarpOutputsBackToUav(App& app, WarpTarget& t)
 // glowImg may be null (self-test: the readback copy is recorded by the caller).
 static void RecordAmbilight(App& app, UINT srcDescIndex, const AmbiConstants& c, ID3D12Resource* glowImg)
 {
-    if (!app.ambiPso || !app.ambiTex) return;
-    if (c.gw == 0 || c.gh == 0) return;
+    if (!app.ambiPso || !app.ambiRingPso || !app.ambiTex || !app.ambiRing) return;
+    if (!AmbiConstantsUsable(c)) return;
 
     ID3D12GraphicsCommandList* cl = app.cmdList.Get();
     ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
     cl->SetDescriptorHeaps(1, heaps);
     cl->SetComputeRootSignature(app.ambiRootSig.Get());
-    cl->SetPipelineState(app.ambiPso.Get());
     cl->SetComputeRoot32BitConstants(0, sizeof(AmbiConstants) / 4, &c, 0);
     cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDescIndex));
     cl->SetComputeRootDescriptorTable(2, GpuDesc(app, DESC_AMBI_UAV));
+    cl->SetPipelineState(app.ambiRingPso.Get());
+    cl->Dispatch((c.ringN + 63) / 64, 1, 1);
+    D3D12_RESOURCE_BARRIER ringDone{};
+    ringDone.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    ringDone.UAV.pResource = app.ambiRing.Get();
+    cl->ResourceBarrier(1, &ringDone);
+    cl->SetPipelineState(app.ambiPso.Get());
     cl->Dispatch((c.gw + 7) / 8, (c.gh + 7) / 8, 1);
     if (!glowImg) return;
 
@@ -2435,6 +2545,36 @@ static void RecordAmbilight(App& app, UINT srcDescIndex, const AmbiConstants& c,
     Transition(cl, app.ambiTex.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
+// The glow around a screen of this size, at this strength (0..1).
+static AmbiConstants MakeAmbiConstants(const App& app, int srcW, int srcH, float screenW, float screenH, float strength, bool reset)
+{
+    AmbiConstants a{};
+    if (srcW <= 0 || srcH <= 0 || !(screenW > 0) || !(screenH > 0)) return a;
+    a.gw = (uint32_t)app.ambiW; a.gh = (uint32_t)app.ambiH;
+    a.srcW = (uint32_t)srcW; a.srcH = (uint32_t)srcH;
+    a.screenW = screenW; a.screenH = screenH;
+    a.marginM = kAmbiMargin * screenW;
+    a.rectW = screenW + 2 * a.marginM;
+    a.rectH = screenH + 2 * a.marginM;
+    a.intensity = strength < 0 ? 0.0f : (strength > 1 ? 1.0f : strength);
+    a.blend = kAmbiBlend;
+    a.reset = reset ? 1u : 0u;
+    a.soft = kAmbiSoft * screenW;
+    a.bezel = kAmbiBezel;
+    a.ringN = kAmbiRing;
+    return a;
+}
+
+// World colour 0xRRGGBB as stored bytes 0..1 (sRGB-encoded, like the picture).
+static void WorldRgb(uint32_t rgb, float out[4])
+{
+    if (!out) return;
+    out[0] = (float)((rgb >> 16) & 255) / 255.0f;
+    out[1] = (float)((rgb >> 8) & 255) / 255.0f;
+    out[2] = (float)(rgb & 255) / 255.0f;
+    out[3] = 1.0f;
+}
+
 // Rotation matrix (rows) of a unit quaternion: world <- local.
 static void QuatRows(const XrQuaternionf& q, float m[3][3])
 {
@@ -2448,7 +2588,8 @@ static void QuatRows(const XrQuaternionf& q, float m[3][3])
 // The curved pass's constants: each eye's position and view rotation expressed in
 // the screen's own frame (origin at its middle, z towards the viewer), and its FOV.
 static CurveConstants MakeCurveConstants(const Cylinder& cyl, const XrPosef& screenPose, const XrPosef eyePose[VIEWS],
-                                         const XrFovf eyeFov[VIEWS], int ew, int eh, bool glowOn, float glowW, float glowH)
+                                         const XrFovf eyeFov[VIEWS], int ew, int eh, bool glowOn, float glowW, float glowH,
+                                         uint32_t worldColor)
 {
     CurveConstants c{};
     if (!eyePose || !eyeFov) return c;
@@ -2456,7 +2597,8 @@ static CurveConstants MakeCurveConstants(const Cylinder& cyl, const XrPosef& scr
     c.radius = cyl.radius; c.halfWrap = cyl.halfWrap; c.halfWidth = cyl.halfWidth; c.halfHeight = cyl.halfHeight;
     c.glowOn = glowOn ? 1u : 0u;
     c.glowHalfW = glowW * 0.5f; c.glowHalfH = glowH * 0.5f;
-    c.glowZ = -kAmbiBehind;
+    c.glowRadius = cyl.radius + kAmbiBehind;
+    WorldRgb(worldColor, c.world);
     float S[3][3];
     QuatRows(screenPose.orientation, S);
     for (uint32_t e = 0; e < VIEWS; e++)
@@ -2475,6 +2617,36 @@ static CurveConstants MakeCurveConstants(const Cylinder& cyl, const XrPosef& scr
         v.tanU = tanf(eyeFov[e].angleUp); v.tanD = tanf(eyeFov[e].angleDown);
     }
     return c;
+}
+
+// The world colour into the acquired world image (RENDER_TARGET at rest), from this
+// frame slot's upload buffer - its previous copy finished before the slot was reused.
+static void RecordWorldColour(App& app, int ring, uint32_t rgb, ID3D12Resource* img)
+{
+    if (!img || ring < 0 || ring >= RING || !app.worldMapped[ring]) return;
+
+    for (uint32_t e = 0; e < VIEWS; e++)
+        for (UINT y = 0; y < app.worldFp[e].Footprint.Height; y++)
+        {
+            unsigned char* row = app.worldMapped[ring] + app.worldFp[e].Offset + (size_t)y * app.worldFp[e].Footprint.RowPitch;
+            for (UINT x = 0; x < app.worldFp[e].Footprint.Width; x++)
+            {
+                row[x * 4 + 0] = (unsigned char)((rgb >> 16) & 255);
+                row[x * 4 + 1] = (unsigned char)((rgb >> 8) & 255);
+                row[x * 4 + 2] = (unsigned char)(rgb & 255);
+                row[x * 4 + 3] = 255;
+            }
+        }
+    ID3D12GraphicsCommandList* cl = app.cmdList.Get();
+    Transition(cl, img, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
+    for (UINT e = 0; e < VIEWS; e++)
+    {
+        D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dst.SubresourceIndex = e; dst.pResource = img;
+        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; src.PlacedFootprint = app.worldFp[e]; src.pResource = app.worldUp[ring].Get();
+        cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+    Transition(cl, img, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
 }
 
 // Ray-cast the curved screen into `eyes` (UAV at rest) from `picture` (the warp's
@@ -3613,6 +3785,40 @@ static bool InitXrSession(App& app)
         }
     }
 
+    // World colour layer (behind a flat screen). Tiny and always made, so the colour
+    // can be changed live; a runtime that refuses it simply keeps the world black.
+    {
+        XrSwapchainCreateInfo ws{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
+        ws.sampleCount = 1; ws.width = WORLD_W; ws.height = WORLD_W; ws.faceCount = 1;
+        ws.arraySize = VIEWS; ws.mipCount = 1;
+        ws.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+        ws.format = colorFmt;
+        const XrResult wr = xrCreateSwapchain_(app.session, &ws, &app.worldSc);
+        uint32_t wn = 0;
+        if (XR_SUCCEEDED(wr))
+        {
+            xrEnumImages_(app.worldSc, 0, &wn, nullptr);
+            app.wimgs.assign(wn, { XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR });
+            xrEnumImages_(app.worldSc, wn, &wn, (XrSwapchainImageBaseHeader*)app.wimgs.data());
+        }
+        bool worldOk = XR_SUCCEEDED(wr) && wn > 0 && app.wimgs[0].texture;
+        if (worldOk)
+        {
+            D3D12_RESOURCE_DESC wd = app.wimgs[0].texture->GetDesc();
+            UINT64 total = 0;
+            app.device->GetCopyableFootprints(&wd, 0, VIEWS, 0, app.worldFp, nullptr, nullptr, &total);
+            for (int i = 0; i < RING && worldOk; i++)
+                worldOk = MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, total, D3D12_RESOURCE_FLAG_NONE,
+                                     D3D12_RESOURCE_STATE_GENERIC_READ, app.worldUp[i], (void**)&app.worldMapped[i]);
+        }
+        if (!worldOk)
+        {
+            Log("InitXrSession: world colour layer unavailable (%s) - the world stays black", XRStr(wr));
+            if (app.worldSc) { xrDestroySwapchain_(app.worldSc); app.worldSc = XR_NULL_HANDLE; }
+        }
+        else Log("InitXrSession: world colour layer %dx%d, %u images", WORLD_W, WORLD_W, wn);
+    }
+
     if (!app.opt.submitDepth) { Log("InitXrSession: exit ok (no depth swapchain - SteamVR ignores it, see M3 findings)"); return true; }
 
     sc.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
@@ -4180,20 +4386,8 @@ static bool SelfTestAmbilight(App& app, const std::vector<unsigned char>& scene)
     if (!UploadTestSource(app, scene)) { Log("SelfTestAmbilight: FAIL upload"); return false; }
 
     const float width = 5.7f, height = width * (float)H / (float)W;
-    const float marginM = kAmbiMargin * width;
-    AmbiConstants a{};
-    a.gw = (uint32_t)app.ambiW; a.gh = (uint32_t)app.ambiH;
-    a.srcW = (uint32_t)W; a.srcH = (uint32_t)H;
-    a.rectW = width + 2 * marginM;
-    a.rectH = height + 2 * marginM;
-    a.insetX = marginM / a.rectW;
-    a.insetY = marginM / a.rectH;
-    a.marginM = marginM;
-    a.intensity = kAmbiIntensity;
-    a.blend = kAmbiBlend;
-    a.reset = 1;                        // no history: exactly what the reference computes
-    a.blurPx = kAmbiBlurFraction * (float)W;
-    a.bezel = kAmbiBezel;
+    const AmbiConstants a = MakeAmbiConstants(app, W, H, width, height, kAmbiDefaultStrength / 100.0f, true);
+    if (!AmbiConstantsUsable(a)) { Log("SelfTestAmbilight: FAIL constants"); return false; }
 
     ID3D12Device* dev = app.device.Get();
     D3D12_RESOURCE_DESC gd = app.ambiTex->GetDesc();
@@ -4310,7 +4504,7 @@ static bool SelfTestCurve(App& app)
     XrPosef eyes[VIEWS] = { { { 0, 0, 0, 1 }, { 0.1f - 0.032f, 1.55f, 0 } }, { { 0, 0.0262f, 0, 0.99966f }, { 0.1f + 0.032f, 1.55f, 0 } } };
     XrFovf fov[VIEWS] = { { -0.96f, 0.96f, 0.72f, -0.72f }, { -0.96f, 0.96f, 0.72f, -0.72f } };
     const CurveConstants c = MakeCurveConstants(cyl, screenPose, eyes, fov, TEST_EYE_W, TEST_EYE_H, true,
-                                                width + 2 * marginM, height + 2 * marginM);
+                                                width + 2 * marginM, height + 2 * marginM, 0x2A3441);
 
     WaitFence(app, app.fenceVal);
     app.cmdAlloc[0]->Reset();
@@ -4548,6 +4742,19 @@ static void RunFrameLoop(App& app)
                         Log("Ambilight: %s", app.opt.ambilight ? "enabled" : "disabled");
                     }
                 }
+                if (next.version >= 9)
+                {
+                    if (app.opt.ambiStrength != next.ambiStrength)
+                    {
+                        app.opt.ambiStrength = next.ambiStrength;
+                        Log("Ambilight strength: %d%%", next.ambiStrength);
+                    }
+                    if (app.opt.worldColor != (uint32_t)next.worldColor)
+                    {
+                        app.opt.worldColor = (uint32_t)next.worldColor;
+                        Log("World colour: #%06X", app.opt.worldColor);
+                    }
+                }
                 if (next.version >= 5)
                 {
                     if (app.steadyEnabled.exchange(next.steady != 0) != (next.steady != 0))
@@ -4604,8 +4811,10 @@ static void RunFrameLoop(App& app)
         if (XR_FAILED(xrBeginFrame_(app.session, nullptr))) { Log("RunFrameLoop: xrBeginFrame failed"); app.stop = true; break; }
         frames++; repFrames++;
 
-        const XrCompositionLayerBaseHeader* layers[VIEWS + 1] = {};
+        const XrCompositionLayerBaseHeader* layers[VIEWS + 2] = {};
         uint32_t layerCount = 0;
+        XrCompositionLayerProjection worldProj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
+        XrCompositionLayerProjectionView worldViews[VIEWS];
         XrCompositionLayerQuad quads[VIEWS] = {};
         XrCompositionLayerQuad glowQuad{};
         XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
@@ -4738,6 +4947,12 @@ static void RunFrameLoop(App& app)
             if (ok && glowLayer && !glowImage.Acquire(app.ambiSc, xrAcquireImage_, xrWaitImage_))
                 Log("RunFrameLoop: ambilight image acquire failed (%d) - no glow this frame", (int)glowImage.result);
             if (!glowWanted) app.ambiHistory = false;
+            // The world colour: behind a flat screen its own layer (none for black).
+            XrReadyImage worldImage;
+            const bool worldLayer = app.opt.worldColor != 0 && !app.opt.headLocked && !curvedScreen && app.worldSc != XR_NULL_HANDLE;
+            if (ok && worldLayer && !worldImage.Acquire(app.worldSc, xrAcquireImage_, xrWaitImage_))
+                Log("RunFrameLoop: world colour image acquire failed (%d) - black this frame", (int)worldImage.result);
+            bool drewWorld = false;
             const uint32_t cIdx = colorImage.index, dIdx = depthImage.index;
             bool drewSource = false, stereo = false, drewGlow = false;
             float glowRectW = 0, glowRectH = 0;
@@ -4842,32 +5057,25 @@ static void RunFrameLoop(App& app)
 
                     if (glowWanted)
                     {
-                        AmbiConstants a{};
-                        a.gw = (uint32_t)app.ambiW; a.gh = (uint32_t)app.ambiH;
-                        a.srcW = (uint32_t)app.srcW; a.srcH = (uint32_t)app.srcH;
-                        const float marginM = kAmbiMargin * screen.size.width;
-                        a.rectW = screen.size.width + 2 * marginM;
-                        a.rectH = screen.size.height + 2 * marginM;
-                        a.insetX = marginM / a.rectW;
-                        a.insetY = marginM / a.rectH;
-                        a.marginM = marginM;
-                        a.intensity = kAmbiIntensity;
-                        a.blend = kAmbiBlend;
-                        a.reset = app.ambiHistory ? 0u : 1u;
-                        a.blurPx = kAmbiBlurFraction * (float)app.srcW;
-                        a.bezel = kAmbiBezel;
+                        const AmbiConstants a = MakeAmbiConstants(app, app.srcW, app.srcH, screen.size.width, screen.size.height,
+                                                                  app.opt.ambiStrength / 100.0f, !app.ambiHistory);
                         const bool toLayer = glowLayer && glowImage.ready;
                         RecordAmbilight(app, DESC_SRC0 + (UINT)source->index, a, toLayer ? app.aimgs[glowImage.index].texture : nullptr);
                         app.ambiHistory = true;
                         drewGlow = toLayer;
                         glowRectW = a.rectW; glowRectH = a.rectH;
                     }
+                    if (worldLayer && worldImage.ready)
+                    {
+                        RecordWorldColour(app, ring, app.opt.worldColor, app.wimgs[worldImage.index].texture);
+                        drewWorld = true;
+                    }
                     if (curvedScreen && eyeImage.ready)
                     {
                         XrPosef eyePose[VIEWS] = { views[0].pose, views[1].pose };
                         XrFovf eyeFov[VIEWS] = { views[0].fov, views[1].fov };
                         const CurveConstants cc = MakeCurveConstants(cylinder, screen.pose, eyePose, eyeFov, app.eyeW, app.eyeH,
-                                                                     glowWanted, glowRectW, glowRectH);
+                                                                     glowWanted, glowRectW, glowRectH, app.opt.worldColor);
                         RecordCurvedScreen(app, DESC_CURVE_MAIN, target.colorOut.Get(), cc, app.eyeOut.Get(), app.eimgs[eyeImage.index].texture);
                     }
                     RecordWarpOutputsBackToUav(app, target);
@@ -4886,6 +5094,7 @@ static void RunFrameLoop(App& app)
             const bool releasedDepth = depthImage.Release(xrReleaseImage_);
             const bool releasedEyes = eyeImage.Release(xrReleaseImage_);
             const bool releasedGlow = glowImage.Release(xrReleaseImage_);
+            if (!worldImage.Release(xrReleaseImage_)) { Log("RunFrameLoop: world colour release failed - black this frame"); drewWorld = false; }
             if (!releasedColor || !releasedDepth || !releasedEyes) { Log("RunFrameLoop: swapchain release failed"); ok = false; app.stop = true; }
             if (!releasedGlow) { Log("RunFrameLoop: ambilight release failed - no glow this frame"); drewGlow = false; }
 
@@ -4933,9 +5142,25 @@ static void RunFrameLoop(App& app)
                 }
                 else
                 {
-                    // The glow goes first: layers composite in submission order, so
-                    // the screen is drawn over the middle of it. It also sits a little
+                    // The world colour first, then the glow, then the screen: layers
+                    // composite in submission order. The glow also sits a little
                     // behind, for any compositor that sorts layers by distance.
+                    if (drewWorld)
+                    {
+                        for (uint32_t e = 0; e < VIEWS; e++)
+                        {
+                            worldViews[e] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW };
+                            worldViews[e].pose = views[e].pose;
+                            worldViews[e].fov = views[e].fov;
+                            worldViews[e].subImage.swapchain = app.worldSc;
+                            worldViews[e].subImage.imageRect = { {0, 0}, {WORLD_W, WORLD_W} };
+                            worldViews[e].subImage.imageArrayIndex = e;
+                        }
+                        worldProj.space = app.space;
+                        worldProj.viewCount = VIEWS;
+                        worldProj.views = worldViews;
+                        layers[layerCount++] = (const XrCompositionLayerBaseHeader*)&worldProj;
+                    }
                     if (drewGlow)
                     {
                         glowQuad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
@@ -5194,6 +5419,7 @@ static void Shutdown(App& app)
     if (ort) ReleaseModel(app);
     if (app.colorSc) xrDestroySwapchain_(app.colorSc);
     if (app.eyeSc) xrDestroySwapchain_(app.eyeSc);
+    if (app.worldSc) xrDestroySwapchain_(app.worldSc);
     if (app.ambiSc) xrDestroySwapchain_(app.ambiSc);
     if (app.depthSc) xrDestroySwapchain_(app.depthSc);
     if (app.session) xrDestroySession_(app.session);
@@ -5264,6 +5490,11 @@ int wmain(int argc, wchar_t** wideArgv)
         {
             app.opt.curve = initial.curve * 0.01f;
             app.opt.ambilight = initial.ambilight != 0;
+        }
+        if (initial.version >= 9)
+        {
+            app.opt.ambiStrength = initial.ambiStrength;
+            app.opt.worldColor = (uint32_t)initial.worldColor;
         }
         if (initial.version >= 5)
         {

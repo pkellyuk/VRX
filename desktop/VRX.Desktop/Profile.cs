@@ -49,17 +49,36 @@ public sealed class Profile
 
     // Ambilight: the picture's edge colours spread around the screen.
     public bool Ambilight { get; set; }
+
+    // The glow's brightness next to the screen, percent.
+    public int AmbilightStrength { get; set; } = 85;
+
+    // The colour around the screen, #RRGGBB. Black shows nothing, as before.
+    public string WorldColor { get; set; } = "#000000";
+
+    // "#RRGGBB" or "RRGGBB" (any case) -> 0xRRGGBB.
+    public static bool TryParseColor(string? text, out int rgb)
+    {
+        rgb = 0;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        string hex = text.Trim();
+        if (hex.StartsWith('#')) hex = hex[1..];
+        if (hex.Length != 6) return false;
+        return int.TryParse(hex, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out rgb);
+    }
+
+    public static string FormatColor(int rgb) => "#" + (rgb & 0xFFFFFF).ToString("X6", CultureInfo.InvariantCulture);
     public bool AutoDismiss { get; set; } = true;
     public int RecenterKey { get; set; } = 0xBB;
     public int MenuKey { get; set; } = 0x77;
 
     public bool Valid() => Version == 1 && Range(Width, 1, 10) && Range(Distance, 1, 8) &&
         Range(Height, -2, 2) && Range(Horizontal, -3, 3) && Range(Strength, 0, 2) &&
-        ScreenCurve is >= 0 and <= 100 &&
+        ScreenCurve is >= 0 and <= 100 && AmbilightStrength is >= 0 and <= 100 && TryParseColor(WorldColor, out _) &&
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 8 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)}\n");
+        $"VRX 9 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)
@@ -90,6 +109,7 @@ public sealed class ProfileStore(string root)
                     saved.ExecutablePath = "";
                     saved.PreferredWindowTitle = "";
                     saved.DepthGpu ??= Gpus.Same;
+                    saved.WorldColor ??= "#000000";
                     if (saved.Valid()) return saved;
                 }
             }
@@ -150,6 +170,7 @@ public sealed class ProfileStore(string root)
         if (profile != null)
         {
             profile.DepthGpu ??= Gpus.Same;
+            profile.WorldColor ??= "#000000";
             // Earlier xgpu builds stored a checkbox; it meant "any other GPU".
             if (profile.DepthOnSecondGpu && profile.DepthGpu == Gpus.Same) profile.DepthGpu = Gpus.Auto;
             profile.DepthOnSecondGpu = false;
