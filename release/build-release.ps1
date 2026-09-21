@@ -1,9 +1,9 @@
 param([string]$OutputRoot = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
-if (!$OutputRoot) { $OutputRoot = Join-Path $PSScriptRoot ('out\v1.7.1-' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
+if (!$OutputRoot) { $OutputRoot = Join-Path $PSScriptRoot ('out\v1.7.5-' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
-$payload = Join-Path $OutputRoot 'VRX-1.7.1-win-x64'
+$payload = Join-Path $OutputRoot 'VRX-1.7.5-win-x64'
 $nativeOutput = Join-Path $OutputRoot 'native'
 if (Test-Path -LiteralPath $payload) { throw 'Choose a fresh output folder; existing packages are never overwritten.' }
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
@@ -67,7 +67,7 @@ try {
     Copy-Item LICENSE $payload                          # VRX's own licence (GPL-3.0)
     $commit = & git rev-parse HEAD
     $dirty = & git status --porcelain
-    @("VRX 1.7.1", "Source commit: $commit", "Working tree dirty: $([bool]$dirty)", "Built UTC: $([DateTime]::UtcNow.ToString('O'))") | Set-Content "$payload\BUILD.txt"
+    @("VRX 1.7.5", "Source commit: $commit", "Working tree dirty: $([bool]$dirty)", "Built UTC: $([DateTime]::UtcNow.ToString('O'))") | Set-Content "$payload\BUILD.txt"
     foreach ($library in 'onnxruntime.dll','DirectML.dll','openxr_loader.dll','d3dcompiler_47.dll') {
         $version = (Get-Item -LiteralPath (Join-Path $engine $library)).VersionInfo.FileVersion
         "$library : $version" | Add-Content "$payload\BUILD.txt"
@@ -79,7 +79,7 @@ try {
     $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
     & $compiler /Qp "/DPayload=$payload" "/DArtifacts=$OutputRoot" release/VRX.iss
     if ($LASTEXITCODE) { throw 'Installer build failed' }
-    Compress-Archive -LiteralPath $payload -DestinationPath "$OutputRoot\VRX-1.7.1-win-x64.zip" -CompressionLevel Optimal
+    Compress-Archive -LiteralPath $payload -DestinationPath "$OutputRoot\VRX-1.7.5-win-x64.zip" -CompressionLevel Optimal
     Get-ChildItem -LiteralPath $OutputRoot -File | Where-Object Extension -in '.exe','.zip' | ForEach-Object {
         '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
     } | Set-Content "$OutputRoot\SHA256SUMS.txt"
