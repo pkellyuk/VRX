@@ -24,7 +24,9 @@ its heading, because a tilted floor would be obvious.
 - **Side walls:** clear of the whole glow and at least a metre from the viewer. The
   room is at least 4 m wide.
 - **Floor:** SteamVR's STAGE floor when it gives a plausible height, otherwise a seated
-  guess. It is always at least 20 cm below the screen.
+  guess. It is always at least 20 cm below the screen. It is looked up again when the
+  screen is recentred and after SteamVR's "reset seated position" (once the change
+  takes effect).
 - **Ceiling:** above the whole glow, at least 2.5 m above the floor.
 - **Back wall:** behind the viewer.
 - **Front wall:** the glow's own surface. For a flat screen, that is the plane 2 cm
@@ -45,9 +47,13 @@ curve the wings meet the side walls level with the viewer's shoulders.
 
 Everything is in linear display radiance, the space the compositor blends in.
 
-- **Emitters:** the picture is a 16 x 9 grid of patches, each the exact mean of its
-  pixels. The glow is blocks of 8 x 8 texels. Both are treated as Lambertian area
-  lights.
+- **Emitters:** the picture is a 16-wide grid of patches (16 x 9 for 16:9), each the
+  exact mean of its pixels. The glow is blocks of 8 x 8 texels. Both are treated as
+  Lambertian area lights.
+  - The LIGHT pass gathers at most 1,024 emitters. A 4:3, square or portrait picture
+    has a taller glow texture, and at 8 texels its blocks alone passed that (a 4:3
+    picture needed 1,056), so the blocks grow to 16, 32 or 64 texels until everything
+    fits: 16 for 4:3, 5:4, 1:1 and 9:16. A 16:9 picture keeps 8 (880 emitters).
 - **Direct light:** a surface point p receives E = sum L_j G_j, where G is pi times the
   point-to-patch form factor.
   - Close up it uses Lambert's exact polygon formula. A softened point light would
@@ -63,6 +69,13 @@ Everything is in linear display radiance, the space the compositor blends in.
   - Albedo: walls reach 60% at Room 100%; the floor is 60% of the walls.
   - On the front wall the glow is added on top. It is light on the wall, so it adds to
     the wall's own light rather than hiding it.
+- **Where the floor meets a curved front:** the lightmap's floor and ceiling are
+  rectangles, so along a curved front some of their texels lie behind the wall, outside
+  the room. They are never seen, but bilinear sampling at the wall's base blends them
+  in. Lit where they were, from behind the glow, they were black and drew a dark
+  sawtooth along the base of the wall, so they are lit from 1 cm inside the wall
+  instead. The strip behind the front is also left out of the floor's and ceiling's
+  area in the bounce term.
 - **Smoothing:** the screen's light is smoothed with a 40 ms time constant, so the
   walls do not strobe with every cut. The glow is already smoothed.
 
@@ -75,8 +88,8 @@ depend on where you look from.
 1. **EMIT** (`kRoomHlsl` with `ROOM_EMIT`): one 256-thread group per emitter works out
    its radiance. Pixels are decoded through a 256-entry table and summed in the same
    order as the CPU reference, so the two agree exactly.
-2. **LIGHT**: one thread per lightmap texel gathers all about 880 emitters through
-   group-shared memory.
+2. **LIGHT**: one thread per lightmap texel gathers all the emitters (880 for a 16:9
+   picture) through group-shared memory.
 3. **Eye pass:** the curve shader's code up to its main, then `kCurveRoomHlsl`. Each
    ray hits either the curved screen or, for a flat screen, its black footprint;
    otherwise it gets the face it leaves through, with the glow on the front wall and a
@@ -100,12 +113,19 @@ frame on an RTX 3090. That is an estimate until the log shows it in the headset.
   - 2,000 random rays each leaving through a face at its chart coordinates;
   - form factors: against brute-force integration (0.5%), against the closed form for
     the back wall's middle (2%), reciprocity, a huge emitter giving pi;
-  - energy: all the screen's light lands on the room, within 3%;
+  - energy: all the screen's light lands on the room, within 3%, flat and curved;
+  - the emitter budget: 21:9, 16:9, 16:10, 4:3, 5:4, 1:1 and 9:16 pictures all fit, with
+    blocks that cover the glow exactly; 16-texel blocks, the partial ones at the edges
+    too, average exactly their own texels;
+  - the curved front: the strip of floor behind it measured to 1%, every lightmap
+    texel lit from inside the room, and the texel behind the wall's base lit like its
+    neighbour inside (this and the previous check both fail without the fix);
   - cases: a black picture giving nothing, the house light, mirror symmetry, red on the
     left lighting the left wall, the glow on and off, the smoothing;
   - details: the dither, half floats, levelling, the v10 snapshot.
 - **`SelfTestRoom`**, flat and 100% curved, compares the GPU with `room.h`:
-  - 880 emitters identical;
+  - the emitters identical: 880 with 8-texel glow blocks (flat), 336 with 16-texel
+    blocks (curved), so both block sizes run on the GPU;
   - all 24,576 lightmap texels within half-float precision (worst 9.6e-4 relative);
   - the eye pass within 2 bits, for one eye looking up at the screen and one turned to
     a side wall and the floor;
@@ -115,6 +135,11 @@ frame on an RTX 3090. That is an estimate until the log shows it in the headset.
 
 - The room needs the fixed screen. It rests while *Screen follows my head* is ticked,
   and `--head-locked` ignores it.
+- If a room cannot be built (for example with the viewer behind the screen), the log
+  says so once and it is tried again only when the screen, the recentre point, the
+  curve or the floor change. The screen stays level while the slider is up either way:
+  levelling only when a room was built would move the screen, change the room's
+  inputs, and could flip between the two every frame.
 - The default screen reaches below a seated player's real floor, so the room's floor is
   below it too. A raised platform (a cinema riser) so that your feet are on the virtual
   floor is the first candidate for a follow-up, once the room has been seen in the

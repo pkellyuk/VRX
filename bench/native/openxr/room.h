@@ -54,7 +54,8 @@ static const int kRoomFaces = 6;
 enum RoomFace { kFaceFront = 0, kFaceLeft = 1, kFaceRight = 2, kFaceFloor = 3, kFaceCeiling = 4, kFaceBack = 5 };
 static const char* const kRoomFaceNames[kRoomFaces] = { "front", "left", "right", "floor", "ceiling", "back" };
 static const int kRoomLightmap = 64;            // texels per side of each face
-static const int kRoomGlowBlock = 8;            // glow texels per side of one glow emitter
+static const int kRoomGlowBlock = 8;            // glow texels per side of one glow emitter, at least
+static const int kRoomMaxGlowBlock = 64;        // the EMIT group loops over as many texels as a block has
 static const int kRoomMaxEmitters = 1024;
 static const int kRoomEmitterFloat4s = 6;       // per emitter in the GPU buffer
 static const float kRoomSideClearance = 1.0f;   // metres from the viewer to a side wall, at least
@@ -95,6 +96,7 @@ struct Room
     float margin = 0;                   // the glow margin, metres
     bool floorTracked = false;          // the floor came from STAGE
     bool phiReduced = false;            // the arc was shortened to keep the viewer inside
+    float frontFloorArea = 0;           // floor (and ceiling) area in front of a curved front: outside the room
 };
 
 // Depth of the front wall at x (the room is z >= FrontDepth).
@@ -192,6 +194,19 @@ inline bool BuildRoom(const RoomInputs& in, Room& out)
     }
     r.sMax = FrontS(r, r.X);
     r.zSide = FrontDepth(r, r.X);
+    if (r.curved)
+    {
+        // The strip of floor (and ceiling) between z = -g and the curved front is not in
+        // the room: integrate (FrontDepth + g) across the width (midpoint rule).
+        const int steps = 512;
+        double area = 0;
+        for (int i = 0; i < steps; i++)
+        {
+            const float x = -r.X + ((float)i + 0.5f) * 2.0f * r.X / (float)steps;
+            area += (double)(FrontDepth(r, x) + r.g) * (2.0 * r.X / steps);
+        }
+        r.frontFloorArea = (float)area;
+    }
     r.valid = true;
     if (!RoomInside(r, in.eye)) return false;
     out = r;
@@ -296,7 +311,7 @@ inline float RoomArea(const Room& r, int face)
     {
     case kFaceFront: return 2.0f * (r.curved ? (r.Rg * r.phiA + (r.X - r.xa) / r.cosA) : r.X) * h;
     case kFaceLeft: case kFaceRight: return (r.zB - r.zSide) * h;
-    case kFaceFloor: case kFaceCeiling: return 2.0f * r.X * (r.zB + r.g);
+    case kFaceFloor: case kFaceCeiling: return 2.0f * r.X * (r.zB + r.g) - r.frontFloorArea;
     case kFaceBack: return 2.0f * r.X * h;
     default: return 0;
     }
@@ -318,11 +333,16 @@ struct RoomEmitterLayout
 {
     int gridX = 0, gridY = 0;           // screen patches
     int glowW = 0, glowH = 0;           // glow texture size
+    int block = kRoomGlowBlock;         // glow texels per side of one glow emitter
     int blocksX = 0, blocksY = 0;       // glow blocks
     int count() const { return gridX * gridY + blocksX * blocksY; }
 };
 
-inline RoomEmitterLayout RoomLayout(float W, float H, int glowW, int glowH)
+// The emitters for a screen of this shape. The glow's blocks start at kRoomGlowBlock
+// texels and grow until everything fits in kRoomMaxEmitters: a 4:3, square or portrait
+// picture has a taller glow texture, and at 8 texels its blocks alone passed the
+// budget. `minBlock` lets the self-test exercise the larger blocks.
+inline RoomEmitterLayout RoomLayout(float W, float H, int glowW, int glowH, int minBlock = kRoomGlowBlock)
 {
     RoomEmitterLayout l;
     if (!(W > 0) || !(H > 0) || glowW <= 0 || glowH <= 0) return l;
@@ -330,8 +350,13 @@ inline RoomEmitterLayout RoomLayout(float W, float H, int glowW, int glowH)
     l.gridY = (int)std::lround(16.0f * H / W);
     l.gridY = l.gridY < 4 ? 4 : (l.gridY > 16 ? 16 : l.gridY);
     l.glowW = glowW; l.glowH = glowH;
-    l.blocksX = (glowW + kRoomGlowBlock - 1) / kRoomGlowBlock;
-    l.blocksY = (glowH + kRoomGlowBlock - 1) / kRoomGlowBlock;
+    for (l.block = std::max(minBlock, kRoomGlowBlock); ; l.block *= 2)
+    {
+        l.blocksX = (glowW + l.block - 1) / l.block;
+        l.blocksY = (glowH + l.block - 1) / l.block;
+        if (l.count() <= kRoomMaxEmitters || l.block >= kRoomMaxGlowBlock) break;
+    }
+    if (l.count() > kRoomMaxEmitters || l.block > kRoomMaxGlowBlock) return RoomEmitterLayout();
     return l;
 }
 
@@ -387,10 +412,10 @@ inline bool BuildRoomEmitters(const Room& r, const Cylinder& cyl, float W, float
         for (int bx = 0; bx < l.blocksX; bx++)
         {
             RoomEmitter& e = out[(size_t)l.gridX * l.gridY + (size_t)by * l.blocksX + bx];
-            const float u0 = (float)(bx * kRoomGlowBlock) / (float)l.glowW;
-            const float u1 = (float)std::min((bx + 1) * kRoomGlowBlock, l.glowW) / (float)l.glowW;
-            const float v0 = (float)(by * kRoomGlowBlock) / (float)l.glowH;
-            const float v1 = (float)std::min((by + 1) * kRoomGlowBlock, l.glowH) / (float)l.glowH;
+            const float u0 = (float)(bx * l.block) / (float)l.glowW;
+            const float u1 = (float)std::min((bx + 1) * l.block, l.glowW) / (float)l.glowW;
+            const float v0 = (float)(by * l.block) / (float)l.glowH;
+            const float v1 = (float)std::min((by + 1) * l.block, l.glowH) / (float)l.glowH;
             const float s0 = (u0 - 0.5f) * 2.0f * glowHalfW, s1 = (u1 - 0.5f) * 2.0f * glowHalfW;
             float y0 = (0.5f - v0) * 2.0f * glowHalfH, y1 = (0.5f - v1) * 2.0f * glowHalfH;
             const bool insideScreen = std::fmax(std::fabs(s0), std::fabs(s1)) <= 0.5f * W && std::fmax(std::fabs(y0), std::fabs(y1)) <= 0.5f * H;
@@ -487,8 +512,8 @@ inline bool RoomEmitRadiance(const RoomEmitterLayout& l, const unsigned char* sr
             RoomEmitter& e = emitters[(size_t)l.gridX * l.gridY + (size_t)by * l.blocksX + bx];
             e.L[0] = e.L[1] = e.L[2] = 0;
             if (!glowOn || e.n[3] == 0) continue;
-            const int gx0 = bx * kRoomGlowBlock, gy0 = by * kRoomGlowBlock;
-            const int bw = std::min(kRoomGlowBlock, l.glowW - gx0), bh = std::min(kRoomGlowBlock, l.glowH - gy0);
+            const int gx0 = bx * l.block, gy0 = by * l.block;
+            const int bw = std::min(l.block, l.glowW - gx0), bh = std::min(l.block, l.glowH - gy0);
             float sum[3];
             RoomGroupSum(bw * bh, [&](int k, float v[3])
             {
@@ -575,12 +600,30 @@ inline RoomShading MakeRoomShading(const Room& r, int roomPercent, uint32_t worl
 
 inline float RoomBounceScale(const RoomShading& sh);
 
+// Where a lightmap texel is lit from. A floor or ceiling texel whose centre lies behind
+// a curved front (outside the room) is lit from just inside the wall instead: texels
+// out there are never seen, but bilinear sampling at the wall's base blends them in,
+// and lit where they are they drew a dark sawtooth seam along it.
+static const float kRoomInsideFront = 0.01f;
+
+inline bool RoomLightPoint(const Room& r, int face, int i, int j, float p[3], float n[3])
+{
+    if (!p || !n) return false;
+    if (!RoomFacePoint(r, face, ((float)i + 0.5f) / kRoomLightmap, ((float)j + 0.5f) / kRoomLightmap, p, n)) return false;
+    if (r.curved && (face == kFaceFloor || face == kFaceCeiling))
+    {
+        const float front = FrontDepth(r, p[0]) + kRoomInsideFront;
+        if (p[2] < front) p[2] = front;
+    }
+    return true;
+}
+
 // One lightmap texel's radiance (linear rgb), as the LIGHT pass computes it.
 inline bool RoomTexel(const Room& r, const RoomShading& sh, const std::vector<RoomEmitter>& emitters, int face, int i, int j, float out[3])
 {
     if (!out || !r.valid || face < 0 || face >= kRoomFaces || i < 0 || j < 0 || i >= kRoomLightmap || j >= kRoomLightmap) return false;
     float p[3], n[3];
-    RoomFacePoint(r, face, ((float)i + 0.5f) / kRoomLightmap, ((float)j + 0.5f) / kRoomLightmap, p, n);
+    RoomLightPoint(r, face, i, j, p, n);
     float E[3] = { 0, 0, 0 }, flux[3] = { 0, 0, 0 };
     for (const RoomEmitter& e : emitters)
     {
@@ -629,7 +672,7 @@ struct RoomConstants                            // must match kRoomCbufferHlsl
     float screenH = 0, pad0 = 0, pad1 = 0, pad2 = 0;
     uint32_t flags = 0, gridX = 0, gridY = 0, emitters = 0;
     uint32_t srcW = 0, srcH = 0, stride = 1, glowW = 0;
-    uint32_t glowH = 0, blocksX = 0, blocksY = 0, pad3 = 0;
+    uint32_t glowH = 0, blocksX = 0, blocksY = 0, glowBlock = kRoomGlowBlock;
     float pad4[20] = {};
 };
 static_assert(sizeof(RoomConstants) == 256, "RoomConstants is one 256-byte constant buffer");
@@ -658,6 +701,7 @@ inline RoomConstants MakeRoomConstants(const Room& r, const RoomShading& sh, con
     c.gridX = (uint32_t)l.gridX; c.gridY = (uint32_t)l.gridY; c.emitters = (uint32_t)l.count();
     c.srcW = (uint32_t)(srcW > 0 ? srcW : 0); c.srcH = (uint32_t)(srcH > 0 ? srcH : 0); c.stride = (uint32_t)RoomStride(srcW);
     c.glowW = (uint32_t)l.glowW; c.glowH = (uint32_t)l.glowH; c.blocksX = (uint32_t)l.blocksX; c.blocksY = (uint32_t)l.blocksY;
+    c.glowBlock = (uint32_t)l.block;
     return c;
 }
 

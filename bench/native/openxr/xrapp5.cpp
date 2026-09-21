@@ -599,18 +599,6 @@ static const int TEST_EYE_W = 256, TEST_EYE_H = 192;     // self-test eye buffer
 
 // The glow texture: small (the compositor stretches it over a soft gradient) and
 // the same shape as the layer, which is the screen plus a margin on every side.
-static void AmbiSizeFor(int colorW, int colorH, int* gw, int* gh)
-{
-    if (!gw || !gh) return;
-    *gw = 0; *gh = 0;
-    if (colorW <= 0 || colorH <= 0) return;
-
-    const float aspect = (float)colorH / (float)colorW;
-    const float rectAspect = (aspect + 2 * kAmbiMargin) / (1.0f + 2 * kAmbiMargin);
-    *gw = 256;
-    *gh = std::max(32, (int)lroundf(256 * rectAspect));
-}
-
 static ID3D12Fence* SourceFence(App& app)
 {
     return app.opt.source == SourceKind::Capture ? app.captureFence.Get() : app.fence.Get();
@@ -2166,7 +2154,7 @@ cbuffer RoomC : register(ROOM_REGISTER)
     float screenH; float rpad0; float rpad1; float rpad2;
     uint flags; uint gridX; uint gridY; uint emitterCount;
     uint srcW; uint srcH; uint stride; uint glowW;
-    uint glowH; uint blocksX; uint blocksY; uint rpad3;
+    uint glowH; uint blocksX; uint blocksY; uint glowBlock;
 };
 )HLSL";
 
@@ -2271,8 +2259,8 @@ void main(uint3 gid : SV_GroupID, uint gi : SV_GroupIndex)
     else if ((flags & 4) != 0 && emit[e * 6 + 4].w != 0.0)
     {
         uint b = e - patches;
-        uint gx0 = (b % blocksX) * 8, gy0 = (b / blocksX) * 8;
-        uint bw = min(8u, glowW - gx0), bh = min(8u, glowH - gy0);
+        uint gx0 = (b % blocksX) * glowBlock, gy0 = (b / blocksX) * glowBlock;
+        uint bw = min(glowBlock, glowW - gx0), bh = min(glowBlock, glowH - gy0);
         count = bw * bh;
         for (uint k = gi; k < count; k += 256)
             sum += Decode(glow.Load(int3(gx0 + k % bw, gy0 + k / bw, 0)).rgb);
@@ -2341,6 +2329,13 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex)
     uint face = id.z;
     float3 p, n;
     FacePointH(face, ((float)id.x + 0.5) / 64.0, ((float)id.y + 0.5) / 64.0, p, n);
+    // room.h RoomLightPoint: floor and ceiling texels behind a curved front are lit
+    // from just inside it (bilinear sampling at the wall's base blends them in).
+    if ((flags & 1) != 0 && (face == 3 || face == 4))
+    {
+        float front = FrontDepthH(p.x) + 0.01;
+        if (p.z < front) p.z = front;
+    }
     float3 E = float3(0, 0, 0), flux = float3(0, 0, 0);
     for (uint base = 0; base < emitterCount; base += 128)
     {
@@ -5224,7 +5219,9 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         Room room;
         if (!BuildRoom(in, room)) { Log("SelfTestRoom[%s]: FAIL room", name); return false; }
         const float margin = kAmbiMargin * width;
-        const RoomEmitterLayout layout = RoomLayout(width, height, app.ambiW, app.ambiH);
+        // The curved case uses 16-texel glow blocks, the path 4:3 and taller pictures take.
+        const RoomEmitterLayout layout = RoomLayout(width, height, app.ambiW, app.ambiH, curvedCase ? 16 : kRoomGlowBlock);
+        if (layout.count() == 0) { Log("SelfTestRoom[%s]: SKIPPED - no emitter layout fits a %dx%d glow", name, app.ambiW, app.ambiH); continue; }
         std::vector<RoomEmitter> em;
         if (!BuildRoomEmitters(room, cyl, width, height, 0.5f * width + margin, 0.5f * height + margin, layout, em)) { Log("SelfTestRoom[%s]: FAIL emitters", name); return false; }
         RoomView view;
@@ -5358,10 +5355,10 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
                             kinds[1 + kFaceFloor] > onePercent && kinds[1 + kFaceCeiling] > onePercent &&
                             kinds[1 + kFaceLeft] + kinds[1 + kFaceRight] > onePercent;
         const bool caseOk = badEm == 0 && badTexel == 0 && lit == kRoomFaces - 1 && glowLit > 0 && bad <= total / 200 && framed;
-        Log("SelfTestRoom[%s]: %s - room %.2f x %.2f x %.2f m; %d emitters (%zu differ, %zu glow blocks lit); lightmap %zu of %d texels "
+        Log("SelfTestRoom[%s]: %s - room %.2f x %.2f x %.2f m; %d emitters, %d px glow blocks (%zu differ, %zu glow blocks lit); lightmap %zu of %d texels "
             "outside half precision (worst %.2e), %d of 5 side, floor, ceiling and back faces lit by the screen; eyes %zu of %zu px differ by more than 2 bits (worst %d; "
             "allowed %zu); screen %zu, footprint %zu, front %zu, floor %zu, ceiling %zu, walls %zu, back %zu, outside %zu",
-            name, caseOk ? "PASS" : "FAIL", 2 * room.X, room.yC - room.yF, room.zB + room.g, layout.count(), badEm, glowLit, badTexel,
+            name, caseOk ? "PASS" : "FAIL", 2 * room.X, room.yC - room.yF, room.zB + room.g, layout.count(), layout.block, badEm, glowLit, badTexel,
             kRoomFaces * kRoomLightmap * kRoomLightmap, worstRel, lit, bad, total, worst, total / 200, kinds[0], kinds[kRoomKindFootprint],
             kinds[1 + kFaceFront], kinds[1 + kFaceFloor], kinds[1 + kFaceCeiling], kinds[1 + kFaceLeft] + kinds[1 + kFaceRight],
             kinds[1 + kFaceBack], kinds[kRoomKindOutside]);
@@ -5491,10 +5488,12 @@ static void RunFrameLoop(App& app)
     RoomEmitterLayout roomLayout;
     std::vector<RoomEmitter> roomGeometry;
     bool roomGeometryDirty = false, roomFailedLogged = false;
+    bool roomRejected = false;                              // the last build failed: wait for its inputs to change
     float roomKey[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
     double roomLastTime = -1;
     float stageFloorY = NAN;                                // the real floor, LOCAL y
     bool stageLocated = false;
+    XrTime stageLocateFrom = 0;                             // a pending reference space change takes effect then
     std::vector<double> passGpuMs;                          // screen/room passes, since the last report
 
     const double period = app.opt.abSeconds > 0.0 ? app.opt.abSeconds : 6.0;
@@ -5631,6 +5630,15 @@ static void RunFrameLoop(App& app)
                 else if (state == XR_SESSION_STATE_EXITING) exitLoop = true;
                 else if (state == XR_SESSION_STATE_LOSS_PENDING) { app.stop = true; exitLoop = true; }
             }
+            else if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING)
+            {
+                // e.g. SteamVR's "reset seated position": LOCAL moves, so the floor's
+                // height in it has to be looked up again, once the change has taken effect.
+                const auto* rc = (const XrEventDataReferenceSpaceChangePending*)&ev;
+                stageLocated = false;
+                stageLocateFrom = rc->changeTime;
+                Log("RunFrameLoop: reference space %d change pending - the room's floor will be looked up again", (int)rc->referenceSpaceType);
+            }
             ev = { XR_TYPE_EVENT_DATA_BUFFER };
         }
         if (XR_FAILED(pollResult)) { Log("RunFrameLoop: event polling failed %s", XRStr(pollResult)); app.stop = true; exitLoop = true; }
@@ -5751,7 +5759,7 @@ static void RunFrameLoop(App& app)
             const bool curvedScreen = cylinder.curved && EnsureCurvedEyes(app);
 
             // The room: built in the screen's own (level) frame round the recentre point.
-            if (roomWanted && !stageLocated)
+            if (roomWanted && !stageLocated && fs.predictedDisplayTime >= stageLocateFrom)
             {
                 stageLocated = true;
                 stageFloorY = NAN;
@@ -5777,12 +5785,14 @@ static void RunFrameLoop(App& app)
                 in.floorY = std::isfinite(stageFloorY) ? stageFloorY - screen.pose.position.y : NAN;
                 const float key[8] = { in.W, in.H, in.eye[0], in.eye[1], in.eye[2], std::isfinite(in.floorY) ? in.floorY : -999.0f,
                                        cylinder.curved ? cylinder.radius : 0.0f, (float)app.ambiH };
-                bool changed = !room.valid;
+                bool changed = !room.valid && !roomRejected;
                 for (int k = 0; k < 8; k++) if (std::fabs(key[k] - roomKey[k]) > 1e-4f) changed = true;
                 if (changed)
                 {
                     memcpy(roomKey, key, sizeof(key));
                     const float margin = kAmbiMargin * in.W;
+                    // A failed build is not retried until its inputs change.
+                    roomRejected = true;
                     if (!BuildRoom(in, room))
                     {
                         room = Room();
@@ -5791,31 +5801,36 @@ static void RunFrameLoop(App& app)
                     }
                     else
                     {
-                        roomFailedLogged = false;
                         roomLayout = RoomLayout(in.W, in.H, app.ambiW, app.ambiH);
-                        if (!BuildRoomEmitters(room, cylinder, in.W, in.H, 0.5f * in.W + margin, 0.5f * in.H + margin, roomLayout, roomGeometry))
+                        if (roomLayout.count() == 0 ||
+                            !BuildRoomEmitters(room, cylinder, in.W, in.H, 0.5f * in.W + margin, 0.5f * in.H + margin, roomLayout, roomGeometry))
                         {
                             room = Room();
-                            Log("RunFrameLoop: room emitters rejected (%d)", roomLayout.count());
+                            if (!roomFailedLogged) Log("RunFrameLoop: no room - its emitters do not fit (glow %dx%d)", app.ambiW, app.ambiH);
+                            roomFailedLogged = true;
                         }
                         else
                         {
+                            roomRejected = false;
+                            roomFailedLogged = false;
                             roomGeometryDirty = true;
-                            Log("RunFrameLoop: room %.2f x %.2f x %.2f m, floor %.2f m below the eye (%s), %s front%s, %d emitters",
+                            Log("RunFrameLoop: room %.2f x %.2f x %.2f m, floor %.2f m below the eye (%s), %s front%s, %d emitters (glow blocks %d px)",
                                 2 * room.X, room.yC - room.yF, room.zB + room.g, in.eye[1] - room.yF,
                                 room.floorTracked ? "STAGE" : "seated guess", room.curved ? "curved" : "flat",
-                                room.phiReduced ? " (arc shortened to keep the viewer inside)" : "", roomLayout.count());
+                                room.phiReduced ? " (arc shortened to keep the viewer inside)" : "", roomLayout.count(), roomLayout.block);
                         }
                     }
                 }
                 roomOn = room.valid && EnsureCurvedEyes(app);
             }
-            else if (room.valid)
+            else
             {
+                if (room.valid) Log("RunFrameLoop: room off");
                 room = Room();
                 roomKey[0] = -1;
                 roomLastTime = -1;
-                Log("RunFrameLoop: room off");
+                roomRejected = false;
+                roomFailedLogged = false;
             }
             const bool roomFlat = roomOn && !curvedScreen;
             if (app.opt.headLocked && (app.opt.curve > 0 || app.opt.ambilight || app.opt.worldColor != 0) && !headLockedNoticeLogged)

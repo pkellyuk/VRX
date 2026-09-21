@@ -51,6 +51,21 @@ static const float kAmbiBezel = 0.08f;          // dark rise next to the screen,
 static const float kAmbiBehind = 0.02f;         // metres the glow sits behind the screen
 static const int kAmbiDefaultStrength = 85;     // percent
 
+// The glow texture's size for a picture of colorW x colorH: 256 texels across the
+// screen plus its margins, and as tall as that rectangle's shape (at least 32).
+inline void AmbiSizeFor(int colorW, int colorH, int* gw, int* gh)
+{
+    if (!gw || !gh) return;
+    *gw = 0; *gh = 0;
+    if (colorW <= 0 || colorH <= 0) return;
+
+    const float aspect = (float)colorH / (float)colorW;
+    const float rectAspect = (aspect + 2 * kAmbiMargin) / (1.0f + 2 * kAmbiMargin);
+    const int tall = (int)std::lround(256 * rectAspect);
+    *gw = 256;
+    *gh = tall < 32 ? 32 : tall;
+}
+
 struct AmbiConstants                            // must match cbuffer C in kAmbiHlsl
 {
     uint32_t gw = 0, gh = 0;                    // glow texture size

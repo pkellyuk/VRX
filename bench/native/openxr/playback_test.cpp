@@ -1158,6 +1158,154 @@ static void TestRoom()
         Check(std::fabs(hist[0].L[0] - 0.75f) < 1e-6f, "the screen's light blends towards a new picture");
     }
 
+    // ---- the emitter budget: every picture shape fits, the glow's blocks growing as needed
+    {
+        struct Shape { int w, h; const char* what; };
+        const Shape shapes[] = { { 2560, 1080, "21:9" }, { 1920, 1080, "16:9" }, { 1920, 1200, "16:10" }, { 1440, 1080, "4:3" },
+                                 { 1280, 1024, "5:4" }, { 1080, 1080, "1:1" }, { 1080, 1920, "9:16" } };
+        int fits = 0;
+        for (const Shape& k : shapes)
+        {
+            int gw = 0, gh = 0;
+            AmbiSizeFor(k.w, k.h, &gw, &gh);
+            const RoomEmitterLayout l = RoomLayout((float)k.w, (float)k.h, gw, gh);
+            const bool covers = l.blocksX * l.block >= gw && l.blocksY * l.block >= gh &&
+                                (l.blocksX - 1) * l.block < gw && (l.blocksY - 1) * l.block < gh;
+            if (l.count() > 0 && l.count() <= kRoomMaxEmitters && l.block >= kRoomGlowBlock && l.block <= kRoomMaxGlowBlock && covers) fits++;
+            else std::printf("room layout for %s (glow %dx%d): %d emitters, %d px blocks\n", k.what, gw, gh, l.count(), l.block);
+        }
+        Check(fits == (int)(sizeof(shapes) / sizeof(shapes[0])), "every picture shape's emitters fit the budget, and its blocks cover the glow exactly");
+        int gw = 0, gh = 0;
+        AmbiSizeFor(1920, 1080, &gw, &gh);
+        Check(gw == glowW && gh == glowH, "the tests' 16:9 glow is the real one");
+        Check(RoomLayout(16, 9, gw, gh).block == kRoomGlowBlock && RoomLayout(16, 9, gw, gh).count() == 880, "a 16:9 picture keeps 8-texel glow blocks (880 emitters)");
+        AmbiSizeFor(1440, 1080, &gw, &gh);
+        Check(RoomLayout(4, 3, gw, gh).block == 16, "a 4:3 picture's glow blocks grow to 16 texels (at 8 they passed the budget)");
+        Check(RoomLayout(16, 9, glowW, glowH, 16).block == 16, "larger blocks can be asked for");
+        Check(RoomLayout(16, 9, 256, 100000).count() == 0, "a glow too tall for any block size has no layout");
+
+        // 16-texel blocks, the partial ones at the edges too, average exactly their own texels.
+        RoomInputs tallIn;
+        tallIn.W = 4.0f; tallIn.H = 3.0f; tallIn.eye[2] = 3.0f;
+        Room tallRoom;
+        const RoomEmitterLayout tl = RoomLayout(tallIn.W, tallIn.H, gw, gh);
+        std::vector<RoomEmitter> tem;
+        Check(BuildRoom(tallIn, tallRoom) && BuildRoomEmitters(tallRoom, tallIn.cyl, tallIn.W, tallIn.H, 0.5f * tallIn.W + tallRoom.margin,
+              0.5f * tallIn.H + tallRoom.margin, tl, tem) && (int)tem.size() == tl.count(), "a 4:3 picture's room and emitters build");
+        std::vector<unsigned char> ramp((size_t)gw * gh * 4, 0), dark((size_t)64 * 48 * 4, 0);
+        for (int y = 0; y < gh; y++)
+            for (int x = 0; x < gw; x++)
+            {
+                unsigned char* q = &ramp[((size_t)y * gw + x) * 4];
+                q[0] = (unsigned char)x; q[1] = (unsigned char)(y & 255); q[3] = 255;
+            }
+        for (size_t i = 3; i < dark.size(); i += 4) dark[i] = 255;
+        Check(RoomEmitRadiance(tl, dark.data(), 64, 48, 64 * 4, ramp.data(), gw * 4, true, 1.0f, table, tem), "emit a 4:3 picture");
+        int active = 0, right = 0;
+        for (int by = 0; by < tl.blocksY; by++)
+            for (int bx = 0; bx < tl.blocksX; bx++)
+            {
+                const RoomEmitter& e = tem[(size_t)tl.gridX * tl.gridY + (size_t)by * tl.blocksX + bx];
+                if (e.n[3] == 0) continue;
+                active++;
+                double sx = 0, sy = 0;
+                int count = 0;
+                for (int y = by * tl.block; y < std::min((by + 1) * tl.block, gh); y++)
+                    for (int x = bx * tl.block; x < std::min((bx + 1) * tl.block, gw); x++) { sx += table[x]; sy += table[y & 255]; count++; }
+                if (std::fabs(e.L[0] - sx / count) < 1e-5 && std::fabs(e.L[1] - sy / count) < 1e-5) right++;
+            }
+        Check(active > 0 && right == active, "16-texel glow blocks, the edge ones too, take the mean of their own texels");
+    }
+
+    // ---- the curved room: its floor area, and no seam where the floor meets the front
+    {
+        const float fullArea = 2.0f * curved.X * (curved.zB + curved.g);
+        double stripArea = 0;
+        const int n = 2000;
+        for (int j = 0; j < n; j++)
+            for (int i = 0; i < n; i++)
+            {
+                const float x = -curved.X + ((float)i + 0.5f) * 2.0f * curved.X / n, z = -curved.g + ((float)j + 0.5f) * (curved.zB + curved.g) / n;
+                if (z < FrontDepth(curved, x)) stripArea += 1;
+            }
+        stripArea *= (double)fullArea / ((double)n * n);
+        Check(curved.frontFloorArea > 0 && std::fabs(curved.frontFloorArea - stripArea) < 0.01 * stripArea,
+            "the floor between the screen's plane and a curved front is measured (within 1%)");
+        Check(std::fabs(RoomArea(curved, kFaceFloor) - (fullArea - curved.frontFloorArea)) < 1e-4f &&
+              std::fabs(RoomArea(curved, kFaceCeiling) - RoomArea(curved, kFaceFloor)) < 1e-6f && room.frontFloorArea == 0 &&
+              std::fabs(RoomArea(room, kFaceFloor) - 2.0f * room.X * (room.zB + room.g)) < 1e-4f,
+            "a curved room's floor and ceiling leave that strip out; a flat room's are whole");
+
+        // Every lightmap texel is lit from inside the room.
+        int outsideRoom = 0, nudged = 0;
+        for (int f = 0; f < kRoomFaces; f++)
+            for (int j = 0; j < kRoomLightmap; j++)
+                for (int i = 0; i < kRoomLightmap; i++)
+                {
+                    float p[3], nn[3], raw[3];
+                    RoomLightPoint(curved, f, i, j, p, nn);
+                    RoomFacePoint(curved, f, ((float)i + 0.5f) / kRoomLightmap, ((float)j + 0.5f) / kRoomLightmap, raw, nn);
+                    if (p[2] < FrontDepth(curved, p[0]) - 1e-4f) outsideRoom++;
+                    if (p[2] != raw[2]) nudged++;
+                }
+        Check(outsideRoom == 0 && nudged > 0, "every curved-room lightmap texel is lit from inside the room");
+
+        // The glow on the front wall lights the floor at its base. A texel behind the wall
+        // was lit from out there - from behind the glow, so black - and bilinear sampling
+        // blended it into the base of the wall as a dark sawtooth.
+        const float cHalfW = 0.5f * in.W + curved.margin, cHalfH = 0.5f * in.H + curved.margin;
+        std::vector<RoomEmitter> cem;
+        Check(BuildRoomEmitters(curved, curvedIn.cyl, in.W, in.H, cHalfW, cHalfH, layout, cem), "curved emitters build");
+        std::vector<unsigned char> glowing((size_t)glowW * glowH * 4, 0);
+        for (size_t i = 0; i < glowing.size(); i += 4) { glowing[i] = 200; glowing[i + 3] = 200; }
+        RoomEmitRadiance(layout, black.data(), sw, sh, sw * 4, glowing.data(), glowW * 4, true, 1.0f, table, cem);
+        const RoomShading cshade = MakeRoomShading(curved, 50, 0, in.W * in.H);
+        int pairs = 0, smooth = 0;
+        float worst = 1e9f;
+        for (int i = 0; i < kRoomLightmap; i++)
+            for (int j = 0; j + 1 < kRoomLightmap; j++)
+            {
+                float a[3], b[3], na[3], nb[3];
+                RoomFacePoint(curved, kFaceFloor, ((float)i + 0.5f) / kRoomLightmap, ((float)j + 0.5f) / kRoomLightmap, a, na);
+                RoomFacePoint(curved, kFaceFloor, ((float)i + 0.5f) / kRoomLightmap, ((float)j + 1.5f) / kRoomLightmap, b, nb);
+                if (!(a[2] < FrontDepth(curved, a[0])) || !(b[2] > FrontDepth(curved, b[0]))) continue;   // j behind, j+1 inside
+                float La[3], Lb[3];
+                RoomTexel(curved, cshade, cem, kFaceFloor, i, j, La);
+                RoomTexel(curved, cshade, cem, kFaceFloor, i, j + 1, Lb);
+                pairs++;
+                if (Lb[0] > 0 && La[0] >= 0.5f * Lb[0]) smooth++;
+                if (Lb[0] > 0) worst = std::min(worst, La[0] / Lb[0]);
+            }
+        if (smooth != pairs) std::printf("curved room seam: %d of %d floor columns smooth, worst ratio %.3f\n", smooth, pairs, worst);
+        Check(pairs >= kRoomLightmap / 2 && smooth == pairs, "where the floor meets a curved front, the texel behind it is lit like its neighbour inside");
+
+        // Energy, curved: all the screen's light lands on the room. Floor and ceiling
+        // texels behind the front are outside the room and are left out.
+        std::vector<RoomEmitter> clit = cem;
+        RoomEmitRadiance(layout, white.data(), sw, sh, sw * 4, glowTex.data(), glowW * 4, false, 1.0f, table, clit);
+        RoomShading cNoBounce = cshade;
+        cNoBounce.rhoBar = 0;
+        double received = 0, emitted = 0;
+        for (int k = 0; k < layout.gridX * layout.gridY; k++) emitted += kRoomPi * clit[k].c[0][3];
+        for (int f = 0; f < kRoomFaces; f++)
+        {
+            const bool strip = f == kFaceFloor || f == kFaceCeiling;
+            const double texelArea = (strip ? fullArea : RoomArea(curved, f)) / (double)(kRoomLightmap * kRoomLightmap);
+            for (int j = 0; j < kRoomLightmap; j++)
+                for (int i = 0; i < kRoomLightmap; i++)
+                {
+                    float p[3], nn[3], L[3];
+                    RoomFacePoint(curved, f, ((float)i + 0.5f) / kRoomLightmap, ((float)j + 0.5f) / kRoomLightmap, p, nn);
+                    if (strip && p[2] < FrontDepth(curved, p[0])) continue;
+                    RoomTexel(curved, cNoBounce, clit, f, i, j, L);
+                    const float rho = f == kFaceFloor ? cNoBounce.rhoFloor : (f == kFaceCeiling ? cNoBounce.rhoCeiling : cNoBounce.rhoWall);
+                    received += (double)L[0] * kRoomPi / rho * texelArea;
+                }
+        }
+        if (std::fabs(received / emitted - 1.0) >= 0.03) std::printf("curved room energy: received / emitted = %.4f\n", received / emitted);
+        Check(std::fabs(received / emitted - 1.0) < 0.03, "energy, curved: all the screen's light lands on the room (within 3%)");
+    }
+
     // ---- dither, half floats, heading
     {
         double sum = 0;
