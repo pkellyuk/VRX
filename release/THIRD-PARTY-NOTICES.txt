@@ -1,4 +1,4 @@
-VRX 1.6.0 third-party components
+VRX 1.7.0 third-party components
 
 Depth Anything V2 Small, ONNX Community export (Apache-2.0)
 https://github.com/DepthAnything/Depth-Anything-V2

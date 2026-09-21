@@ -31,9 +31,9 @@ From using VRX day to day:
 
 ## Get started
 
-Download VRX v1.6.0: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.6.0/VRX-Setup-1.6.0.exe)
-or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.6.0/VRX-1.6.0-win-x64.zip)
-([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.6.0); older versions on
+Download VRX v1.7.0: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.7.0/VRX-Setup-1.7.0.exe)
+or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.0/VRX-1.7.0-win-x64.zip)
+([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.7.0); older versions on
 [GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.

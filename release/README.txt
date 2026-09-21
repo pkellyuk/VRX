@@ -1,6 +1,6 @@
-VRX 1.6.0 - Windows x64
+VRX 1.7.0 - Windows x64
 
-Install with VRX-Setup-1.6.0.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.7.0.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -47,7 +47,17 @@ screen: presets or any #RRGGBB.
 dark room whose walls, floor and ceiling are lit by the picture and the ambilight.
 The slider sets how pale the walls are; 30-60% looks like a cinema. The world colour
 becomes the room's house lights and the screen is kept level while the room is on.
-It needs the fixed screen.
+It needs the fixed screen. Under it:
+- "Glass walls" (0 solid .. 100 clear) turns the side walls, back wall and ceiling
+  into glass in slim frames, looking out over a ground and horizon in the world
+  colour. The wall with the screen and the floor stay solid.
+- "Reflections" mirrors the screen, its glow and the room light in the glass and a
+  polished floor, more strongly at a glancing angle.
+- "Room light" is a soft panel in the ceiling above and behind you, with a "Light
+  colour" from warm (2700 K) to daylight (6500 K), so the room stays visible when
+  the picture is dark.
+With Glass or Reflections above 0 the floor shows subtle 1 m tiles, so you can
+count the screen's size in metres.
 
 "Apply to all" copies the settings shown to every game already set up, after an
 OK/Cancel warning. Each game keeps its own path and window.
@@ -91,6 +101,8 @@ if verifying the download. Do not disable Windows security features.
 
 VRX itself is free software under the GNU General Public License v3.0: see
 LICENSE. Source: https://github.com/pkellyuk/VRX
+Source for this build: https://github.com/pkellyuk/VRX/tree/v1.7.0 (the exact
+commit is in BUILD.txt).
 Third-party components keep their own licenses; notices and license texts are in
 THIRD-PARTY-NOTICES.txt and the licenses folder.
 Project: https://github.com/pkellyuk/VRX
