@@ -10,12 +10,13 @@ using System.Windows.Media.Imaging;
 namespace VRX.Desktop;
 public sealed record GameWindow(nint Handle, string Title)
 {
-    public override string ToString() => string.IsNullOrWhiteSpace(Title) ? $"Window {Handle:X}" : Title;
+    public override string ToString() => string.IsNullOrWhiteSpace(Title) ? Loc.Format("WindowUntitled", Handle.ToString("X", System.Globalization.CultureInfo.InvariantCulture)) : Title;
 }
 public sealed record RunningApp(int Pid, string Name, string FullPath, List<GameWindow> Windows, ImageSource? Icon)
 {
     public bool CanAttach => FullPath.Length > 0 && Windows.Count > 0;
-    public string Description => CanAttach ? $"PID {Pid} · {Windows.Count} window(s)" : "No accessible game window";
+    public string Description => !CanAttach ? Loc.Get("AppNoGameWindow") :
+        Windows.Count == 1 ? Loc.Format("AppDescriptionOne", Pid) : Loc.Format("AppDescriptionOther", Pid, Windows.Count);
 }
 public static class RunningApps
 {
@@ -47,9 +48,10 @@ public static class RunningApps
         try { var path = new StringBuilder(32768); int size = path.Capacity; return QueryFullProcessImageName(process, 0, path, ref size) ? path.ToString() : ""; }
         finally { CloseHandle(process); }
     }
-    private static ImageSource? IconFor(string path)
+    // The executable's icon, cached per path; null when there is none.
+    internal static ImageSource? IconFor(string? path)
     {
-        if (path.Length == 0) return null;
+        if (string.IsNullOrEmpty(path)) return null;
         if (Icons.TryGetValue(path, out var cached)) return cached;
         ImageSource? image = null;
         if (SHGetFileInfo(path, 0, out var info, (uint)Marshal.SizeOf<FileInfo>(), 0x101) != 0 && info.Icon != 0)

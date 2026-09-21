@@ -105,7 +105,7 @@ public sealed class ProfileStore(string root)
     public bool HasBase => File.Exists(BaseFile);
     public void SaveBase(Profile profile)
     {
-        if (!profile.Valid()) throw new InvalidDataException("Settings are outside the allowed range or shortcut keys conflict.");
+        if (!profile.Valid()) throw new InvalidDataException(Loc.Get("ErrorSettingsInvalid"));
         var copy = JsonSerializer.Deserialize<Profile>(JsonSerializer.Serialize(profile))!;
         copy.ExecutablePath = "";
         copy.PreferredWindowTitle = "";
@@ -138,27 +138,56 @@ public sealed class ProfileStore(string root)
 
     // The saved app settings, or the defaults when the file is missing or unreadable.
     // Out-of-range seconds are clamped.
+    // A mode that is missing (a file from before the modes, or no file) is resolved here:
+    // Expert for anyone who has used VRX before, Easy for a new install.
     public AppSettings LoadAppSettings()
     {
+        AppSettings loaded;
         try
         {
-            if (!File.Exists(AppSettingsFile)) return new AppSettings();
-            var saved = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(AppSettingsFile));
-            if (saved == null) return new AppSettings();
-            saved.AutoAttachSeconds = AppSettings.ClampSeconds(saved.AutoAttachSeconds);
-            return saved;
+            loaded = File.Exists(AppSettingsFile) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(AppSettingsFile)) ?? new AppSettings() : new AppSettings();
+            loaded.AutoAttachSeconds = AppSettings.ClampSeconds(loaded.AutoAttachSeconds);
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException)
         {
             System.Diagnostics.Debug.WriteLine($"[AppSettings] could not read {AppSettingsFile}: {ex.Message}; using defaults");
-            return new AppSettings();
+            loaded = new AppSettings();
+        }
+        if (!AppSettings.ValidMode(loaded.Mode))
+        {
+            bool existing = ExistingUser();
+            System.Diagnostics.Debug.WriteLine($"[AppSettings] mode '{loaded.Mode}' not set; existing user {existing}");
+            loaded.Mode = existing ? AppSettings.ExpertMode : AppSettings.EasyMode;
+        }
+        return loaded;
+    }
+
+    // True when VRX has been used here before: app settings, a saved game, base settings
+    // or a last-used game already exist. Such users start in Expert, so nothing they are
+    // used to disappears.
+    public bool ExistingUser()
+    {
+        try
+        {
+            return File.Exists(AppSettingsFile) || SavedProfileFiles().Count > 0 || HasBase || File.Exists(Path.Combine(Root, "last-game.txt"));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppSettings] could not check for earlier use: {ex.Message}; assuming an existing user");
+            return true;
         }
     }
 
     public void SaveAppSettings(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        var copy = new AppSettings { AutoAttach = settings.AutoAttach, AutoAttachSeconds = AppSettings.ClampSeconds(settings.AutoAttachSeconds) };
+        var copy = new AppSettings
+        {
+            AutoAttach = settings.AutoAttach,
+            AutoAttachSeconds = AppSettings.ClampSeconds(settings.AutoAttachSeconds),
+            Mode = AppSettings.ValidMode(settings.Mode) ? settings.Mode : null,
+            Sections = settings.Sections == null ? null : new Dictionary<string, bool>(settings.Sections, StringComparer.Ordinal),
+        };
         AtomicWrite(AppSettingsFile, JsonSerializer.Serialize(copy, new JsonSerializerOptions { WriteIndented = true }));
     }
 
@@ -187,7 +216,7 @@ public sealed class ProfileStore(string root)
         ArgumentNullException.ThrowIfNull(settings);
         skipped = 0;
         failed = 0;
-        if (!settings.Valid()) throw new InvalidDataException("Settings are outside the allowed range or shortcut keys conflict.");
+        if (!settings.Valid()) throw new InvalidDataException(Loc.Get("ErrorSettingsInvalid"));
 
         int applied = 0;
         foreach (string file in SavedProfileFiles())
@@ -243,19 +272,46 @@ public sealed class ProfileStore(string root)
             profile.DepthOnSecondGpu = false;
         }
         if (profile == null || !profile.Valid() || !string.Equals(profile.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("This game's saved settings are invalid. They have not been overwritten.");
+            throw new InvalidDataException(Loc.Get("ErrorProfileInvalid"));
         return profile;
     }
     public void Save(Profile profile)
     {
-        if (!profile.Valid()) throw new InvalidDataException("Settings are outside the allowed range or shortcut keys conflict.");
+        if (!profile.Valid()) throw new InvalidDataException(Loc.Get("ErrorSettingsInvalid"));
         AtomicWrite(FileFor(profile.ExecutablePath), JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true }));
     }
     public static void AtomicWrite(string path, string text)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try { File.WriteAllText(temp, text, new UTF8Encoding(false)); File.Move(temp, path, true); }
+        try
+        {
+            File.WriteAllText(temp, text, new UTF8Encoding(false));
+            ReplaceWithRetry(temp, path);
+        }
         finally { if (File.Exists(temp)) File.Delete(temp); }
+    }
+
+    // Replacing a file that was written a moment ago can fail briefly while another program
+    // (a virus scanner, the search indexer) still has it open: try a few times. A read-only
+    // file fails at once - that is not going to change.
+    private static void ReplaceWithRetry(string temp, string path)
+    {
+        const int attempts = 5;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(temp, path, true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                bool readOnly = File.Exists(path) && File.GetAttributes(path).HasFlag(FileAttributes.ReadOnly);
+                if (readOnly || attempt >= attempts) throw;
+                System.Diagnostics.Debug.WriteLine($"[ProfileStore] replacing {path} failed ({ex.Message}); retry {attempt}");
+                Thread.Sleep(25 * attempt);
+            }
+        }
     }
 }

@@ -10,6 +10,9 @@
     <Version>1.7.1</Version>
     <Product>VRX</Product>
     <Description>Desktop-controlled stereo gaming in VR</Description>
+    <!-- Strings.resx is English; translations (Strings.<culture>.resx) become satellite
+         assemblies and are chosen from the Windows display language. -->
+    <NeutralLanguage>en</NeutralLanguage>
   </PropertyGroup>
   <ItemGroup>
     <!-- Also embedded as a resource so the window and taskbar use it. Regenerate

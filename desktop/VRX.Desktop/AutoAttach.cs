@@ -17,9 +17,36 @@ public sealed class AppSettings
     public const int MaxSeconds = 30;
     public const int DefaultSeconds = 5;
 
-    // Auto-attach: count down, then attach to the game in front. Off by default.
+    // Auto-attach: count down, then attach to the game in front. Off by default (Easy mode
+    // turns it on).
     public bool AutoAttach { get; set; }
     public int AutoAttachSeconds { get; set; } = DefaultSeconds;
+
+    // "Easy" or "Expert". Null in files written before the modes existed; ProfileStore
+    // then picks Expert for anyone who has used VRX before and Easy for a new install.
+    public const string EasyMode = "Easy";
+    public const string ExpertMode = "Expert";
+    public string? Mode { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsExpert => Mode == ExpertMode;
+    public static bool ValidMode(string? mode) => mode is EasyMode or ExpertMode;
+
+    // Expert's collapsible sections: name -> open. Sections not listed use DefaultSections.
+    public const string SectionGame = "Game", SectionScreen = "Screen", SectionAround = "Around", SectionRoom = "Room",
+        SectionDepth = "Depth", SectionSteamVr = "SteamVr", SectionProfile = "Profile", SectionSession = "Session";
+    public static readonly IReadOnlyDictionary<string, bool> DefaultSections = new Dictionary<string, bool>(StringComparer.Ordinal)
+    {
+        [SectionGame] = false, [SectionScreen] = true, [SectionAround] = true, [SectionRoom] = true,
+        [SectionDepth] = false, [SectionSteamVr] = false, [SectionProfile] = false, [SectionSession] = false,
+    };
+    public Dictionary<string, bool>? Sections { get; set; }
+
+    public bool SectionOpen(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        if (Sections != null && Sections.TryGetValue(name, out bool open)) return open;
+        return DefaultSections.TryGetValue(name, out bool byDefault) && byDefault;
+    }
 
     public static int ClampSeconds(int seconds) => Math.Clamp(seconds, MinSeconds, MaxSeconds);
 }
@@ -320,7 +347,7 @@ public sealed class AutoAttachOverlay : Window
         WindowStartupLocation = WindowStartupLocation.Manual;
         Left = -20000;
         Top = -20000;
-        Title = "VRX auto-attach";
+        Title = Loc.Get("OverlayTitle");
         Content = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(0xE6, 0x10, 0x18, 0x27)),

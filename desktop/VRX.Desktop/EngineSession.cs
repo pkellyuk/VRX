@@ -15,14 +15,14 @@ public sealed class EngineSession
         if (File.Exists(Path.Combine(AppContext.BaseDirectory, "engine", "xrplayer.exe"))) return AppContext.BaseDirectory;
         for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
             if (File.Exists(Path.Combine(dir.FullName, "bench", "native", "openxr", "xrapp5.cpp"))) return dir.FullName;
-        throw new DirectoryNotFoundException("VRX renderer is missing. Reinstall VRX or build the project.");
+        throw new DirectoryNotFoundException(Loc.Get("ErrorRendererMissing"));
     }
     public static string EnginePath()
     {
         string root = RepositoryRoot();
         string engine = Path.Combine(root, "engine", "xrplayer.exe");
         if (!File.Exists(engine)) engine = Path.Combine(root, "bench", "native", "openxr", "out", "xrplayer.exe");
-        if (!File.Exists(engine)) throw new FileNotFoundException("Build the desktop renderer first using bench/native/openxr/build.bat --desktop.");
+        if (!File.Exists(engine)) throw new FileNotFoundException(Loc.Get("ErrorBuildRenderer"));
         return engine;
     }
     public void Update(Profile profile, bool reset = false, bool dismiss = false, bool stop = false)
@@ -33,16 +33,16 @@ public sealed class EngineSession
     }
     public void Start(RunningApp app, GameWindow window, Profile profile, string dataRoot)
     {
-        if (Running) throw new InvalidOperationException("Stop the current session first.");
+        if (Running) throw new InvalidOperationException(Loc.Get("ErrorStopFirst"));
         foreach (string name in new[] { "xrapp5", "xrplayer" })
         {
             var existing = Process.GetProcessesByName(name);
             bool found = existing.Length > 0;
             foreach (var item in existing) item.Dispose();
-            if (found) throw new InvalidOperationException("Another VRX session is running. Close that session before attaching here.");
+            if (found) throw new InvalidOperationException(Loc.Get("ErrorAnotherSession"));
         }
         if (!string.Equals(RunningApps.ProcessPath(app.Pid), app.FullPath, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("The selected process has closed or changed. Refresh the list.");
+            throw new InvalidOperationException(Loc.Get("ErrorProcessChanged"));
         string root = RepositoryRoot();
         string engine = EnginePath();
         string sessionRoot = Path.Combine(dataRoot, "sessions", Guid.NewGuid().ToString("N"));
@@ -51,8 +51,10 @@ public sealed class EngineSession
         var start = new ProcessStartInfo(engine) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8 };
+        // Culture-invariant numbers: the engine parses these whatever the Windows language.
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
         foreach (string arg in new[] { "0", "--exe=" + Path.GetFileName(app.FullPath), "--exe-path=" + app.FullPath,
-            "--pid=" + app.Pid, "--hwnd=" + window.Handle.ToInt64(), "--control=" + control }) start.ArgumentList.Add(arg);
+            "--pid=" + app.Pid.ToString(invariant), "--hwnd=" + window.Handle.ToInt64().ToString(invariant), "--control=" + control }) start.ArgumentList.Add(arg);
         if (profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) start.ArgumentList.Add("--depth-gpu=" + profile.DepthGpu);
         var child = new Process { StartInfo = start };
         try
@@ -90,7 +92,7 @@ public sealed class EngineSession
         try { await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
         catch (TimeoutException)
         {
-            Log?.Invoke("VRX did not stop in time; terminating its renderer. The game is unaffected.");
+            Log?.Invoke(Loc.Get("LogStopTimeout"));
             child.Kill(); await child.WaitForExitAsync();
         }
         catch (InvalidOperationException) { } // Observe already disposed the exited child.
