@@ -188,7 +188,9 @@ depend on where you look from.
    - the uniform denominators (the room's size, the glow's) are reciprocals in the
      constants, rows 17-20, with the screen's bounds.
 
-   The results differ from v10's only by float rounding and at exact edge ties.
+   The results differ from v10's only by float rounding and at exact edge ties (shown
+   by the A/B comparison with a kept copy of the v10 eye pass, since removed: see
+   Tests).
 
    The eye pass is compiled twice. With `ROOM_LOOK 0` it has no code for the v11
    controls and is Stage 1's pass exactly; it draws a room whose controls are all 0.
@@ -213,20 +215,24 @@ of view, in the form `--bench-fov` takes. The design panel estimated about 0.3 m
 frame on an RTX 3090; the offline benchmark below measures more. On an RTX 3090 at
 boost clocks, the room and a curved screen take 1.08-1.20 ms p50 in total with Stage 1
 (the v10 eye pass: 1.37-1.99 ms), against 0.87-1.08 ms for the curved screen alone,
-across the four views and both curves. The headset's figures are still to come.
+across the four views and both curves. The v10 figures came from the temporary A/B
+comparison: a kept copy of the v10 eye pass, drawn by `--room-v10-eye` in playback and
+by the benchmark's case D. It was removed once the headset's numbers were in.
 
 `--selftest --bench-room` measures the same passes offline, with no VR session, at the
 PSVR2's 2804 x 2860 eye buffers: the curve alone (A), the curve with the room (B), the
-same with the room light at 50% (C), the kept v10 eye pass (D, also `--room-v10-eye` in
-playback) and the flat screen's half-size room layer without and with the room light
-(E, F), each at four views (yaw 0, 30, 60 and 120 degrees, pitch -15) and the curved
-ones at 60% and 100% curve. C and F are the spec's Glass 60 / Reflections 40 / Light 50
-cases, and the log gives what they cost (C minus B, F minus E) and C's total against D's.
+same with Glass 60, Reflections 40 and the room light at 50% (C), and the flat screen's
+half-size room layer without and with them (E, F), each at four views (yaw 0, 30, 60
+and 120 degrees, pitch -15) and the curved ones at 60% and 100% curve. C and F are the
+spec's Glass 60 / Reflections 40 / Light 50 cases, and the log gives what they cost
+(C minus B, F minus E). The acceptance lines give B's eye pass minus A's at yaw 0 and
+60, and EMIT + LIGHT. (Case D, the kept v10 eye pass, and the lines comparing B's and
+C's totals with it went with the A/B comparison; the letters were kept.)
 With the reflections, the minima of one run (SteamVR's compositor running, so most
 curved rows contended) were: C minus B +0.28-0.65 ms at 60% and +0.27-0.60 ms at 100%
 (yaw 0 to 120; about +0.13-0.29 of it the glass and the light), F minus E +0.06-0.16 ms,
-the MIRROR pass under 0.01 ms; C's total 0.07-0.24 ms under D's at yaw 30-120, 0.02-0.05
-over it at yaw 0.
+the MIRROR pass under 0.01 ms; and, in the removed A/B comparison, C's total 0.07-0.24
+ms under the v10 eye pass's (D) at yaw 30-120, 0.02-0.05 over it at yaw 0.
 - **Interleaved.** The cases that draw the same screen (the curved one at each curve,
   or the flat one) are drawn in turn, frame by frame, the order rotating each round, so
   other work on the GPU falls on them alike. Every round also draws a probe, the curve
@@ -272,20 +278,24 @@ over it at yaw 0.
     neighbour inside (this and the previous check both fail without the fix);
   - cases: a black picture giving nothing, the house light, mirror symmetry, red on the
     left lighting the left wall, the glow on and off, the smoothing;
-  - Stage 1 against the kept v10 code (`room_v10`):
+  - Stage 1:
     - the exit on 20,000 random rays from the eye and 20,000 from points inside, in the
-      flat, 60%, 100% and shortened-arc rooms: the same face bar 0.05% ties, t within
-      1e-4 relative (the point within 1e-6 m for an exit millimetres away), u and v
-      within 1e-4;
+      flat, 60%, 100% and shortened-arc rooms: every ray leaves the room, at the point
+      `RoomFacePoint` puts at its u and v (within 1e-5 m), u and v within 0..1, and a
+      front exit's s `FrontS`'s at that point (within 1e-5 m);
     - on those rays the exit's surface alone gives the identical hit and no other
       surface claims it; rays 1 mm and 1 cm either side of every edge of the room and of
-      each arc/wing join leave where they are aimed, and the neighbouring surface
-      refuses them;
+      each arc/wing join leave where they are aimed, at the u and v of that point
+      (within 1e-5 m), and the neighbouring surface refuses them;
     - the room's screen test against `CylinderHit` on 20,000 rays at curves of 1-100%:
       the same hit or miss bar 0.05% within 1e-5 m of the outline, uv within 1e-5;
-    - the eye pass pixel by pixel on the self-test's two views, flat and curved, over a
-      lightmap lit on the CPU: every pixel within 1/255, 99.9% the same 8-bit value;
     - the constants' rows 17-20 carry the room's reciprocals and the screen's box;
+    - until the A/B comparison was removed, Stage 1 was also checked against a kept
+      copy of the v10 code (`room_v10`): the exit on the rays above had the same face
+      bar 0.05% ties, t within 1e-4 relative (the point within 1e-6 m for an exit
+      millimetres away) and u and v within 1e-4, the seam rays the same face, u and v, and the
+      eye pass on the self-test's two views, flat and curved, was within 1/255 on every
+      pixel and the same 8-bit value on 99.9%;
   - the room light: its placement and clearance (also 3 m to the side and in the small
     close curved room), the last emitter in every picture shape's budget (753, 881,
     929, 417, 433, 513 and 657, with the same glow blocks as before), the floor under
@@ -328,8 +338,9 @@ over it at yaw 0.
     the constants' exactly;
   - all 24,576 lightmap texels within half-float precision (worst 9.6e-4 relative);
   - the eye pass within 2 bits, for one eye looking up at the screen and one turned to
-    a side wall and the floor; the kept v10 eye pass likewise against `room_v10`, and
-    how many pixels the two eye passes draw differently;
+    a side wall and the floor (until the A/B comparison was removed, the kept v10 eye
+    pass was checked likewise against `room_v10`; it drew 0 pixels flat and 5 curved
+    differently from the current pass);
   - with the room light on: one eye turned round and looking up at the panel (which
     must cover at least 1% of its pixels), one turned left to the left wall, the floor
     and, curved, the front's left wing; the floor under the panel lit by at least 90% of the panel's

@@ -2448,7 +2448,7 @@ static void TestRoom()
         Check(roundTrip, "%.9g reads back as the same float");
     }
 
-    // ---- Stage 1: the eye pass's classification against the kept v10 one (room_v10)
+    // ---- Stage 1: the eye pass's classification - RoomExit, RoomExitOnFace and RoomScreenHit
     {
         uint32_t seed = 20260921;
         auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return (float)(seed >> 8) / 16777215.0f * 2.0f - 1.0f; };
@@ -2469,42 +2469,44 @@ static void TestRoom()
         const ExitRoom exitRooms[] = { { &room, in.eye, "flat" }, { &curved60, in.eye, "60%" }, { &curved, in.eye, "100%" },
                                        { &closeRoom, smallIn.eye, "shortened arc" } };
 
-        // B1: RoomExit (planes first; t straight from the arc's root; reciprocals) against v10's,
-        // 20,000 rays from the eye and 20,000 from points inside, in each room. B2 on the same
-        // rays: the exit's own surface alone (RoomExitOnFace) gives the very same hit, and no
-        // other surface claims it (bar a tie at a seam, where the points agree).
-        long rays = 0, missing = 0, faceTies = 0, farTies = 0, badT = 0, badUv = 0;
+        // B1: RoomExit (planes first; t straight from the arc's root; reciprocals), 20,000 rays
+        // from the eye and 20,000 from points inside, in each room: every ray leaves the room, at
+        // the point RoomFacePoint puts at the hit's u and v on its face, with u and v in [0, 1]
+        // and, on the front, s as FrontS gives it at the point's x. (This compared RoomExit with
+        // the kept v10 copy until that was removed.) B2 on the same rays: the exit's own surface
+        // alone (RoomExitOnFace) gives the very same hit, and no other surface claims it (bar a
+        // tie at a seam, where the points agree) - so the exit is the nearest surface's.
+        long rays = 0, missing = 0, offFace = 0, outsideUv = 0, badS = 0, frontExits = 0;
         long onFaceSame = 0, onFaceDiffer = 0, onFaceRefused = 0, otherClaims = 0, otherWrong = 0;
-        long nearExits = 0;
-        float worstT = 0, worstUv = 0, worstPoint = 0;
+        float worstPoint = 0, worstS = 0;
         for (const ExitRoom& k : exitRooms)
             for (int i = 0; i < 40000; i++)
             {
                 float o[3] = { k.eye[0], k.eye[1], k.eye[2] };
                 if (i >= 20000 && !interior(*k.r, o)) { missing++; continue; }
                 const float d[3] = { rnd(), rnd(), rnd() };
-                RoomHit a, b;
-                const bool ea = RoomExit(*k.r, o, d, a), eb = room_v10::RoomExit(*k.r, o, d, b);
+                RoomHit a;
+                const bool ea = RoomExit(*k.r, o, d, a);
                 rays++;
-                if (!ea || !eb) { missing++; continue; }
-                // t within 1e-4 relative - or, for an exit a few millimetres away, the two points
-                // within 1e-6 m: both versions place an arc's point to about 2e-7 m (float), which
-                // is more than 1e-4 of a t that small.
+                if (!ea) { missing++; continue; }
                 const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-                const float tTol = std::max(1e-4f * b.t, 1e-6f / len);
-                if (a.face != b.face)
-                {
-                    faceTies++;
-                    if (std::fabs(a.t - b.t) > tTol) farTies++;
-                }
+                const float q[3] = { o[0] + a.t * d[0], o[1] + a.t * d[1], o[2] + a.t * d[2] };
+                float fp[3], fn[3];
+                if (!RoomFacePoint(*k.r, a.face, a.u, a.v, fp, fn)) offFace++;
                 else
                 {
-                    worstT = std::max(worstT, std::fabs(a.t - b.t) / b.t);
-                    worstPoint = std::max(worstPoint, std::fabs(a.t - b.t) * len);
-                    if (std::fabs(a.t - b.t) > 1e-4f * b.t) nearExits++;
-                    worstUv = std::max(worstUv, std::max(std::fabs(a.u - b.u), std::fabs(a.v - b.v)));
-                    if (std::fabs(a.t - b.t) > tTol) badT++;
-                    if (std::fabs(a.u - b.u) > 1e-4f || std::fabs(a.v - b.v) > 1e-4f) badUv++;
+                    const float err = std::max(std::max(std::fabs(fp[0] - q[0]), std::fabs(fp[1] - q[1])),
+                                               std::max(std::fabs(fp[2] - q[2]), std::fabs(a.y - q[1])));
+                    worstPoint = std::max(worstPoint, err);
+                    if (err > 1e-5f) offFace++;
+                }
+                if (a.u < -1e-4f || a.u > 1.0f + 1e-4f || a.v < -1e-4f || a.v > 1.0f + 1e-4f) outsideUv++;
+                if (a.face == kFaceFront)
+                {
+                    frontExits++;
+                    const float ds = std::fabs(a.s - FrontS(*k.r, q[0]));
+                    worstS = std::max(worstS, ds);
+                    if (ds > 1e-5f) badS++;
                 }
                 float rcp[3];
                 RoomRayRcp(d, rcp);
@@ -2520,22 +2522,23 @@ static void TestRoom()
                     if (std::fabs(w.t - a.t) > std::max(1e-4f * a.t, 1e-6f / len)) otherWrong++;
                 }
             }
-        std::printf("room stage 1, B1/B2: %ld rays in 4 rooms; %ld face ties with v10 (%ld with t apart); worst t %.2e relative (%ld exits within "
-                    "millimetres beyond 1e-4, worst point %.2e m), worst u/v %.2e; own surface alone: %ld the same hit, %ld refused, %ld different; "
-                    "other surfaces claimed %ld (%ld wrongly)\n", rays, faceTies, farTies, (double)worstT, nearExits, (double)worstPoint,
-                    (double)worstUv, onFaceSame, onFaceRefused, onFaceDiffer, otherClaims, otherWrong);
+        std::printf("room stage 1, B1/B2: %ld rays in 4 rooms; worst exit %.2e m from its face's point at its u/v, worst front s %.2e m "
+                    "(%ld front exits); own surface alone: %ld the same hit, %ld refused, %ld different; other surfaces claimed %ld (%ld wrongly)\n",
+                    rays, (double)worstPoint, (double)worstS, frontExits, onFaceSame, onFaceRefused, onFaceDiffer, otherClaims, otherWrong);
         std::fflush(stdout);     // Check aborts on a failure, and abort does not flush
-        Check(missing == 0 && rays == 4 * 40000, "B1: every ray, from the eye or inside, leaves the room in both versions");
-        Check(faceTies * 2000 <= rays && farTies == 0 && badT == 0 && badUv == 0 && nearExits * 2000 <= rays,
-            "B1: RoomExit is v10's - the same face bar 0.05% ties, t within 1e-4 relative (the point within 1e-6 m for an exit millimetres away), "
-            "u and v within 1e-4 (flat, 60%, 100%, shortened arc)");
+        Check(missing == 0 && rays == 4 * 40000, "B1: every ray, from the eye or inside, leaves the room");
+        Check(offFace == 0 && outsideUv == 0 && badS == 0 && frontExits > rays / 20,
+            "B1: every exit is RoomFacePoint's point at its u and v (within 1e-5 m), u and v in [0, 1], a front exit's s FrontS's "
+            "(within 1e-5 m) (flat, 60%, 100%, shortened arc)");
         Check(onFaceDiffer == 0 && onFaceRefused * 2000 <= rays && otherWrong == 0 && otherClaims * 2000 <= rays,
             "B2: the exit's surface alone gives the identical hit, and no other surface claims the exit (bar 0.05% ties)");
 
         // B2 at the seams: rays aimed 1 mm and 1 cm either side of every edge of the room (and of
-        // each arc/wing join) leave through the surface they are aimed at, as in v10; that surface
-        // alone gives the identical hit, and the neighbouring surface refuses them.
+        // each arc/wing join) leave through the surface they are aimed at, at the u and v where
+        // RoomFacePoint puts the point aimed at; that surface alone gives the identical hit, and
+        // the neighbouring surface refuses them.
         long seamRays = 0, seamRight = 0;
+        float worstSeamPoint = 0;
         int seamReported = 0;
         for (const ExitRoom& k : exitRooms)
         {
@@ -2588,27 +2591,31 @@ static void TestRoom()
                     const float d[3] = { tg.p[0] - o[0], tg.p[1] - o[1], tg.p[2] - o[2] };
                     float rcp[3];
                     RoomRayRcp(d, rcp);
-                    RoomHit h, own, other, v10;
+                    RoomHit h, own, other;
                     const bool exits = RoomExit(r, o, d, h);
                     const bool onOwn = RoomExitOnFace(r, tg.part, o, d, rcp, own);
                     const bool onOther = RoomExitOnFace(r, tg.neighbour, o, d, rcp, other);
-                    const bool v10Exits = room_v10::RoomExit(r, o, d, v10);
+                    float fp[3] = { 0, 0, 0 }, fn[3];
+                    const bool placedAt = exits && RoomFacePoint(r, h.face, h.u, h.v, fp, fn);
+                    const float pointOff = std::max(std::fabs(fp[0] - tg.p[0]), std::max(std::fabs(fp[1] - tg.p[1]), std::fabs(fp[2] - tg.p[2])));
+                    if (placedAt) worstSeamPoint = std::max(worstSeamPoint, pointOff);
                     const bool right = exits && h.part == tg.part && std::fabs(h.t - 1.0f) < 1e-4f && onOwn && own.part == h.part &&
                                        own.t == h.t && own.u == h.u && own.v == h.v && own.s == h.s && own.y == h.y && !onOther &&
-                                       v10Exits && v10.face == h.face && std::fabs(v10.u - h.u) <= 1e-4f && std::fabs(v10.v - h.v) <= 1e-4f;
+                                       placedAt && pointOff <= 1e-5f;
                     seamRays++;
                     if (right) { seamRight++; continue; }
                     if (seamReported++ < 8)
-                        std::printf("seam ray (%s room) to (%.4f, %.4f, %.4f) on part %d: exit %d part %d t %.6f; own %d; neighbour %d claims %d; v10 face %d u %.6f/%.6f v %.6f/%.6f\n",
-                                    k.what, (double)tg.p[0], (double)tg.p[1], (double)tg.p[2], tg.part, (int)exits, h.part, (double)h.t, (int)onOwn,
-                                    tg.neighbour, (int)onOther, v10.face, (double)h.u, (double)v10.u, (double)h.v, (double)v10.v);
+                        std::printf("seam ray (%s room) to (%.4f, %.4f, %.4f) on part %d: exit %d part %d t %.6f u %.6f v %.6f (%.2e m from the point); "
+                                    "own %d; neighbour %d claims %d\n", k.what, (double)tg.p[0], (double)tg.p[1], (double)tg.p[2], tg.part, (int)exits,
+                                    h.part, (double)h.t, (double)h.u, (double)h.v, (double)pointOff, (int)onOwn, tg.neighbour, (int)onOther);
                 }
         }
-        std::printf("room stage 1, B2 seams: %ld of %ld rays either side of every seam right\n", seamRight, seamRays);
+        std::printf("room stage 1, B2 seams: %ld of %ld rays either side of every seam right (worst %.2e m from the point aimed at)\n",
+                    seamRight, seamRays, (double)worstSeamPoint);
         std::fflush(stdout);     // Check aborts on a failure, and abort does not flush
         Check(seamRays > 2000 && seamRight == seamRays,
             "B2: rays 1 mm and 1 cm either side of every seam (arc/wing, wall/floor, floor/front, ceiling/back, ...) leave where aimed, "
-            "that surface alone agrees, its neighbour refuses them, and v10 agrees");
+            "at the u and v of the point aimed at (within 1e-5 m), that surface alone agrees and its neighbour refuses them");
 
         // B3: RoomScreenHit (the box, the tan test, atan2 only on a hit) against CylinderHit, 20,000
         // rays at curves of 1-100%: many aimed at the screen's surface out to a quarter past its
@@ -2670,106 +2677,6 @@ static void TestRoom()
         std::fflush(stdout);     // Check aborts on a failure, and abort does not flush
         Check(screenRays == 20000 && bothHit > screenRays / 5 && screenWrong == 0 && outlineTies * 2000 <= screenRays && screenBadUv == 0,
             "B3: RoomScreenHit is CylinderHit - the same hit or miss bar 0.05% within 1e-5 m of the outline, uv within 1e-5 (curves 1-100%)");
-    }
-
-    // ---- A3: the new eye pass against the kept v10 one, pixel by pixel, on the GPU self-test's
-    // two views (256 x 192; one eye looks up 20 degrees at the screen, the other turns 80 degrees
-    // right and looks 20 degrees down), flat and curved, over a lightmap the CPU lights from a
-    // made-up picture and glow.
-    {
-        const int pw = 686, ph = 392, ew = 256, eh = 192;
-        const float scrW = 5.7f, scrH = scrW * (float)ph / (float)pw;
-        int agw = 0, agh = 0;
-        AmbiSizeFor(pw, ph, &agw, &agh);
-        std::vector<unsigned char> pic((size_t)pw * ph * 4), glowPic((size_t)agw * agh * 4);
-        for (int y = 0; y < ph; y++)
-            for (int x = 0; x < pw; x++)
-            {
-                unsigned char* q = &pic[((size_t)y * pw + x) * 4];
-                q[0] = (unsigned char)(x * 255 / pw); q[1] = (unsigned char)(y * 255 / ph); q[2] = ((x / 32 + y / 32) & 1) ? 200 : 40; q[3] = 255;
-            }
-        for (int y = 0; y < agh; y++)
-            for (int x = 0; x < agw; x++)
-            {
-                unsigned char* q = &glowPic[((size_t)y * agw + x) * 4];
-                q[0] = (unsigned char)(x * 255 / agw); q[1] = 90; q[2] = (unsigned char)(y * 255 / agh); q[3] = 180;
-            }
-        const RgbaImage picture{ pic.data(), pw, ph, pw * 4 }, glowImg{ glowPic.data(), agw, agh, agw * 4 };
-        const uint32_t world = 0x2A3441;
-        CurveConstants c;
-        c.ew = (uint32_t)ew; c.eh = (uint32_t)eh;
-        c.world[0] = 0x2A / 255.0f; c.world[1] = 0x34 / 255.0f; c.world[2] = 0x41 / 255.0f; c.world[3] = 1.0f;
-        const float yawPitch[2][2] = { { 0.0f, 20.0f }, { 80.0f, -20.0f } };
-        for (int e = 0; e < 2; e++)
-        {
-            CurveEye& v = c.eye[e];
-            v.origin[0] = e ? 0.064f : 0.0f; v.origin[1] = 0.05f; v.origin[2] = 3.0f; v.origin[3] = 0;
-            YawPitchRows(yawPitch[e][0], yawPitch[e][1], v);
-            v.tanL = std::tan(-0.88f); v.tanR = std::tan(0.88f); v.tanU = std::tan(0.79f); v.tanD = std::tan(-0.79f);
-        }
-        long pixels = 0, within = 0, same8 = 0, sameFloat = 0, failed = 0;
-        float worst = 0;
-        int reported = 0;
-        for (int curvedCase = 0; curvedCase < 2; curvedCase++)
-        {
-            RoomInputs rin;
-            rin.W = scrW; rin.H = scrH; rin.eye[1] = 0.05f; rin.eye[2] = 3.0f;
-            if (curvedCase) Check(BuildCylinder(scrW, scrH, 3.0f, 1.0f, rin.cyl), "A3's cylinder");
-            Room r;
-            Check(BuildRoom(rin, r), "A3's room");
-            const float margin = kAmbiMargin * scrW;
-            const RoomEmitterLayout l = RoomLayout(scrW, scrH, agw, agh, curvedCase ? 16 : kRoomGlowBlock);
-            std::vector<RoomEmitter> lem;
-            Check(BuildRoomEmitters(r, rin.cyl, scrW, scrH, 0.5f * scrW + margin, 0.5f * scrH + margin, l, lem) &&
-                  RoomEmitRadiance(l, pic.data(), pw, ph, pw * 4, glowPic.data(), agw * 4, true, 1.0f, table, lem), "A3's emitters");
-            const RoomShading sh40 = MakeRoomShading(r, 40, world, scrW * scrH);
-            RoomLightmap light;
-            light.texels.resize((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 4);
-            for (int f = 0; f < kRoomFaces; f++)
-                for (int j = 0; j < kRoomLightmap; j++)
-                    for (int i = 0; i < kRoomLightmap; i++)
-                    {
-                        float L[3] = { 0, 0, 0 };
-                        RoomTexel(r, sh40, lem, f, i, j, L);
-                        float* t = &light.texels[(((size_t)f * kRoomLightmap + j) * kRoomLightmap + i) * 4];
-                        t[0] = L[0]; t[1] = L[1]; t[2] = L[2]; t[3] = 1.0f;
-                    }
-            RoomView view;
-            view.flatLayer = !curvedCase; view.W = scrW; view.H = scrH; view.glowOn = true;
-            view.glowHalfW = 0.5f * scrW + margin; view.glowHalfH = 0.5f * scrH + margin; view.dither = true; view.cyl = rin.cyl;
-            const RoomConstants rc40 = MakeRoomConstants(r, sh40, l, view, pw, ph, 1.0f);
-            RoomEyeInputs inputs;
-            inputs.rc = &rc40; inputs.picture = &picture; inputs.glow = &glowImg; inputs.light = &light;
-            for (int e = 0; e < 2; e++)
-                for (int y = 0; y < eh; y++)
-                    for (int x = 0; x < ew; x++)
-                    {
-                        float a[3] = { -1, -1, -1 }, b[3] = { -2, -2, -2 };
-                        const bool okA = RoomPixel(c, rin.cyl, r, view, e, x, y, inputs, a);
-                        const bool okB = room_v10::RoomPixel(c, rin.cyl, r, view, e, x, y, picture, &glowImg, light, b);
-                        pixels++;
-                        if (!okA || !okB) { failed++; continue; }
-                        float diff = 0;
-                        bool eq8 = true;
-                        for (int ch = 0; ch < 3; ch++)
-                        {
-                            diff = std::max(diff, std::fabs(a[ch] - b[ch]));
-                            eq8 = eq8 && lroundf(std::min(std::max(a[ch], 0.0f), 1.0f) * 255.0f) == lroundf(std::min(std::max(b[ch], 0.0f), 1.0f) * 255.0f);
-                        }
-                        worst = std::max(worst, diff);
-                        if (diff <= 1.0f / 255.0f) within++;
-                        if (eq8) same8++;
-                        if (std::memcmp(a, b, sizeof(a)) == 0) sameFloat++;
-                        if (diff > 1.0f / 255.0f && reported++ < 6)
-                            std::printf("A3: %s eye %d pixel %d,%d: new %.4f %.4f %.4f, v10 %.4f %.4f %.4f\n", curvedCase ? "curved" : "flat", e, x, y,
-                                        (double)a[0], (double)a[1], (double)a[2], (double)b[0], (double)b[1], (double)b[2]);
-                    }
-        }
-        std::printf("room stage 1, A3: %ld pixels; %ld within 1/255 (worst %.2e), %ld the same 8-bit value, %ld the same float\n",
-                    pixels, within, (double)worst, same8, sameFloat);
-        std::fflush(stdout);     // Check aborts on a failure, and abort does not flush
-        Check(failed == 0 && pixels == 2L * 2 * ew * eh && within == pixels && same8 * 1000 >= pixels * 999,
-            "A3: the new eye pass is v10's to 1/255 on every pixel and to the 8-bit value on 99.9%, flat and curved, on the self-test's views");
     }
 
     // ---- dither, half floats, heading
