@@ -103,6 +103,9 @@ int main()
         "XR_KHR_D3D11_enable", "XR_KHR_D3D12_enable", "XR_KHR_composition_layer_depth",
         "XR_MSFT_composition_layer_reprojection", "XR_KHR_win32_convert_performance_counter_time",
         "XR_EXT_win32_appcontainer_compatible", "XR_KHR_vulkan_enable",
+        // curved screen: a cylinder layer is the runtime doing the curve for us
+        "XR_KHR_composition_layer_cylinder", "XR_KHR_composition_layer_equirect",
+        "XR_KHR_composition_layer_equirect2", "XR_KHR_composition_layer_color_scale_bias",
         // passthrough: what a runtime offers apps (with an ALPHA_BLEND blend mode below)
         "XR_FB_passthrough", "XR_HTC_passthrough", "XR_FB_composition_layer_alpha_blend",
     };

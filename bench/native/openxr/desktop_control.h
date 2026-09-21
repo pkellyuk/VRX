@@ -21,6 +21,8 @@ struct DesktopSettings
     int fuse = 0;       // v5: fuse with Depth Anything V2, live
     int delayed = 0;    // v6: game frame timing "delayed to depth" (paired wins if both), live
     int subpixel = 1;   // v7: sub-pixel warp (no depth banding), live; v1-v6 keep it on
+    int curve = 0;      // v8: curved screen, 0 flat .. 100 fully wrapped, live
+    int ambilight = 0;  // v8: glow around the screen from the picture's edges, live
 };
 
 inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& result)
@@ -36,11 +38,13 @@ inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& resul
     if (version >= 5 && !(input >> s.steady >> s.fuse)) return false;
     if (version >= 6 && !(input >> s.delayed)) return false;
     if (version >= 7 && !(input >> s.subpixel)) return false;
+    if (version >= 8 && !(input >> s.curve >> s.ambilight)) return false;
     s.version = version;
     if (input >> tail) return false;
     auto between = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
-    if (magic != "VRX" || version < 1 || version > 7 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
-        s.subpixel < 0 || s.subpixel > 1 || !between(s.width, 1, 10) || !between(s.distance, 1, 8) ||
+    if (magic != "VRX" || version < 1 || version > 8 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
+        s.subpixel < 0 || s.subpixel > 1 || s.curve < 0 || s.curve > 100 || s.ambilight < 0 || s.ambilight > 1 ||
+        !between(s.width, 1, 10) || !between(s.distance, 1, 8) ||
         !between(s.height, -2, 2) || !between(s.horizontal, -3, 3) || !between(s.strength, 0, 2) ||
         s.follow < 0 || s.follow > 1 || s.stereo < 0 || s.stereo > 1 || s.autoDismiss < 0 || s.autoDismiss > 1 ||
         s.stop < 0 || s.stop > 1 || s.foreground < 0 || s.foreground > 1 || s.paired < 0 || s.paired > 1 || s.fastModel < 0 || s.fastModel > 1 || s.recenterKey < 1 || s.recenterKey > 254 ||

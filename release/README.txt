@@ -30,6 +30,15 @@ about 25 distinct depths, so smoothly receding surfaces such as grass, roads and
 walls show ridges like a ploughed field. Turning it off restores the earlier warp,
 which is very slightly sharper.
 
+"Screen curve" (per game, default 0%, applies live) wraps the screen around you like
+a curved television: the picture is laid on a cylinder whose edges come towards you,
+and the top view in the desktop app draws the shape. 100% is a wider wrap than any
+real screen. It needs stereo 3D and the fixed screen (not head-follow).
+
+"Ambilight - glow around the screen" (per game, default off, applies live) spreads the
+colours at the edge of the picture into the darkness around the screen and fades them
+out, like the bias lighting behind a television. It needs the fixed screen.
+
 "Make base settings" saves the settings shown as the starting point for games you
 have not set up yet; games already set up keep their own. "Reset this profile"
 returns a game to those base settings, or to VRX's defaults if none are saved.

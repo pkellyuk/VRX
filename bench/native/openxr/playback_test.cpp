@@ -9,6 +9,8 @@
 #include "gpu_choice.h"
 #include "depth_fusion.h"
 #include "frame_timing.h"
+#include "screen_curve.h"
+#include "ambilight.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -422,6 +424,19 @@ static void TestDesktopControl()
     Check(ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1", settings) && settings.subpixel == 1, "v7 sub-pixel warp on");
     Check(!ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1", settings), "v7 missing warp flag rejected");
     Check(!ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 2", settings), "v7 invalid warp flag rejected");
+    Check(ParseDesktopSettings("VRX 7 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1", settings) && settings.curve == 0 && settings.ambilight == 0,
+        "v7 has a flat screen and no glow");
+    Check(ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 65 1", settings) && settings.curve == 65 && settings.ambilight == 1,
+        "v8 curve percentage and ambilight");
+    Check(ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0", settings) && settings.curve == 0 && settings.ambilight == 0,
+        "v8 flat with no glow");
+    Check(ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 100 0", settings) && settings.curve == 100,
+        "v8 fully curved");
+    Check(!ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 65", settings), "v8 missing ambilight flag rejected");
+    Check(!ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 101 0", settings), "v8 curve over 100 rejected");
+    Check(!ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 -1 0", settings), "v8 negative curve rejected");
+    Check(!ParseDesktopSettings("VRX 8 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 2", settings), "v8 invalid ambilight flag rejected");
+    Check(!ParseDesktopSettings("VRX 9 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -598,6 +613,91 @@ static void TestForegroundRefinement()
     Check(!FuseForeground(base,local,w,h,testCrop) && base==original, "invalid crop does not corrupt base depth");
 }
 
+// Curved screen geometry (screen_curve.h): the numbers the warp shader and its CPU
+// reference both read, so the invariants they rely on are checked here.
+static void TestScreenCurve()
+{
+    CurveTable flat;
+    Check(BuildCurveTable(8, 5.7f, 3.0f, 0.0f, flat) && !flat.curved, "no curve is a flat screen");
+    Check(flat.col.size() == 8 && flat.heightScale == 1.0f && flat.wrapRadians == 0, "flat table is the full width");
+    for (int x = 0; x < 8; x++)
+        Check(flat.col[x].destBase == (float)x && flat.col[x].invZ == 0 && flat.col[x].vertMag == 1.0f, "flat columns are the identity");
+
+    CurveTable bad;
+    Check(!BuildCurveTable(0, 5.7f, 3.0f, 1.0f, bad), "zero width in pixels is rejected");
+    Check(!BuildCurveTable(64, 0.0f, 3.0f, 1.0f, bad), "a screen with no width is rejected");
+    Check(!BuildCurveTable(64, 5.7f, 0.0f, 1.0f, bad), "a screen at no distance is rejected");
+    Check(!BuildCurveTable(64, 5.7f, 3.0f, -0.5f, bad), "a negative curve is rejected");
+    Check(!BuildCurveTable(64, std::numeric_limits<float>::quiet_NaN(), 3.0f, 1.0f, bad), "an invalid width is rejected");
+
+    const int cw = 1920;
+    CurveTable curve;
+    Check(BuildCurveTable(cw, 5.7f, 3.0f, 1.0f, curve) && curve.curved, "a full curve builds");
+    Check(std::fabs(curve.wrapRadians - kCurveMaxWrap) < 1e-5f, "a full curve uses the maximum wrap");
+    Check(curve.col.size() == (size_t)cw, "one entry per colour column");
+    // The edges stay exactly at the edges of the quad, so no content is lost.
+    // The outermost column centres land on (or just outside) the first and last
+    // pixel, so the picture still reaches both edges of the quad.
+    Check(curve.col[0].destBase <= 0.5f && curve.col[0].destBase > -1.0f, "the first column lands on the first pixel");
+    Check(curve.col[cw - 1].destBase >= (float)cw - 1.5f && curve.col[cw - 1].destBase < (float)cw, "the last column lands on the last pixel");
+    bool rising = true, compressed = true;
+    for (int x = 1; x < cw; x++) if (!(curve.col[x].destBase > curve.col[x - 1].destBase)) rising = false;
+    Check(rising, "the mapping never folds back on itself");
+    for (int x = cw / 2 - 200; x < cw / 2 + 200; x++)
+        if (!(curve.col[x].destBase - curve.col[x - 1].destBase < 1.0f)) compressed = false;
+    Check(compressed, "the middle of the picture is compressed, because the edges take more of the view");
+    // The curve's own disparity: zero in the middle, positive (nearer) at the edges.
+    Check(std::fabs(curve.col[cw / 2].invZ) < 2e-4f, "the middle of the screen keeps the screen's own distance");
+    Check(curve.col[0].invZ > 0.05f && curve.col[cw - 1].invZ > 0.05f, "both edges are nearer than the middle");
+    Check(std::fabs(curve.col[0].invZ - curve.col[cw - 1].invZ) < 1e-5f, "the curve is symmetric");
+    const float sag = CurveSag(5.7f, curve.wrapRadians);
+    // Within a pixel of the edge: the column's centre is half a pixel inside it.
+    Check(std::fabs(curve.col[0].invZ - (1.0f / (3.0f - sag) - 1.0f / 3.0f)) < 1e-3f, "the edge disparity is the sag of the arc");
+    // Vertical: 1 at the edges, smaller in the middle, and the quad grows to match.
+    Check(std::fabs(curve.col[0].vertMag - 1.0f) < 2e-3f, "the edge columns fill the quad's height");
+    Check(curve.col[cw / 2].vertMag < 1.0f && curve.col[cw / 2].vertMag > 0.6f, "the middle stops a little short");
+    Check(curve.heightScale > 1.0f && curve.heightScale < 1.2f, "the quad is a little taller when curved");
+    // The middle of the screen faces the viewer squarely, so there it must be
+    // scaled by the same amount in both directions or straight lines would shear.
+    const float middleWide = curve.col[cw / 2 + 1].destBase - curve.col[cw / 2].destBase;
+    const float middleTall = curve.heightScale * curve.col[cw / 2].vertMag;
+    Check(std::fabs(middleWide - middleTall) < 2e-3f, "the middle of the picture is scaled equally sideways and vertically");
+    // Towards the edges the surface wraps round, taking more of the view per metre
+    // of screen, so the picture is stretched there - which is what keeps the whole
+    // width inside the quad while the middle is compressed.
+    Check(curve.col[1].destBase - curve.col[0].destBase > 1.0f, "the edges are stretched to fill the quad");
+
+    // Half the curve is gentler than a full one, in every measure.
+    CurveTable half;
+    Check(BuildCurveTable(cw, 5.7f, 3.0f, 0.5f, half) && half.curved, "half a curve builds");
+    Check(half.wrapRadians < curve.wrapRadians && half.col[0].invZ < curve.col[0].invZ &&
+          half.heightScale < curve.heightScale && half.col[cw / 2].vertMag > curve.col[cw / 2].vertMag,
+        "half the curve is gentler throughout");
+
+    // A wide screen very close by would otherwise wrap past the viewer's head.
+    CurveTable clamped;
+    Check(BuildCurveTable(cw, 10.0f, 1.0f, 1.0f, clamped) && clamped.curved, "a wide close screen still curves");
+    Check(clamped.wrapRadians < kCurveMaxWrap, "the wrap is reduced when the edges would come too close");
+    Check(CurveSag(10.0f, clamped.wrapRadians) <= 1.0f * (1.0f - kCurveMinDepthFraction) + 1e-4f,
+        "the edges stay in front of the viewer");
+    for (int x = 0; x < cw; x++) Check(std::isfinite(clamped.col[x].destBase) && std::isfinite(clamped.col[x].invZ), "clamped geometry stays finite");
+
+    // Ambilight constants: the reference refuses anything it cannot compute.
+    AmbiConstants a{};
+    float rgba[4] = { 0, 0, 0, 0 };
+    std::vector<unsigned char> picture(16 * 16 * 4, 200);
+    Check(!AmbilightPixel(a, picture.data(), 16 * 4, 0, 0, rgba), "the glow needs a size");
+    a.gw = 8; a.gh = 8; a.srcW = 16; a.srcH = 16;
+    a.rectW = 2; a.rectH = 2; a.marginM = 0.25f; a.insetX = 0.125f; a.insetY = 0.125f;
+    a.intensity = kAmbiIntensity; a.blurPx = 1; a.reset = 1;
+    Check(!AmbilightPixel(a, nullptr, 16 * 4, 0, 0, rgba), "the glow needs a picture");
+    Check(!AmbilightPixel(a, picture.data(), 4, 0, 0, rgba), "a pitch shorter than the picture is rejected");
+    Check(!AmbilightPixel(a, picture.data(), 16 * 4, 8, 0, rgba), "a pixel outside the glow is rejected");
+    Check(AmbilightPixel(a, picture.data(), 16 * 4, 4, 4, rgba) && rgba[3] == 0, "the middle of the glow is hidden by the screen");
+    Check(AmbilightPixel(a, picture.data(), 16 * 4, 0, 4, rgba) && rgba[3] > 0 && rgba[3] <= kAmbiIntensity, "the side glows, never brighter than asked");
+    Check(rgba[0] <= rgba[3] && rgba[1] <= rgba[3] && rgba[2] <= rgba[3], "the colour is premultiplied by its own alpha");
+}
+
 int main(int argc, char** argv)
 {
     TestForegroundRefinement();
@@ -620,5 +720,6 @@ int main(int argc, char** argv)
     TestCaptureClientRegion();
     TestCaptureDownscale();
     TestGpuChoice();
-    std::puts("PASS: game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop, capture downscale, depth GPU choice");
+    TestScreenCurve();
+    std::puts("PASS: curved screen geometry, ambilight constants, game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop, capture downscale, depth GPU choice");
 }

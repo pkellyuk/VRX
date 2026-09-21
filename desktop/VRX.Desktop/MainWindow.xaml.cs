@@ -182,6 +182,8 @@ public partial class MainWindow : Window
         TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
         FastModelCheck.IsChecked = p.FastDepthModel;
         SubpixelCheck.IsChecked = p.SubpixelWarp;
+        CurveSlider.Value = p.ScreenCurve;
+        AmbilightCheck.IsChecked = p.Ambilight;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
         ShowGpuChoice(p.DepthGpu);
@@ -201,6 +203,8 @@ public partial class MainWindow : Window
             DelayToDepth = TimingList.SelectedIndex == 1,
             FastDepthModel = FastModelCheck.IsChecked == true,
             SubpixelWarp = SubpixelCheck.IsChecked == true,
+            ScreenCurve = (int)Math.Round(CurveSlider.Value),
+            Ambilight = AmbilightCheck.IsChecked == true,
             SteadyDepth = SteadyCheck.IsChecked == true,
             FuseModels = FuseCheck.IsChecked == true,
             DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
@@ -236,6 +240,30 @@ public partial class MainWindow : Window
         double centre = 270 + HorizontalSlider.Value * 20, y = 150 - DistanceSlider.Value * 17;
         ScreenLine.X1 = centre - WidthSlider.Value * 10; ScreenLine.X2 = centre + WidthSlider.Value * 10;
         ScreenLine.Y1 = ScreenLine.Y2 = y;
+        DrawCurve(centre, y);
+    }
+
+    // The top view shows the curve: the edges come towards the viewer (down the
+    // canvas) by the sag of the arc, using the same geometry as the renderer
+    // (screen_curve.h: kCurveMaxWrap 70 degrees, edges never nearer than 55 % of
+    // the distance). A quadratic Bezier whose control point is one sag above the
+    // ends passes exactly through the middle of the screen.
+    private void DrawCurve(double centre, double y)
+    {
+        double fraction = CurveSlider.Value / 100.0;
+        bool curved = fraction > 0;
+        ScreenArc.Visibility = curved ? Visibility.Visible : Visibility.Collapsed;
+        ScreenLine.Visibility = curved ? Visibility.Collapsed : Visibility.Visible;
+        if (!curved) return;
+
+        double wrap = fraction * 70 * Math.PI / 180;
+        double sag = WidthSlider.Value / wrap * (1 - Math.Cos(wrap / 2));
+        sag = Math.Min(sag, DistanceSlider.Value * 0.45) * 17;
+        var figure = new PathFigure { StartPoint = new Point(ScreenLine.X1, y + sag) };
+        figure.Segments.Add(new QuadraticBezierSegment(new Point(centre, y - sag), new Point(ScreenLine.X2, y + sag), true));
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
+        ScreenArc.Data = geometry;
     }
     private void PreviewDown(object sender, MouseButtonEventArgs e)
     {
@@ -342,6 +370,8 @@ public partial class MainWindow : Window
         legacy.Remove("FastDepthModel");
         legacy.Remove("SteadyDepth");
         legacy.Remove("SubpixelWarp");
+        legacy.Remove("ScreenCurve");
+        legacy.Remove("Ambilight");
         legacy.Remove("FuseModels");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
@@ -367,20 +397,34 @@ public partial class MainWindow : Window
         var delayed = new Profile { DelayToDepth = true };
         var matchedWins = new Profile { DelayToDepth = true, MatchFrameToDepth = true };
         var wholePixel = new Profile { SubpixelWarp = false };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 7 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0"))
-            throw new Exception("Control snapshot must be v7 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags (see desktop_control.h)");
+        var curved = new Profile { ScreenCurve = 65, Ambilight = true };
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 8 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1"))
+            throw new Exception("Control snapshot must be v8 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage and the ambilight flag (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
             throw new Exception("Profiles saved before the sub-pixel warp existed must load with it on");
+        if (store.Load(one.ExecutablePath).ScreenCurve != 0 || store.Load(one.ExecutablePath).Ambilight)
+            throw new Exception("Profiles saved before the curve and ambilight existed must load flat, with no glow");
         one.MatchFrameToDepth = false;
         var sample = new RunningApp(1234, "game.exe", one.ExecutablePath, [new GameWindow(42, "Example game window")], null);
         refreshing = true; AppList.ItemsSource = new[] { sample }; AppList.SelectedItem = sample; refreshing = false;
         profile = one; PutProfile(one); WindowList.ItemsSource = sample.Windows; WindowList.SelectedIndex = 0;
         if (ForegroundCheck.IsChecked != true) throw new Exception("Foreground checkbox default is not on");
+        if (CurveSlider.Value != 0 || AmbilightCheck.IsChecked == true) throw new Exception("The screen curve and the ambilight glow should default off");
+        if (ScreenArc.Visibility != Visibility.Collapsed || ScreenLine.Visibility != Visibility.Visible)
+            throw new Exception("A flat screen must be drawn as the straight line in the top view");
+        CurveSlider.Value = 40;
+        AmbilightCheck.IsChecked = true;
+        if (ReadProfile().ScreenCurve != 40 || !ReadProfile().Ambilight) throw new Exception("The curve slider and ambilight checkbox are not mapped to settings");
+        if (ScreenArc.Visibility != Visibility.Visible || ScreenLine.Visibility != Visibility.Collapsed || ScreenArc.Data == null)
+            throw new Exception("A curved screen must be drawn as the arc in the top view");
+        CurveSlider.Value = 0;
+        AmbilightCheck.IsChecked = false;
         if (SubpixelCheck.IsChecked != true) throw new Exception("The sub-pixel warp should default on");
         SubpixelCheck.IsChecked = false;
         if (ReadProfile().SubpixelWarp) throw new Exception("Sub-pixel warp checkbox is not mapped to settings");
