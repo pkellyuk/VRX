@@ -377,6 +377,7 @@ struct Capture
     std::thread thread;
     std::atomic<uint64_t> frames{ 0 };
     HWND hwnd = nullptr;                // window capture only; frames are cropped to its client area
+    HANDLE process = nullptr;           // the captured window's process (SYNCHRONIZE): Closed is not always raised when a game exits
     int frameW = 0, frameH = 0;         // captured frame (pool) size - the whole window; srcW/srcH may be smaller
     RECT crop{};                        // last client crop applied (for change logging)
     bool cropping = false;
@@ -1365,6 +1366,10 @@ static bool SelectCaptureItem(App& app)
         if (!hwnd) return false;
         hr = interop->CreateForWindow(hwnd, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(c.item));
         c.hwnd = hwnd;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid) c.process = OpenProcess(SYNCHRONIZE, FALSE, pid);
+        if (!c.process) Log("InitCaptureItem: cannot watch process %lu (error %lu) - relying on the window and Closed alone", pid, GetLastError());
     }
     else
     {
@@ -1483,6 +1488,17 @@ static bool StartCapture(App& app)
     return true;
 }
 
+// Why the captured source is gone, or nullptr while it is still there. Windows.Graphics.Capture
+// does not always raise Closed when a game exits (Helldivers 1 did not), so the window and its
+// process are checked too; the process check also covers a window handle Windows has reused.
+static const char* CaptureSourceGone(const Capture& c)
+{
+    if (c.closed.load()) return "the capture item was closed";
+    if (c.hwnd && !IsWindow(c.hwnd)) return "the window no longer exists";
+    if (c.process && WaitForSingleObject(c.process, 0) == WAIT_OBJECT_0) return "its process has exited";
+    return nullptr;
+}
+
 static void CaptureMain(App* app)
 {
     g_threadName = "capture";
@@ -1497,9 +1513,21 @@ static void CaptureMain(App* app)
     {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     apartmentInitialized = true;
+    ULONGLONG nextSourceCheck = 0;
     while (!app->stop.load())
     {
         if (c.closed.load()) { Log("CaptureMain: source closed; stopping playback"); app->stop = true; break; }
+        const ULONGLONG now = GetTickCount64();
+        if (now >= nextSourceCheck)
+        {
+            nextSourceCheck = now + 500;
+            if (const char* why = CaptureSourceGone(c))
+            {
+                Log("CaptureMain: source gone (%s) after %llu frames; stopping playback", why, (unsigned long long)c.frames.load());
+                app->stop = true;
+                break;
+            }
+        }
         auto frame = c.pool.TryGetNextFrame();
         if (!frame) { Sleep(1); continue; }
 
@@ -8321,6 +8349,7 @@ static void Shutdown(App& app)
         if (app.cap.session) app.cap.session.Close();
         if (app.cap.pool) app.cap.pool.Close();
     } catch (const winrt::hresult_error&) {}
+    if (app.cap.process) { CloseHandle(app.cap.process); app.cap.process = nullptr; }
 
     DumpDebugMessages(app);
 
