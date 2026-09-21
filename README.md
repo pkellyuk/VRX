@@ -13,6 +13,11 @@ are needed.
 
 ![Helldivers 2 on a curved VRX screen in the room, seen in the headset](docs/vrx-headset.png)
 
+**Easy mode:** start your game and bring it to the front; VRX counts down and attaches by
+itself. Switch to **Expert** for every setting.
+
+![VRX in Easy mode: the game card with Attach / Play, Stop VR and Recenter](docs/vrx-easy-mode.png)
+
 It is not only for games: attach to a browser window and any 2D video you play in
 it — YouTube, a streaming service, your own files — becomes 3D on the same screen.
 
