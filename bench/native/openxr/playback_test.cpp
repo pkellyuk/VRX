@@ -1071,7 +1071,7 @@ static void TestRoom()
     float screenArea = 0;
     int glowActive = 0;
     for (int i = 0; i < layout.gridX * layout.gridY; i++) screenArea += em[i].c[0][3];
-    for (size_t i = (size_t)layout.gridX * layout.gridY; i < em.size(); i++) glowActive += em[i].n[3] != 0;
+    for (size_t i = (size_t)layout.gridX * layout.gridY; i < (size_t)layout.lampIndex(); i++) glowActive += em[i].n[3] != 0;
     Check(std::fabs(screenArea - in.W * in.H) < 1e-2f, "the patches cover the screen exactly");
     Check(glowActive > 200 && glowActive < layout.blocksX * layout.blocksY, "glow blocks inside the screen or the floor are skipped");
     float table[256];
@@ -1178,10 +1178,12 @@ static void TestRoom()
 
     // ---- the emitter budget: every picture shape fits, the glow's blocks growing as needed
     {
-        struct Shape { int w, h; const char* what; };
-        const Shape shapes[] = { { 2560, 1080, "21:9" }, { 1920, 1080, "16:9" }, { 1920, 1200, "16:10" }, { 1440, 1080, "4:3" },
-                                 { 1280, 1024, "5:4" }, { 1080, 1080, "1:1" }, { 1080, 1920, "9:16" } };
-        int fits = 0;
+        // With the room light counted: its emitter changes no block size.
+        struct Shape { int w, h; const char* what; int emitters, block; };
+        const Shape shapes[] = { { 2560, 1080, "21:9", 753, 8 }, { 1920, 1080, "16:9", 881, 8 }, { 1920, 1200, "16:10", 929, 8 },
+                                 { 1440, 1080, "4:3", 417, 16 }, { 1280, 1024, "5:4", 433, 16 }, { 1080, 1080, "1:1", 513, 16 },
+                                 { 1080, 1920, "9:16", 657, 16 } };
+        int fits = 0, expected = 0;
         for (const Shape& k : shapes)
         {
             int gw = 0, gh = 0;
@@ -1191,12 +1193,18 @@ static void TestRoom()
                                 (l.blocksX - 1) * l.block < gw && (l.blocksY - 1) * l.block < gh;
             if (l.count() > 0 && l.count() <= kRoomMaxEmitters && l.block >= kRoomGlowBlock && l.block <= kRoomMaxGlowBlock && covers) fits++;
             else std::printf("room layout for %s (glow %dx%d): %d emitters, %d px blocks\n", k.what, gw, gh, l.count(), l.block);
+            if (l.count() == k.emitters && l.block == k.block && l.lights == kRoomLights && l.lampIndex() == l.count() - 1) expected++;
+            else std::printf("room layout for %s: %d emitters, %d px blocks, lamp at %d (expected %d emitters, %d px blocks)\n", k.what, l.count(),
+                             l.block, l.lampIndex(), k.emitters, k.block);
         }
         Check(fits == (int)(sizeof(shapes) / sizeof(shapes[0])), "every picture shape's emitters fit the budget, and its blocks cover the glow exactly");
+        Check(expected == (int)(sizeof(shapes) / sizeof(shapes[0])),
+            "C1: with the room light every shape keeps its blocks: 753, 881, 929, 417, 433, 513 and 657 emitters, the light last");
+        Check(RoomEmitterLayout().count() == 0, "an empty layout has no emitters, not even the room light");
         int gw = 0, gh = 0;
         AmbiSizeFor(1920, 1080, &gw, &gh);
         Check(gw == glowW && gh == glowH, "the tests' 16:9 glow is the real one");
-        Check(RoomLayout(16, 9, gw, gh).block == kRoomGlowBlock && RoomLayout(16, 9, gw, gh).count() == 880, "a 16:9 picture keeps 8-texel glow blocks (880 emitters)");
+        Check(RoomLayout(16, 9, gw, gh).block == kRoomGlowBlock && RoomLayout(16, 9, gw, gh).count() == 881, "a 16:9 picture keeps 8-texel glow blocks (881 emitters, the room light included)");
         AmbiSizeFor(1440, 1080, &gw, &gh);
         Check(RoomLayout(4, 3, gw, gh).block == 16, "a 4:3 picture's glow blocks grow to 16 texels (at 8 they passed the budget)");
         Check(RoomLayout(16, 9, glowW, glowH, 16).block == 16, "larger blocks can be asked for");
@@ -1324,6 +1332,313 @@ static void TestRoom()
         Check(std::fabs(received / emitted - 1.0) < 0.03, "energy, curved: all the screen's light lands on the room (within 3%)");
     }
 
+    // ---- the room light (v11): its panel, its emitter, its light and its look
+    {
+        const size_t lamp = (size_t)layout.lampIndex();
+        const float eps = 1e-5f;
+        // C1: placement. The default panel; clearance from the walls and the front, with the
+        // viewer 3 m to the side and in the small close curved room; the last emitter.
+        Check(room.lightValid && std::fabs(room.lightX0 + 1.2f) < eps && std::fabs(room.lightX1 - 1.2f) < eps &&
+              std::fabs(room.lightZ0 - 2.5f) < eps && std::fabs(room.lightZ1 - 4.1f) < eps, "C1: the default panel spans x -1.2..1.2 and z 2.5..4.1");
+        const RoomEmitter& lampE = em[lamp];
+        bool flush = true;
+        for (int k = 0; k < 4; k++) flush = flush && lampE.c[k][1] == room.yC;
+        Check(layout.lights == kRoomLights && lamp + 1 == em.size() && flush && lampE.n[0] == 0 && lampE.n[1] == -1.0f && lampE.n[2] == 0 &&
+              lampE.n[3] == 1.0f && std::fabs(lampE.c[0][3] - 3.84f) < 1e-4f,
+            "C1: the room light is the last emitter, flush in the ceiling, facing down, active, 3.84 m2");
+        auto clear = [](const Room& r)
+        {
+            bool ok = r.lightValid && r.lightX0 >= -r.X + kRoomLightInset - 1e-4f && r.lightX1 <= r.X - kRoomLightInset + 1e-4f &&
+                      r.lightZ1 <= r.zB - kRoomLightInset + 1e-4f && r.lightX1 - r.lightX0 >= kRoomLightMinSide && r.lightZ1 - r.lightZ0 >= kRoomLightMinSide;
+            for (int i = 0; i <= 64 && ok; i++)
+            {
+                const float x = r.lightX0 + (r.lightX1 - r.lightX0) * (float)i / 64.0f;
+                ok = FrontDepth(r, x) + kRoomLightInset <= r.lightZ0 + 1e-4f;
+            }
+            return ok;
+        };
+        Check(clear(room) && clear(curved) && clear(wide) && std::fabs(0.5f * (wide.lightX0 + wide.lightX1) - std::fmin(3.0f, wide.X - kRoomLightInset - 1.2f)) < eps,
+            "C1: the panel stays 0.3 m clear of the walls and the front, and follows the viewer 3 m to the side as far as that allows");
+        std::printf("room light: the small close curved room's panel is %s (x %.2f..%.2f, z %.2f..%.2f; front at most %.2f, back %.2f)\n",
+                    closeRoom.lightValid ? "kept" : "inactive", (double)closeRoom.lightX0, (double)closeRoom.lightX1, (double)closeRoom.lightZ0,
+                    (double)closeRoom.lightZ1, (double)closeRoom.zSide, (double)closeRoom.zB);
+        std::fflush(stdout);     // Check aborts on a failure, and abort does not flush
+        Check(clear(closeRoom) || (!closeRoom.lightValid && closeRoom.lightX0 == 0 && closeRoom.lightX1 == 0 && closeRoom.lightZ0 == 0 && closeRoom.lightZ1 == 0),
+            "C1: the small close curved room keeps the panel's clearance, or has no panel");
+        Room noPanel = room;
+        noPanel.lightValid = false;
+        noPanel.lightX0 = noPanel.lightX1 = noPanel.lightZ0 = noPanel.lightZ1 = 0;
+        std::vector<RoomEmitter> noPanelEm;
+        Check(BuildRoomEmitters(noPanel, in.cyl, in.W, in.H, glowHalfW, glowHalfH, layout, noPanelEm) && noPanelEm.size() == em.size() && noPanelEm[lamp].n[3] == 0,
+            "C1: a room with no space for the panel keeps the room light's emitter, inactive");
+
+        // C2: the golden value. The floor under the panel's middle, against the closed form.
+        const float under[3] = { 0.5f * (room.lightX0 + room.lightX1), room.yF, 0.5f * (room.lightZ0 + room.lightZ1) }, upN[3] = { 0, 1, 0 };
+        const double golden = ParallelG(1.2, 0.8, (double)room.yC - room.yF);
+        Check(std::fabs(RoomLambertQuad(under, upN, lampE.c) - golden) < 1e-4 && std::fabs(ParallelG(1.2, 0.8, 4.66) - 0.1663) < 1e-4,
+            "C2: the floor under the panel's middle matches the closed form ParallelG(1.2, 0.8, yC - yF) (0.1663 at 4.66 m)");
+
+        // C4: level and colour.
+        RoomLook half, full, quarter, tenth, noColour, off, daylight;
+        half.light = 50; full.light = 100; quarter.light = 25; tenth.light = 10; noColour.light = 50; noColour.lightRgb = 0; off.light = 0;
+        daylight.light = 100; daylight.lightRgb = 0xFFF9FD;
+        const float A = in.W * in.H;
+        const RoomShading s50 = MakeRoomShading(room, 50, 0, A, half), s100 = MakeRoomShading(room, 50, 0, A, full);
+        const RoomShading s25 = MakeRoomShading(room, 50, 0, A, quarter), s10 = MakeRoomShading(room, 50, 0, A, tenth);
+        bool quarterOfFull = s50.lightOn && s100.lightOn;
+        for (int ch = 0; ch < 3; ch++) quarterOfFull = quarterOfFull && s50.lightL[ch] == 0.25f * s100.lightL[ch] && s100.lightL[ch] == kRoomLightMax * s100.lightSeen[ch];
+        Check(quarterOfFull, "C4: the room light at 50% emits exactly a quarter of 100%, and 100% emits kRoomLightMax x its colour");
+        Check(s100.lightSeen[0] == 1.0f && std::fabs(s100.lightSeen[1] - 0.456f) < 1e-3f && std::fabs(s100.lightSeen[2] - 0.147f) < 1e-3f,
+            "C4: #FFB46B normalises to (1, 0.456, 0.147)");
+        bool saturates = s25.lightOn && s10.lightOn;
+        for (int ch = 0; ch < 3; ch++)
+            saturates = saturates && s25.lightSeen[ch] == s100.lightSeen[ch] && s50.lightSeen[ch] == s100.lightSeen[ch] &&
+                        std::fabs(s10.lightSeen[ch] - 0.2f * s100.lightSeen[ch]) < 1e-6f;
+        Check(saturates, "C4: the panel's seen light keeps its hue and saturates at its colour (full at 25%, a fifth at 10%)");
+        RoomView cview;
+        cview.W = in.W; cview.H = in.H; cview.glowOn = true; cview.glowHalfW = glowHalfW; cview.glowHalfH = glowHalfH;
+        const RoomConstants rcOn = MakeRoomConstants(room, s50, layout, cview, 1920, 1080, 1.0f);
+        const RoomConstants rcBlack = MakeRoomConstants(room, MakeRoomShading(room, 50, 0, A, noColour), layout, cview, 1920, 1080, 1.0f);
+        const RoomConstants rcOff = MakeRoomConstants(room, MakeRoomShading(room, 50, 0, A, off), layout, cview, 1920, 1080, 1.0f);
+        const RoomConstants rcNoPanel = MakeRoomConstants(noPanel, MakeRoomShading(noPanel, 50, 0, A, half), layout, cview, 1920, 1080, 1.0f);
+        Check((rcOn.flags & kRoomFlagLight) != 0 && (rcBlack.flags & kRoomFlagLight) == 0 && (rcOff.flags & kRoomFlagLight) == 0 &&
+              (rcNoPanel.flags & kRoomFlagLight) == 0 && rcBlack.lightL[0] == 0 && rcBlack.lightSeen[0] == 0 && rcNoPanel.lightL[3] == 0 &&
+              rcOn.lightL[0] == s50.lightL[0] && rcOn.lightL[2] == s50.lightL[2] && rcOn.lightSeen[1] == s50.lightSeen[1] && rcOn.lightL[3] == 1.0f,
+            "C4: flag 64 needs a level, a colour that is not black and a panel; rows 14-15 carry the emitted and seen light");
+        Check(RoomLookOn(rcOn) && !RoomLookOn(rcBlack) && !RoomLookOn(rcOff) && !RoomLookOn(rcNoPanel),
+            "the eye pass takes its look variant only while the room light is on");
+
+        // A1: the room light at 0 is +0 at the end of the same sum. Every lightmap texel of the
+        // flat and 100% curved default rooms (a white picture, the glow on, a grey world, the
+        // bounce) is bit for bit what it is with the room light's emitter inactive, and with no
+        // such emitter at all (v10).
+        std::vector<unsigned char> glowing((size_t)glowW * glowH * 4, 0);
+        for (size_t i = 0; i < glowing.size(); i += 4) { glowing[i] = 200; glowing[i + 1] = 90; glowing[i + 3] = 200; }
+        const RoomShading greyFlat = MakeRoomShading(room, 50, 0x404040, A);
+        const RoomShading greyCurved = MakeRoomShading(curved, 50, 0x404040, A);
+        std::vector<RoomEmitter> curvedEm;
+        Check(BuildRoomEmitters(curved, curvedIn.cyl, in.W, in.H, 0.5f * in.W + curved.margin, 0.5f * in.H + curved.margin, layout, curvedEm),
+            "A1: the curved room's emitters build");
+        long texels = 0, same = 0;
+        for (int k = 0; k < 2; k++)
+        {
+            const Room& r = k ? curved : room;
+            const RoomShading& shd = k ? greyCurved : greyFlat;
+            std::vector<RoomEmitter> lampDark = k ? curvedEm : em;
+            Check(RoomEmitRadiance(layout, white.data(), sw, sh, sw * 4, glowing.data(), glowW * 4, true, 1.0f, table, lampDark),
+                "A1: emit");
+            std::vector<RoomEmitter> inactive = lampDark, v10 = lampDark;
+            inactive[lamp].n[3] = 0;
+            v10.pop_back();
+            for (int f = 0; f < kRoomFaces; f++)
+                for (int j = 0; j < kRoomLightmap; j++)
+                    for (int i = 0; i < kRoomLightmap; i++)
+                    {
+                        float a[3], b[3], c3[3];
+                        RoomTexel(r, shd, lampDark, f, i, j, a);
+                        RoomTexel(r, shd, inactive, f, i, j, b);
+                        RoomTexel(r, shd, v10, f, i, j, c3);
+                        texels++;
+                        if (std::memcmp(a, b, sizeof(a)) == 0 && std::memcmp(a, c3, sizeof(a)) == 0) same++;
+                    }
+        }
+        Check(texels == 2L * kRoomFaces * kRoomLightmap * kRoomLightmap && same == texels,
+            "A1: with the room light at 0 every lightmap texel is bit for bit v10's, flat and curved");
+
+        // A2: the bounce with the room light off, and on (Glass and Reflections 0), is v10's
+        // formula bit for bit: the panel is part of the ceiling.
+        for (int k = 0; k < 2; k++)
+        {
+            const Room& r = k ? curved : room;
+            float total = 0, weighted = 0;
+            const float rhoWall = kRoomMaxAlbedo * 0.5f, rhoFloor = kRoomFloorAlbedo * rhoWall;
+            for (int f = 0; f < kRoomFaces; f++)
+            {
+                const float a = RoomArea(r, f);
+                const float rho = f == kFaceFloor ? rhoFloor : rhoWall;
+                total += a;
+                weighted += rho * (f == kFaceFront ? std::fmax(a - A, 0.0f) : a);
+            }
+            const float rhoBar = weighted / total, invArea = 1.0f / total;
+            const float bounce = rhoBar * invArea / (1.0f - rhoBar);
+            const RoomShading lookOff = MakeRoomShading(r, 50, 0, A), lookOn = MakeRoomShading(r, 50, 0, A, half);
+            const float gotOff[3] = { lookOff.rhoBar, lookOff.invArea, RoomBounceScale(lookOff) }, gotOn[3] = { lookOn.rhoBar, lookOn.invArea, RoomBounceScale(lookOn) };
+            const float want[3] = { rhoBar, invArea, bounce };
+            Check(std::memcmp(gotOff, want, sizeof(want)) == 0 && std::memcmp(gotOn, want, sizeof(want)) == 0,
+                k ? "A2: the curved room's bounce is v10's formula bit for bit, the room light off and on" : "A2: the bounce is v10's formula bit for bit, the room light off and on");
+            Check(lookOn.kappaBar > 0 && std::fabs(lookOn.kappaBar - (r.lightX1 - r.lightX0) * (r.lightZ1 - r.lightZ0) / RoomArea(r, kFaceCeiling)) < 1e-6f,
+                "the panel's share of the ceiling, for the bounce once the ceiling can be glass");
+        }
+
+        // C3: energy. The room light alone (a black picture, the glow off, a black world, no
+        // bounce): everything it emits lands on the faces other than the ceiling (within 3%),
+        // flat and curved, and no ceiling texel gets any.
+        for (int k = 0; k < 2; k++)
+        {
+            const Room& r = k ? curved : room;
+            RoomShading shd = MakeRoomShading(r, 50, 0, A, full);
+            shd.rhoBar = 0;
+            std::vector<RoomEmitter> lampOnly = k ? curvedEm : em;
+            Check(RoomEmitRadiance(layout, black.data(), sw, sh, sw * 4, glowTex.data(), glowW * 4, false, 1.0f, table, lampOnly, shd.lightL),
+                "C3: emit the room light alone");
+            const double fullArea = 2.0 * r.X * (r.zB + r.g);
+            double received = 0;
+            long ceilingLit = 0;
+            for (int f = 0; f < kRoomFaces; f++)
+            {
+                const bool strip = f == kFaceFloor || f == kFaceCeiling;
+                const double texelArea = (strip ? fullArea : RoomArea(r, f)) / (double)(kRoomLightmap * kRoomLightmap);
+                const float rho = f == kFaceFloor ? shd.rhoFloor : (f == kFaceCeiling ? shd.rhoCeiling : shd.rhoWall);
+                for (int j = 0; j < kRoomLightmap; j++)
+                    for (int i = 0; i < kRoomLightmap; i++)
+                    {
+                        float p[3], nn[3], L[3];
+                        RoomFacePoint(r, f, ((float)i + 0.5f) / kRoomLightmap, ((float)j + 0.5f) / kRoomLightmap, p, nn);
+                        if (strip && p[2] < FrontDepth(r, p[0])) continue;
+                        RoomTexel(r, shd, lampOnly, f, i, j, L);
+                        if (f == kFaceCeiling) { ceilingLit += L[0] != 0 || L[1] != 0 || L[2] != 0; continue; }
+                        received += (double)L[0] * kRoomPi / rho * texelArea;
+                    }
+            }
+            const double emitted = kRoomPi * lampOnly[lamp].c[0][3] * shd.lightL[0];
+            std::printf("room light energy (%s): received / emitted = %.4f\n", k ? "curved" : "flat", received / emitted);
+            std::fflush(stdout);
+            Check(std::fabs(received / emitted - 1.0) < 0.03 && ceilingLit == 0,
+                k ? "C3: energy, curved: all the room light lands on the room below the ceiling (within 3%), none on the ceiling"
+                  : "C3: energy: all the room light lands on the room below the ceiling (within 3%), none on the ceiling");
+            // C4 again: the warm white lights the floor under its panel redder than blue, as
+            // strongly as the closed form says (the texel's centre is within half a texel of
+            // the panel's middle; Le = 20 x its colour at 100%).
+            const float ux = 0.5f * (r.lightX0 + r.lightX1), uz = 0.5f * (r.lightZ0 + r.lightZ1);
+            const int fi = (int)((ux + r.X) / (2.0f * r.X) * kRoomLightmap), fj = (int)((uz + r.g) / (r.zB + r.g) * kRoomLightmap);
+            const double goldenR = ParallelG(0.5 * (r.lightX1 - r.lightX0), 0.5 * (r.lightZ1 - r.lightZ0), (double)r.yC - r.yF);
+            float floorL[3];
+            RoomTexel(r, shd, lampOnly, kFaceFloor, fi, fj, floorL);
+            const double direct = shd.rhoFloor / kRoomPi * goldenR * shd.lightL[0];
+            Check(floorL[0] > floorL[1] && floorL[1] > floorL[2] && floorL[0] > 0.97 * direct && floorL[0] <= 1.0001 * direct,
+                k ? "C4: a warm light makes the floor under it redder than blue, as bright as the closed form says (curved)"
+                  : "C4: a warm light makes the floor under it redder than blue, as bright as the closed form says");
+        }
+        {
+            const RoomShading shd = MakeRoomShading(room, 50, 0, A, daylight);
+            std::vector<RoomEmitter> day = em;
+            RoomEmitRadiance(layout, black.data(), sw, sh, sw * 4, glowTex.data(), glowW * 4, false, 1.0f, table, day, shd.lightL);
+            float floorL[3];
+            const int fi = (int)((under[0] + room.X) / (2.0f * room.X) * kRoomLightmap), fj = (int)((under[2] + room.g) / (room.zB + room.g) * kRoomLightmap);
+            RoomTexel(room, shd, day, kFaceFloor, fi, fj, floorL);
+            Check(floorL[2] > 0.9f * floorL[0], "C4: daylight (6500 K) lights the floor nearly white");
+        }
+
+        // The panel's coverage: a box-filtered bar, exactly 1 inside and 0 outside with a tiny
+        // footprint, soft across its edge over about one footprint, and the mean for a huge one.
+        Check(RoomBar(0.3f, 0.0f, 2.4f, 1e-4f) == 1.0f && RoomBar(1.5f, 0.0f, 2.4f, 1e-4f) == 0.0f && std::fabs(RoomBar(1.2f, 0.0f, 2.4f, 0.1f) - 0.5f) < 1e-5f &&
+              std::fabs(RoomBar(0.0f, 0.0f, 2.4f, 100.0f) - 0.024f) < 0.01f * 0.024f, "the panel's edges: a bar box-filtered over the footprint");
+        {
+            float worstStep = 0, prev = RoomBar(0.9f, 0.0f, 2.4f, 0.2f);
+            bool monotonic = true;
+            for (int i = 1; i <= 600; i++)
+            {
+                const float s = 0.9f + 0.001f * (float)i, b = RoomBar(s, 0.0f, 2.4f, 0.2f);
+                worstStep = std::max(worstStep, std::fabs(b - prev));
+                monotonic = monotonic && b <= prev + 1e-6f;          // flat to rounding inside and outside
+                prev = b;
+            }
+            Check(monotonic && worstStep <= 2.0f * 0.001f / 0.2f + 1e-5f, "the bar falls smoothly across its edge: neighbours differ by at most 2 delta / f");
+        }
+        Check(RoomPanelCoverage(rcOn, 0.0f, 3.3f, 0.05f, 0.05f) == 1.0f && RoomPanelCoverage(rcOn, 2.0f, 3.3f, 0.05f, 0.05f) == 0.0f &&
+              std::fabs(RoomPanelCoverage(rcOn, 1.2f, 3.3f, 0.05f, 0.05f) - 0.5f) < 1e-4f && RoomPanelCoverage(rcNoPanel, 0.0f, 3.3f, 0.05f, 0.05f) == 0.0f,
+            "the panel covers its middle, not beyond it, half of its edge, and nothing without a panel");
+
+        // The footprint: where a pixel's neighbours meet the ceiling, from the ray differentials
+        // (against a central difference of the hits themselves).
+        {
+            CurveConstants fc;
+            fc.ew = 64; fc.eh = 48;
+            CurveEye& v = fc.eye[0];
+            v.origin[0] = in.eye[0]; v.origin[1] = in.eye[1]; v.origin[2] = in.eye[2];
+            YawPitchRows(20.0f, 70.0f, v);
+            v.tanL = -0.6f; v.tanR = 0.6f; v.tanU = 0.45f; v.tanD = -0.45f;
+            float Dx[3], Dy[3];
+            Check(RoomRayDiff(fc, 0, Dx, Dy), "ray differentials");
+            float worst = 0;
+            for (int py = 4; py < 48; py += 10)
+                for (int px = 4; px < 64; px += 10)
+                {
+                    float o[3], d[3], Px[3], Py[3];
+                    CurveRay(fc, 0, (float)px + 0.5f, (float)py + 0.5f, o, d);
+                    if (!(d[1] > 0)) continue;
+                    const float t = (room.yC - o[1]) / d[1], n[3] = { 0, -1, 0 };
+                    RoomPlaneFootprint(t, d, n, Dx, Dy, Px, Py);
+                    auto hitAt = [&](float qx, float qy, float p[3])
+                    {
+                        float oo[3], dd[3];
+                        CurveRay(fc, 0, qx, qy, oo, dd);
+                        const float tt = (room.yC - oo[1]) / dd[1];
+                        RoomAt(oo, dd, tt, p);
+                    };
+                    const float h = 0.05f;
+                    float a[3], b[3], c3[3], d3[3];
+                    hitAt((float)px + 0.5f + h, (float)py + 0.5f, a); hitAt((float)px + 0.5f - h, (float)py + 0.5f, b);
+                    hitAt((float)px + 0.5f, (float)py + 0.5f + h, c3); hitAt((float)px + 0.5f, (float)py + 0.5f - h, d3);
+                    for (int k = 0; k < 3; k += 2)
+                    {
+                        const float fx = (a[k] - b[k]) / (2.0f * h), fy = (c3[k] - d3[k]) / (2.0f * h);
+                        worst = std::max(worst, std::max(std::fabs(fx - Px[k]) / (std::fabs(Px[k]) + 1e-3f), std::fabs(fy - Py[k]) / (std::fabs(Py[k]) + 1e-3f)));
+                    }
+                }
+            Check(worst < 2e-2f, "a pixel's footprint on the ceiling is how far its hit moves per pixel");
+        }
+
+        // The eye pass: straight up from the viewer, over a flat grey lightmap. The pixel over
+        // the panel's middle shows the lightmap plus the panel's own light; one well beyond it
+        // only the lightmap; across the panel's edge it fades over about a pixel; and with the
+        // light off the ceiling is the lightmap alone.
+        {
+            RoomLightmap grey05;
+            grey05.texels.assign((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 4, 0.05f);
+            CurveConstants uc;
+            uc.ew = 64; uc.eh = 64;
+            CurveEye& v = uc.eye[0];
+            v.origin[0] = in.eye[0]; v.origin[1] = in.eye[1]; v.origin[2] = 3.3f;
+            YawPitchRows(0.0f, 90.0f, v);
+            v.tanL = -0.8f; v.tanR = 0.8f; v.tanU = 0.8f; v.tanD = -0.8f;
+            uc.eye[1] = uc.eye[0];
+            RoomView uview = cview;
+            uview.flatLayer = true; uview.dither = false;
+            const RoomConstants on = MakeRoomConstants(room, s50, layout, uview, 1920, 1080, 1.0f);
+            const RoomConstants offRc = MakeRoomConstants(room, MakeRoomShading(room, 50, 0, A), layout, uview, 1920, 1080, 1.0f);
+            unsigned char dummy[4] = { 0, 0, 0, 255 };
+            const RgbaImage noPicture{ dummy, 1, 1, 4 };
+            RoomEyeInputs lit3, dark3;
+            lit3.rc = &on; lit3.picture = &noPicture; lit3.light = &grey05;
+            dark3 = lit3;
+            dark3.rc = &offRc;
+            float mid[3], far3[3], midOff[3];
+            const bool okMid = RoomPixel(uc, in.cyl, room, uview, 0, 32, 32, lit3, mid) && RoomPixel(uc, in.cyl, room, uview, 0, 32, 32, dark3, midOff);
+            const bool okFar = RoomPixel(uc, in.cyl, room, uview, 0, 1, 1, lit3, far3);
+            bool midRight = okMid && okFar;
+            for (int ch = 0; ch < 3; ch++)
+                midRight = midRight && std::fabs(mid[ch] - LinearToSrgb(0.05f + s50.lightSeen[ch])) < 1e-5f &&
+                           std::fabs(midOff[ch] - LinearToSrgb(0.05f)) < 1e-6f && std::fabs(far3[ch] - LinearToSrgb(0.05f)) < 1e-6f;
+            Check(midRight, "the eye pass: the ceiling over the panel shows the lightmap plus the panel's light, beyond it the lightmap alone");
+            // Across the panel's right edge (x = 1.2, 2.86 m up): the pixels' red, from inside
+            // to outside, falls monotonically, with at least one in between.
+            float prev = 2.0f;
+            bool falls = true;
+            int between = 0;
+            for (int px = 32; px < 64; px++)
+            {
+                float rgb[3];
+                if (!RoomPixel(uc, in.cyl, room, uview, 0, px, 32, lit3, rgb)) { falls = false; break; }
+                const float linear = SrgbToLinear(rgb[1]) - 0.05f;
+                falls = falls && linear <= prev + 1e-6f;
+                if (linear > 0.01f * s50.lightSeen[1] && linear < 0.99f * s50.lightSeen[1]) between++;
+                prev = linear;
+            }
+            Check(falls && between >= 1 && between <= 3, "the panel's edge is soft over about a pixel, not stepped");
+        }
+    }
+
     // ---- the constant buffer: 512 bytes, v10's rows as they were, rows 17-20 the eye pass's
     // reciprocals and the screen's box, the other v11 rows zero until their steps
     {
@@ -1332,11 +1647,16 @@ static void TestRoom()
         const RoomConstants rc = MakeRoomConstants(room, shade, layout, view, 1920, 1080, 0.5f);
         const unsigned char* bytes = (const unsigned char*)&rc;
         bool rest = true;
-        for (size_t i = offsetof(RoomConstants, glass); i < offsetof(RoomConstants, invH); i++) rest = rest && bytes[i] == 0;
+        for (size_t i = offsetof(RoomConstants, glass); i < offsetof(RoomConstants, lightX0); i++) rest = rest && bytes[i] == 0;
+        for (size_t i = offsetof(RoomConstants, mirrorW); i < offsetof(RoomConstants, invH); i++) rest = rest && bytes[i] == 0;
         for (size_t i = offsetof(RoomConstants, rpad6); i < sizeof(RoomConstants); i++) rest = rest && bytes[i] == 0;
-        Check(sizeof(RoomConstants) == 512 && offsetof(RoomConstants, glass) == 176 && rest, "RoomConstants is 512 bytes; rows 11-16 and the padding from row 20 on are zero");
+        Check(sizeof(RoomConstants) == 512 && offsetof(RoomConstants, glass) == 176 && rest,
+            "RoomConstants is 512 bytes; rows 11, 12 and 16 and the padding from row 20 on are zero");
         Check(rc.X == room.X && rc.zSide == room.zSide && rc.glowBlock == (uint32_t)layout.block && rc.emitters == (uint32_t)layout.count() &&
               rc.srcW == 1920 && rc.alpha == 0.5f && rc.flags == (kRoomFlagGlow | kRoomFlagDither), "rows 0-10 carry what they carried in v10");
+        Check(rc.lightX0 == room.lightX0 && rc.lightX1 == room.lightX1 && rc.lightZ0 == room.lightZ0 && rc.lightZ1 == room.lightZ1 &&
+              rc.lightL[0] == 0 && rc.lightL[1] == 0 && rc.lightL[2] == 0 && rc.lightL[3] == 1.0f && rc.lightSeen[0] == 0 && rc.lightSeen[3] == 0,
+            "rows 13-15 with the room light off: its panel, no light, and w = the panel fits");
         Check(rc.invH == 1.0f / (room.yC - room.yF) && rc.inv2X == 1.0f / (2.0f * room.X) && rc.invSide == 1.0f / (room.zB - room.zSide) &&
               rc.invFloorZ == 1.0f / (room.zB + room.g) && rc.inv2sMax == 1.0f / (2.0f * room.sMax) && rc.invGlowW == 1.0f / (2.0f * glowHalfW) &&
               rc.invGlowH == 1.0f / (2.0f * glowHalfH) && rc.tanA == 0 && rc.wingS == 0 && rc.scrTanWrap == 0 && rc.scrBoxX == 0 && rc.scrBoxZ == 0,
@@ -1369,8 +1689,10 @@ static void TestRoom()
             "the HLSL's floats read back as exactly the C++ values");
         Check(value("ROOM_LIGHTMAP") == "64" && value("ROOM_FACES") == "6" && value("ROOM_FACE_FRONT") == "0" && value("ROOM_FACE_FLOOR") == "3" &&
               value("ROOM_FACE_BACK") == "5" && value("ROOM_EMITTER_FLOAT4S") == "6" && value("ROOM_GROUP_THREADS") == "256" &&
-              value("ROOM_FLAG_CURVED") == "1u" && value("ROOM_FLAG_DITHER") == "8u" && value("ROOM_KIND_FOOTPRINT") == "7" &&
-              value("ROOM_KIND_OUTSIDE") == "8", "the HLSL's whole-number constants");
+              value("ROOM_FLAG_CURVED") == "1u" && value("ROOM_FLAG_DITHER") == "8u" && value("ROOM_FLAG_LIGHT") == "64u" &&
+              value("ROOM_KIND_FOOTPRINT") == "7" && value("ROOM_KIND_OUTSIDE") == "8", "the HLSL's whole-number constants");
+        Check(std::strtof(value("ROOM_FOOT_MIN").c_str(), nullptr) == kRoomFootMin && std::strtof(value("ROOM_FOOT_MAX").c_str(), nullptr) == kRoomFootMax,
+            "the HLSL's footprint clamps are room.h's");
         const std::string bayer = value("ROOM_BAYER");
         int parsed = 0, matching = 0;
         for (size_t at = bayer.find_first_of("0123456789"); at != std::string::npos; at = bayer.find_first_of("0123456789", at))
@@ -1678,12 +2000,15 @@ static void TestRoom()
             RoomView view;
             view.flatLayer = !curvedCase; view.W = scrW; view.H = scrH; view.glowOn = true;
             view.glowHalfW = 0.5f * scrW + margin; view.glowHalfH = 0.5f * scrH + margin; view.dither = true; view.cyl = rin.cyl;
+            const RoomConstants rc40 = MakeRoomConstants(r, sh40, l, view, pw, ph, 1.0f);
+            RoomEyeInputs inputs;
+            inputs.rc = &rc40; inputs.picture = &picture; inputs.glow = &glowImg; inputs.light = &light;
             for (int e = 0; e < 2; e++)
                 for (int y = 0; y < eh; y++)
                     for (int x = 0; x < ew; x++)
                     {
                         float a[3] = { -1, -1, -1 }, b[3] = { -2, -2, -2 };
-                        const bool okA = RoomPixel(c, rin.cyl, r, view, e, x, y, picture, &glowImg, light, a);
+                        const bool okA = RoomPixel(c, rin.cyl, r, view, e, x, y, inputs, a);
                         const bool okB = room_v10::RoomPixel(c, rin.cyl, r, view, e, x, y, picture, &glowImg, light, b);
                         pixels++;
                         if (!okA || !okB) { failed++; continue; }

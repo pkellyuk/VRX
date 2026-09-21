@@ -49,6 +49,9 @@
 // the light bouncing round the room (the integrating-sphere estimate). A surface
 // shows L = (albedo/pi)(E + bounce) + shade x the world colour, which becomes the
 // room's house lights. The glow is added on top where it lies on the front wall.
+// The room light (v11) is one more emitter, the last: a panel flush in the ceiling just
+// above and behind the viewer, whose radiance comes from the constants (0 while off).
+// The ceiling shows the panel's own light over it (RoomCeilingPanel).
 //
 // All of it is computed once per frame into a small lightmap (kRoomLightmap^2 per
 // face) that both eyes sample: diffuse light does not depend on where you look from.
@@ -80,6 +83,18 @@ static const float kRoomShadeFloor = 0.75f;     // house light (world colour) pe
 static const float kRoomShadeCeiling = 0.6f;
 static const float kRoomLightTau = 0.04f;       // seconds: the screen's light is smoothed this much
 static const float kRoomPi = 3.14159265358979f;
+// The room light (v11): one soft panel flush in the ceiling, just above and behind the
+// viewer. It is always an emitter, the last in the buffer (radiance 0 when it is off).
+static const int kRoomLights = 1;               // lamp emitters
+static const float kRoomLightW = 2.4f;          // the panel across the room (x), metres ...
+static const float kRoomLightD = 1.6f;          // ... and along it (z)
+static const float kRoomLightBehind = 0.3f;     // its centre this far behind the head
+static const float kRoomLightInset = 0.3f;      // at least this far from the side and back walls and the front
+static const float kRoomLightMinSide = 0.5f;    // a room with no space for this much either way has no panel
+static const float kRoomLightMax = 20.0f;       // emitted radiance at 100%
+static const uint32_t kRoomLightDefault = 0xFFB46B;     // 3000 K, "Soft white"
+static const float kRoomFootMin = 1e-4f;        // a pixel's footprint on a surface, metres, at least ...
+static const float kRoomFootMax = 10.0f;        // ... and at most
 
 // ------------------------------------------------------------------- geometry
 struct RoomInputs
@@ -118,6 +133,10 @@ struct Room
     float invSide = 0;                  // 1 / (zB - zSide)
     float invFloorZ = 0;                // 1 / (zB + g)
     float inv2sMax = 0;                 // 1 / (2 sMax)
+    // The room light's panel, flush in the ceiling: x in [lightX0, lightX1], z in [lightZ0,
+    // lightZ1]. All zero, and lightValid false, when the room has no space for it.
+    float lightX0 = 0, lightX1 = 0, lightZ0 = 0, lightZ1 = 0;
+    bool lightValid = false;
 };
 
 // Depth of the front wall at x (the room is z >= FrontDepth). tanA is sinA / cosA, the
@@ -239,6 +258,22 @@ inline bool BuildRoom(const RoomInputs& in, Room& out)
     r.invSide = 1.0f / (r.zB - r.zSide);
     r.invFloorZ = 1.0f / (r.zB + r.g);
     r.inv2sMax = 1.0f / (2.0f * r.sMax);
+    // The room light's panel: kRoomLightW x kRoomLightD, over the viewer's x and
+    // kRoomLightBehind behind the head, but kRoomLightInset clear of the side walls, the
+    // back wall and the front (zSide is the front's deepest point, so a curved front's
+    // too). A room with no space for kRoomLightMinSide either way has none.
+    {
+        const float w = std::fmin(kRoomLightW, 2.0f * (r.X - kRoomLightInset));
+        const float cx = std::fmin(std::fmax(ex, -r.X + kRoomLightInset + 0.5f * w), r.X - kRoomLightInset - 0.5f * w);
+        const float d = std::fmin(kRoomLightD, (r.zB - kRoomLightInset) - (r.zSide + kRoomLightInset));
+        const float cz = std::fmin(std::fmax(ez + kRoomLightBehind, r.zSide + kRoomLightInset + 0.5f * d), r.zB - kRoomLightInset - 0.5f * d);
+        r.lightValid = w >= kRoomLightMinSide && d >= kRoomLightMinSide;
+        if (r.lightValid)
+        {
+            r.lightX0 = cx - 0.5f * w; r.lightX1 = cx + 0.5f * w;
+            r.lightZ0 = cz - 0.5f * d; r.lightZ1 = cz + 0.5f * d;
+        }
+    }
     r.valid = true;
     if (!RoomInside(r, in.eye)) return false;
     out = r;
@@ -544,13 +579,17 @@ struct RoomEmitterLayout
     int glowW = 0, glowH = 0;           // glow texture size
     int block = kRoomGlowBlock;         // glow texels per side of one glow emitter
     int blocksX = 0, blocksY = 0;       // glow blocks
-    int count() const { return gridX * gridY + blocksX * blocksY; }
+    int lights = 0;                     // the room light (kRoomLights from RoomLayout), after the glow's blocks
+    int count() const { return gridX * gridY + blocksX * blocksY + lights; }
+    // The room light's index: every loop over the glow's blocks stops here.
+    int lampIndex() const { return gridX * gridY + blocksX * blocksY; }
 };
 
 // The emitters for a screen of this shape. The glow's blocks start at kRoomGlowBlock
 // texels and grow until everything fits in kRoomMaxEmitters: a 4:3, square or portrait
 // picture has a taller glow texture, and at 8 texels its blocks alone passed the
-// budget. `minBlock` lets the self-test exercise the larger blocks.
+// budget. `minBlock` lets the self-test exercise the larger blocks. The budget counts
+// the room light too.
 inline RoomEmitterLayout RoomLayout(float W, float H, int glowW, int glowH, int minBlock = kRoomGlowBlock)
 {
     RoomEmitterLayout l;
@@ -559,6 +598,7 @@ inline RoomEmitterLayout RoomLayout(float W, float H, int glowW, int glowH, int 
     l.gridY = (int)std::lround(16.0f * H / W);
     l.gridY = l.gridY < 4 ? 4 : (l.gridY > 16 ? 16 : l.gridY);
     l.glowW = glowW; l.glowH = glowH;
+    l.lights = kRoomLights;
     for (l.block = std::max(minBlock, kRoomGlowBlock); ; l.block *= 2)
     {
         l.blocksX = (glowW + l.block - 1) / l.block;
@@ -582,8 +622,9 @@ inline void RoomSetQuad(RoomEmitter& e, const float c[4][3], const float n[3])
 }
 
 // Emitter geometry (radiance left at zero). Screen patches first, row by row from the
-// top-left; then the glow's blocks, row by row. Glow blocks wholly inside the screen
-// (the glow is zero there) or outside the room's height are marked inactive.
+// top-left; then the glow's blocks, row by row; then the room light. Glow blocks wholly
+// inside the screen (the glow is zero there) or outside the room's height are marked
+// inactive, as is the room light when the room has no space for its panel.
 inline bool BuildRoomEmitters(const Room& r, const Cylinder& cyl, float W, float H, float glowHalfW, float glowHalfH,
                               const RoomEmitterLayout& l, std::vector<RoomEmitter>& out)
 {
@@ -639,6 +680,16 @@ inline bool BuildRoomEmitters(const Room& r, const Cylinder& cyl, float W, float
             const float n[3] = { nx, 0, nz };
             RoomSetQuad(e, c, n);
         }
+    // The room light: a quad flush in the ceiling, facing down. It is lit whatever the
+    // light's level (0 radiance when off), so turning the light up needs no rebuild.
+    if (l.lights > 0)
+    {
+        RoomEmitter& e = out[(size_t)l.lampIndex()];
+        const float c[4][3] = { { r.lightX0, r.yC, r.lightZ0 }, { r.lightX1, r.yC, r.lightZ0 }, { r.lightX1, r.yC, r.lightZ1 }, { r.lightX0, r.yC, r.lightZ1 } };
+        const float n[3] = { 0, -1, 0 };
+        RoomSetQuad(e, c, n);
+        if (!r.lightValid) e.n[3] = 0;
+    }
     return true;
 }
 
@@ -686,10 +737,11 @@ inline void RoomGroupSum(int count, Item item, float out[3])
 // Each emitter's radiance this frame, as the EMIT pass computes it. `src` is the
 // captured picture (RGBA8, pitch in bytes), `glow` the 8-bit glow texture. Screen
 // patches blend towards their new mean by `alpha` (1: take it); glow blocks take
-// theirs (the glow is already smoothed).
+// theirs (the glow is already smoothed). The room light takes `lightL` (rgb, the
+// constants' row 14), or 0 when it is null - the block loops never reach its index.
 inline bool RoomEmitRadiance(const RoomEmitterLayout& l, const unsigned char* src, int srcW, int srcH, int srcPitch,
                              const unsigned char* glow, int glowPitch, bool glowOn, float alpha,
-                             const float table[256], std::vector<RoomEmitter>& emitters)
+                             const float table[256], std::vector<RoomEmitter>& emitters, const float* lightL = nullptr)
 {
     if (!src || !table || srcW <= 0 || srcH <= 0 || srcPitch < srcW * 4) return false;
     if ((int)emitters.size() != l.count()) return false;
@@ -733,6 +785,11 @@ inline bool RoomEmitRadiance(const RoomEmitterLayout& l, const unsigned char* sr
             const float count = (float)(bw * bh);
             for (int ch = 0; ch < 3; ch++) e.L[ch] = sum[ch] / count;
         }
+    if (l.lights > 0)
+    {
+        RoomEmitter& e = emitters[(size_t)l.lampIndex()];
+        for (int ch = 0; ch < 3; ch++) e.L[ch] = lightL ? lightL[ch] : 0.0f;
+    }
     return true;
 }
 
@@ -778,14 +835,37 @@ inline float RoomFormFactor(const float p[3], const float n[3], const RoomEmitte
     return RoomLambertQuad(p, n, e.c);
 }
 
+// The room's controls beyond the Room slider (v11). So far the room light: its level,
+// 0 (off) .. 100, and its colour. Glass and Reflections join it in the next steps.
+struct RoomLook
+{
+    int light = 0;
+    uint32_t lightRgb = kRoomLightDefault;      // 0xRRGGBB
+};
+
 struct RoomShading
 {
     float rhoWall = 0, rhoFloor = 0, rhoCeiling = 0;
     float rhoBar = 0, invArea = 0;      // mean albedo and 1 / total area, for the bounce
     float world[3] = { 0, 0, 0 };       // Dec(world colour): the house lights
+    // The room light. Level s = (Light/100)^2 and colour c = Dec(rgb) / its largest
+    // channel: the panel emits Le = kRoomLightMax s c into the lightmap and is seen as
+    // Ls = c min(1, kRoomLightMax s), which keeps its hue and is full from 23% up
+    // (kRoomLightMax s reaches 1 at 22.4%).
+    bool lightOn = false;               // the panel fits, its level is above 0 and its colour is not black (kRoomFlagLight)
+    float lightL[3] = { 0, 0, 0 };      // Le, linear (0 while off)
+    float lightSeen[3] = { 0, 0, 0 };   // Ls, linear (0 while off)
+    float kappaBar = 0;                 // the panel's share of the ceiling's area (0 with no panel), for the finish's bounce
 };
 
-inline RoomShading MakeRoomShading(const Room& r, int roomPercent, uint32_t worldRgb, float screenArea)
+// The lightmap's albedos and bounce, the house lights and the room light. The bounce's
+// mean albedo rhoBar weighs each face's albedo a_f by its area; the screen absorbs. The
+// room light's panel is part of the ceiling, of the ceiling's albedo, so with Glass and
+// Reflections at 0 (all there is so far) a_f is each face's plain albedo and rhoBar is
+// v10's to the bit. The room light's own flux joins the bounce as every emitter's does,
+// through RoomTexel's flux sum; kappaBar is kept for the bounce once the rest of the
+// ceiling can be glass.
+inline RoomShading MakeRoomShading(const Room& r, int roomPercent, uint32_t worldRgb, float screenArea, const RoomLook& look = RoomLook())
 {
     RoomShading s;
     const float pct = (float)(roomPercent < 0 ? 0 : (roomPercent > 100 ? 100 : roomPercent)) / 100.0f;
@@ -805,6 +885,22 @@ inline RoomShading MakeRoomShading(const Room& r, int roomPercent, uint32_t worl
     s.world[0] = SrgbToLinear((float)((worldRgb >> 16) & 255) / 255.0f);
     s.world[1] = SrgbToLinear((float)((worldRgb >> 8) & 255) / 255.0f);
     s.world[2] = SrgbToLinear((float)(worldRgb & 255) / 255.0f);
+
+    const float level = (float)(look.light < 0 ? 0 : (look.light > 100 ? 100 : look.light)) / 100.0f;
+    const float strength = level * level;
+    const float c[3] = { SrgbToLinear((float)((look.lightRgb >> 16) & 255) / 255.0f), SrgbToLinear((float)((look.lightRgb >> 8) & 255) / 255.0f),
+                         SrgbToLinear((float)(look.lightRgb & 255) / 255.0f) };
+    const float peak = std::fmax(std::fmax(c[0], c[1]), c[2]);
+    s.lightOn = r.valid && r.lightValid && strength > 0 && peak > 0;
+    if (s.lightOn)
+        for (int ch = 0; ch < 3; ch++)
+        {
+            const float cn = c[ch] / peak;
+            s.lightL[ch] = kRoomLightMax * strength * cn;
+            s.lightSeen[ch] = cn * std::fmin(1.0f, kRoomLightMax * strength);
+        }
+    const float ceiling = RoomArea(r, kFaceCeiling);
+    s.kappaBar = r.lightValid && ceiling > 0 ? (r.lightX1 - r.lightX0) * (r.lightZ1 - r.lightZ0) / ceiling : 0.0f;
     return s;
 }
 
@@ -876,10 +972,12 @@ static const uint32_t kRoomFlagCurved = 1;      // the front is the glow's cylin
 static const uint32_t kRoomFlagFlatLayer = 2;   // flat screen: the compositor draws it; show its footprint
 static const uint32_t kRoomFlagGlow = 4;        // the ambilight is on
 static const uint32_t kRoomFlagDither = 8;
+static const uint32_t kRoomFlagLight = 64;      // the room light is on: its panel fits, its level is above 0, its colour is not black
 
-// Rows 0-10 are v10's. Rows 11-20 are v11's: glass, reflections, the room light and the
-// mirror picture (rows 11-16, zero until the steps that fill them), and the eye pass's
-// reciprocals and screen bounds (rows 17-20). kRoomCbufferHlsl declares rows 0-20.
+// Rows 0-10 are v10's. Rows 11-20 are v11's: glass, reflections and the mirror picture
+// (rows 11, 12 and 16, zero until the steps that fill them), the room light (rows
+// 13-15), and the eye pass's reciprocals and screen bounds (rows 17-20).
+// kRoomCbufferHlsl declares rows 0-20.
 struct RoomConstants                            // must match kRoomCbufferHlsl
 {
     float X = 0, yF = 0, yC = 0, zB = 0;                            // row 0
@@ -912,6 +1010,14 @@ static_assert(offsetof(RoomConstants, pitchSide) == 192 && offsetof(RoomConstant
               offsetof(RoomConstants, inv2sMax) == 288 && offsetof(RoomConstants, wingS) == 304 && offsetof(RoomConstants, scrBoxZ) == 320 &&
               offsetof(RoomConstants, pad5) == 336, "rows 11-20 as in the v11 spec (section 3.5)");
 
+// Whether any of the v11 controls is on in these constants, so that the eye pass needs
+// their code (xrapp5.cpp RoomEyePso picks its look variant). So far the room light;
+// Glass and Reflections join it in the next steps.
+inline bool RoomLookOn(const RoomConstants& rc)
+{
+    return (rc.flags & kRoomFlagLight) != 0;
+}
+
 inline float RoomBounceScale(const RoomShading& sh)
 {
     return sh.rhoBar < 0.999f ? sh.rhoBar * sh.invArea / (1.0f - sh.rhoBar) : 0.0f;
@@ -932,11 +1038,16 @@ inline RoomConstants MakeRoomConstants(const Room& r, const RoomShading& sh, con
     c.alpha = alpha < 0 ? 0.0f : (alpha > 1 ? 1.0f : alpha);
     c.screenW = view.W; c.screenH = view.H;
     c.flags = (r.curved ? kRoomFlagCurved : 0) | (view.flatLayer ? kRoomFlagFlatLayer : 0) | (view.glowOn ? kRoomFlagGlow : 0) |
-              (view.dither ? kRoomFlagDither : 0);
+              (view.dither ? kRoomFlagDither : 0) | (sh.lightOn ? kRoomFlagLight : 0);
     c.gridX = (uint32_t)l.gridX; c.gridY = (uint32_t)l.gridY; c.emitters = (uint32_t)l.count();
     c.srcW = (uint32_t)(srcW > 0 ? srcW : 0); c.srcH = (uint32_t)(srcH > 0 ? srcH : 0); c.stride = (uint32_t)RoomStride(srcW);
     c.glowW = (uint32_t)l.glowW; c.glowH = (uint32_t)l.glowH; c.blocksX = (uint32_t)l.blocksX; c.blocksY = (uint32_t)l.blocksY;
     c.glowBlock = (uint32_t)l.block;
+    // Rows 13-15: the room light's panel, its emitted radiance (EMIT gives it to the lamp
+    // emitter; w is 1 when the panel fits, as the emitter's n.w) and its seen radiance.
+    c.lightX0 = r.lightX0; c.lightX1 = r.lightX1; c.lightZ0 = r.lightZ0; c.lightZ1 = r.lightZ1;
+    for (int ch = 0; ch < 3; ch++) { c.lightL[ch] = sh.lightL[ch]; c.lightSeen[ch] = sh.lightSeen[ch]; }
+    c.lightL[3] = r.lightValid ? 1.0f : 0.0f;
     // Rows 17-20: the eye pass's reciprocals and the screen's bounds, the same floats the
     // CPU reference uses (the room's own, RoomRecip of the glow's size, RoomScreenBounds).
     c.invH = r.invH; c.inv2X = r.inv2X; c.invSide = r.invSide; c.invFloorZ = r.invFloorZ;
@@ -1076,43 +1187,134 @@ inline int RoomClassify(const CurveConstants& c, const Cylinder& cyl, const Room
     return RoomClassifyRay(cyl, r, view, state, o, d, u, v, gu, gv);
 }
 
+// ------------------------------------------------------- footprints and patterns
+// A pixel's rays move linearly with px and py (CurveRay), so these are exact: how the
+// direction moves per pixel across (Dx) and down (Dy). A half-size layer's pixels are
+// twice as wide, and so are its footprints.
+inline bool RoomRayDiff(const CurveConstants& c, int e, float Dx[3], float Dy[3])
+{
+    if (!Dx || !Dy || e < 0 || e > 1 || c.ew == 0 || c.eh == 0) return false;
+    const CurveEye& v = c.eye[e];
+    const float sx = (v.tanR - v.tanL) / (float)c.ew, sy = (v.tanD - v.tanU) / (float)c.eh;
+    Dx[0] = v.row0[0] * sx; Dx[1] = v.row1[0] * sx; Dx[2] = v.row2[0] * sx;
+    Dy[0] = v.row0[1] * sy; Dy[1] = v.row1[1] * sy; Dy[2] = v.row2[1] * sy;
+    return true;
+}
+
+// Where a ray (direction d) meets a plane with normal n at t: how far the hit moves per
+// pixel across (Px) and down (Py), from the ray differentials. False if the ray runs
+// along the plane.
+inline bool RoomPlaneFootprint(float t, const float d[3], const float n[3], const float Dx[3], const float Dy[3], float Px[3], float Py[3])
+{
+    if (!d || !n || !Dx || !Dy || !Px || !Py) return false;
+    const float nd = n[0] * d[0] + n[1] * d[1] + n[2] * d[2];
+    if (nd == 0) return false;
+    const float kx = (n[0] * Dx[0] + n[1] * Dx[1] + n[2] * Dx[2]) / nd, ky = (n[0] * Dy[0] + n[1] * Dy[1] + n[2] * Dy[2]) / nd;
+    for (int k = 0; k < 3; k++)
+    {
+        Px[k] = t * (Dx[k] - d[k] * kx);
+        Py[k] = t * (Dy[k] - d[k] * ky);
+    }
+    return true;
+}
+
+// The footprint along one of the plane's own axes (0 x, 1 y, 2 z): |Px| + |Py| there,
+// clamped to [kRoomFootMin, kRoomFootMax].
+inline float RoomFootprintAxis(const float Px[3], const float Py[3], int axis)
+{
+    if (!Px || !Py || axis < 0 || axis > 2) return kRoomFootMin;
+    return std::fmin(std::fmax(std::fabs(Px[axis]) + std::fabs(Py[axis]), kRoomFootMin), kRoomFootMax);
+}
+
+// A bar of width w centred on c, box-filtered over a footprint f round s: how much of
+// [s - f/2, s + f/2] it covers, 0..1.
+inline float RoomBar(float s, float c, float w, float f)
+{
+    if (!(f > 0)) return 0;
+    const float v = (std::fmin(s + 0.5f * f, c + 0.5f * w) - std::fmax(s - 0.5f * f, c - 0.5f * w)) / f;
+    return std::fmin(std::fmax(v, 0.0f), 1.0f);
+}
+
+// How much of a footprint fx across by fz along, round ceiling point (x, z), the room
+// light's panel covers (kappa). 0 with no panel: its extents are all zero then.
+inline float RoomPanelCoverage(const RoomConstants& rc, float x, float z, float fx, float fz)
+{
+    return RoomBar(x, 0.5f * (rc.lightX0 + rc.lightX1), rc.lightX1 - rc.lightX0, fx) *
+           RoomBar(z, 0.5f * (rc.lightZ0 + rc.lightZ1), rc.lightZ1 - rc.lightZ0, fz);
+}
+
+// The panel's coverage of a pixel where its ray (o, d) meets the ceiling: the hit on the
+// plane y = yC (one divide) and its footprint from the pixel differentials. 0 for a ray
+// that does not rise.
+inline float RoomCeilingPanel(const RoomConstants& rc, const float o[3], const float d[3], const float Dx[3], const float Dy[3])
+{
+    if (!o || !d || !Dx || !Dy) return 0;
+    if (!(d[1] > 0)) return 0;
+    const float t = (rc.yC - o[1]) / d[1];
+    float p[3], Px[3], Py[3];
+    RoomAt(o, d, t, p);
+    const float n[3] = { 0, -1, 0 };
+    if (!RoomPlaneFootprint(t, d, n, Dx, Dy, Px, Py)) return 0;
+    return RoomPanelCoverage(rc, p[0], p[2], RoomFootprintAxis(Px, Py, 0), RoomFootprintAxis(Px, Py, 2));
+}
+
+// What the eye pass reads besides its geometry: the room's constants (the room light's
+// panel, colour and flag, read from here as the GPU reads them from RoomC), each eye's
+// picture (it may have no pixels in the flat layer, which never samples it), the glow
+// (null: none) and the lightmap.
+struct RoomEyeInputs
+{
+    const RoomConstants* rc = nullptr;
+    const RgbaImage* picture = nullptr;
+    const RgbaImage* glow = nullptr;
+    const RoomLightmap* light = nullptr;
+};
+
 // One sample's colour, encoded (like the picture): the picture; black; the world
 // colour; or a room surface - its lightmap radiance, plus the glow where it lies on
-// the front wall (light on the wall adds: it does not hide the wall's own light).
-inline bool RoomSampleColour(const CurveConstants& c, const RoomView& view, int kind, float u, float v, float gu, float gv,
-                             const RgbaImage& picture, const RgbaImage* glow, const RoomLightmap& light, float out[3])
+// the front wall (light on the wall adds: it does not hide the wall's own light), and
+// on the ceiling, with the room light on, the panel's own light where it covers the
+// pixel (kappa, RoomCeilingPanel).
+inline bool RoomSampleColour(const CurveConstants& c, const RoomView& view, const RoomEyeInputs& in, int kind, float u, float v,
+                             float gu, float gv, float kappa, float out[3])
 {
     if (!out) return false;
+    if (!in.rc || !in.picture || !in.light) return false;
     if (kind == 0)
     {
         float s[4];
-        if (!SampleRgba(picture, u, v, s)) return false;
+        if (!SampleRgba(*in.picture, u, v, s)) return false;
         out[0] = s[0]; out[1] = s[1]; out[2] = s[2];
         return true;
     }
     if (kind == kRoomKindFootprint) { out[0] = out[1] = out[2] = 0; return true; }
     if (kind == kRoomKindOutside) { out[0] = c.world[0]; out[1] = c.world[1]; out[2] = c.world[2]; return true; }
     float L[3];
-    if (!light.Sample(kind - 1, u, v, L)) return false;
-    if (kind - 1 == kFaceFront && view.glowOn && glow && gu >= 0 && gu <= 1 && gv >= 0 && gv <= 1)
+    if (!in.light->Sample(kind - 1, u, v, L)) return false;
+    if (kind - 1 == kFaceFront && view.glowOn && in.glow && gu >= 0 && gu <= 1 && gv >= 0 && gv <= 1)
     {
         float g[4];
-        if (!SampleRgba(*glow, gu, gv, g)) return false;
+        if (!SampleRgba(*in.glow, gu, gv, g)) return false;
         for (int ch = 0; ch < 3; ch++) L[ch] += SrgbToLinear(g[ch]);
     }
+    if (kind - 1 == kFaceCeiling && (in.rc->flags & kRoomFlagLight) != 0)
+        for (int ch = 0; ch < 3; ch++) L[ch] += kappa * in.rc->lightSeen[ch];
     for (int ch = 0; ch < 3; ch++) out[ch] = LinearToSrgb(std::fmax(L[ch], 0.0f));
     return true;
 }
 
 // One eye-buffer pixel of the room pass: four rays as CurvedPixel, classified with one
 // full exit per pixel (RoomPixelState); one sample when they agree; the dither on room
-// surfaces.
+// surfaces. With the room light on, a ceiling sample adds the panel's light: when the
+// four agree, over the footprint of the pixel's centre ray (the exact mean of the four
+// directions); otherwise each of its own ray.
 inline bool RoomPixel(const CurveConstants& c, const Cylinder& cyl, const Room& r, const RoomView& view, int e, int px, int py,
-                      const RgbaImage& picture, const RgbaImage* glow, const RoomLightmap& light, float out[3])
+                      const RoomEyeInputs& in, float out[3])
 {
     if (!out) return false;
     if (e < 0 || e > 1 || px < 0 || py < 0 || px >= (int)c.ew || py >= (int)c.eh) return false;
-    if (!view.flatLayer && !picture.data) return false;
+    if (!in.rc || !in.picture || !in.light) return false;
+    if (!view.flatLayer && !in.picture->data) return false;
 
     int kind[4];
     float uu[4], vv[4], gu[4], gv[4];
@@ -1123,20 +1325,37 @@ inline bool RoomPixel(const CurveConstants& c, const Cylinder& cyl, const Room& 
         CurveRay(c, e, (float)px + 0.5f + kCurveSubsamples[s][0], (float)py + 0.5f + kCurveSubsamples[s][1], o, d);
         kind[s] = RoomClassifyRay(cyl, r, view, state, o, d, &uu[s], &vv[s], &gu[s], &gv[s]);
     }
+    const bool lightOn = (in.rc->flags & kRoomFlagLight) != 0;
+    float Dx[3] = { 0, 0, 0 }, Dy[3] = { 0, 0, 0 };
+    if (lightOn && !RoomRayDiff(c, e, Dx, Dy)) return false;
     const bool agree = kind[0] == kind[1] && kind[1] == kind[2] && kind[2] == kind[3];
     if (agree)
     {
         const float mu = (uu[0] + uu[1] + uu[2] + uu[3]) * 0.25f, mv = (vv[0] + vv[1] + vv[2] + vv[3]) * 0.25f;
         const float mgu = (gu[0] + gu[1] + gu[2] + gu[3]) * 0.25f, mgv = (gv[0] + gv[1] + gv[2] + gv[3]) * 0.25f;
-        if (!RoomSampleColour(c, view, kind[0], mu, mv, mgu, mgv, picture, glow, light, out)) return false;
+        float kappa = 0;
+        if (lightOn && kind[0] == 1 + kFaceCeiling)
+        {
+            float o[3], d[3];
+            CurveRay(c, e, (float)px + 0.5f, (float)py + 0.5f, o, d);
+            kappa = RoomCeilingPanel(*in.rc, o, d, Dx, Dy);
+        }
+        if (!RoomSampleColour(c, view, in, kind[0], mu, mv, mgu, mgv, kappa, out)) return false;
     }
     else
     {
         out[0] = out[1] = out[2] = 0;
         for (int s = 0; s < 4; s++)
         {
+            float kappa = 0;
+            if (lightOn && kind[s] == 1 + kFaceCeiling)
+            {
+                float o[3], d[3];
+                CurveRay(c, e, (float)px + 0.5f + kCurveSubsamples[s][0], (float)py + 0.5f + kCurveSubsamples[s][1], o, d);
+                kappa = RoomCeilingPanel(*in.rc, o, d, Dx, Dy);
+            }
             float rgb[3];
-            if (!RoomSampleColour(c, view, kind[s], uu[s], vv[s], gu[s], gv[s], picture, glow, light, rgb)) return false;
+            if (!RoomSampleColour(c, view, in, kind[s], uu[s], vv[s], gu[s], gv[s], kappa, rgb)) return false;
             for (int ch = 0; ch < 3; ch++) out[ch] += rgb[ch] * 0.25f;
         }
     }
@@ -1190,6 +1409,9 @@ inline std::string RoomHlslDefines()
     defUint("ROOM_FLAG_FLAT_LAYER", kRoomFlagFlatLayer);
     defUint("ROOM_FLAG_GLOW", kRoomFlagGlow);
     defUint("ROOM_FLAG_DITHER", kRoomFlagDither);
+    defUint("ROOM_FLAG_LIGHT", kRoomFlagLight);
+    def("ROOM_FOOT_MIN", RoomHlslFloat(kRoomFootMin));
+    def("ROOM_FOOT_MAX", RoomHlslFloat(kRoomFootMax));
     defInt("ROOM_KIND_FOOTPRINT", kRoomKindFootprint);
     defInt("ROOM_KIND_OUTSIDE", kRoomKindOutside);
     defInt("ROOM_PART_WING_L", kRoomPartWingL);

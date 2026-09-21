@@ -53,7 +53,24 @@ Everything is in linear display radiance, the space the compositor blends in.
   - The LIGHT pass gathers at most 1,024 emitters. A 4:3, square or portrait picture
     has a taller glow texture, and at 8 texels its blocks alone passed that (a 4:3
     picture needed 1,056), so the blocks grow to 16, 32 or 64 texels until everything
-    fits: 16 for 4:3, 5:4, 1:1 and 9:16. A 16:9 picture keeps 8 (880 emitters).
+    fits: 16 for 4:3, 5:4, 1:1 and 9:16. A 16:9 picture keeps 8 (881 emitters, the
+    room light included).
+- **The room light** (v11, `--room-light=N` and `--room-light-colour=RRGGBB` until the
+  desktop has its controls): a 2.4 x 1.6 m panel flush in the ceiling, over the viewer
+  and centred 0.3 m behind the head, kept 0.3 m clear of the walls and the front (the
+  default room's spans x -1.2..1.2 m and z 2.5..4.1 m). It is always the last emitter, so
+  turning it up needs no rebuild; its radiance comes from the constants and is 0 while
+  it is off, which adds exactly +0 to every texel.
+  - Level s = (Light/100)^2 and colour c = the decoded colour over its largest channel
+    (#FFB46B, 3000 K, is (1, 0.456, 0.147)). The panel emits 20 s c into the lightmap
+    and is seen as c min(1, 20 s): the hue is kept, and it is full from 23% up.
+  - The ceiling gets none of its light (the panel lies in it); its flux joins the bounce
+    like every emitter's. With Glass and Reflections at 0 the bounce's mean albedo is
+    v10's to the bit: the panel is part of the ceiling.
+  - The eye pass adds the panel's own light over the ceiling, box-filtered over each
+    pixel's footprint there (from the rays' exact pixel differentials), so its edges
+    are soft over about a pixel. The EMIT pass gives the room light its radiance before
+    the glow's branch: as a glow block its first row would lie past the glow's last.
 - **Direct light:** a surface point p receives E = sum L_j G_j, where G is pi times the
   point-to-patch form factor.
   - Close up it uses Lambert's exact polygon formula. A softened point light would
@@ -88,7 +105,7 @@ depend on where you look from.
 1. **EMIT** (`kRoomHlsl` with `ROOM_EMIT`): one 256-thread group per emitter works out
    its radiance. Pixels are decoded through a 256-entry table and summed in the same
    order as the CPU reference, so the two agree exactly.
-2. **LIGHT**: one thread per lightmap texel gathers all the emitters (880 for a 16:9
+2. **LIGHT**: one thread per lightmap texel gathers all the emitters (881 for a 16:9
    picture) through group-shared memory.
 3. **Eye pass:** the curve shader's code up to its main, then `kCurveRoomHlsl`. Each
    ray hits either the curved screen or, for a flat screen, its black footprint;
@@ -109,6 +126,15 @@ depend on where you look from.
      constants, rows 17-20, with the screen's bounds.
 
    The results differ from v10's only by float rounding and at exact edge ties.
+
+   The eye pass is compiled twice. With `ROOM_LOOK 0` it has no code for the v11
+   controls and is Stage 1's pass exactly; it draws a room whose controls are all 0.
+   With `ROOM_LOOK 1` it adds the room light's panel (and, later, Glass and
+   Reflections); it draws a room with any of them on (`RoomLookOn`). In one shader the
+   light's code, even with the light off, cost the plain pass about 4% (curved, 60%:
+   0.916 against 0.876 ms eye min), through registers. With the light on, the look pass
+   costs 0.03-0.04 ms more than the plain one on the curved screen and 0.006-0.009 ms on
+   the flat screen's half-size layer.
 4. **Layers:**
    - A **curved** screen is one projection layer, as before.
    - A **flat** screen stays the compositor's two quads. The room goes under them as a
@@ -127,9 +153,12 @@ across the four views and both curves. The headset's figures are still to come.
 
 `--selftest --bench-room` measures the same passes offline, with no VR session, at the
 PSVR2's 2804 x 2860 eye buffers: the curve alone (A), the curve with the room (B), the
-kept v10 eye pass (D, also `--room-v10-eye` in playback) and the flat screen's
-half-size room layer (E), each at four views (yaw 0, 30, 60 and 120 degrees, pitch -15)
-and the curved ones at 60% and 100% curve.
+same with the room light at 50% (C), the kept v10 eye pass (D, also `--room-v10-eye` in
+playback) and the flat screen's half-size room layer without and with the room light
+(E, F), each at four views (yaw 0, 30, 60 and 120 degrees, pitch -15) and the curved
+ones at 60% and 100% curve. C and F are the spec's Glass 60 / Reflections 40 / Light 50
+cases; until Glass and Reflections exist they draw the room light alone, and the log
+gives what it costs (C minus B, F minus E).
 - **Interleaved.** The cases that draw the same screen (the curved one at each curve,
   or the flat one) are drawn in turn, frame by frame, the order rotating each round, so
   other work on the GPU falls on them alike. Every round also draws a probe, the curve
@@ -189,15 +218,29 @@ and the curved ones at 60% and 100% curve.
     - the eye pass pixel by pixel on the self-test's two views, flat and curved, over a
       lightmap lit on the CPU: every pixel within 1/255, 99.9% the same 8-bit value;
     - the constants' rows 17-20 carry the room's reciprocals and the screen's box;
+  - the room light: its placement and clearance (also 3 m to the side and in the small
+    close curved room), the last emitter in every picture shape's budget (753, 881,
+    929, 417, 433, 513 and 657, with the same glow blocks as before), the floor under
+    it against the closed form, all its light landing below the ceiling (3%, flat and
+    curved), its level and colour, flag 64, every lightmap texel bit for bit v10's with
+    it at 0, the bounce's mean albedo v10's bit for bit, the panel's soft edge, and the
+    footprints against a central difference;
   - details: the dither, half floats, levelling, the v10 snapshot.
-- **`SelfTestRoom`**, flat and 100% curved, compares the GPU with `room.h`:
-  - the emitters identical: 880 with 8-texel glow blocks (flat), 336 with 16-texel
-    blocks (curved), so both block sizes run on the GPU;
+- **`SelfTestRoom`**, flat and 100% curved, each with the room light off and at 50%
+  (#FFB46B), compares the GPU with `room.h`:
+  - the emitters identical: 881 with 8-texel glow blocks (flat), 337 with 16-texel
+    blocks (curved), so both block sizes run on the GPU; the room light's radiance is
+    the constants' exactly;
   - all 24,576 lightmap texels within half-float precision (worst 9.6e-4 relative);
   - the eye pass within 2 bits, for one eye looking up at the screen and one turned to
     a side wall and the floor; the kept v10 eye pass likewise against `room_v10`, and
     how many pixels the two eye passes draw differently;
-  - `--selftest --dump` writes `room-eyes-flat.ppm` and `room-eyes-curved.ppm`.
+  - with the room light on: one eye turned round and looking up at the panel (which
+    must cover at least 1% of its pixels), one turned left to the left wall, the floor
+    and, curved, the front's left wing; the floor under the panel lit by at least 90% of the panel's
+    direct light;
+  - `--selftest --dump` writes `room-eyes-flat.ppm`, `room-eyes-curved.ppm`,
+    `room-eyes-flat-light.ppm` and `room-eyes-curved-light.ppm`.
 
 ## Limits, and what was left out on purpose
 
