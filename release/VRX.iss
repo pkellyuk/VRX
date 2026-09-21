@@ -29,6 +29,10 @@ RestartApplications=no
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 [Files]
 Source: "{#Payload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+[UninstallDelete]
+; Compiled shaders the engine cached for this PC. The rest of {localappdata}\VRX
+; (profiles, settings, logs) is deliberately kept.
+Type: filesandordirs; Name: "{localappdata}\VRX\shader-cache"
 [Icons]
 Name: "{group}\VRX"; Filename: "{app}\VRX.Desktop.exe"
 Name: "{autodesktop}\VRX"; Filename: "{app}\VRX.Desktop.exe"; Tasks: desktopicon

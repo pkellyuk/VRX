@@ -3262,15 +3262,20 @@ static bool Sha256(const void* data, size_t size, uint8_t (&digest)[32])
 }
 
 // The compiler's identity for the cache key: d3dcompiler_47.dll's file version and
-// size (a Windows update that changes the compiler changes the key).
-static std::string ShaderCompilerId()
+// size (a different compiler changes the key). The engine ships the Windows SDK's
+// redistributable copy next to the exe (build.bat), which the loader prefers to
+// System32's, whose version changes with Windows updates; `loadedFrom` gets the
+// loaded module's path for the log (it is not part of the key: install folders differ).
+static std::string ShaderCompilerId(std::string& loadedFrom)
 {
+    loadedFrom = "(unknown)";
     std::string id = "D3D_COMPILER_VERSION " + std::to_string(D3D_COMPILER_VERSION);
     HMODULE module = GetModuleHandleW(L"d3dcompiler_47.dll");
     if (!module) return id + " (d3dcompiler_47.dll not loaded)";
     wchar_t path[32768]{};
     const DWORD count = GetModuleFileNameW(module, path, DWORD(std::size(path)));
     if (!count || count >= std::size(path)) return id + " (d3dcompiler_47.dll path unknown)";
+    loadedFrom = winrt::to_string(path);
     std::error_code ec;
     id += " size " + std::to_string((unsigned long long)std::filesystem::file_size(path, ec));
     DWORD handle = 0;
@@ -3287,6 +3292,55 @@ static std::string ShaderCompilerId()
     return id + version;
 }
 
+// Cached shaders not used for this long are deleted from the user cache on start
+// (a hit refreshes the file's last-write time, see TouchCachedShader), so that old
+// versions' shaders do not pile up. Leftover temporary files from a crash go too.
+static const auto kShaderCacheMaxAge = std::chrono::hours(24 * 30);
+static const auto kShaderTouchInterval = std::chrono::hours(24);
+
+static void PruneShaderCache(const std::filesystem::path& dir)
+{
+    Log("PruneShaderCache: enter (%s)", PathText(dir).c_str());
+    if (dir.empty()) { Log("PruneShaderCache: exit - no folder"); return; }
+
+    const auto now = std::filesystem::file_time_type::clock::now();
+    int kept = 0, deleted = 0, failed = 0;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+    {
+        const auto& path = it->path();
+        const std::wstring name = path.filename().wstring();
+        const bool shader = path.extension() == L".cso";
+        const bool temp = name.find(L".tmp-") != std::wstring::npos;
+        if (!shader && !temp) continue;
+        std::error_code fileEc;
+        if (!it->is_regular_file(fileEc)) continue;
+        const auto written = std::filesystem::last_write_time(path, fileEc);
+        if (fileEc) { failed++; continue; }
+        const auto maxAge = temp ? std::chrono::duration_cast<std::filesystem::file_time_type::duration>(kShaderTouchInterval)
+                                 : std::chrono::duration_cast<std::filesystem::file_time_type::duration>(kShaderCacheMaxAge);
+        if (now - written < maxAge) { kept++; continue; }
+        if (std::filesystem::remove(path, fileEc)) deleted++;
+        else failed++;
+    }
+    if (ec) Log("PruneShaderCache: listing stopped (%s)", ec.message().c_str());
+    Log("PruneShaderCache: exit - %d kept, %d deleted (unused 30+ days, or stale temporary files), %d could not be read or deleted", kept, deleted, failed);
+}
+
+// Marks a user-cache hit as used (for PruneShaderCache): the last-write time is set
+// to now, at most once a day per file, so a normal start writes nothing.
+static void TouchCachedShader(const std::filesystem::path& file)
+{
+    if (file.empty()) return;
+
+    std::error_code ec;
+    const auto now = std::filesystem::file_time_type::clock::now();
+    const auto written = std::filesystem::last_write_time(file, ec);
+    if (ec || now - written < std::chrono::duration_cast<std::filesystem::file_time_type::duration>(kShaderTouchInterval)) return;
+    std::filesystem::last_write_time(file, now, ec);
+    if (ec) Log("ShaderCache: cannot mark %s as used (%s)", PathText(file).c_str(), ec.message().c_str());
+}
+
 // Chooses the cache folders (once, unless `only` is given). `only` is the pre-warm's
 // folder: the one place to look and to write.
 static void EnsureShaderCache(const std::filesystem::path* only = nullptr)
@@ -3297,7 +3351,9 @@ static void EnsureShaderCache(const std::filesystem::path* only = nullptr)
     Log("ShaderCache: enter (%s)", only ? "pre-warm folder" : "default folders");
     g_shaderCache.readDirs.clear();
     g_shaderCache.writeDir.clear();
-    g_shaderCache.compilerId = ShaderCompilerId();
+    std::string compilerPath;
+    g_shaderCache.compilerId = ShaderCompilerId(compilerPath);
+    Log("ShaderCache: compiler loaded from %s", compilerPath.c_str());
     std::error_code ec;
     if (only)
     {
@@ -3326,6 +3382,7 @@ static void EnsureShaderCache(const std::filesystem::path* only = nullptr)
             {
                 g_shaderCache.readDirs.push_back(user);
                 g_shaderCache.writeDir = user;
+                PruneShaderCache(user);
             }
         }
     }
@@ -3433,6 +3490,7 @@ static bool CompileCs(const char* name, const char* src, ComPtr<ID3DBlob>& out)
         const auto file = dir / (hex + L".cso");
         if (!LoadCachedShader(file, out)) continue;
         g_shaderCache.hits++;
+        if (dir == writeDir) TouchCachedShader(file);
         Log("CompileCs[%s]: from cache in %.1f ms (%zu bytes, %s)", name,
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), out->GetBufferSize(), PathText(file).c_str());
         return true;
@@ -8793,8 +8851,13 @@ int wmain(int argc, wchar_t** wideArgv)
         if (!InitSource(app)) break;
         // The self-test needs the headset's GPU (from the runtime) but not a VR
         // session, so it also runs while the headset is asleep or disconnected.
-        if (!app.opt.selfTestOnly && !InitXrSession(app)) break;
+        // Shaders before the session: on a cold cache the room's shaders take 10-60 s
+        // to compile, and a created session that submits no frames for that long makes
+        // SteamVR show its dashboard and hold the session SYNCHRONIZED. InitShaders
+        // needs only the device and the presented size (InitSource), not the session.
         if (!InitShaders(app)) break;
+        if (!app.opt.selfTestOnly) Log("main: shaders ready - creating the OpenXR session");
+        if (!app.opt.selfTestOnly && !InitXrSession(app)) break;
 
         if (!SelfTest(app)) { Log("main: GPU shaders do not match the CPU reference - not presenting"); break; }
         if (app.opt.selfTestOnly)

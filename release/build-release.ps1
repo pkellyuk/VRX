@@ -23,17 +23,11 @@ try {
     $packages = Join-Path $env:USERPROFILE '.nuget\packages'
     $ortPackage = Join-Path $packages 'microsoft.ml.onnxruntime.directml\1.24.4'
     $dmlPackage = Join-Path $packages 'microsoft.ai.directml\1.15.4'
-    Copy-Item "$nativeOutput\xrplayer.exe","$nativeOutput\openxr_loader.dll" $engine
+    # d3dcompiler_47.dll: the Windows SDK redistributable (copied by build.bat), loaded
+    # app-local so that every PC compiles with the compiler the shader cache was built by.
+    Copy-Item "$nativeOutput\xrplayer.exe","$nativeOutput\openxr_loader.dll","$nativeOutput\d3dcompiler_47.dll" $engine
     Copy-Item "$ortPackage\runtimes\win-x64\native\*.dll" $engine
     Copy-Item "$dmlPackage\bin\x64-win\DirectML.dll" $engine
-    # Pre-compiled shaders, so the first start after an install does not spend 10-60 s in
-    # D3DCompile with the VR session open. No headset, OpenXR runtime or GPU is needed.
-    # The cache is keyed by d3dcompiler_47.dll's version too: a PC whose Windows ships a
-    # different compiler misses it and compiles once into %LOCALAPPDATA%\VRX\shader-cache.
-    $warmLog = Join-Path $OutputRoot 'shader-cache-warm.log'
-    & "$nativeOutput\xrplayer.exe" "--warm-shader-cache=$engine\shader-cache" *> $warmLog
-    if ($LASTEXITCODE) { Get-Content $warmLog -Tail 20; throw 'Shader cache pre-warm failed' }
-    Get-Content $warmLog -Tail 1
     Copy-Item bench/models/model_fixed_686x392.onnx $models
     # Default depth model (Depth Anything V2 above is the per-game alternative); generated, not downloaded.
     $zipDepth = 'bench/models/zipdepth_faithful_fp16_672x384.onnx'
@@ -45,6 +39,15 @@ try {
     if (!$crt) { throw 'Visual C++ redistributable directory missing' }
     Copy-Item "$crt\*.dll" $engine
     Copy-Item "$crt\*.dll" $payload
+    # Pre-compiled shaders, so the first start after an install does not spend 10-60 s in
+    # D3DCompile with the VR session open. No headset, OpenXR runtime or GPU is needed.
+    # The cache is keyed by d3dcompiler_47.dll's version too; the pre-warm runs the payload's
+    # own xrplayer.exe, so it loads the app-local SDK compiler that ships with it.
+    $warmLog = Join-Path $OutputRoot 'shader-cache-warm.log'
+    & "$engine\xrplayer.exe" "--warm-shader-cache=$engine\shader-cache" *> $warmLog
+    if ($LASTEXITCODE) { Get-Content $warmLog -Tail 20; throw 'Shader cache pre-warm failed' }
+    if (!(Select-String -LiteralPath $warmLog -SimpleMatch "$engine\d3dcompiler_47.dll" -Quiet)) { Get-Content $warmLog -Tail 20; throw 'Shader cache pre-warm did not use the app-local d3dcompiler_47.dll' }
+    Get-Content $warmLog -Tail 1
     Copy-Item release/licenses/*.txt $licenses
     Copy-Item "$ortPackage\LICENSE" "$licenses\ONNXRuntime-LICENSE.txt"
     Copy-Item "$ortPackage\ThirdPartyNotices.txt" "$licenses\ONNXRuntime-ThirdPartyNotices.txt"
@@ -65,7 +68,7 @@ try {
     $commit = & git rev-parse HEAD
     $dirty = & git status --porcelain
     @("VRX 1.7.0", "Source commit: $commit", "Working tree dirty: $([bool]$dirty)", "Built UTC: $([DateTime]::UtcNow.ToString('O'))") | Set-Content "$payload\BUILD.txt"
-    foreach ($library in 'onnxruntime.dll','DirectML.dll','openxr_loader.dll') {
+    foreach ($library in 'onnxruntime.dll','DirectML.dll','openxr_loader.dll','d3dcompiler_47.dll') {
         $version = (Get-Item -LiteralPath (Join-Path $engine $library)).VersionInfo.FileVersion
         "$library : $version" | Add-Content "$payload\BUILD.txt"
     }
