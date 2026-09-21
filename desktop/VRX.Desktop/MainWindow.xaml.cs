@@ -1,8 +1,10 @@
 ﻿using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -19,6 +21,20 @@ public partial class MainWindow : Window
     private string lastExecutable = "";
     private string sessionError = "", lastEngineError = "";
     private readonly bool smoke;
+    // Auto-attach (app-wide, AutoAttach.cs): polls the window in front twice a second.
+    private readonly DispatcherTimer autoTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    private readonly AutoAttachMachine autoMachine = new();
+    private readonly System.Diagnostics.Stopwatch autoClock = System.Diagnostics.Stopwatch.StartNew();
+    private AppSettings appSettings = new();
+    private AutoAttachOverlay? autoOverlay;
+    private ForegroundSnapshot? autoTarget;
+    private nint sessionWindow;                    // the window of the running session, for "spent"
+    private string autoSavedStatus = "", autoStatus = "";
+    private bool autoSettingsLoading;
+    // Easy | Expert and the sections' open/closed state (app-wide, AppSettings).
+    private bool modeLoading, sectionsLoading;
+    private bool playing;                          // the engine has entered its frame loop
+    private IReadOnlyList<string> gpuLines = [];   // the engine's --list-gpus output, re-labelled when the strings change
     private sealed record Shortcut(string Name, int Code);
     public MainWindow(bool smokeTest)
     {
@@ -26,23 +42,24 @@ public partial class MainWindow : Window
         string data = smoke ? Path.Combine(EngineSession.RepositoryRoot(), "desktop", "out", "smoke-data") :
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX");
         store = new(data);
+        // Bound numbers ("5.70 m") in the user's format; profiles and the engine stay invariant.
+        Language = XmlLanguage.GetLanguage(CultureInfo.CurrentCulture.IetfLanguageTag);
         InitializeComponent();
+        System.Diagnostics.Debug.WriteLine($"[MainWindow] UI culture {CultureInfo.CurrentUICulture.Name}, format culture {CultureInfo.CurrentCulture.Name}, pseudo {Loc.Pseudo}");
         FillWorldList();
         FillLightColourList(Profile.DefaultRoomLightColor);
+        WorldHex.Text = WorldPresets[0].Hex;           // data, not text: kept out of the XAML
         WorldList.SelectedIndex = 0;
         ShowGpuChoice(Gpus.Same);
         // From <Version> in the project file, so the UI always matches the build.
         VersionText.Text = DisplayVersion();
-        Title = $"VRX {VersionText.Text} — Desktop setup";
+        Title = Loc.Format("WindowTitle", VersionText.Text);
         if (smoke)
         {
             ShowActivated = false; ShowInTaskbar = false;
             WindowStartupLocation = WindowStartupLocation.Manual; Left = -20000; Top = -20000;
         }
-        var keys = new List<Shortcut> { new("= / +", 0xBB), new("Home", 0x24), new("End", 0x23), new("Insert", 0x2D), new("Pause", 0x13) };
-        for (int i = 1; i <= 24; i++) keys.Add(new("F" + i, 0x6F + i));
-        for (int i = 0; i < 26; i++) keys.Add(new(((char)('A' + i)).ToString(), 'A' + i));
-        RecenterKeys.ItemsSource = keys; MenuKeys.ItemsSource = keys;
+        FillShortcutKeys();
         RecenterKeys.SelectedValue = 0xBB; MenuKeys.SelectedValue = 0x77;
         saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveAndApply(); };
         refreshTimer.Tick += (_, _) => RefreshApps();
@@ -53,18 +70,33 @@ public partial class MainWindow : Window
             LogBox.ScrollToEnd();
             if (line.Contains("FAIL") || line.Contains("expected one game window") || line.Contains("main: failure"))
                 lastEngineError = line;
-            if (line.Contains("RunFrameLoop: enter")) Status.Text = "Playing · " + Path.GetFileName(profile?.ExecutablePath);
+            if (line.Contains("RunFrameLoop: enter"))
+            {
+                playing = true;
+                Status.Text = Loc.Format("StatusPlaying", Path.GetFileName(profile?.ExecutablePath));
+                UpdateGameCard();
+            }
         });
         engine.Exited += code => Dispatcher.InvokeAsync(() =>
         {
-            sessionError = code == 0 ? "" : "VRX could not continue. " +
-                (lastEngineError.Length > 0 ? lastEngineError[(lastEngineError.LastIndexOf(']') + 1)..].Trim() : "See Session details below.");
+            // No loops: the session's window is not auto-attached again until it has left
+            // the foreground and come back.
+            autoMachine.MarkSpent(sessionWindow);
+            sessionWindow = 0;
+            playing = false;
+            // The renderer's own reason stays English (engine logs are not translated).
+            sessionError = code == 0 ? "" : Loc.Format("StatusEngineFailed",
+                lastEngineError.Length > 0 ? lastEngineError[(lastEngineError.LastIndexOf(']') + 1)..].Trim() : Loc.Get("SeeSessionDetails"));
             UpdateButtons(); RefreshApps();
-            Status.Text = code == 0 ? "Stopped · your settings are saved" : sessionError;
-            if (code != 0) SessionDetails.IsExpanded = true;
+            Status.Text = code == 0 ? Loc.Get("StatusStopped") : sessionError;
+            if (code != 0) ShowSessionDetails();
         });
         try { string last = Path.Combine(store.Root, "last-game.txt"); if (File.Exists(last)) lastExecutable = File.ReadAllText(last); }
         catch (IOException) { }
+        appSettings = store.LoadAppSettings();
+        PutAppSettings();
+        autoTimer.Tick += (_, _) => AutoAttachTick();
+        Closed += (_, _) => { autoTimer.Stop(); autoOverlay?.Close(); autoOverlay = null; };
         ready = true;
         Loaded += async (_, _) =>
         {
@@ -79,7 +111,7 @@ public partial class MainWindow : Window
                     Application.Current.Shutdown(1);
                 }
             }
-            else { refreshTimer.Start(); await LoadGpusAsync(); }
+            else { refreshTimer.Start(); UpdateAutoTimer(); await LoadGpusAsync(); }
         };
     }
     private void RefreshApps()
@@ -103,7 +135,7 @@ public partial class MainWindow : Window
             }
             else { refreshing = false; LoadSelected(); }
         }
-        catch (Exception ex) { Status.Text = "Could not refresh applications: " + ex.Message; }
+        catch (Exception ex) { Status.Text = Loc.Format("StatusRefreshFailed", ex.Message); }
         finally { refreshing = false; UpdateButtons(); if (sessionError.Length > 0) Status.Text = sessionError; }
     }
     private void AppSelected(object sender, SelectionChangedEventArgs e)
@@ -112,12 +144,14 @@ public partial class MainWindow : Window
     }
     private void LoadSelected()
     {
-        SaveAndApply();
-        profile = null; SettingsPanel.IsEnabled = false;
+        // Only a pending change is saved: just looking at a game must not create a profile
+        // for it (auto-attach treats a game with saved settings as one set up before).
+        if (saveTimer.IsEnabled) SaveAndApply();
+        profile = null; SetSettingsEnabled(false);
         var app = AppList.SelectedItem as RunningApp;
         WindowList.ItemsSource = app?.Windows;
         WindowList.SelectedIndex = app?.Windows.Count > 0 ? 0 : -1;
-        PathLabel.Text = app?.FullPath.Length > 0 ? app.FullPath : "No accessible executable/window. Select a running game.";
+        PathLabel.Text = app?.FullPath.Length > 0 ? app.FullPath : Loc.Get("PathNoAccess");
         if (app?.CanAttach == true)
         {
             try
@@ -130,9 +164,9 @@ public partial class MainWindow : Window
                 loading = false;
                 lastExecutable = app.FullPath;
                 ProfileStore.AtomicWrite(Path.Combine(store.Root, "last-game.txt"), lastExecutable);
-                Status.Text = WindowList.SelectedItem == null ? "Choose which window to capture for " + app.Name : "Ready · settings for " + app.Name;
+                Status.Text = Loc.Format(WindowList.SelectedItem == null ? "StatusChooseWindow" : "StatusReadyFor", app.Name);
             }
-            catch (Exception ex) { Status.Text = ex.Message; profile = null; SettingsPanel.IsEnabled = false; }
+            catch (Exception ex) { Status.Text = ex.Message; profile = null; SetSettingsEnabled(false); }
         }
         UpdateButtons();
     }
@@ -146,12 +180,15 @@ public partial class MainWindow : Window
 
     private IReadOnlyList<GpuChoice> gpuChoices = Gpus.Parse([]);
 
-    // Replaces the Depth GPU list (e.g. once the engine has listed the GPUs), keeping
-    // the current selection.
-    private void SetGpuChoices(IReadOnlyList<GpuChoice> choices)
+    // Replaces the Depth GPU list from the engine's --list-gpus lines (e.g. once the engine
+    // has listed the GPUs, or when the strings change), keeping the current selection.
+    private void SetGpuLines(IEnumerable<string> lines)
     {
+        ArgumentNullException.ThrowIfNull(lines);
+        gpuLines = lines.ToArray();
         string current = DepthGpuList.SelectedValue as string ?? profile?.DepthGpu ?? Gpus.Same;
-        gpuChoices = choices;
+        gpuChoices = Gpus.Parse(gpuLines);
+        System.Diagnostics.Debug.WriteLine($"[MainWindow] SetGpuLines: {gpuChoices.Count} choice(s), keeping {current}");
         ShowGpuChoice(current);
     }
 
@@ -161,7 +198,7 @@ public partial class MainWindow : Window
     {
         if (!Gpus.ValidId(id)) id = Gpus.Same;
         var list = gpuChoices.ToList();
-        if (!list.Any(c => c.Id == id)) list.Add(new GpuChoice(id, "Not found: " + Gpus.NameOf(id) + " (the game's GPU is used)"));
+        if (!list.Any(c => c.Id == id)) list.Add(new GpuChoice(id, Loc.Format("GpuNotFound", Gpus.NameOf(id))));
         bool wasLoading = loading;
         loading = true;
         DepthGpuList.ItemsSource = list;
@@ -171,8 +208,8 @@ public partial class MainWindow : Window
 
     private async Task LoadGpusAsync()
     {
-        var list = await Task.Run(Gpus.List);
-        SetGpuChoices(list);
+        var lines = await Task.Run(Gpus.EngineLines);
+        SetGpuLines(lines);
     }
 
     private void PutProfile(Profile p)
@@ -198,12 +235,12 @@ public partial class MainWindow : Window
         FuseCheck.IsChecked = p.FuseModels;
         ShowGpuChoice(p.DepthGpu);
         RecenterKeys.SelectedValue = p.RecenterKey; MenuKeys.SelectedValue = p.MenuKey;
-        SettingsPanel.IsEnabled = true;
+        SetSettingsEnabled(true);
         loading = false; UpdateRoomControls(); DrawPreview();
     }
     private Profile ReadProfile()
     {
-        if (profile == null) throw new InvalidOperationException("Select a game first.");
+        if (profile == null) throw new InvalidOperationException(Loc.Get("ErrorSelectGame"));
         var p = new Profile { ExecutablePath = profile.ExecutablePath,
             PreferredWindowTitle = (WindowList.SelectedItem as GameWindow)?.Title ?? profile.PreferredWindowTitle, Width = WidthSlider.Value,
             Distance = DistanceSlider.Value, Height = HeightSlider.Value, Horizontal = HorizontalSlider.Value,
@@ -222,13 +259,13 @@ public partial class MainWindow : Window
             RoomLight = (int)Math.Round(LightSlider.Value),
             RoomLightColor = SelectedLightColour(),
             WorldColor = Profile.TryParseColor(WorldHex.Text, out int world) ? Profile.FormatColor(world) :
-                throw new InvalidDataException("World colour must be six hex digits, like #1C1C1E. Changes are not saved until it is."),
+                throw new InvalidDataException(Loc.Get("ErrorWorldColour")),
             SteadyDepth = SteadyCheck.IsChecked == true,
             FuseModels = FuseCheck.IsChecked == true,
             DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
             AutoDismiss = DismissCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
             MenuKey = (int)(MenuKeys.SelectedValue ?? 0) };
-        if (!p.Valid()) throw new InvalidDataException("Choose two different shortcut keys. Changes are not saved until the settings are valid.");
+        if (!p.Valid()) throw new InvalidDataException(Loc.Get("ErrorShortcutsConflict"));
         return p;
     }
     private bool SaveAndApply()
@@ -240,7 +277,7 @@ public partial class MainWindow : Window
             var p = ReadProfile(); store.Save(p); profile = p;
             if (engine.Running) engine.Update(p);
             if (sessionError.Length == 0)
-                Status.Text = (engine.Running ? "Playing · saved for " : "Saved for ") + Path.GetFileName(p.ExecutablePath);
+                Status.Text = Loc.Format(engine.Running ? "StatusSavedPlaying" : "StatusSaved", Path.GetFileName(p.ExecutablePath));
             return true;
         }
         catch (Exception ex) { Status.Text = ex.Message; return false; }
@@ -254,20 +291,34 @@ public partial class MainWindow : Window
         bool follows = FollowCheck.IsChecked == true;
         RoomSlider.IsEnabled = !follows;
         int room = (int)Math.Round(RoomSlider.Value);
-        RoomValue.Text = follows ? "Needs the fixed screen" : room == 0 ? "Off" : $"{room} %";
+        RoomValue.Text = follows ? Loc.Get("NeedsFixedScreen") : room == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", room);
         if (GlassSlider == null || GlassValue == null || ReflectSlider == null || ReflectValue == null ||
             LightSlider == null || LightValue == null || LightColourList == null) return;
         bool withRoom = !follows && room > 0;
-        string resting = follows ? "Needs the fixed screen" : "Needs the room";
+        string resting = Loc.Get(follows ? "NeedsFixedScreen" : "NeedsRoom");
         GlassSlider.IsEnabled = withRoom;
         ReflectSlider.IsEnabled = withRoom;
         LightSlider.IsEnabled = withRoom;
         int glass = (int)Math.Round(GlassSlider.Value), reflect = (int)Math.Round(ReflectSlider.Value), light = (int)Math.Round(LightSlider.Value);
-        GlassValue.Text = !withRoom ? resting : glass == 0 ? "Solid" : $"{glass} % clear";
-        ReflectValue.Text = !withRoom ? resting : reflect == 0 ? "Off" : $"{reflect} %";
-        LightValue.Text = !withRoom ? resting : light == 0 ? "Off" : $"{light} %";
+        GlassValue.Text = !withRoom ? resting : glass == 0 ? Loc.Get("ValueSolid") : Loc.Format("ValueClearPercent", glass);
+        ReflectValue.Text = !withRoom ? resting : reflect == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", reflect);
+        LightValue.Text = !withRoom ? resting : light == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", light);
         LightColourList.IsEnabled = withRoom && light > 0;
     }
+
+    // The settings sections (2-7) follow whether a game is selected; their headers stay
+    // usable, so sections can be opened and closed at any time.
+    private void SetSettingsEnabled(bool on)
+    {
+        foreach (var content in new UIElement?[] { ScreenContent, AroundContent, RoomContent, DepthContent, SteamVrContent, ProfileContent })
+        {
+            if (content == null) continue;
+            content.IsEnabled = on;
+        }
+    }
+
+    // True when the settings sections accept input.
+    private bool SettingsEnabled => ScreenContent?.IsEnabled == true;
     private void SettingsChanged(object sender, RoutedEventArgs e)
     {
         UpdateRoomControls();
@@ -285,30 +336,36 @@ public partial class MainWindow : Window
         DrawCurve(centre, y);
     }
 
-    // World colour presets; anything else is "Custom" and typed as #RRGGBB.
-    private static readonly (string Name, string Hex)[] WorldPresets =
+    // World colour presets (Key = its name in Strings.resx); anything else is "Custom" and
+    // typed as #RRGGBB. The list's items are the names in list order, Custom last.
+    private static readonly (string Key, string Hex)[] WorldPresets =
     [
-        ("Black (default)", "#000000"), ("Charcoal", "#1C1C1E"), ("Slate", "#2A3441"), ("Midnight blue", "#0B1530"),
-        ("Deep purple", "#1E0F2E"), ("Forest", "#0F2418"), ("Warm dark", "#2A1E14"), ("Cinema red", "#2B0A0A"), ("Grey", "#4A4A4A"),
-        ("Dusk", "#33415C"), ("Overcast", "#5A6270"),
+        ("WorldBlack", "#000000"), ("WorldCharcoal", "#1C1C1E"), ("WorldSlate", "#2A3441"), ("WorldMidnight", "#0B1530"),
+        ("WorldPurple", "#1E0F2E"), ("WorldForest", "#0F2418"), ("WorldWarm", "#2A1E14"), ("WorldCinemaRed", "#2B0A0A"), ("WorldGrey", "#4A4A4A"),
+        ("WorldDusk", "#33415C"), ("WorldOvercast", "#5A6270"),
     ];
-    private const string CustomColour = "Custom";
+    private static int CustomWorldIndex => WorldPresets.Length;
     private bool worldSyncing;
     private string lastWorldHex = "#000000";      // the last whole colour in the box
 
+    // Fills (or re-labels) the list, keeping the selected entry.
     private void FillWorldList()
     {
+        int selected = WorldList.SelectedIndex;
+        worldSyncing = true;
         WorldList.Items.Clear();
-        foreach (var preset in WorldPresets) WorldList.Items.Add(preset.Name);
-        WorldList.Items.Add(CustomColour);
+        foreach (var preset in WorldPresets) WorldList.Items.Add(Loc.Get(preset.Key));
+        WorldList.Items.Add(Loc.Get("WorldCustom"));
+        WorldList.SelectedIndex = selected;
+        worldSyncing = false;
     }
 
     // A preset picked: its colour goes into the box (Custom keeps whatever is there).
     private void WorldListChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (worldSyncing || WorldList.SelectedItem is not string name || name == CustomColour) return;
-        foreach (var preset in WorldPresets)
-            if (preset.Name == name) { WorldHex.Text = preset.Hex; return; }
+        int index = WorldList.SelectedIndex;
+        if (worldSyncing || index < 0 || index >= CustomWorldIndex) return;
+        WorldHex.Text = WorldPresets[index].Hex;
     }
 
     // The box changed: show the colour, point the list at its preset (or Custom) and
@@ -322,30 +379,29 @@ public partial class MainWindow : Window
             // that was showing - fires and puts a whole colour back.
             WorldSwatch.Fill = Brushes.Transparent;
             worldSyncing = true;
-            WorldList.SelectedItem = CustomColour;
+            WorldList.SelectedIndex = CustomWorldIndex;
             worldSyncing = false;
             return;
         }
         WorldSwatch.Fill = new SolidColorBrush(Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb));
         string hex = Profile.FormatColor(rgb);
         lastWorldHex = hex;
-        string match = CustomColour;
-        foreach (var preset in WorldPresets) if (preset.Hex == hex) match = preset.Name;
+        int match = Array.FindIndex(WorldPresets, preset => preset.Hex == hex);
         worldSyncing = true;
-        WorldList.SelectedItem = match;
+        WorldList.SelectedIndex = match >= 0 ? match : CustomWorldIndex;
         worldSyncing = false;
         SettingsChanged(sender, e);
     }
 
     // Room light colours: blackbody sRGB values from the published Kelvin table. A saved
     // colour that is no preset (an edited profile) shows as one extra "Custom (#RRGGBB)"
-    // item and is kept when saving.
-    private static readonly (string Name, string Hex)[] LightPresets =
+    // item and is kept when saving. `lightHexes` holds each list item's colour.
+    private static readonly (string Key, string Hex)[] LightPresets =
     [
-        ("Warm (2700 K)", "#FFA957"), ("Soft white (3000 K)", Profile.DefaultRoomLightColor), ("Neutral (4000 K)", "#FFD1A3"),
-        ("Daylight (6500 K)", "#FFF9FD"),
+        ("LightWarm", "#FFA957"), ("LightSoftWhite", Profile.DefaultRoomLightColor), ("LightNeutral", "#FFD1A3"),
+        ("LightDaylight", "#FFF9FD"),
     ];
-    private string? customLightHex;                // the kept non-preset colour, or null
+    private readonly List<string> lightHexes = [];
 
     // Lists the presets (plus the custom colour, if `hex` is none of them) and selects `hex`.
     // An unreadable colour selects the default.
@@ -356,30 +412,29 @@ public partial class MainWindow : Window
         bool wasLoading = loading;
         loading = true;                            // filling the list is not a change to save
         LightColourList.Items.Clear();
-        customLightHex = null;
-        string? select = null;
+        lightHexes.Clear();
         foreach (var preset in LightPresets)
         {
-            LightColourList.Items.Add(preset.Name);
-            if (preset.Hex == wanted) select = preset.Name;
+            LightColourList.Items.Add(Loc.Get(preset.Key));
+            lightHexes.Add(preset.Hex);
         }
-        if (select == null)
+        int select = lightHexes.IndexOf(wanted);
+        if (select < 0)
         {
-            customLightHex = wanted;
-            select = $"Custom ({wanted})";
-            LightColourList.Items.Add(select);
+            LightColourList.Items.Add(Loc.Format("LightCustom", wanted));
+            lightHexes.Add(wanted);
+            select = lightHexes.Count - 1;
         }
-        LightColourList.SelectedItem = select;
+        LightColourList.SelectedIndex = select;
         loading = wasLoading;
     }
 
     // The selected preset's colour, or the kept custom one; the default if nothing is selected.
     private string SelectedLightColour()
     {
-        if (LightColourList?.SelectedItem is not string name) return Profile.DefaultRoomLightColor;
-        foreach (var preset in LightPresets)
-            if (preset.Name == name) return preset.Hex;
-        return customLightHex ?? Profile.DefaultRoomLightColor;
+        int index = LightColourList?.SelectedIndex ?? -1;
+        if (index < 0 || index >= lightHexes.Count) return Profile.DefaultRoomLightColor;
+        return lightHexes[index];
     }
 
     // Leaving the box with half a colour in it puts the last whole one back, so the
@@ -438,33 +493,395 @@ public partial class MainWindow : Window
     private void UpdateButtons()
     {
         bool running = engine.Running;
-        SettingsPanel.IsEnabled = profile != null && !stopping;
+        SetSettingsEnabled(profile != null && !stopping);
         StartButton.IsEnabled = !running && profile != null && WindowList.SelectedItem is GameWindow;
         StopButton.IsEnabled = running && !stopping;
-        RecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
+        RecenterButton.IsEnabled = EasyRecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
         AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = !running;
+        UpdateGameCard();
     }
-    private void StartClick(object sender, RoutedEventArgs e)
+
+    // The game card at the top (both modes): the game in front or attached, with its icon
+    // and what is happening - waiting, attaching in N, starting, playing.
+    private void UpdateGameCard()
     {
-        if (!SaveAndApply() || AppList.SelectedItem is not RunningApp app || WindowList.SelectedItem is not GameWindow window) return;
-        try { sessionError = lastEngineError = ""; LogBox.Clear(); engine.Start(app, window, profile!, store.Root); Status.Text = "Starting VR · " + app.Name; }
-        catch (Exception ex) { sessionError = ex.Message; Status.Text = sessionError; }
+        if (CardName == null || CardState == null || CardIcon == null) return;
+        var app = AppList.SelectedItem as RunningApp;
+        string title = (WindowList.SelectedItem as GameWindow)?.Title ?? "";
+        string name = app != null ? GameDisplayName(title, app.Name) : Loc.Get("CardNoGame");
+        ImageSource? icon = app?.Icon;
+        string state;
+        if (engine.Running)
+        {
+            state = Loc.Get(stopping ? "CardStopping" : playing ? "CardPlaying" : "CardStarting");
+        }
+        else if (autoTarget != null)
+        {
+            name = GameDisplayName(autoTarget.Title, autoTarget.ProcessName);
+            icon = RunningApps.IconFor(autoTarget.FullPath);
+            state = Loc.Format("CardCountdown", autoMachine.Remaining);
+        }
+        else if (appSettings.AutoAttach)
+        {
+            state = Loc.Get(autoMachine.Phase == AutoAttachPhase.Spent ? "CardSpent" : "CardWaiting");
+        }
+        else if (app == null || !app.CanAttach)
+        {
+            name = Loc.Get("CardNoGame");
+            icon = null;
+            state = Loc.Get("CardPickGame");
+        }
+        else
+        {
+            state = Loc.Get(WindowList.SelectedItem is GameWindow ? "CardReady" : "CardChooseWindow");
+        }
+        CardName.Text = name;
+        CardState.Text = state;
+        CardIcon.Source = icon;
+    }
+
+    // A game's name for people: its window title, else its executable without ".exe";
+    // "the game" when there is neither. Long titles are shortened.
+    public static string GameDisplayName(string? title, string? processName)
+    {
+        string name = !string.IsNullOrWhiteSpace(title) ? title.Trim() : AutoAttachRules.BaseName(processName);
+        if (name.Length == 0) name = Loc.Get("AutoTheGame");
+        if (name.Length > 60) name = name[..57] + "...";
+        return name;
+    }
+    private void StartClick(object sender, RoutedEventArgs e) => StartSession();
+    // Attach / Play, for the button and for auto-attach alike. True when the engine started.
+    private bool StartSession()
+    {
+        if (!SaveAndApply() || AppList.SelectedItem is not RunningApp app || WindowList.SelectedItem is not GameWindow window) return false;
+        bool started = false;
+        try
+        {
+            sessionError = lastEngineError = ""; LogBox.Clear();
+            playing = false;
+            engine.Start(app, window, profile!, store.Root);
+            sessionWindow = window.Handle; started = true;
+            Status.Text = Loc.Format("StatusStarting", app.Name);
+        }
+        catch (Exception ex)
+        {
+            sessionError = ex.Message; Status.Text = sessionError;
+            autoMachine.MarkSpent(window.Handle);      // not retried until it leaves the foreground and comes back
+        }
         UpdateButtons();
+        return started;
+    }
+
+    // ---- Auto-attach -------------------------------------------------------------------
+
+    // Shows the app settings: auto-attach, the sections' open/closed state and the mode
+    // (Easy turns auto-attach on).
+    private void PutAppSettings()
+    {
+        System.Diagnostics.Debug.WriteLine($"[AppSettings] PutAppSettings enter: mode {appSettings.Mode}, auto {appSettings.AutoAttach}, {appSettings.AutoAttachSeconds} s");
+        autoSettingsLoading = true;
+        AutoAttachCheck.IsChecked = appSettings.AutoAttach;
+        AutoAttachSlider.Value = AppSettings.ClampSeconds(appSettings.AutoAttachSeconds);
+        AutoAttachValue.Text = Loc.Format("ValueSeconds", (int)AutoAttachSlider.Value);
+        autoMachine.Seconds = appSettings.AutoAttachSeconds;
+        autoSettingsLoading = false;
+        PutSections();
+        SetMode(appSettings.IsExpert);
+        System.Diagnostics.Debug.WriteLine("[AppSettings] PutAppSettings exit");
+    }
+
+    private void SaveAppSettingsFromUi()
+    {
+        if (!ready || autoSettingsLoading || AutoAttachCheck == null || AutoAttachSlider == null || AutoAttachValue == null) return;
+        appSettings.AutoAttach = AutoAttachCheck.IsChecked == true;
+        appSettings.AutoAttachSeconds = AppSettings.ClampSeconds((int)Math.Round(AutoAttachSlider.Value));
+        AutoAttachValue.Text = Loc.Format("ValueSeconds", appSettings.AutoAttachSeconds);
+        autoMachine.Seconds = appSettings.AutoAttachSeconds;
+        System.Diagnostics.Debug.WriteLine($"[AutoAttach] settings: on {appSettings.AutoAttach}, {appSettings.AutoAttachSeconds} s");
+        SaveAppSettings();
+        UpdateAutoTimer();
+        UpdateGameCard();
+    }
+
+    // Writes app-settings.json; a failure shows in the status line.
+    private void SaveAppSettings()
+    {
+        System.Diagnostics.Debug.WriteLine($"[AppSettings] save: mode {appSettings.Mode}, auto {appSettings.AutoAttach}, {appSettings.AutoAttachSeconds} s");
+        try { store.SaveAppSettings(appSettings); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Debug.WriteLine("[AppSettings] save failed: " + ex.Message);
+            Status.Text = Loc.Format("StatusAppSettingsFailed", ex.Message);
+        }
+    }
+
+    // ---- Easy | Expert -----------------------------------------------------------------
+
+    private void ModeChecked(object sender, RoutedEventArgs e)
+    {
+        if (!ready || modeLoading) return;
+        SetMode(ReferenceEquals(sender, ExpertMode));
+    }
+
+    // Easy shows the game card, Attach / Play, Stop VR and Recenter, and keeps auto-attach on;
+    // Expert shows every section. Going back to Expert keeps auto-attach as it is. The
+    // mode is remembered app-wide. Easy never changes a game's settings.
+    private void SetMode(bool expert)
+    {
+        System.Diagnostics.Debug.WriteLine($"[Mode] SetMode enter: expert {expert}, was {appSettings.Mode}, auto-attach {appSettings.AutoAttach}");
+        if (EasyMode == null || ExpertMode == null || SettingsScroll == null) return;
+        modeLoading = true;
+        EasyMode.IsChecked = !expert;
+        ExpertMode.IsChecked = expert;
+        modeLoading = false;
+        var easyOnly = expert ? Visibility.Collapsed : Visibility.Visible;
+        EasyPanel.Visibility = easyOnly;
+        EasyIntro.Visibility = easyOnly;
+        EasyRecenterButton.Visibility = easyOnly;
+        SettingsScroll.Visibility = expert ? Visibility.Visible : Visibility.Collapsed;
+        Subtitle.Text = Loc.Get(expert ? "SubtitleExpert" : "SubtitleEasy");
+
+        string mode = expert ? AppSettings.ExpertMode : AppSettings.EasyMode;
+        bool changed = appSettings.Mode != mode;
+        appSettings.Mode = mode;
+        if (!expert && !appSettings.AutoAttach)
+        {
+            System.Diagnostics.Debug.WriteLine("[Mode] Easy turns auto-attach on");
+            appSettings.AutoAttach = true;
+            autoSettingsLoading = true;
+            AutoAttachCheck.IsChecked = true;
+            autoSettingsLoading = false;
+            changed = true;
+        }
+        if (changed) SaveAppSettings();
+        UpdateAutoTimer();
+        UpdateGameCard();
+        System.Diagnostics.Debug.WriteLine($"[Mode] SetMode exit: {appSettings.Mode}, auto-attach {appSettings.AutoAttach}, saved {changed}");
+    }
+
+    // ---- Sections ----------------------------------------------------------------------
+
+    // Each collapsible section and its name in app-settings.json.
+    private (string Name, Expander Section)[] SectionList() =>
+    [
+        (AppSettings.SectionGame, GameSection), (AppSettings.SectionScreen, ScreenSection), (AppSettings.SectionAround, AroundSection),
+        (AppSettings.SectionRoom, RoomSection), (AppSettings.SectionDepth, DepthSection), (AppSettings.SectionSteamVr, SteamVrSection),
+        (AppSettings.SectionProfile, ProfileSection), (AppSettings.SectionSession, SessionDetails),
+    ];
+
+    private void PutSections()
+    {
+        sectionsLoading = true;
+        foreach (var (name, section) in SectionList()) section.IsExpanded = appSettings.SectionOpen(name);
+        sectionsLoading = false;
+    }
+
+    // A section opened or closed by the user: remembered app-wide.
+    private void SectionToggled(object sender, RoutedEventArgs e)
+    {
+        if (!ReferenceEquals(sender, e.OriginalSource)) return;
+        if (!ready || sectionsLoading) return;
+        var open = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var (name, section) in SectionList()) open[name] = section.IsExpanded;
+        appSettings.Sections = open;
+        System.Diagnostics.Debug.WriteLine($"[Sections] {((Expander)sender).Name} {(((Expander)sender).IsExpanded ? "opened" : "closed")}");
+        SaveAppSettings();
+    }
+
+    // After a failed session: open the log (without changing the remembered state) and show it.
+    private void ShowSessionDetails()
+    {
+        sectionsLoading = true;
+        SessionDetails.IsExpanded = true;
+        sectionsLoading = false;
+        if (appSettings.IsExpert) SessionDetails.BringIntoView();
+    }
+
+    // ---- Strings -----------------------------------------------------------------------
+
+    // The shortcut key choices; key names come from the strings, keeping the selections.
+    private void FillShortcutKeys()
+    {
+        object? recenter = RecenterKeys.SelectedValue, menu = MenuKeys.SelectedValue;
+        bool wasLoading = loading;
+        loading = true;
+        var keys = new List<Shortcut> { new("= / +", 0xBB), new(Loc.Get("KeyHome"), 0x24), new(Loc.Get("KeyEnd"), 0x23),
+            new(Loc.Get("KeyInsert"), 0x2D), new(Loc.Get("KeyPause"), 0x13) };
+        for (int i = 1; i <= 24; i++) keys.Add(new("F" + i.ToString(CultureInfo.InvariantCulture), 0x6F + i));
+        for (int i = 0; i < 26; i++) keys.Add(new(((char)('A' + i)).ToString(), 'A' + i));
+        RecenterKeys.ItemsSource = keys; MenuKeys.ItemsSource = keys;
+        if (recenter != null) RecenterKeys.SelectedValue = recenter;
+        if (menu != null) MenuKeys.SelectedValue = menu;
+        loading = wasLoading;
+    }
+
+    // Re-labels everything set from code after the strings change (the pseudo-locale in
+    // the smoke test); XAML text follows by itself.
+    private void RefreshLanguage()
+    {
+        System.Diagnostics.Debug.WriteLine($"[MainWindow] RefreshLanguage enter: pseudo {Loc.Pseudo}");
+        Title = Loc.Format("WindowTitle", VersionText.Text);
+        Subtitle.Text = Loc.Get(appSettings.IsExpert ? "SubtitleExpert" : "SubtitleEasy");
+        FillWorldList();
+        FillLightColourList(SelectedLightColour());
+        FillShortcutKeys();
+        SetGpuLines(gpuLines);
+        // A selected ComboBoxItem's text is copied when it is selected: select it again.
+        bool wasLoading = loading;
+        loading = true;
+        int timing = TimingList.SelectedIndex;
+        TimingList.SelectedIndex = -1;
+        TimingList.SelectedIndex = timing;
+        loading = wasLoading;
+        AppList.Items.Refresh();
+        WindowList.Items.Refresh();
+        AutoAttachValue.Text = Loc.Format("ValueSeconds", appSettings.AutoAttachSeconds);
+        if (profile == null) PathLabel.Text = Loc.Get(AppList.SelectedItem == null ? "PathChoose" : "PathNoAccess");
+        UpdateRoomControls();
+        UpdateGameCard();
+        System.Diagnostics.Debug.WriteLine("[MainWindow] RefreshLanguage exit");
+    }
+
+    private void AutoAttachChanged(object sender, RoutedEventArgs e) => SaveAppSettingsFromUi();
+    private void AutoAttachSecondsChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => SaveAppSettingsFromUi();
+
+    // Polls only while auto-attach is on. Turning it off cancels a countdown. The smoke
+    // test never polls (it must not touch real windows or attach).
+    private void UpdateAutoTimer()
+    {
+        if (smoke || !ready) return;
+        if (appSettings.AutoAttach)
+        {
+            if (!autoTimer.IsEnabled) autoTimer.Start();
+            return;
+        }
+        autoTimer.Stop();
+        ApplyAutoAction(autoMachine.Step(new AutoAttachInput(false, engine.Running || stopping, 0, false, false, autoClock.Elapsed.TotalSeconds)), null);
+    }
+
+    private void AutoAttachTick()
+    {
+        if (!ready || closing || smoke) return;
+        ForegroundSnapshot? snapshot = null;
+        try { snapshot = ForegroundWindow.Read(store.HasProfile); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AutoAttach] could not read the window in front: " + ex.Message); }
+        bool qualifies = AutoAttachRules.Evaluate(snapshot, out string reason);
+        var input = new AutoAttachInput(appSettings.AutoAttach, engine.Running || stopping, snapshot?.Handle ?? 0,
+            snapshot?.IsVrx == true, qualifies, autoClock.Elapsed.TotalSeconds);
+        var action = autoMachine.Step(input);
+        if (action != AutoAttachAction.None)
+            System.Diagnostics.Debug.WriteLine($"[AutoAttach] {action}: {snapshot?.ProcessName} '{snapshot?.Title}' ({reason}), {autoMachine.Remaining} s left");
+        ApplyAutoAction(action, snapshot);
+    }
+
+    // "Attaching VRX to <game> in 5 - switch window to cancel"
+    public static string CountdownText(string? title, string? processName, int seconds) =>
+        Loc.Format("AutoCountdown", GameDisplayName(title, processName), Math.Max(0, seconds));
+
+    private void ApplyAutoAction(AutoAttachAction action, ForegroundSnapshot? snapshot)
+    {
+        switch (action)
+        {
+            case AutoAttachAction.Countdown:
+            {
+                if (snapshot == null) return;
+                if (autoTarget == null) autoSavedStatus = Status.Text;
+                autoTarget = snapshot;
+                autoStatus = CountdownText(snapshot.Title, snapshot.ProcessName, autoMachine.Remaining);
+                Status.Text = autoStatus;
+                try
+                {
+                    autoOverlay ??= new AutoAttachOverlay();
+                    autoOverlay.ShowOn(snapshot.Monitor, autoStatus);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    System.Diagnostics.Debug.WriteLine("[AutoAttach] overlay failed: " + ex.Message);
+                }
+                UpdateGameCard();
+                return;
+            }
+            case AutoAttachAction.Cancel:
+            {
+                HideAutoOverlay();
+                if (Status.Text == autoStatus) Status.Text = autoSavedStatus;
+                autoTarget = null;
+                autoStatus = "";
+                UpdateGameCard();
+                return;
+            }
+            case AutoAttachAction.Attach:
+            {
+                HideAutoOverlay();
+                var target = snapshot ?? autoTarget;
+                autoTarget = null;
+                autoStatus = "";
+                AutoAttachNow(target);
+                return;
+            }
+            default:
+                return;
+        }
+    }
+
+    private void HideAutoOverlay()
+    {
+        if (autoOverlay == null || !autoOverlay.IsVisible) return;
+        autoOverlay.Hide();
+    }
+
+    // At zero: pick the game and its window exactly as a manual pick would (its own profile,
+    // or the base settings for a new game), then start it through Attach / Play's path.
+    private void AutoAttachNow(ForegroundSnapshot? target)
+    {
+        System.Diagnostics.Debug.WriteLine($"[AutoAttach] attach to {target?.ProcessName} pid {target?.Pid} window {target?.Handle:X}");
+        if (target == null || target.Handle == 0) return;
+        if (engine.Running || stopping) return;
+        List<RunningApp> list;
+        try { list = RunningApps.List(ShowAll.IsChecked == true); }
+        catch (Exception ex)
+        {
+            Status.Text = Loc.Format("StatusAutoListFailed", ex.Message);
+            autoMachine.MarkSpent(target.Handle);
+            return;
+        }
+        var app = list.FirstOrDefault(a => a.Pid == target.Pid && a.CanAttach && a.Windows.Any(w => w.Handle == target.Handle));
+        if (app == null)
+        {
+            Status.Text = Loc.Format("StatusAutoGone", AutoAttachRules.BaseName(target.ProcessName));
+            autoMachine.MarkSpent(target.Handle);
+            return;
+        }
+        refreshing = true;
+        AppList.ItemsSource = list;
+        AppList.SelectedItem = app;
+        refreshing = false;
+        sessionError = "";
+        LoadSelected();                                 // as AppSelected does for a manual pick
+        WindowList.SelectedItem = app.Windows.First(w => w.Handle == target.Handle);
+        if (profile == null || !StartSession())
+        {
+            System.Diagnostics.Debug.WriteLine($"[AutoAttach] attach to {app.Name} failed: {Status.Text}");
+            autoMachine.MarkSpent(target.Handle);
+            return;
+        }
+        Status.Text = Loc.Format("StatusAutoStarted", app.Name);
+        System.Diagnostics.Debug.WriteLine($"[AutoAttach] started {app.Name}");
     }
     private async void StopClick(object sender, RoutedEventArgs e) => await StopSession();
     private async Task StopSession()
     {
         if (!engine.Running || profile == null || stopping) return;
         SaveAndApply(); saveTimer.Stop();
-        stopping = true; UpdateButtons(); Status.Text = "Stopping VR…";
+        stopping = true; UpdateButtons(); Status.Text = Loc.Get("StatusStopping");
         try { await engine.Stop(profile); }
-        catch (Exception ex) { Status.Text = "Could not stop VR: " + ex.Message; }
+        catch (Exception ex) { Status.Text = Loc.Format("StatusStopFailed", ex.Message); }
         finally { stopping = false; UpdateButtons(); }
     }
     private void RecenterClick(object sender, RoutedEventArgs e)
-    { if (SaveAndApply() && engine.Running) { engine.Update(profile!, reset: true); Status.Text = "Recenter requested · uses the current headset direction"; } }
+    { if (SaveAndApply() && engine.Running) { engine.Update(profile!, reset: true); Status.Text = Loc.Get("StatusRecenter"); } }
     private void DismissClick(object sender, RoutedEventArgs e)
-    { if (SaveAndApply() && engine.Running) { engine.Update(profile!, dismiss: true); Status.Text = "SteamVR menu dismissal requested"; } }
+    { if (SaveAndApply() && engine.Running) { engine.Update(profile!, dismiss: true); Status.Text = Loc.Get("StatusDismiss"); } }
     private void ResetClick(object sender, RoutedEventArgs e)
     {
         if (profile == null) return;
@@ -473,43 +890,53 @@ public partial class MainWindow : Window
         start.PreferredWindowTitle = profile.PreferredWindowTitle;
         PutProfile(start);
         SaveAndApply();
-        Status.Text = store.HasBase ? "Reset to your base settings" : "Reset to VRX's default settings";
+        Status.Text = Loc.Get(store.HasBase ? "StatusResetBase" : "StatusResetDefault");
     }
     // Keeps the settings shown here as the starting point for games not yet set up.
     private void MakeBaseClick(object sender, RoutedEventArgs e)
     {
-        if (profile == null) { Status.Text = "Select a game first, then save its settings as the base."; return; }
+        if (profile == null) { Status.Text = Loc.Get("StatusBaseSelectFirst"); return; }
         if (!SaveAndApply()) return;
         try
         {
             store.SaveBase(profile);
-            Status.Text = "Base settings saved · games you have not set up yet will start from these";
+            Status.Text = Loc.Get("StatusBaseSaved");
         }
-        catch (Exception ex) { Status.Text = "Could not save base settings: " + ex.Message; }
+        catch (Exception ex) { Status.Text = Loc.Format("StatusBaseFailed", ex.Message); }
     }
+
+    // The Apply to all warning for `count` saved games.
+    public static string ApplyAllQuestion(int count) => Loc.Format(count == 1 ? "ApplyAllQuestionOne" : "ApplyAllQuestionOther", count);
+
+    // The status after Apply to all: the result, then any skipped or failed profiles, as
+    // separate messages joined by the status separator.
+    public static string ApplyAllResult(int applied, int skipped, int failed)
+    {
+        var parts = new List<string>
+        {
+            skipped == 0 && failed == 0 ? Loc.Format(applied == 1 ? "AppliedAllOne" : "AppliedAllOther", applied) :
+                Loc.Format(applied == 1 ? "AppliedSomeOne" : "AppliedSomeOther", applied),
+        };
+        if (skipped > 0) parts.Add(Loc.Format(skipped == 1 ? "SkippedOne" : "SkippedOther", skipped));
+        if (failed > 0) parts.Add(Loc.Format("FailedWrite", failed));
+        return string.Join(Loc.Get("StatusSeparator"), parts);
+    }
+
     // Overwrites every saved game, so it asks first; Cancel is the default.
     private void ApplyAllClick(object sender, RoutedEventArgs e)
     {
-        if (profile == null) { Status.Text = "Select a game first, then apply its settings to all games."; return; }
+        if (profile == null) { Status.Text = Loc.Get("StatusApplyAllSelectFirst"); return; }
         if (!SaveAndApply()) return;
 
         int count = store.SavedProfileFiles().Count;
-        string question = $"Apply the settings shown here to all {count} saved game{(count == 1 ? "" : "s")}?\n\n" +
-            "Every game's screen placement, 3D strength, depth options, depth GPU and shortcut keys will be replaced " +
-            "by these. Each game keeps its own path and window.\n\nThis cannot be undone. " +
-            "Games you have not set up yet still start from the base settings.";
-        var answer = MessageBox.Show(this, question, "Apply to all games", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
-        if (answer != MessageBoxResult.OK) { Status.Text = "Apply to all cancelled · nothing was changed"; return; }
+        var answer = MessageBox.Show(this, ApplyAllQuestion(count), Loc.Get("ApplyAllTitle"), MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (answer != MessageBoxResult.OK) { Status.Text = Loc.Get("StatusApplyAllCancelled"); return; }
         try
         {
             int applied = store.ApplyToAll(profile, out int skipped, out int failed);
-            string text = skipped == 0 && failed == 0 ? $"Settings applied to all {applied} saved game{(applied == 1 ? "" : "s")}" :
-                $"Settings applied to {applied} saved game{(applied == 1 ? "" : "s")}";
-            if (skipped > 0) text += $" · {skipped} unreadable profile{(skipped == 1 ? "" : "s")} left unchanged";
-            if (failed > 0) text += $" · {failed} could not be written (read-only or in use) and keep their old settings";
-            Status.Text = text;
+            Status.Text = ApplyAllResult(applied, skipped, failed);
         }
-        catch (Exception ex) { Status.Text = "Could not apply to all games: " + ex.Message; }
+        catch (Exception ex) { Status.Text = Loc.Format("StatusApplyAllFailed", ex.Message); }
     }
     private void RefreshClick(object sender, RoutedEventArgs e) => RefreshApps();
     private void ShowAllChanged(object sender, RoutedEventArgs e) { if (ready) RefreshApps(); }
@@ -523,10 +950,11 @@ public partial class MainWindow : Window
     {
         if (closing) return;
         SaveAndApply(); refreshTimer.Stop(); saveTimer.Stop();
+        autoTimer.Stop(); HideAutoOverlay();
         if (!engine.Running) return;
         e.Cancel = true;
         await StopSession();
-        if (engine.Running) { Status.Text = "VRX is still stopping. Close again after it stops."; return; }
+        if (engine.Running) { Status.Text = Loc.Get("StatusStillStopping"); UpdateAutoTimer(); return; }
         closing = true; Close();
     }
     private async Task SmokeTest()
@@ -604,6 +1032,25 @@ public partial class MainWindow : Window
         if (store.Load(one.ExecutablePath).AmbilightStrength != 85 || store.Load(one.ExecutablePath).WorldColor != "#000000")
             throw new Exception("Profiles saved before the glow strength and world colour existed must load at 85 % and black");
         if (store.Load(one.ExecutablePath).Room != 0) throw new Exception("Profiles saved before the room existed must load with it off");
+        // A fresh install starts with the room set up; nothing else changes, and base
+        // settings saved before the room existed keep it off.
+        string freshRoot = Path.Combine(output, "newInstall-install");
+        if (Directory.Exists(freshRoot)) Directory.Delete(freshRoot, true);
+        var newInstall = new ProfileStore(freshRoot);
+        var freshStart = newInstall.BaseSettings();
+        if (freshStart.Room != Profile.NewInstallRoom || freshStart.RoomGlass != Profile.NewInstallRoomGlass ||
+            freshStart.RoomReflections != Profile.NewInstallRoomReflections || freshStart.RoomLight != Profile.NewInstallRoomLight ||
+            freshStart.RoomLightColor != Profile.DefaultRoomLightColor)
+            throw new Exception("A newInstall install must start with the room set up (20 / 14 / 15 / 15, warm light)");
+        var plain = new Profile();
+        if (freshStart.FuseModels != plain.FuseModels || freshStart.DepthGpu != plain.DepthGpu || freshStart.ScreenCurve != plain.ScreenCurve ||
+            freshStart.Ambilight != plain.Ambilight || freshStart.DelayToDepth != plain.DelayToDepth || freshStart.Width != plain.Width)
+            throw new Exception("A newInstall install must change only the room's defaults");
+        if (newInstall.Load(Path.Combine(freshRoot, "game.exe")).Room != Profile.NewInstallRoom)
+            throw new Exception("A new game on a newInstall install must start with the room set up");
+        Directory.CreateDirectory(freshRoot);
+        File.WriteAllText(newInstall.BaseFile, "{\"Width\":5.7}");
+        if (newInstall.BaseSettings().Room != 0) throw new Exception("Base settings saved before the room existed must keep the room off");
         if (new Profile { Room = 101 }.Valid() || new Profile { Room = -1 }.Valid() || !new Profile { Room = 100 }.Valid())
             throw new Exception("Room level validation");
         var oldRoom = store.Load(one.ExecutablePath);
@@ -647,58 +1094,58 @@ public partial class MainWindow : Window
         WidthSlider.Value = savedWidth; CurveSlider.Value = savedCurve;
         CurveSlider.Value = 0;
         AmbilightCheck.IsChecked = false;
-        if (RoomSlider.Value != 0 || RoomValue.Text != "Off" || !RoomSlider.IsEnabled) throw new Exception("The room should default off, and be available");
+        if (RoomSlider.Value != 0 || RoomValue.Text != Loc.Get("ValueOff") || !RoomSlider.IsEnabled) throw new Exception("The room should default off, and be available");
         RoomSlider.Value = 45;
-        if (ReadProfile().Room != 45 || RoomValue.Text != "45 %") throw new Exception("The room slider is not mapped to settings");
+        if (ReadProfile().Room != 45 || RoomValue.Text != Loc.Format("ValuePercent", 45)) throw new Exception("The room slider is not mapped to settings");
         FollowCheck.IsChecked = true;
-        if (RoomSlider.IsEnabled || RoomValue.Text != "Needs the fixed screen") throw new Exception("The room must rest while the screen follows the head");
+        if (RoomSlider.IsEnabled || RoomValue.Text != Loc.Get("NeedsFixedScreen")) throw new Exception("The room must rest while the screen follows the head");
         FollowCheck.IsChecked = false;
         if (!RoomSlider.IsEnabled) throw new Exception("The room must come back with the fixed screen");
         RoomSlider.Value = 0;
         // Glass, reflections and the room light: they need the room and the fixed screen, and the
         // light colour also needs the light. Resting controls keep their values.
         if (GlassSlider.Value != 0 || ReflectSlider.Value != 0 || LightSlider.Value != 0 || GlassSlider.IsEnabled || ReflectSlider.IsEnabled ||
-            LightSlider.IsEnabled || LightColourList.IsEnabled || GlassValue.Text != "Needs the room" || ReflectValue.Text != "Needs the room" ||
-            LightValue.Text != "Needs the room")
+            LightSlider.IsEnabled || LightColourList.IsEnabled || GlassValue.Text != Loc.Get("NeedsRoom") || ReflectValue.Text != Loc.Get("NeedsRoom") ||
+            LightValue.Text != Loc.Get("NeedsRoom"))
             throw new Exception("Glass, reflections and the room light must default off and rest without the room");
-        if (LightColourList.SelectedItem as string != "Soft white (3000 K)" || ReadProfile().RoomLightColor != "#FFB46B")
+        if (LightColourList.SelectedItem as string != Loc.Get("LightSoftWhite") || ReadProfile().RoomLightColor != "#FFB46B")
             throw new Exception("The room light colour should default to soft white");
         RoomSlider.Value = 45;
         if (!GlassSlider.IsEnabled || !ReflectSlider.IsEnabled || !LightSlider.IsEnabled || LightColourList.IsEnabled ||
-            GlassValue.Text != "Solid" || ReflectValue.Text != "Off" || LightValue.Text != "Off")
+            GlassValue.Text != Loc.Get("ValueSolid") || ReflectValue.Text != Loc.Get("ValueOff") || LightValue.Text != Loc.Get("ValueOff"))
             throw new Exception("Glass, reflections and the room light must be available with the room, the light colour only with the light");
         GlassSlider.Value = 60; ReflectSlider.Value = 25; LightSlider.Value = 50;
-        if (GlassValue.Text != "60 % clear" || ReflectValue.Text != "25 %" || LightValue.Text != "50 %" || !LightColourList.IsEnabled)
+        if (GlassValue.Text != Loc.Format("ValueClearPercent", 60) || ReflectValue.Text != Loc.Format("ValuePercent", 25) || LightValue.Text != Loc.Format("ValuePercent", 50) || !LightColourList.IsEnabled)
             throw new Exception("Glass, reflections and room light value texts");
         var roomLook = ReadProfile();
         if (roomLook.RoomGlass != 60 || roomLook.RoomReflections != 25 || roomLook.RoomLight != 50)
             throw new Exception("The glass, reflections and room light sliders are not mapped to settings");
-        LightColourList.SelectedItem = "Neutral (4000 K)";
+        LightColourList.SelectedItem = Loc.Get("LightNeutral");
         if (ReadProfile().RoomLightColor != "#FFD1A3") throw new Exception("A room light colour preset is not mapped to settings");
-        LightColourList.SelectedItem = "Warm (2700 K)";
+        LightColourList.SelectedItem = Loc.Get("LightWarm");
         if (ReadProfile().RoomLightColor != "#FFA957") throw new Exception("The warm room light preset is not mapped to settings");
-        LightColourList.SelectedItem = "Daylight (6500 K)";
+        LightColourList.SelectedItem = Loc.Get("LightDaylight");
         if (ReadProfile().RoomLightColor != "#FFF9FD") throw new Exception("The daylight room light preset is not mapped to settings");
         FollowCheck.IsChecked = true;
         if (GlassSlider.IsEnabled || ReflectSlider.IsEnabled || LightSlider.IsEnabled || LightColourList.IsEnabled ||
-            GlassValue.Text != "Needs the fixed screen" || ReflectValue.Text != "Needs the fixed screen" || LightValue.Text != "Needs the fixed screen")
+            GlassValue.Text != Loc.Get("NeedsFixedScreen") || ReflectValue.Text != Loc.Get("NeedsFixedScreen") || LightValue.Text != Loc.Get("NeedsFixedScreen"))
             throw new Exception("Glass, reflections and the room light must rest while the screen follows the head");
         if (ReadProfile().RoomGlass != 60 || ReadProfile().RoomLight != 50 || ReadProfile().RoomLightColor != "#FFF9FD")
             throw new Exception("Resting room controls must keep their values");
         FollowCheck.IsChecked = false;
         RoomSlider.Value = 0;
-        if (GlassSlider.IsEnabled || GlassValue.Text != "Needs the room" || ReadProfile().RoomReflections != 25)
+        if (GlassSlider.IsEnabled || GlassValue.Text != Loc.Get("NeedsRoom") || ReadProfile().RoomReflections != 25)
             throw new Exception("Glass, reflections and the room light must rest, keeping their values, with the room off");
         var customLight = ReadProfile();
         customLight.Room = 45; customLight.RoomLightColor = "#123456";
         PutProfile(customLight);
-        if (LightColourList.SelectedItem as string != "Custom (#123456)" || !LightColourList.IsEnabled || ReadProfile().RoomLightColor != "#123456")
+        if (LightColourList.SelectedItem as string != Loc.Format("LightCustom", "#123456") || !LightColourList.IsEnabled || ReadProfile().RoomLightColor != "#123456")
             throw new Exception("A saved room light colour that is no preset must show as Custom and be kept");
-        LightColourList.SelectedItem = "Soft white (3000 K)";
+        LightColourList.SelectedItem = Loc.Get("LightSoftWhite");
         if (ReadProfile().RoomLightColor != "#FFB46B") throw new Exception("Picking a preset after a custom room light colour");
         PutProfile(one);
-        if (GlassSlider.Value != 0 || LightSlider.Value != 0 || LightColourList.SelectedItem as string != "Soft white (3000 K)" ||
-            LightColourList.Items.Contains("Custom (#123456)"))
+        if (GlassSlider.Value != 0 || LightSlider.Value != 0 || LightColourList.SelectedItem as string != Loc.Get("LightSoftWhite") ||
+            LightColourList.Items.Contains(Loc.Format("LightCustom", "#123456")))
             throw new Exception("Loading another profile must put back its room look and drop the custom light colour");
         if (AmbiStrengthSlider.Value != 85 || AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength should default to 85 % and follow the ambilight checkbox");
         AmbilightCheck.IsChecked = true;
@@ -707,23 +1154,23 @@ public partial class MainWindow : Window
         if (ReadProfile().AmbilightStrength != 40) throw new Exception("The glow strength slider is not mapped to settings");
         AmbiStrengthSlider.Value = 85;
         AmbilightCheck.IsChecked = false;
-        if (WorldHex.Text != "#000000" || WorldList.SelectedItem as string != "Black (default)") throw new Exception("The world should default to black");
-        WorldList.SelectedItem = "Slate";
+        if (WorldHex.Text != "#000000" || WorldList.SelectedItem as string != Loc.Get("WorldBlack")) throw new Exception("The world should default to black");
+        WorldList.SelectedItem = Loc.Get("WorldSlate");
         if (WorldHex.Text != "#2A3441" || ReadProfile().WorldColor != "#2A3441") throw new Exception("A world colour preset is not mapped to settings");
         WorldHex.Text = "#123456";
-        if (WorldList.SelectedItem as string != "Custom" || ReadProfile().WorldColor != "#123456") throw new Exception("A typed world colour must show as Custom and save");
+        if (WorldList.SelectedItem as string != Loc.Get("WorldCustom") || ReadProfile().WorldColor != "#123456") throw new Exception("A typed world colour must show as Custom and save");
         WorldHex.Text = "#12";
         bool rejected = false;
         try { ReadProfile(); } catch (InvalidDataException) { rejected = true; }
         if (!rejected) throw new Exception("A half-typed world colour must not be saved");
-        if (WorldList.SelectedItem as string != "Custom") throw new Exception("A half-typed world colour must show as Custom");
-        WorldList.SelectedItem = "Charcoal";
+        if (WorldList.SelectedItem as string != Loc.Get("WorldCustom")) throw new Exception("A half-typed world colour must show as Custom");
+        WorldList.SelectedItem = Loc.Get("WorldCharcoal");
         if (WorldHex.Text != "#1C1C1E") throw new Exception("Picking a preset after a half-typed colour must put a whole colour back");
         WorldHex.Text = "#1C";
         WorldHexLostFocus(WorldHex, new RoutedEventArgs());
         if (WorldHex.Text != "#1C1C1E") throw new Exception("Leaving the box with half a colour must restore the last whole one");
         WorldHex.Text = "#000000";
-        if (WorldList.SelectedItem as string != "Black (default)") throw new Exception("Typing a preset's colour must select the preset");
+        if (WorldList.SelectedItem as string != Loc.Get("WorldBlack")) throw new Exception("Typing a preset's colour must select the preset");
         if (SubpixelCheck.IsChecked != true) throw new Exception("The sub-pixel warp should default on");
         SubpixelCheck.IsChecked = false;
         if (ReadProfile().SubpixelWarp) throw new Exception("Sub-pixel warp checkbox is not mapped to settings");
@@ -743,17 +1190,20 @@ public partial class MainWindow : Window
         if (FastModelCheck.IsChecked != true) throw new Exception("Fast depth model should default on");
         // GPU list: two identical cards stay distinguishable, software adapters are hidden,
         // a saved card that is no longer present is shown rather than silently replaced.
-        var gpus = Gpus.Parse(["ParseArgs noise", "GPU|0|0|24325|0|NVIDIA GeForce RTX 3090", "GPU|1|0|12115|0|NVIDIA GeForce RTX 3060",
-            "GPU|2|1|12115|0|NVIDIA GeForce RTX 3060", "GPU|3|0|0|1|Microsoft Basic Render Driver"]);
+        string[] gpuSample = ["ParseArgs noise", "GPU|0|0|24325|0|NVIDIA GeForce RTX 3090", "GPU|1|0|12115|0|NVIDIA GeForce RTX 3060",
+            "GPU|2|1|12115|0|NVIDIA GeForce RTX 3060", "GPU|3|0|0|1|Microsoft Basic Render Driver"];
+        var gpus = Gpus.Parse(gpuSample);
+        string card2 = Loc.Format("GpuLabelCard", "NVIDIA GeForce RTX 3060", Loc.Format("GpuSizeGB", 12115 / 1024.0), 2);
         if (gpus.Count != 5 || gpus[3].Id != "name:NVIDIA GeForce RTX 3060#0" || gpus[4].Id != "name:NVIDIA GeForce RTX 3060#1" ||
-            !gpus[4].Label.Contains("card 2") || gpus.Any(g => g.Label.Contains("Basic Render")))
+            gpus[4].Label != card2 || !Loc.NeutralStrings()["GpuLabelCard"].Contains("card {2}") || gpus.Any(g => g.Label.Contains("Basic Render")) ||
+            gpus[0].Label != Loc.Get("GpuSame") || gpus[2].Label != Loc.Format("GpuLabel", "NVIDIA GeForce RTX 3090", Loc.Format("GpuSizeGB", 24325 / 1024.0)))
             throw new Exception("GPU list parsing failed");
-        SetGpuChoices(gpus);
+        SetGpuLines(gpuSample);
         if (DepthGpuList.SelectedValue as string != Gpus.Same) throw new Exception("Depth GPU should default to the game's GPU");
         DepthGpuList.SelectedValue = "name:NVIDIA GeForce RTX 3060#1";
         if (ReadProfile().DepthGpu != "name:NVIDIA GeForce RTX 3060#1") throw new Exception("Depth GPU list is not mapped to settings");
         ShowGpuChoice("name:Old Card#0");
-        if (DepthGpuList.SelectedValue as string != "name:Old Card#0" || !((GpuChoice)DepthGpuList.SelectedItem).Label.StartsWith("Not found"))
+        if (DepthGpuList.SelectedValue as string != "name:Old Card#0" || ((GpuChoice)DepthGpuList.SelectedItem).Label != Loc.Format("GpuNotFound", "Old Card"))
             throw new Exception("A missing saved GPU must stay selected and be marked not found");
         DepthGpuList.SelectedValue = Gpus.Same;
         if (VersionText.Text != DisplayVersion() || !VersionText.Text.StartsWith("v1.") || !Title.Contains(VersionText.Text))
@@ -823,9 +1273,18 @@ public partial class MainWindow : Window
             throw new Exception($"Apply to all must carry on past a locked profile (applied {appliedLocked}, skipped {skippedLocked}, failed {failedLocked})");
         if (ApplyAllButton == null) throw new Exception("The Apply to all button is missing");
 
+        SmokeTestAutoAttach(output, sample, one);
+        SmokeTestModes(output, sample, one);
+        SmokeTestStrings(root);
+
         PutProfile(one);
         PathLabel.Text = one.ExecutablePath; Status.Text = "Preview · saved settings are isolated by executable path";
         UpdateButtons();
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+        UpdateLayout();
+        await SmokeTestScreenshots(output);
+        SetMode(true);
+        PutSections();
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         UpdateLayout();
         var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32);
@@ -848,6 +1307,556 @@ public partial class MainWindow : Window
         if (!SaveAndApply() || Status.Text != sessionError) throw new Exception("Saving hid the session error");
         RefreshApps();
         if (Status.Text != sessionError) throw new Exception("Refreshing hid the session error");
-        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh. No VR session started.");
+        if (Loc.Missing.Count > 0) throw new Exception("Strings asked for but missing from Strings.resx: " + string.Join(", ", Loc.Missing));
+        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; strings: " +
+            Loc.NeutralStrings().Count.ToString(CultureInfo.InvariantCulture) + " keys, all referenced keys present, placeholders consistent, no literal text in MainWindow.xaml, pseudo-locale transforms every string; screenshots ui-easy, ui-expert-default, ui-expert-all-open, ui-expert-pseudo. No VR session started.");
+    }
+
+    // Easy | Expert and the sections: defaults for new and existing users, memory, Easy
+    // turning auto-attach on, what each mode shows. No window is polled and nothing attaches.
+    private void SmokeTestModes(string output, RunningApp sample, Profile one)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(sample);
+        ArgumentNullException.ThrowIfNull(one);
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestModes enter");
+
+        ProfileStore FreshStore(string name)
+        {
+            var created = new ProfileStore(Path.Combine(output, name));
+            if (Directory.Exists(created.Root)) Directory.Delete(created.Root, true);
+            return created;
+        }
+        // A new install starts in Easy; the choice is remembered either way.
+        var fresh = FreshStore("mode-fresh");
+        if (fresh.ExistingUser() || fresh.LoadAppSettings().Mode != AppSettings.EasyMode || fresh.LoadAppSettings().IsExpert)
+            throw new Exception("A new install must start in Easy");
+        fresh.SaveAppSettings(new AppSettings { Mode = AppSettings.ExpertMode });
+        if (fresh.LoadAppSettings().Mode != AppSettings.ExpertMode) throw new Exception("Expert must be remembered");
+        fresh.SaveAppSettings(new AppSettings { Mode = AppSettings.EasyMode });
+        if (fresh.LoadAppSettings().Mode != AppSettings.EasyMode) throw new Exception("Easy must be remembered, even though app settings now exist");
+        if (File.ReadAllText(fresh.AppSettingsFile).Contains("IsExpert")) throw new Exception("IsExpert is derived and must not be saved");
+        // Anyone who has used VRX before starts in Expert, so nothing disappears on them.
+        var withProfile = FreshStore("mode-profile");
+        withProfile.Save(new Profile { ExecutablePath = Path.Combine(output, "mode", "game.exe") });
+        if (withProfile.LoadAppSettings().Mode != AppSettings.ExpertMode) throw new Exception("An existing user with a saved game must start in Expert");
+        var withSettings = FreshStore("mode-settings");
+        Directory.CreateDirectory(withSettings.Root);
+        File.WriteAllText(withSettings.AppSettingsFile, "{\"AutoAttach\":false,\"AutoAttachSeconds\":7}");
+        var before = withSettings.LoadAppSettings();
+        if (before.Mode != AppSettings.ExpertMode || before.AutoAttach || before.AutoAttachSeconds != 7)
+            throw new Exception("App settings from before the modes must open in Expert, keeping auto-attach as it was");
+        var withBase = FreshStore("mode-base");
+        withBase.SaveBase(new Profile());
+        if (withBase.LoadAppSettings().Mode != AppSettings.ExpertMode) throw new Exception("An existing user with base settings must start in Expert");
+        var withLast = FreshStore("mode-last");
+        ProfileStore.AtomicWrite(Path.Combine(withLast.Root, "last-game.txt"), one.ExecutablePath);
+        if (withLast.LoadAppSettings().Mode != AppSettings.ExpertMode) throw new Exception("An existing user with a last game must start in Expert");
+        var corruptMode = FreshStore("mode-corrupt");
+        Directory.CreateDirectory(corruptMode.Root);
+        File.WriteAllText(corruptMode.AppSettingsFile, "{\"Mode\":\"Banana\"}");
+        if (corruptMode.LoadAppSettings().Mode != AppSettings.ExpertMode) throw new Exception("An unknown mode in existing settings must open in Expert");
+        corruptMode.SaveAppSettings(new AppSettings { Mode = "Banana" });
+        if (File.ReadAllText(corruptMode.AppSettingsFile).Contains("Banana")) throw new Exception("An unknown mode must not be saved");
+
+        // Sections: Screen, Around the screen and Room open by default; the rest closed;
+        // saved states round-trip; unknown or missing names use the defaults.
+        var sectionDefaults = new AppSettings();
+        foreach (var (name, _) in SectionList())
+        {
+            bool wanted = name is AppSettings.SectionScreen or AppSettings.SectionAround or AppSettings.SectionRoom;
+            if (sectionDefaults.SectionOpen(name) != wanted) throw new Exception($"Section {name} must default {(wanted ? "open" : "closed")}");
+        }
+        if (sectionDefaults.SectionOpen("Nonsense") || sectionDefaults.SectionOpen("")) throw new Exception("Unknown sections must be closed");
+        fresh.SaveAppSettings(new AppSettings { Mode = AppSettings.ExpertMode, Sections = new() { [AppSettings.SectionGame] = true, [AppSettings.SectionScreen] = false, [AppSettings.SectionSession] = true } });
+        var sectionsBack = fresh.LoadAppSettings();
+        if (!sectionsBack.SectionOpen(AppSettings.SectionGame) || sectionsBack.SectionOpen(AppSettings.SectionScreen) || !sectionsBack.SectionOpen(AppSettings.SectionSession) ||
+            !sectionsBack.SectionOpen(AppSettings.SectionRoom) || sectionsBack.SectionOpen(AppSettings.SectionDepth))
+            throw new Exception("Section states must round-trip, with unsaved sections at their defaults");
+
+        // The window: Easy hides the sections and turns auto-attach on; Expert shows them and
+        // keeps auto-attach as it is. Both are saved.
+        ExpertMode.IsChecked = true;
+        AutoAttachCheck.IsChecked = false;
+        UpdateLayout();
+        if (!appSettings.IsExpert || store.LoadAppSettings().Mode != AppSettings.ExpertMode || SettingsScroll.Visibility != Visibility.Visible ||
+            EasyPanel.Visibility == Visibility.Visible || EasyIntro.Visibility == Visibility.Visible || EasyRecenterButton.Visibility == Visibility.Visible)
+            throw new Exception("Expert must show the sections and hide the Easy panel");
+        if (store.LoadAppSettings().AutoAttach) throw new Exception("Auto-attach should be off before switching to Easy");
+        EasyMode.IsChecked = true;
+        UpdateLayout();
+        var easySaved = store.LoadAppSettings();
+        if (appSettings.IsExpert || easySaved.Mode != AppSettings.EasyMode || !easySaved.AutoAttach || AutoAttachCheck.IsChecked != true || !appSettings.AutoAttach)
+            throw new Exception("Easy must turn auto-attach on and be remembered");
+        if (SettingsScroll.Visibility == Visibility.Visible || SectionList().Any(s => s.Section.IsVisible) || AppList.IsVisible || WidthSlider.IsVisible)
+            throw new Exception("Easy must hide the settings sections");
+        if (!StartButton.IsVisible || !StopButton.IsVisible || !EasyRecenterButton.IsVisible || !GameCard.IsVisible || !EasyIntro.IsVisible || !Status.IsVisible)
+            throw new Exception("Easy must show the game card, Attach / Play, Stop VR, Recenter, the explanation and the status");
+        if (autoTimer.IsEnabled) throw new Exception("The smoke test must never poll the window in front, even in Easy");
+        // The game card: waiting, then a countdown (the state machine only; nothing is shown
+        // on screen and nothing attaches), then cancelled.
+        if (CardState.Text != Loc.Get("CardWaiting")) throw new Exception($"The Easy card must be waiting for a game (shows '{CardState.Text}')");
+        var inFront = new ForegroundSnapshot(0x4242, 4321, @"C:\Games\game.exe", "The Game", false, true, true, true, false, false, default, default, default, false);
+        if (autoMachine.Step(new AutoAttachInput(true, false, inFront.Handle, false, true, 1000)) != AutoAttachAction.Countdown) throw new Exception("Card countdown setup");
+        autoTarget = inFront;
+        UpdateGameCard();
+        if (CardName.Text != "The Game" || CardState.Text != Loc.Format("CardCountdown", autoMachine.Remaining) || autoMachine.Remaining != autoMachine.Seconds)
+            throw new Exception("The card must show the game in front and the countdown");
+        if (autoMachine.Step(new AutoAttachInput(false, false, inFront.Handle, false, true, 1001)) != AutoAttachAction.Cancel) throw new Exception("Card countdown cancel");
+        autoTarget = null;
+        UpdateGameCard();
+        if (CardState.Text != Loc.Get("CardWaiting")) throw new Exception("After a cancelled countdown the card must be waiting again");
+        ExpertMode.IsChecked = true;
+        UpdateLayout();
+        if (!appSettings.IsExpert || store.LoadAppSettings().Mode != AppSettings.ExpertMode || AutoAttachCheck.IsChecked != true || !store.LoadAppSettings().AutoAttach)
+            throw new Exception("Back in Expert, auto-attach must stay as the checkbox says (on)");
+        if (!SettingsScroll.IsVisible || !ScreenSection.IsVisible || EasyRecenterButton.IsVisible) throw new Exception("Expert must show the sections again");
+        AutoAttachCheck.IsChecked = false;
+        if (store.LoadAppSettings().AutoAttach || !appSettings.IsExpert) throw new Exception("Turning auto-attach off in Expert must be saved and keep Expert");
+        UpdateGameCard();
+        if (CardState.Text != Loc.Get("CardReady")) throw new Exception($"With a game and window chosen, the card must be ready (shows '{CardState.Text}')");
+
+        // Sections in the window: each toggle is saved; PutSections puts saved states back;
+        // opening the log after a failure is not remembered.
+        foreach (var (name, section) in SectionList())
+        {
+            bool was = section.IsExpanded;
+            section.IsExpanded = !was;
+            if (store.LoadAppSettings().SectionOpen(name) != !was) throw new Exception($"Opening/closing section {name} must be saved");
+            section.IsExpanded = was;
+            if (store.LoadAppSettings().SectionOpen(name) != was) throw new Exception($"Section {name} must be saved back (status: {Status.Text})");
+        }
+        foreach (var (_, section) in SectionList()) section.IsExpanded = true;
+        appSettings = store.LoadAppSettings();
+        sectionsLoading = true;
+        foreach (var (_, section) in SectionList()) section.IsExpanded = false;
+        sectionsLoading = false;
+        PutSections();
+        if (SectionList().Any(s => !s.Section.IsExpanded)) throw new Exception("Saved section states must be put back");
+        appSettings.Sections = null;
+        SaveAppSettings();
+        PutSections();
+        foreach (var (name, section) in SectionList())
+            if (section.IsExpanded != AppSettings.DefaultSections[name]) throw new Exception($"Section {name} must start at its default");
+        ShowSessionDetails();
+        if (!SessionDetails.IsExpanded || store.LoadAppSettings().SectionOpen(AppSettings.SectionSession))
+            throw new Exception("Opening the log after a failure must show it without remembering it");
+        PutSections();
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestModes exit");
+    }
+
+    // Strings: every key used exists, placeholders match the arguments, MainWindow.xaml has
+    // no literal text, and the pseudo-locale transforms every string. Reads the sources, so
+    // it runs from the repository.
+    private static void SmokeTestStrings(string root)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestStrings enter");
+        var strings = Loc.NeutralStrings();
+        if (strings.Count < 150) throw new Exception($"Strings.resx has only {strings.Count} strings");
+        var problems = new List<string>();
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        int PlaceholderCount(string key) => Loc.Placeholders(strings[key]).DefaultIfEmpty(-1).Max() + 1;
+
+        // Every string's placeholders are {0}..{n-1}, it formats with n arguments, and its
+        // pseudo form keeps them, is bracketed, accented where possible and ~35 % longer.
+        foreach (var (key, value) in strings)
+        {
+            var indexes = Loc.Placeholders(value);
+            int count = indexes.DefaultIfEmpty(-1).Max() + 1;
+            if (Enumerable.Range(0, count).Any(i => !indexes.Contains(i))) problems.Add($"{key}: placeholders not 0..{count - 1}");
+            try { _ = string.Format(CultureInfo.InvariantCulture, value, Enumerable.Repeat((object)1.5, count).ToArray()); }
+            catch (FormatException) { problems.Add($"{key}: does not format with {count} argument(s)"); }
+            string pseudo = Loc.PseudoTransform(value);
+            if (!pseudo.StartsWith('[') || !pseudo.EndsWith(']') || pseudo == value || pseudo.Length < value.Length * 1.3 ||
+                !Loc.Placeholders(pseudo).OrderBy(i => i).SequenceEqual(indexes.OrderBy(i => i)))
+                problems.Add($"{key}: pseudo form '{pseudo}'");
+            if (value.Any(char.IsAsciiLetterLower) && pseudo[1..^1].Replace("·", "").Trim() == value) problems.Add($"{key}: pseudo form is not accented");
+        }
+
+        // MainWindow.xaml: {l:Tr Key} (no placeholders) and {l:TrValue Key, ...} (one).
+        string source = Path.Combine(root, "desktop", "VRX.Desktop");
+        string xaml = File.ReadAllText(Path.Combine(source, "MainWindow.xaml"));
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(xaml, @"\{l:(Tr|TrValue)\s+(\w+)"))
+        {
+            string key = m.Groups[2].Value;
+            used.Add(key);
+            if (!strings.ContainsKey(key)) { problems.Add($"MainWindow.xaml: missing key {key}"); continue; }
+            int wanted = m.Groups[1].Value == "TrValue" ? 1 : 0;
+            if (PlaceholderCount(key) != wanted) problems.Add($"MainWindow.xaml: {key} has {PlaceholderCount(key)} placeholder(s), wanted {wanted}");
+        }
+        // No literal text: every text-bearing attribute is a markup extension, and no element
+        // has text content. (No symbols are exempt; even ↻ is in Strings.resx.)
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(xaml, @"\s(Content|Text|Header|ToolTip|Title)=""([^""]*)"""))
+            if (!m.Groups[2].Value.StartsWith('{')) problems.Add($"MainWindow.xaml: literal {m.Groups[1].Value}=\"{m.Groups[2].Value}\"");
+        string withoutComments = System.Text.RegularExpressions.Regex.Replace(xaml, "<!--.*?-->", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(withoutComments, @">\s*([^<\s][^<]*)<"))
+            problems.Add($"MainWindow.xaml: literal element text '{m.Groups[1].Value.Trim()}'");
+
+        // Code: Loc.Get with a literal key (no placeholders) and Loc.Format with a literal key
+        // and as many arguments as placeholders; a conditional key (cond ? A : B) checks each.
+        foreach (string file in Directory.GetFiles(source, "*.cs"))
+        {
+            string code = File.ReadAllText(file);
+            string name = Path.GetFileName(file);
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(code, @"Loc\.(Get|Format)\("))
+            {
+                var args = SplitArguments(code, m.Index + m.Length);
+                if (args.Count == 0) { problems.Add($"{name}: unreadable Loc call at {m.Index}"); continue; }
+                var keys = System.Text.RegularExpressions.Regex.Matches(args[0], "\"(\\w+)\"").Select(k => k.Groups[1].Value).ToList();
+                if (keys.Count == 0) continue;                     // a key from a variable (checked below)
+                foreach (string key in keys)
+                {
+                    used.Add(key);
+                    if (!strings.ContainsKey(key)) { problems.Add($"{name}: missing key {key}"); continue; }
+                    int wanted = m.Groups[1].Value == "Get" ? 0 : args.Count - 1;
+                    if (PlaceholderCount(key) != wanted) problems.Add($"{name}: {key} has {PlaceholderCount(key)} placeholder(s) but {wanted} argument(s)");
+                }
+            }
+        }
+        // Keys held in tables (the colour presets).
+        foreach (var (key, _) in WorldPresets.Concat(LightPresets))
+        {
+            used.Add(key);
+            if (!strings.ContainsKey(key) || PlaceholderCount(key) != 0) problems.Add($"Preset key {key} missing or has placeholders");
+        }
+        foreach (string key in strings.Keys)
+            if (!used.Contains(key)) problems.Add($"Strings.resx: {key} is not used");
+        if (problems.Count > 0) throw new Exception("Strings: " + string.Join("; ", problems.Take(25)) + (problems.Count > 25 ? $" (+{problems.Count - 25} more)" : ""));
+        System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestStrings exit: {strings.Count} strings, {used.Count} used");
+    }
+
+    // The arguments of a call whose "(" ends just before `start`, split at top-level commas
+    // (strings, chars, brackets and nested calls respected). Empty when unreadable.
+    private static List<string> SplitArguments(string code, int start)
+    {
+        var args = new List<string>();
+        if (string.IsNullOrEmpty(code) || start < 0 || start > code.Length) return args;
+        int depth = 0, from = start;
+        for (int i = start; i < code.Length; i++)
+        {
+            char c = code[i];
+            if (c == '"' || c == '\'')
+            {
+                bool verbatim = c == '"' && i > 0 && code[i - 1] == '@';
+                for (i++; i < code.Length && code[i] != c; i++)
+                    if (code[i] == '\\' && !verbatim) i++;
+                continue;
+            }
+            if (c is '(' or '[' or '{') { depth++; continue; }
+            if (c is ')' or ']' or '}')
+            {
+                if (depth > 0) { depth--; continue; }
+                string last = code[from..i].Trim();
+                if (last.Length > 0 || args.Count > 0) args.Add(last);
+                return args;
+            }
+            if (c == ',' && depth == 0) { args.Add(code[from..i].Trim()); from = i + 1; }
+        }
+        return [];
+    }
+
+    // Screenshots for a look at the layout: Easy; Expert with the default sections; Expert
+    // with every section open (the whole scrolling list); and the same in the pseudo-locale,
+    // with every visible text checked for being transformed.
+    private async Task SmokeTestScreenshots(string output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestScreenshots enter");
+        async Task Settle()
+        {
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            UpdateLayout();
+        }
+        bool savedAuto = appSettings.AutoAttach;
+        SetMode(false);
+        Status.Text = Loc.Get("StatusReady");
+        await Settle();
+        SaveWindowShot(Path.Combine(output, "ui-easy.png"));
+        SetMode(true);
+        appSettings.AutoAttach = savedAuto;
+        autoSettingsLoading = true; AutoAttachCheck.IsChecked = savedAuto; autoSettingsLoading = false;
+        SaveAppSettings();
+        UpdateGameCard();
+        appSettings.Sections = null;
+        PutSections();
+        SettingsScroll.ScrollToTop();
+        await Settle();
+        SaveWindowShot(Path.Combine(output, "ui-expert-default.png"));
+        sectionsLoading = true;
+        foreach (var (_, section) in SectionList()) section.IsExpanded = true;
+        sectionsLoading = false;
+        await Settle();
+        SaveStackedShot(Path.Combine(output, "ui-expert-all-open.png"));
+
+        string savedPath = PathLabel.Text;
+        Loc.SetPseudo(true);
+        try
+        {
+            RefreshLanguage();
+            Status.Text = Loc.Get("StatusReady");
+            PathLabel.Text = Loc.Get("PathChoose");
+            await Settle();
+            SaveStackedShot(Path.Combine(output, "ui-expert-pseudo.png"));
+            CheckPseudoTexts();
+        }
+        finally
+        {
+            Loc.SetPseudo(false);
+            RefreshLanguage();
+            PathLabel.Text = savedPath;
+        }
+        await Settle();
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestScreenshots exit");
+    }
+
+    // In the pseudo-locale every text a person can read must be transformed ("[...]"),
+    // except data: game and window names, paths, the version and key names.
+    private void CheckPseudoTexts()
+    {
+        var problems = new List<string>();
+        var dataOwners = new DependencyObject[] { AppList, WindowList, RecenterKeys, MenuKeys, VersionText, CardName, WorldHex, LogBox };
+        void Walk(DependencyObject node)
+        {
+            if (dataOwners.Contains(node)) return;
+            if (node is FrameworkElement element && element.ToolTip is string tip && !tip.StartsWith('['))
+                problems.Add($"tooltip of {element.Name}: {tip[..Math.Min(40, tip.Length)]}");
+            if (node is TextBlock block && !string.IsNullOrWhiteSpace(block.Text) && !block.Text.StartsWith('['))
+                problems.Add($"text '{block.Text}'");
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Walk(VisualTreeHelper.GetChild(node, i));
+        }
+        Walk(this);
+        foreach (var list in new[] { WorldList, LightColourList, DepthGpuList, TimingList })
+            foreach (var item in list.Items)
+            {
+                string text = item is GpuChoice gpu ? gpu.Label : item is ComboBoxItem box ? box.Content as string ?? "" : item as string ?? "";
+                if (!text.StartsWith('[')) problems.Add($"{list.Name} item '{text}'");
+            }
+        if (!Title.StartsWith('[')) problems.Add("window title");
+        if (problems.Count > 0) throw new Exception("Pseudo-locale left text untransformed: " + string.Join("; ", problems.Distinct().Take(20)));
+    }
+
+    // The window's client area (its content plus the content's margin), without the frame.
+    private void SaveWindowShot(string file)
+    {
+        var content = (FrameworkElement)Content;
+        int width = (int)Math.Ceiling(content.ActualWidth + content.Margin.Left + content.Margin.Right);
+        int height = (int)Math.Ceiling(content.ActualHeight + content.Margin.Top + content.Margin.Bottom);
+        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(this);
+        SavePng(bitmap, file);
+    }
+
+    // The header, the game card, the whole list of sections (not just what the scroll
+    // viewer shows) and the status line, stacked.
+    private void SaveStackedShot(string file)
+    {
+        var parts = new FrameworkElement[] { HeaderGrid, TopArea, SectionsPanel, Status };
+        const double gap = 12, margin = 24;
+        double width = parts.Max(p => p.ActualWidth) + 2 * margin;
+        double height = parts.Sum(p => p.ActualHeight + gap) + 2 * margin;
+        var drawing = new DrawingVisual();
+        using (var dc = drawing.RenderOpen())
+        {
+            dc.DrawRectangle((Brush)FindResource("Page"), null, new Rect(0, 0, width, height));
+            double y = margin;
+            foreach (var part in parts)
+            {
+                if (part.ActualWidth <= 0 || part.ActualHeight <= 0) continue;
+                // A VisualBrush maps the visual's drawn bounds onto the rectangle: draw it at
+                // those bounds, 1:1.
+                var bounds = VisualTreeHelper.GetDescendantBounds(part);
+                if (!bounds.IsEmpty && bounds.Width > 0 && bounds.Height > 0)
+                    dc.DrawRectangle(new VisualBrush(part), null, new Rect(margin + bounds.X, y + bounds.Y, bounds.Width, bounds.Height));
+                y += part.ActualHeight + gap;
+            }
+        }
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(width), (int)Math.Ceiling(height), 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(drawing);
+        SavePng(bitmap, file);
+    }
+
+    private static void SavePng(BitmapSource bitmap, string file)
+    {
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = File.Create(file);
+        encoder.Save(stream);
+    }
+
+    // Auto-attach: the app settings file, the rules and the state machine, all on plain data.
+    // Nothing here reads or drives a real window, and nothing attaches.
+    private void SmokeTestAutoAttach(string output, RunningApp sample, Profile one)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(sample);
+        ArgumentNullException.ThrowIfNull(one);
+
+        // The settings file: default off / 5 s, round-trip, clamping, missing or corrupt file.
+        var appStore = new ProfileStore(Path.Combine(output, "app-settings"));
+        if (Directory.Exists(appStore.Root)) Directory.Delete(appStore.Root, true);
+        var defaults = appStore.LoadAppSettings();
+        if (defaults.AutoAttach || defaults.AutoAttachSeconds != 5) throw new Exception("Auto-attach must default off, with a 5 s countdown");
+        if (Path.GetFileName(appStore.AppSettingsFile) != "app-settings.json" || Path.GetDirectoryName(appStore.AppSettingsFile) != appStore.Root)
+            throw new Exception("App settings must live in app-settings.json in the store root");
+        appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 12 });
+        var back = appStore.LoadAppSettings();
+        if (!back.AutoAttach || back.AutoAttachSeconds != 12) throw new Exception("App settings did not round-trip");
+        appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 99 });
+        if (appStore.LoadAppSettings().AutoAttachSeconds != 30) throw new Exception("Saving must clamp the countdown to 30 s");
+        File.WriteAllText(appStore.AppSettingsFile, "{\"AutoAttach\":true,\"AutoAttachSeconds\":1}");
+        if (appStore.LoadAppSettings().AutoAttachSeconds != 3 || !appStore.LoadAppSettings().AutoAttach) throw new Exception("Loading must clamp the countdown to 3 s");
+        File.WriteAllText(appStore.AppSettingsFile, "{ not json");
+        var corrupt = appStore.LoadAppSettings();
+        if (corrupt.AutoAttach || corrupt.AutoAttachSeconds != 5) throw new Exception("A corrupt app settings file must load as the defaults");
+        File.WriteAllText(appStore.AppSettingsFile, "null");
+        if (appStore.LoadAppSettings().AutoAttach) throw new Exception("A null app settings file must load as the defaults");
+        File.WriteAllText(appStore.AppSettingsFile, "{\"AutoAttach\":true}");
+        if (appStore.LoadAppSettings().AutoAttachSeconds != 5) throw new Exception("A missing countdown must load as 5 s");
+        if (appStore.HasBase) throw new Exception("App settings must not be the base settings");
+        if (appStore.HasProfile("") || appStore.HasProfile(Path.Combine(output, "nobody", "game.exe"))) throw new Exception("HasProfile without a profile");
+        appStore.Save(new Profile { ExecutablePath = Path.Combine(output, "somebody", "game.exe") });
+        if (!appStore.HasProfile(Path.Combine(output, "somebody", "game.exe"))) throw new Exception("HasProfile with a profile");
+
+        // Qualifies: full screen / borderless, or a saved non-browser game in a window.
+        var mon = new ScreenRect(0, 0, 1920, 1080);
+        var mon2 = new ScreenRect(1920, -200, 4480, 1240);
+        var windowed = new ScreenRect(100, 100, 1380, 820);
+        var windowedClient = new ScreenRect(108, 131, 1372, 812);
+        if (!AutoAttachRules.Qualifies("Game.exe", false, mon, mon, mon, true, false)) throw new Exception("A full-screen game must qualify");
+        if (!AutoAttachRules.Qualifies("game", false, mon2, mon2, mon2, true, false)) throw new Exception("A borderless game on a second monitor must qualify");
+        if (!AutoAttachRules.Qualifies("game.exe", false, new ScreenRect(-1, -1, 1921, 1081), new ScreenRect(0, 0, 1920, 1080), mon, true, false))
+            throw new Exception("A borderless window slightly larger than its monitor must qualify");
+        if (!AutoAttachRules.Qualifies("game.exe", false, new ScreenRect(-8, -31, 1928, 1088), new ScreenRect(0, 0, 1920, 1080), mon, true, false))
+            throw new Exception("A window whose client area covers the monitor must qualify");
+        if (AutoAttachRules.Qualifies("game.exe", false, windowed, windowedClient, mon, true, false)) throw new Exception("A windowed game with no profile must not qualify");
+        if (!AutoAttachRules.Qualifies("game.exe", true, windowed, windowedClient, mon, true, false, false, out string savedReason) || savedReason != "saved profile")
+            throw new Exception("A windowed game with a saved profile must qualify");
+        foreach (string browser in new[] { "chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe", "iexplore.exe" })
+        {
+            if (AutoAttachRules.Qualifies(browser, true, windowed, windowedClient, mon, true, false)) throw new Exception($"A windowed browser ({browser}) with a profile must not qualify");
+            if (!AutoAttachRules.Qualifies(browser, false, mon, mon, mon, true, false)) throw new Exception($"A full-screen browser ({browser}) must qualify");
+        }
+        foreach (string excluded in new[] { "VRX.Desktop.exe", "xrplayer.exe", "xrapp5.exe", "steam.exe", "steamwebhelper.exe", "vrmonitor.exe", "vrserver.exe",
+            "vrcompositor.exe", "vrdashboard.exe", "vrwebhelper.exe", "vrstartup.exe", "explorer.exe", @"C:\Windows\explorer.exe", "ShellExperienceHost.exe",
+            "StartMenuExperienceHost.exe", "SearchHost.exe", "WindowsTerminal.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "conhost.exe", "", "  " })
+        {
+            if (AutoAttachRules.Qualifies(excluded, true, mon, mon, mon, true, false)) throw new Exception($"An excluded process ({excluded}) must never qualify");
+        }
+        if (AutoAttachRules.Qualifies(null, true, mon, mon, mon, true, false)) throw new Exception("No process name must not qualify");
+        if (AutoAttachRules.Qualifies("game.exe", true, mon, mon, mon, true, true)) throw new Exception("A minimized window must not qualify");
+        if (AutoAttachRules.Qualifies("game.exe", true, mon, mon, mon, false, false)) throw new Exception("An invisible window must not qualify");
+        // A normal captioned window that is maximized is not "full screen", even when it
+        // reaches over an auto-hidden taskbar; its client area below the caption is < 98 %.
+        var maxWindow = new ScreenRect(-8, -8, 1928, 1088);
+        var maxClient = new ScreenRect(0, 31, 1920, 1080);
+        if (AutoAttachRules.Qualifies("notepad.exe", false, maxWindow, maxClient, mon, true, false, true)) throw new Exception("A maximized captioned window must not count as full screen");
+        if (AutoAttachRules.Qualifies("notepad.exe", false, new ScreenRect(0, 0, 1920, 1040), new ScreenRect(0, 31, 1920, 1040), mon, true, false))
+            throw new Exception("A window above the taskbar must not count as full screen");
+        if (!AutoAttachRules.Qualifies("game.exe", true, maxWindow, maxClient, mon, true, false, true)) throw new Exception("A maximized saved game must qualify");
+        if (AutoAttachRules.CoversMonitor(mon, default) || AutoAttachRules.CoversMonitor(default, mon) || AutoAttachRules.CoversMonitor(mon2, mon))
+            throw new Exception("CoversMonitor edge cases");
+        var good = new ForegroundSnapshot(0x100, 4321, @"C:\Games\game.exe", "The Game", false, true, true, true, false, false, mon, mon, mon, false);
+        if (!AutoAttachRules.Evaluate(good, out _)) throw new Exception("A full-screen game in front must qualify");
+        if (AutoAttachRules.Evaluate(null, out _) || AutoAttachRules.Evaluate(good with { Handle = 0 }, out _) ||
+            AutoAttachRules.Evaluate(good with { IsVrx = true }, out string vrxReason) || vrxReason != "VRX is in front" ||
+            AutoAttachRules.Evaluate(good with { TopLevel = false }, out _) || AutoAttachRules.Evaluate(good with { Offerable = false }, out _) ||
+            AutoAttachRules.Evaluate(good with { Minimized = true }, out _) || AutoAttachRules.Evaluate(good with { FullPath = @"C:\Program Files\Steam\steam.exe" }, out _))
+            throw new Exception("Evaluate must refuse no window, VRX, child windows, windows RunningApps would not offer, minimized and excluded");
+        if (!RunningApps.IsExcludedExecutable("XRPLAYER.EXE") || RunningApps.IsExcludedExecutable("game.exe") || RunningApps.IsExcludedExecutable(null) ||
+            !RunningApps.IsCaptureWindow(true, 10, 10, "UnityWndClass") || RunningApps.IsCaptureWindow(true, 10, 10, "ConsoleWindowClass") ||
+            RunningApps.IsCaptureWindow(false, 10, 10, "X") || RunningApps.IsCaptureWindow(true, 0, 10, "X"))
+            throw new Exception("RunningApps' shared exclusions");
+
+        // The state machine: idle -> counting -> attach -> attached -> spent.
+        static AutoAttachInput At(nint window, double now, bool qualifies = true, bool vrx = false, bool session = false, bool enabled = true) =>
+            new(enabled, session, window, vrx, qualifies, now);
+        var m = new AutoAttachMachine { Seconds = 5 };
+        void Expect(AutoAttachAction got, AutoAttachAction wanted, AutoAttachPhase phase, string what)
+        {
+            if (got != wanted || m.Phase != phase) throw new Exception($"Auto-attach state machine, {what}: got {got}/{m.Phase}, wanted {wanted}/{phase}");
+        }
+        Expect(m.Step(At(0x100, 0, enabled: false)), AutoAttachAction.None, AutoAttachPhase.Idle, "off");
+        Expect(m.Step(At(0x100, 0)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "start");
+        if (m.Target != 0x100 || m.Remaining != 5) throw new Exception("The countdown must start at 5 for the window in front");
+        Expect(m.Step(At(0x100, 1.2)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "1.2 s");
+        if (m.Remaining != 4) throw new Exception($"After 1.2 s the countdown must show 4 (shows {m.Remaining})");
+        Expect(m.Step(At(0x100, 4.9)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "4.9 s");
+        if (m.Remaining != 1) throw new Exception("Just before zero the countdown must show 1");
+        Expect(m.Step(At(0x100, 5.0)), AutoAttachAction.Attach, AutoAttachPhase.Attached, "zero");
+        Expect(m.Step(At(0x100, 6, session: true)), AutoAttachAction.None, AutoAttachPhase.Attached, "session running");
+        m.MarkSpent(0x100);                                    // the session ended
+        Expect(m.Step(At(0x100, 7)), AutoAttachAction.None, AutoAttachPhase.Spent, "spent, still in front");
+        Expect(m.Step(At(0x999, 8, qualifies: false, vrx: true)), AutoAttachAction.None, AutoAttachPhase.Spent, "VRX in front");
+        Expect(m.Step(At(0, 8.5, qualifies: false)), AutoAttachAction.None, AutoAttachPhase.Spent, "no window in front");
+        Expect(m.Step(At(0x100, 9)), AutoAttachAction.None, AutoAttachPhase.Spent, "back from VRX: still spent");
+        Expect(m.Step(At(0x200, 10, qualifies: false)), AutoAttachAction.None, AutoAttachPhase.Idle, "another window in front");
+        Expect(m.Step(At(0x100, 11)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "refocused");
+        Expect(m.Step(At(0x200, 12, qualifies: false)), AutoAttachAction.Cancel, AutoAttachPhase.Idle, "focus change");
+        if (m.Target != 0) throw new Exception("A cancelled countdown must forget its window");
+        Expect(m.Step(At(0x100, 13)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "again");
+        Expect(m.Step(At(0x300, 14)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "another game in front");
+        if (m.Target != 0x300 || m.Remaining != 5) throw new Exception("Switching to another qualifying game must restart the countdown for it");
+        Expect(m.Step(At(0x300, 15, qualifies: false)), AutoAttachAction.Cancel, AutoAttachPhase.Idle, "minimized / closed / stops qualifying");
+        Expect(m.Step(At(0x400, 16, vrx: true)), AutoAttachAction.None, AutoAttachPhase.Idle, "VRX in front never counts");
+        Expect(m.Step(At(0x100, 17)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "counting before VRX comes to front");
+        Expect(m.Step(At(0x400, 17.5, vrx: true)), AutoAttachAction.Cancel, AutoAttachPhase.Idle, "VRX to front cancels");
+        Expect(m.Step(At(0x100, 18)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "counting before turning off");
+        Expect(m.Step(At(0x100, 19, enabled: false)), AutoAttachAction.Cancel, AutoAttachPhase.Idle, "turned off");
+        Expect(m.Step(At(0x100, 20)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "counting before a manual attach");
+        Expect(m.Step(At(0x100, 21, session: true)), AutoAttachAction.Cancel, AutoAttachPhase.Attached, "a manual attach");
+        Expect(m.Step(At(0x100, 22)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "counting before a failed attach");
+        Expect(m.Step(At(0x100, 27)), AutoAttachAction.Attach, AutoAttachPhase.Attached, "attach that fails");
+        m.MarkSpent(0x100);
+        Expect(m.Step(At(0x100, 28)), AutoAttachAction.None, AutoAttachPhase.Spent, "no retry after a failed attach");
+        Expect(m.Step(At(0x100, 60)), AutoAttachAction.None, AutoAttachPhase.Spent, "no retry later either");
+        Expect(m.Step(At(0x500, 61)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "another game while one is spent");
+        Expect(m.Step(At(0x100, 62)), AutoAttachAction.Countdown, AutoAttachPhase.Counting, "the failed one after it left the foreground");
+        m.MarkSpent(0);
+        if (m.Phase != AutoAttachPhase.Counting) throw new Exception("MarkSpent(0) must be ignored");
+        m.Seconds = 1;
+        if (m.Seconds != 3) throw new Exception("The countdown must be at least 3 s");
+        m.Seconds = 100;
+        if (m.Seconds != 30) throw new Exception("The countdown must be at most 30 s");
+
+        if (Loc.NeutralStrings()["AutoCountdown"] != "Attaching VRX to {0} in {1} - switch window to cancel" ||
+            CountdownText("Half-Life 2", "hl2.exe", 5) != Loc.Format("AutoCountdown", "Half-Life 2", 5) ||
+            CountdownText("", "hl2.exe", 3) != Loc.Format("AutoCountdown", "hl2", 3) || CountdownText(null, null, 1) != Loc.Format("AutoCountdown", Loc.Get("AutoTheGame"), 1))
+            throw new Exception("Countdown text");
+
+        // The controls: on/off and the seconds, saved app-wide; the smoke test never polls.
+        var shown = store.LoadAppSettings();
+        if (AutoAttachCheck.IsChecked != shown.AutoAttach || (int)AutoAttachSlider.Value != shown.AutoAttachSeconds || AutoAttachValue.Text != Loc.Format("ValueSeconds", shown.AutoAttachSeconds))
+            throw new Exception("The auto-attach controls must show the saved app settings");
+        if (AutoAttachPanel.ToolTip is not string tip || tip != Loc.Get("AutoAttachTip") ||
+            !Loc.NeutralStrings()["AutoAttachTip"].Contains("full screen") || !Loc.NeutralStrings()["AutoAttachTip"].Contains("cancel"))
+            throw new Exception("The auto-attach controls need their explanation");
+        AutoAttachCheck.IsChecked = true;
+        AutoAttachSlider.Value = 12;
+        var saved = store.LoadAppSettings();
+        if (!saved.AutoAttach || saved.AutoAttachSeconds != 12 || AutoAttachValue.Text != Loc.Format("ValueSeconds", 12) || autoMachine.Seconds != 12)
+            throw new Exception("The auto-attach controls are not saved");
+        if (autoTimer.IsEnabled) throw new Exception("The smoke test must never poll the window in front");
+        AutoAttachSlider.Value = 5;
+        AutoAttachCheck.IsChecked = false;
+        if (store.LoadAppSettings().AutoAttach || store.LoadAppSettings().AutoAttachSeconds != 5) throw new Exception("Turning auto-attach off is not saved");
+
+        // Just looking at games in the list must not save profiles for them (a saved profile
+        // makes a windowed game auto-attachable); changing a setting still saves.
+        var look1 = new RunningApp(2001, "look1.exe", Path.Combine(output, "unsaved", "look1.exe"), [new GameWindow(51, "Look 1")], null);
+        var look2 = new RunningApp(2002, "look2.exe", Path.Combine(output, "unsaved", "look2.exe"), [new GameWindow(52, "Look 2")], null);
+        foreach (var look in new[] { look1, look2 })
+            if (File.Exists(store.FileFor(look.FullPath))) File.Delete(store.FileFor(look.FullPath));
+        refreshing = true; AppList.ItemsSource = new[] { look1, look2 }; refreshing = false;
+        AppList.SelectedItem = look1;
+        AppList.SelectedItem = look2;
+        AppList.SelectedItem = look1;
+        if (store.HasProfile(look1.FullPath) || store.HasProfile(look2.FullPath))
+            throw new Exception("Selecting a game in the list must not save a profile for it");
+        WidthSlider.Value = 6.5;
+        if (!SaveAndApply() || !store.HasProfile(look1.FullPath) || store.HasProfile(look2.FullPath))
+            throw new Exception("Changing a setting must save the game's profile");
+        refreshing = true; AppList.ItemsSource = new[] { sample }; AppList.SelectedItem = sample; refreshing = false;
+        profile = one; PutProfile(one); WindowList.ItemsSource = sample.Windows; WindowList.SelectedIndex = 0;
     }
 }

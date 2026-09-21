@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  VRX desktop app: every user-visible string (neutral = English).
+  To translate, copy this file to Strings.<culture>.resx (for example Strings.de.resx or
+  Strings.fr-CA.resx) next to it, translate each <value>, and keep every {0}, {1}...
+  placeholder (their order may change). Keys ending in One / Other are the singular
+  and plural forms. Rebuild: the translation ships as a satellite assembly and is
+  picked automatically from the Windows display language.
+-->
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+
+  <!-- Window and header -->
+  <data name="AppName" xml:space="preserve"><value>VRX</value><comment>Product name; normally not translated.</comment></data>
+  <data name="WindowTitle" xml:space="preserve"><value>VRX {0} — Desktop setup</value><comment>{0} = version, e.g. v1.7.1</comment></data>
+  <data name="SubtitleEasy" xml:space="preserve"><value>Play your game in VR. VRX does the setting up.</value></data>
+  <data name="SubtitleExpert" xml:space="preserve"><value>Choose a game. Set up your screen.</value></data>
+  <data name="ModeEasy" xml:space="preserve"><value>Easy</value></data>
+  <data name="ModeEasyCaption" xml:space="preserve"><value>Automatic</value></data>
+  <data name="ModeEasyTip" xml:space="preserve"><value>Easy: VRX attaches by itself to the game in front, using the game's saved settings (or your base settings for a new game). Almost everything else is hidden.</value></data>
+  <data name="ModeExpert" xml:space="preserve"><value>Expert</value></data>
+  <data name="ModeExpertCaption" xml:space="preserve"><value>All settings</value></data>
+  <data name="ModeExpertTip" xml:space="preserve"><value>Expert: every setting, grouped into sections you can open and close.</value></data>
+
+  <!-- Easy mode and the game card -->
+  <data name="EasyIntro" xml:space="preserve"><value>Start your game and bring it to the front - VRX attaches after a short countdown.</value></data>
+  <data name="EasyHintSettings" xml:space="preserve"><value>VRX uses the game's saved settings, or your base settings for a game it has not seen before. Switch to Expert to change them.</value></data>
+  <data name="EasyHintSteamVr" xml:space="preserve"><value>Start SteamVR before playing. Press Stop VR, or close the game, to finish.</value></data>
+  <data name="CardCaption" xml:space="preserve"><value>GAME</value></data>
+  <data name="CardNoGame" xml:space="preserve"><value>No game yet</value></data>
+  <data name="CardWaiting" xml:space="preserve"><value>Waiting · bring your game to the front</value></data>
+  <data name="CardCountdown" xml:space="preserve"><value>Attaching in {0} s · switch window to cancel</value><comment>{0} = seconds left</comment></data>
+  <data name="CardStarting" xml:space="preserve"><value>Starting VR…</value></data>
+  <data name="CardPlaying" xml:space="preserve"><value>Playing</value></data>
+  <data name="CardStopping" xml:space="preserve"><value>Stopping VR…</value></data>
+  <data name="CardSpent" xml:space="preserve"><value>Stopped · switch to another window and back to attach again</value></data>
+  <data name="CardReady" xml:space="preserve"><value>Ready · press Attach / Play</value></data>
+  <data name="CardChooseWindow" xml:space="preserve"><value>Choose the window to capture under Game &amp; window</value></data>
+  <data name="CardPickGame" xml:space="preserve"><value>Pick a game under Game &amp; window, or turn on auto-attach</value></data>
+
+  <!-- Buttons -->
+  <data name="AttachPlay" xml:space="preserve"><value>Attach / Play</value></data>
+  <data name="StopVr" xml:space="preserve"><value>Stop VR</value></data>
+  <data name="Recenter" xml:space="preserve"><value>Recenter</value></data>
+  <data name="RecenterTip" xml:space="preserve"><value>Puts the screen straight in front of where the headset is looking now.</value></data>
+  <data name="RecenterNow" xml:space="preserve"><value>Recenter now</value></data>
+  <data name="DismissMenuNow" xml:space="preserve"><value>Dismiss menu now</value></data>
+  <data name="RefreshSymbol" xml:space="preserve"><value>↻</value><comment>Refresh button symbol; normally not translated.</comment></data>
+  <data name="RefreshTip" xml:space="preserve"><value>Refresh running applications</value></data>
+  <data name="ResetProfile" xml:space="preserve"><value>Reset this profile</value></data>
+  <data name="ResetProfileTip" xml:space="preserve"><value>Puts this game back to the base settings (or VRX's defaults if no base has been saved).</value></data>
+  <data name="MakeBase" xml:space="preserve"><value>Make base settings</value></data>
+  <data name="MakeBaseTip" xml:space="preserve"><value>Saves the settings shown here as the starting point for games you have not set up yet. Screen placement, 3D strength, depth options and shortcuts are all included; the game's own path and window are not. Games you have already set up keep their own settings.</value></data>
+  <data name="ApplyAll" xml:space="preserve"><value>Apply to all</value></data>
+  <data name="ApplyAllTip" xml:space="preserve"><value>Copies the settings shown here to every game you have already set up, after asking you to confirm. Screen placement, 3D strength, depth options, depth GPU and shortcuts are all included; each game keeps its own path and window. Games you have not set up yet still start from the base settings.</value></data>
+
+  <!-- Section headers -->
+  <data name="SectionGame" xml:space="preserve"><value>Game &amp; window</value></data>
+  <data name="SectionScreen" xml:space="preserve"><value>Screen</value></data>
+  <data name="SectionAround" xml:space="preserve"><value>Around the screen</value></data>
+  <data name="SectionRoom" xml:space="preserve"><value>Room</value></data>
+  <data name="SectionDepth" xml:space="preserve"><value>3D &amp; depth</value></data>
+  <data name="SectionSteamVr" xml:space="preserve"><value>SteamVR &amp; shortcuts</value></data>
+  <data name="SectionProfile" xml:space="preserve"><value>Profile</value></data>
+  <data name="SectionSession" xml:space="preserve"><value>Session details</value></data>
+
+  <!-- 1 Game & window -->
+  <data name="RunningApplications" xml:space="preserve"><value>Running applications</value></data>
+  <data name="ShowAllProcesses" xml:space="preserve"><value>Show all processes</value></data>
+  <data name="WindowToCapture" xml:space="preserve"><value>Window to capture</value></data>
+  <data name="PathChoose" xml:space="preserve"><value>Choose an application to get started.</value></data>
+  <data name="PathNoAccess" xml:space="preserve"><value>No accessible executable/window. Select a running game.</value></data>
+  <data name="GameHint" xml:space="preserve"><value>Settings are saved separately for each executable. Start SteamVR before playing.</value></data>
+  <data name="AutoAttachCheck" xml:space="preserve"><value>Auto-attach to the game in front</value></data>
+  <data name="AutoAttachCountdown" xml:space="preserve"><value>Countdown</value></data>
+  <data name="AutoAttachTip" xml:space="preserve"><value>When a game is in front, VRX counts down and then attaches to it, exactly as if you had picked it and pressed Attach / Play. A window counts when it is full screen or borderless, or when it is a game you have set up before (it has saved settings; web browsers only count full screen). Steam, SteamVR, Windows itself, terminals and VRX are never attached. Switch to another window during the countdown to cancel it. After you stop VR, or if attaching fails, that window is left alone until you switch away from it and back. The countdown never starts while VRX itself is in front. Easy mode always has it on.</value></data>
+  <data name="AppDescriptionOne" xml:space="preserve"><value>PID {0} · 1 window</value><comment>{0} = process id</comment></data>
+  <data name="AppDescriptionOther" xml:space="preserve"><value>PID {0} · {1} windows</value><comment>{0} = process id, {1} = number of windows</comment></data>
+  <data name="AppNoGameWindow" xml:space="preserve"><value>No accessible game window</value></data>
+  <data name="WindowUntitled" xml:space="preserve"><value>Window {0}</value><comment>{0} = window handle in hex</comment></data>
+
+  <!-- 2 Screen -->
+  <data name="ScreenHint" xml:space="preserve"><value>Changes apply live. Position is relative to your last recenter.</value></data>
+  <data name="PreviewLabel" xml:space="preserve"><value>TOP VIEW · drag the screen</value></data>
+  <data name="PreviewTip" xml:space="preserve"><value>Drag the screen to change horizontal position and distance</value></data>
+  <data name="ScreenWidth" xml:space="preserve"><value>Screen width</value></data>
+  <data name="Distance" xml:space="preserve"><value>Distance</value></data>
+  <data name="HeightOffset" xml:space="preserve"><value>Height offset</value></data>
+  <data name="LeftRightOffset" xml:space="preserve"><value>Left / right offset</value></data>
+  <data name="ScreenCurve" xml:space="preserve"><value>Screen curve</value></data>
+  <data name="ScreenCurveTip" xml:space="preserve"><value>Wraps the screen around you like a curved television. A curved screen is drawn as a real cylinder for each eye, so its outline, perspective and head-movement parallax are right; the top view above shows the shape. 0 % is flat. Works with the fixed screen and with head-follow. Applies live; saved per game.</value></data>
+  <data name="FollowHead" xml:space="preserve"><value>Screen follows my head</value></data>
+  <data name="ValueMetres" xml:space="preserve"><value>{0:F2} m</value><comment>{0} = a length in metres</comment></data>
+  <data name="ValuePercent" xml:space="preserve"><value>{0:F0} %</value><comment>{0} = a percentage</comment></data>
+  <data name="ValueNumber" xml:space="preserve"><value>{0:F2}</value><comment>{0} = a plain number with two decimals</comment></data>
+  <data name="ValueSeconds" xml:space="preserve"><value>{0} s</value><comment>{0} = seconds</comment></data>
+
+  <!-- 3 Around the screen -->
+  <data name="Ambilight" xml:space="preserve"><value>Ambilight — glow around the screen</value></data>
+  <data name="AmbilightTip" xml:space="preserve"><value>Spreads the colours at the edge of the picture softly into the darkness around the screen, like the bias lighting behind a television. Each point of the glow blends the whole border, the nearest part most, so it follows the local colour close in and softens further out. It wraps round a curved screen and follows the scene smoothly rather than flickering. Applies live; saved per game.</value></data>
+  <data name="AmbilightStrength" xml:space="preserve"><value>Ambilight strength</value></data>
+  <data name="AmbilightStrengthTip" xml:space="preserve"><value>How bright the glow is next to the screen; it always fades out towards its edge. Applies live; saved per game.</value></data>
+  <data name="WorldColour" xml:space="preserve"><value>World colour</value></data>
+  <data name="WorldListTip" xml:space="preserve"><value>The colour of the space around the screen, instead of black. Dark colours keep the picture's contrast; the ambilight glows over it. Applies live; saved per game.</value></data>
+  <data name="WorldHexTip" xml:space="preserve"><value>Any colour as #RRGGBB. Leaving the box with half a colour in it puts the last whole one back.</value></data>
+  <data name="WorldBlack" xml:space="preserve"><value>Black (default)</value></data>
+  <data name="WorldCharcoal" xml:space="preserve"><value>Charcoal</value></data>
+  <data name="WorldSlate" xml:space="preserve"><value>Slate</value></data>
+  <data name="WorldMidnight" xml:space="preserve"><value>Midnight blue</value></data>
+  <data name="WorldPurple" xml:space="preserve"><value>Deep purple</value></data>
+  <data name="WorldForest" xml:space="preserve"><value>Forest</value></data>
+  <data name="WorldWarm" xml:space="preserve"><value>Warm dark</value></data>
+  <data name="WorldCinemaRed" xml:space="preserve"><value>Cinema red</value></data>
+  <data name="WorldGrey" xml:space="preserve"><value>Grey</value></data>
+  <data name="WorldDusk" xml:space="preserve"><value>Dusk</value></data>
+  <data name="WorldOvercast" xml:space="preserve"><value>Overcast</value></data>
+  <data name="WorldCustom" xml:space="preserve"><value>Custom</value></data>
+
+  <!-- 4 Room -->
+  <data name="RoomLabel" xml:space="preserve"><value>Room — walls lit by the screen</value></data>
+  <data name="RoomTip" xml:space="preserve"><value>Puts you in a dark room whose walls, floor and ceiling are lit by the picture and the ambilight, like a television or a cinema screen in a dark room. 0 is off; higher values make the walls paler, so they reflect more; 30-60 % looks like a cinema. With the room on, the world colour becomes its house lights and the screen is kept level (a tilted floor would feel wrong). Not with 'Screen follows my head'. Glass, reflections and a room light are below. Applies live; saved per game.</value></data>
+  <data name="GlassWalls" xml:space="preserve"><value>Glass walls</value></data>
+  <data name="GlassTip" xml:space="preserve"><value>Turns the side walls, the back wall and the ceiling into glass in slim frames, so you look out over a ground that runs to a horizon in the world colour. With a black world colour it is a glass room at night: you see only the frames and reflections. 0 is solid walls, 100 clear glass. The wall with the screen and the floor stay solid. Glass or reflections also show 1 m floor tiles, so you can count the screen's size in metres. Clear glass keeps less light in, so the room gets a little darker. Applies live; saved per game.</value></data>
+  <data name="Reflections" xml:space="preserve"><value>Reflections</value></data>
+  <data name="ReflectTip" xml:space="preserve"><value>How much the glass, the walls and a polished floor reflect: the screen, its glow and the room light appear mirrored, which shows how big the screen is and how far away. Reflections are stronger at a glancing angle. 0 is none. Applies live; saved per game.</value></data>
+  <data name="RoomLight" xml:space="preserve"><value>Room light</value></data>
+  <data name="RoomLightTip" xml:space="preserve"><value>A soft light panel in the ceiling just above and behind you, so the room stays visible when the picture is dark. How much the walls pick it up depends on how pale they are (the Room slider). 0 is off. Applies live; saved per game.</value></data>
+  <data name="LightColour" xml:space="preserve"><value>Light colour</value></data>
+  <data name="LightColourTip" xml:space="preserve"><value>The room light's colour, from warm (2700 K, like a table lamp) to daylight (6500 K). Applies live; saved per game.</value></data>
+  <data name="LightWarm" xml:space="preserve"><value>Warm (2700 K)</value></data>
+  <data name="LightSoftWhite" xml:space="preserve"><value>Soft white (3000 K)</value></data>
+  <data name="LightNeutral" xml:space="preserve"><value>Neutral (4000 K)</value></data>
+  <data name="LightDaylight" xml:space="preserve"><value>Daylight (6500 K)</value></data>
+  <data name="LightCustom" xml:space="preserve"><value>Custom ({0})</value><comment>{0} = a colour like #123456</comment></data>
+  <data name="ValueOff" xml:space="preserve"><value>Off</value></data>
+  <data name="ValueSolid" xml:space="preserve"><value>Solid</value></data>
+  <data name="ValueClearPercent" xml:space="preserve"><value>{0} % clear</value><comment>{0} = how clear the glass is, percent</comment></data>
+  <data name="NeedsFixedScreen" xml:space="preserve"><value>Needs the fixed screen</value></data>
+  <data name="NeedsRoom" xml:space="preserve"><value>Needs the room</value></data>
+
+  <!-- 5 3D & depth -->
+  <data name="Strength3D" xml:space="preserve"><value>3D strength</value></data>
+  <data name="EnableStereo" xml:space="preserve"><value>Enable stereo 3D</value></data>
+  <data name="FastModel" xml:space="preserve"><value>Fast depth model — ZipDepth</value></data>
+  <data name="FastModelTip" xml:space="preserve"><value>On (default): ZipDepth, about 6x less GPU time per depth estimate than Depth Anything V2 (2.0 vs 13.1 ms on an RTX 3090), so depth keeps up with the game much better. Off: Depth Anything V2, the original model; depth detail differs slightly between them. Applies live (depth pauses for under a second while the model loads); saved per game.</value></data>
+  <data name="Subpixel" xml:space="preserve"><value>Smooth depth steps (sub-pixel warp)</value></data>
+  <data name="SubpixelTip" xml:space="preserve"><value>On (default): the stereo shift keeps its fractional part, so smoothly receding surfaces such as grass, roads and walls look smooth. Off: whole-pixel shifts, which quantise the scene into about 25 depth bands and can show ridges like a ploughed field. Off is very slightly sharper. Applies live; saved per game.</value></data>
+  <data name="Steady" xml:space="preserve"><value>Steady depth — motion vectors</value></data>
+  <data name="SteadyTip" xml:space="preserve"><value>Reduces depth shimmer: each new depth estimate is blended with the previous one, moved to where things are now by the graphics card's hardware motion estimator (its video engine, not the shader cores). Only where the motion is verified, so moving edges should not trail. On by default; works on any GPU with a hardware motion estimator. Applies live; saved per game.</value></data>
+  <data name="Fuse" xml:space="preserve"><value>Fuse with Depth Anything V2 (experimental)</value></data>
+  <data name="FuseTip" xml:space="preserve"><value>Runs Depth Anything V2 alongside ZipDepth: ZipDepth keeps depth fast, Depth Anything supplies more detailed layering, moved to the current frame with motion vectors. Best with another GPU chosen as the depth GPU; on one GPU it runs at most 10 times a second. Needs the fast depth model. Applies live; saved per game.</value></data>
+  <data name="FuseHint" xml:space="preserve"><value>Fusion is best with a second depth GPU. Both can be used together.</value></data>
+  <data name="DepthGpu" xml:space="preserve"><value>Depth GPU</value></data>
+  <data name="DepthGpuTip" xml:space="preserve"><value>Which graphics card runs the depth model. Another card stops depth competing with the game for GPU time; the capture step sends each frame across automatically. If the chosen card is missing, VRX uses the game's GPU. Takes effect the next time you press Attach / Play; saved per game.</value></data>
+  <data name="DepthGpuHint" xml:space="preserve"><value>Another GPU keeps depth fast while the game uses its own card fully. Applies at the next Attach / Play.</value></data>
+  <data name="GpuSame" xml:space="preserve"><value>Same GPU as the game (default)</value></data>
+  <data name="GpuAuto" xml:space="preserve"><value>Any other GPU (automatic)</value></data>
+  <data name="GpuLabel" xml:space="preserve"><value>{0} ({1})</value><comment>{0} = GPU name, {1} = its memory, e.g. 12 GB</comment></data>
+  <data name="GpuLabelCard" xml:space="preserve"><value>{0} ({1}, card {2})</value><comment>{0} = GPU name, {1} = memory, {2} = which of several identical cards (1, 2...)</comment></data>
+  <data name="GpuSizeGB" xml:space="preserve"><value>{0:0.#} GB</value><comment>{0} = gigabytes</comment></data>
+  <data name="GpuSizeMB" xml:space="preserve"><value>{0} MB</value><comment>{0} = megabytes</comment></data>
+  <data name="GpuNotFound" xml:space="preserve"><value>Not found: {0} (the game's GPU is used)</value><comment>{0} = GPU name</comment></data>
+  <data name="ForegroundPasses" xml:space="preserve"><value>Extra foreground depth passes (experimental)</value></data>
+  <data name="ForegroundTip" xml:space="preserve"><value>Gives persistent nearby regions an extra detail pass when time allows. Uses more GPU time; improvement varies by scene. Toggle during playback to compare.</value></data>
+  <data name="FrameTiming" xml:space="preserve"><value>Game frame timing</value></data>
+  <data name="FrameTimingTip" xml:space="preserve"><value>Which game frame is shown with the depth. Latest frame (default): smooth and immediate; depth lags slightly behind moving things. Delayed to depth: the game image is held back by the depth delay so they line up much better, and motion stays smooth. Matched to depth: each depth estimate with the exact frame it came from; best alignment, but game motion only updates at the depth rate. Delayed and matched add delay. Applies live; saved per game.</value></data>
+  <data name="TimingLatest" xml:space="preserve"><value>Latest frame (default)</value></data>
+  <data name="TimingDelayed" xml:space="preserve"><value>Delayed to depth — smooth, slightly behind</value></data>
+  <data name="TimingMatched" xml:space="preserve"><value>Matched to depth — exact, updates at the depth rate</value></data>
+  <data name="TimingHint" xml:space="preserve"><value>Delayed and matched line the depth up with the game better, but show the game later.</value></data>
+
+  <!-- 6 SteamVR & shortcuts -->
+  <data name="DismissOnStart" xml:space="preserve"><value>Dismiss SteamVR menu when playback starts</value></data>
+  <data name="KeyboardShortcuts" xml:space="preserve"><value>Keyboard shortcuts</value></data>
+  <data name="ShortcutRecenter" xml:space="preserve"><value>Recenter</value></data>
+  <data name="ShortcutDismiss" xml:space="preserve"><value>Dismiss SteamVR menu</value></data>
+  <data name="ShortcutsHint" xml:space="preserve"><value>Shortcuts work during VR playback and also reach the game. Choose keys that do not conflict with your game controls.</value></data>
+  <data name="KeyHome" xml:space="preserve"><value>Home</value><comment>Keyboard key name</comment></data>
+  <data name="KeyEnd" xml:space="preserve"><value>End</value><comment>Keyboard key name</comment></data>
+  <data name="KeyInsert" xml:space="preserve"><value>Insert</value><comment>Keyboard key name</comment></data>
+  <data name="KeyPause" xml:space="preserve"><value>Pause</value><comment>Keyboard key name</comment></data>
+
+  <!-- 7 Profile -->
+  <data name="ProfileHint" xml:space="preserve"><value>Settings are saved for each game as you change them. These buttons copy them between games.</value></data>
+
+  <!-- Status line -->
+  <data name="StatusSeparator" xml:space="preserve"><value> · </value><comment>Joins independent status messages; keep the spaces.</comment></data>
+  <data name="StatusReady" xml:space="preserve"><value>Ready · desktop controls only</value></data>
+  <data name="StatusPlaying" xml:space="preserve"><value>Playing · {0}</value><comment>{0} = game executable</comment></data>
+  <data name="StatusStopped" xml:space="preserve"><value>Stopped · your settings are saved</value></data>
+  <data name="StatusEngineFailed" xml:space="preserve"><value>VRX could not continue. {0}</value><comment>{0} = the reason (English, from the renderer) or SeeSessionDetails</comment></data>
+  <data name="SeeSessionDetails" xml:space="preserve"><value>See Session details below.</value></data>
+  <data name="StatusRefreshFailed" xml:space="preserve"><value>Could not refresh applications: {0}</value><comment>{0} = error message</comment></data>
+  <data name="StatusChooseWindow" xml:space="preserve"><value>Choose which window to capture for {0}</value><comment>{0} = game executable</comment></data>
+  <data name="StatusReadyFor" xml:space="preserve"><value>Ready · settings for {0}</value><comment>{0} = game executable</comment></data>
+  <data name="StatusSavedPlaying" xml:space="preserve"><value>Playing · saved for {0}</value><comment>{0} = game executable</comment></data>
+  <data name="StatusSaved" xml:space="preserve"><value>Saved for {0}</value><comment>{0} = game executable</comment></data>
+  <data name="StatusStarting" xml:space="preserve"><value>Starting VR · {0}</value><comment>{0} = game executable</comment></data>
+  <data name="StatusStopping" xml:space="preserve"><value>Stopping VR…</value></data>
+  <data name="StatusStopFailed" xml:space="preserve"><value>Could not stop VR: {0}</value><comment>{0} = error message</comment></data>
+  <data name="StatusStillStopping" xml:space="preserve"><value>VRX is still stopping. Close again after it stops.</value></data>
+  <data name="StatusRecenter" xml:space="preserve"><value>Recenter requested · uses the current headset direction</value></data>
+  <data name="StatusDismiss" xml:space="preserve"><value>SteamVR menu dismissal requested</value></data>
+  <data name="StatusResetBase" xml:space="preserve"><value>Reset to your base settings</value></data>
+  <data name="StatusResetDefault" xml:space="preserve"><value>Reset to VRX's default settings</value></data>
+  <data name="StatusBaseSelectFirst" xml:space="preserve"><value>Select a game first, then save its settings as the base.</value></data>
+  <data name="StatusBaseSaved" xml:space="preserve"><value>Base settings saved · games you have not set up yet will start from these</value></data>
+  <data name="StatusBaseFailed" xml:space="preserve"><value>Could not save base settings: {0}</value><comment>{0} = error message</comment></data>
+  <data name="StatusAppSettingsFailed" xml:space="preserve"><value>Could not save the app settings: {0}</value><comment>{0} = error message</comment></data>
+  <data name="StatusApplyAllSelectFirst" xml:space="preserve"><value>Select a game first, then apply its settings to all games.</value></data>
+  <data name="StatusApplyAllCancelled" xml:space="preserve"><value>Apply to all cancelled · nothing was changed</value></data>
+  <data name="StatusApplyAllFailed" xml:space="preserve"><value>Could not apply to all games: {0}</value><comment>{0} = error message</comment></data>
+  <data name="AppliedAllOne" xml:space="preserve"><value>Settings applied to your {0} saved game</value><comment>{0} = 1</comment></data>
+  <data name="AppliedAllOther" xml:space="preserve"><value>Settings applied to all {0} saved games</value><comment>{0} = number of games</comment></data>
+  <data name="AppliedSomeOne" xml:space="preserve"><value>Settings applied to {0} saved game</value><comment>{0} = 1</comment></data>
+  <data name="AppliedSomeOther" xml:space="preserve"><value>Settings applied to {0} saved games</value><comment>{0} = number of games</comment></data>
+  <data name="SkippedOne" xml:space="preserve"><value>{0} unreadable profile left unchanged</value><comment>{0} = 1</comment></data>
+  <data name="SkippedOther" xml:space="preserve"><value>{0} unreadable profiles left unchanged</value><comment>{0} = number of profiles</comment></data>
+  <data name="FailedWrite" xml:space="preserve"><value>{0} could not be written (read-only or in use) and keep their old settings</value><comment>{0} = number of profiles</comment></data>
+  <data name="ApplyAllTitle" xml:space="preserve"><value>Apply to all games</value></data>
+  <data name="ApplyAllQuestionOne" xml:space="preserve"><value>Apply the settings shown here to your {0} saved game?
+
+Every game's screen placement, 3D strength, depth options, depth GPU and shortcut keys will be replaced by these. Each game keeps its own path and window.
+
+This cannot be undone. Games you have not set up yet still start from the base settings.</value><comment>{0} = 1</comment></data>
+  <data name="ApplyAllQuestionOther" xml:space="preserve"><value>Apply the settings shown here to all {0} saved games?
+
+Every game's screen placement, 3D strength, depth options, depth GPU and shortcut keys will be replaced by these. Each game keeps its own path and window.
+
+This cannot be undone. Games you have not set up yet still start from the base settings.</value><comment>{0} = number of games</comment></data>
+
+  <!-- Auto-attach -->
+  <data name="AutoCountdown" xml:space="preserve"><value>Attaching VRX to {0} in {1} - switch window to cancel</value><comment>{0} = game title, {1} = seconds left</comment></data>
+  <data name="AutoTheGame" xml:space="preserve"><value>the game</value><comment>Used as {0} in AutoCountdown when the game has no name</comment></data>
+  <data name="StatusAutoListFailed" xml:space="preserve"><value>Auto-attach could not list applications: {0}</value><comment>{0} = error message</comment></data>
+  <data name="StatusAutoGone" xml:space="preserve"><value>Auto-attach: {0} is no longer available</value><comment>{0} = game name</comment></data>
+  <data name="StatusAutoStarted" xml:space="preserve"><value>Auto-attached · starting VR · {0}</value><comment>{0} = game name</comment></data>
+  <data name="OverlayTitle" xml:space="preserve"><value>VRX auto-attach</value></data>
+
+  <!-- Errors shown in the status line -->
+  <data name="ErrorSelectGame" xml:space="preserve"><value>Select a game first.</value></data>
+  <data name="ErrorWorldColour" xml:space="preserve"><value>World colour must be six hex digits, like #1C1C1E. Changes are not saved until it is.</value></data>
+  <data name="ErrorShortcutsConflict" xml:space="preserve"><value>Choose two different shortcut keys. Changes are not saved until the settings are valid.</value></data>
+  <data name="ErrorSettingsInvalid" xml:space="preserve"><value>Settings are outside the allowed range or shortcut keys conflict.</value></data>
+  <data name="ErrorProfileInvalid" xml:space="preserve"><value>This game's saved settings are invalid. They have not been overwritten.</value></data>
+  <data name="ErrorStopFirst" xml:space="preserve"><value>Stop the current session first.</value></data>
+  <data name="ErrorAnotherSession" xml:space="preserve"><value>Another VRX session is running. Close that session before attaching here.</value></data>
+  <data name="ErrorProcessChanged" xml:space="preserve"><value>The selected process has closed or changed. Refresh the list.</value></data>
+  <data name="ErrorRendererMissing" xml:space="preserve"><value>VRX renderer is missing. Reinstall VRX or build the project.</value></data>
+  <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
+  <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
+</root>

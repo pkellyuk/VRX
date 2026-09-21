@@ -65,6 +65,20 @@ public sealed class Profile
     // 0 off .. 100, and its colour, #RRGGBB (3000 K by default). Glass or reflections above 0
     // also show the frames and the 1 m floor tiles.
     public const string DefaultRoomLightColor = "#FFB46B";
+    // A fresh install's starting settings: VRX's defaults with a room already set up (the
+    // author's own Helldivers tuning, 2026-09-21), so a new player sees the room straight
+    // away. Only settings made from scratch start here: profiles and base settings saved
+    // before these existed keep loading with the room off, because missing JSON fields
+    // fall back to the property defaults, not to this.
+    public const int NewInstallRoom = 20, NewInstallRoomGlass = 14, NewInstallRoomReflections = 15, NewInstallRoomLight = 15;
+    public static Profile NewInstallDefaults() => new Profile
+    {
+        Room = NewInstallRoom,
+        RoomGlass = NewInstallRoomGlass,
+        RoomReflections = NewInstallRoomReflections,
+        RoomLight = NewInstallRoomLight,
+        RoomLightColor = DefaultRoomLightColor,
+    };
     public int RoomGlass { get; set; }
     public int RoomReflections { get; set; }
     public int RoomLight { get; set; }
@@ -105,7 +119,7 @@ public sealed class ProfileStore(string root)
     public bool HasBase => File.Exists(BaseFile);
     public void SaveBase(Profile profile)
     {
-        if (!profile.Valid()) throw new InvalidDataException("Settings are outside the allowed range or shortcut keys conflict.");
+        if (!profile.Valid()) throw new InvalidDataException(Loc.Get("ErrorSettingsInvalid"));
         var copy = JsonSerializer.Deserialize<Profile>(JsonSerializer.Serialize(profile))!;
         copy.ExecutablePath = "";
         copy.PreferredWindowTitle = "";
@@ -131,8 +145,73 @@ public sealed class ProfileStore(string root)
             }
         }
         catch (Exception ex) when (ex is IOException or JsonException) { }
-        return new Profile();
+        return Profile.NewInstallDefaults();
     }
+    // App-wide settings (auto-attach), not per game.
+    public string AppSettingsFile => Path.Combine(Root, "app-settings.json");
+
+    // The saved app settings, or the defaults when the file is missing or unreadable.
+    // Out-of-range seconds are clamped.
+    // A mode that is missing (a file from before the modes, or no file) is resolved here:
+    // Expert for anyone who has used VRX before, Easy for a new install.
+    public AppSettings LoadAppSettings()
+    {
+        AppSettings loaded;
+        try
+        {
+            loaded = File.Exists(AppSettingsFile) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(AppSettingsFile)) ?? new AppSettings() : new AppSettings();
+            loaded.AutoAttachSeconds = AppSettings.ClampSeconds(loaded.AutoAttachSeconds);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppSettings] could not read {AppSettingsFile}: {ex.Message}; using defaults");
+            loaded = new AppSettings();
+        }
+        if (!AppSettings.ValidMode(loaded.Mode))
+        {
+            bool existing = ExistingUser();
+            System.Diagnostics.Debug.WriteLine($"[AppSettings] mode '{loaded.Mode}' not set; existing user {existing}");
+            loaded.Mode = existing ? AppSettings.ExpertMode : AppSettings.EasyMode;
+        }
+        return loaded;
+    }
+
+    // True when VRX has been used here before: app settings, a saved game, base settings
+    // or a last-used game already exist. Such users start in Expert, so nothing they are
+    // used to disappears.
+    public bool ExistingUser()
+    {
+        try
+        {
+            return File.Exists(AppSettingsFile) || SavedProfileFiles().Count > 0 || HasBase || File.Exists(Path.Combine(Root, "last-game.txt"));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppSettings] could not check for earlier use: {ex.Message}; assuming an existing user");
+            return true;
+        }
+    }
+
+    public void SaveAppSettings(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var copy = new AppSettings
+        {
+            AutoAttach = settings.AutoAttach,
+            AutoAttachSeconds = AppSettings.ClampSeconds(settings.AutoAttachSeconds),
+            Mode = AppSettings.ValidMode(settings.Mode) ? settings.Mode : null,
+            Sections = settings.Sections == null ? null : new Dictionary<string, bool>(settings.Sections, StringComparer.Ordinal),
+        };
+        AtomicWrite(AppSettingsFile, JsonSerializer.Serialize(copy, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    // True when this executable has its own saved settings (the game has been set up).
+    public bool HasProfile(string executable)
+    {
+        if (string.IsNullOrWhiteSpace(executable)) return false;
+        return File.Exists(FileFor(executable));
+    }
+
     // Every game that has its own saved settings.
     public IReadOnlyList<string> SavedProfileFiles()
     {
@@ -151,7 +230,7 @@ public sealed class ProfileStore(string root)
         ArgumentNullException.ThrowIfNull(settings);
         skipped = 0;
         failed = 0;
-        if (!settings.Valid()) throw new InvalidDataException("Settings are outside the allowed range or shortcut keys conflict.");
+        if (!settings.Valid()) throw new InvalidDataException(Loc.Get("ErrorSettingsInvalid"));
 
         int applied = 0;
         foreach (string file in SavedProfileFiles())
@@ -207,19 +286,46 @@ public sealed class ProfileStore(string root)
             profile.DepthOnSecondGpu = false;
         }
         if (profile == null || !profile.Valid() || !string.Equals(profile.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("This game's saved settings are invalid. They have not been overwritten.");
+            throw new InvalidDataException(Loc.Get("ErrorProfileInvalid"));
         return profile;
     }
     public void Save(Profile profile)
     {
-        if (!profile.Valid()) throw new InvalidDataException("Settings are outside the allowed range or shortcut keys conflict.");
+        if (!profile.Valid()) throw new InvalidDataException(Loc.Get("ErrorSettingsInvalid"));
         AtomicWrite(FileFor(profile.ExecutablePath), JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true }));
     }
     public static void AtomicWrite(string path, string text)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try { File.WriteAllText(temp, text, new UTF8Encoding(false)); File.Move(temp, path, true); }
+        try
+        {
+            File.WriteAllText(temp, text, new UTF8Encoding(false));
+            ReplaceWithRetry(temp, path);
+        }
         finally { if (File.Exists(temp)) File.Delete(temp); }
+    }
+
+    // Replacing a file that was written a moment ago can fail briefly while another program
+    // (a virus scanner, the search indexer) still has it open: try a few times. A read-only
+    // file fails at once - that is not going to change.
+    private static void ReplaceWithRetry(string temp, string path)
+    {
+        const int attempts = 5;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(temp, path, true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                bool readOnly = File.Exists(path) && File.GetAttributes(path).HasFlag(FileAttributes.ReadOnly);
+                if (readOnly || attempt >= attempts) throw;
+                System.Diagnostics.Debug.WriteLine($"[ProfileStore] replacing {path} failed ({ex.Message}); retry {attempt}");
+                Thread.Sleep(25 * attempt);
+            }
+        }
     }
 }

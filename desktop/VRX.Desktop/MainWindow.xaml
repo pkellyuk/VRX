@@ -1,106 +1,241 @@
-﻿<Window x:Class="VRX.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="VRX — Desktop setup" Icon="Assets/vrx.ico" Width="1080" Height="900" MinWidth="930" MinHeight="720" Background="#101827" Foreground="#E8EEF8" FontFamily="Segoe UI" FontSize="14" Closing="WindowClosing">
- <Grid Margin="26">
-  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-  <Grid Margin="0,0,0,22">
-   <StackPanel><StackPanel Orientation="Horizontal"><TextBlock Text="VRX" FontSize="32" FontWeight="Bold"/><TextBlock x:Name="VersionText" FontSize="15" Foreground="#76DCC6" VerticalAlignment="Bottom" Margin="10,0,0,6"/></StackPanel><TextBlock Text="Choose a game. Set up your screen." Foreground="#A5B4CC" Margin="0,3,0,0"/></StackPanel>
-   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-    <Button x:Name="StartButton" Content="Attach / Play" Click="StartClick" IsEnabled="False" Background="#76DCC6" FontWeight="SemiBold"/>
-    <Button x:Name="StopButton" Content="Stop VR" Click="StopClick" IsEnabled="False"/>
+﻿<Window x:Class="VRX.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:l="clr-namespace:VRX.Desktop"
+ Title="{l:Tr AppName}" Icon="Assets/vrx.ico" Width="1080" Height="900" MinWidth="800" MinHeight="640" Background="{StaticResource Page}" Foreground="{StaticResource Ink}" FontFamily="Segoe UI" FontSize="14" Closing="WindowClosing">
+ <Grid Margin="24,20,24,18">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+
+  <!-- Header: name and version, and the Easy | Expert switch -->
+  <Grid x:Name="HeaderGrid" Margin="0,0,0,16">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+    <StackPanel Orientation="Horizontal"><TextBlock Text="{l:Tr AppName}" FontSize="32" FontWeight="Bold"/><TextBlock x:Name="VersionText" FontSize="15" Foreground="{StaticResource Accent}" VerticalAlignment="Bottom" Margin="10,0,0,6"/></StackPanel>
+    <TextBlock x:Name="Subtitle" Foreground="{StaticResource Soft}" TextWrapping="Wrap" Margin="0,2,0,0"/>
    </StackPanel>
+   <Border Grid.Column="1" x:Name="ModeSwitch" Background="#0B1320" BorderBrush="#2A3B57" BorderThickness="1" CornerRadius="24" Padding="4" VerticalAlignment="Center">
+    <StackPanel Orientation="Horizontal">
+     <RadioButton x:Name="EasyMode" GroupName="Mode" Style="{StaticResource ModeSegment}" Checked="ModeChecked" ToolTip="{l:Tr ModeEasyTip}">
+      <StackPanel><TextBlock Text="{l:Tr ModeEasy}" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center"/><TextBlock Text="{l:Tr ModeEasyCaption}" FontSize="11" HorizontalAlignment="Center" Opacity="0.8"/></StackPanel>
+     </RadioButton>
+     <RadioButton x:Name="ExpertMode" GroupName="Mode" Style="{StaticResource ModeSegment}" Checked="ModeChecked" ToolTip="{l:Tr ModeExpertTip}">
+      <StackPanel><TextBlock Text="{l:Tr ModeExpert}" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center"/><TextBlock Text="{l:Tr ModeExpertCaption}" FontSize="11" HorizontalAlignment="Center" Opacity="0.8"/></StackPanel>
+     </RadioButton>
+    </StackPanel>
+   </Border>
   </Grid>
-  <Grid Grid.Row="1">
-   <Grid.ColumnDefinitions><ColumnDefinition Width="320"/><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-   <Border Background="#192438" CornerRadius="12" Padding="18">
-    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-     <DockPanel><TextBlock Text="Running applications" FontSize="19" FontWeight="SemiBold" VerticalAlignment="Center"/><Button x:Name="RefreshButton" Content="↻" ToolTip="Refresh running applications" DockPanel.Dock="Right" HorizontalAlignment="Right" Click="RefreshClick" Margin="12,0,0,0"/></DockPanel>
-     <CheckBox Grid.Row="1" x:Name="ShowAll" Content="Show all processes" Checked="ShowAllChanged" Unchecked="ShowAllChanged"/>
-     <ListBox Grid.Row="2" x:Name="AppList" Background="#111B2B" Foreground="#E8EEF8" BorderThickness="0" SelectionChanged="AppSelected" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-      <ListBox.ItemTemplate><DataTemplate><Grid Margin="4,7"><Grid.ColumnDefinitions><ColumnDefinition Width="32"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-       <Image Source="{Binding Icon}" Width="24" Height="24" VerticalAlignment="Top"/>
-       <StackPanel Grid.Column="1"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Description}" FontSize="11" Foreground="#9EAFC7"/></StackPanel>
-      </Grid></DataTemplate></ListBox.ItemTemplate>
-     </ListBox>
-     <StackPanel Grid.Row="3" Margin="0,16,0,0"><TextBlock Text="Window to capture" Margin="0,0,0,6"/><ComboBox x:Name="WindowList" SelectionChanged="WindowSelected"/>
-      <TextBlock x:Name="PathLabel" Text="Choose an application to get started." FontSize="11" Foreground="#9EAFC7" TextWrapping="Wrap" Margin="0,10,0,0"/>
+
+  <!-- Always visible: the game card with Attach / Play and Stop VR (Easy adds Recenter) -->
+  <StackPanel Grid.Row="1" x:Name="TopArea">
+   <TextBlock x:Name="EasyIntro" Text="{l:Tr EasyIntro}" FontSize="18" TextWrapping="Wrap" Margin="2,0,0,14"/>
+   <Border x:Name="GameCard" Background="{StaticResource Card}" BorderBrush="{StaticResource CardEdge}" BorderThickness="1" CornerRadius="12" Padding="18,14,10,6" Margin="0,0,0,14">
+    <Grid>
+     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+     <Border Width="44" Height="44" CornerRadius="10" Background="{StaticResource Well}" VerticalAlignment="Top" Margin="0,0,14,8">
+      <Image x:Name="CardIcon" Width="32" Height="32"/>
+     </Border>
+     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,8">
+      <TextBlock Text="{l:Tr CardCaption}" FontSize="11" Foreground="{StaticResource Muted}"/>
+      <TextBlock x:Name="CardName" FontSize="18" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+      <TextBlock x:Name="CardState" Foreground="{StaticResource Soft}" TextWrapping="Wrap"/>
      </StackPanel>
-     <TextBlock Grid.Row="4" Text="Settings are saved separately for each executable. Start SteamVR before playing." TextWrapping="Wrap" Foreground="#9EAFC7" FontSize="12" Margin="0,18,0,0"/>
+     <WrapPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" MaxWidth="560">
+      <Button x:Name="StartButton" Style="{StaticResource Primary}" Content="{l:Tr AttachPlay}" Click="StartClick" IsEnabled="False"/>
+      <Button x:Name="StopButton" Content="{l:Tr StopVr}" Click="StopClick" IsEnabled="False"/>
+      <Button x:Name="EasyRecenterButton" Content="{l:Tr Recenter}" ToolTip="{l:Tr RecenterTip}" Click="RecenterClick" IsEnabled="False"/>
+     </WrapPanel>
     </Grid>
    </Border>
-   <Border Grid.Column="2" Background="#192438" CornerRadius="12" Padding="22">
-    <ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto"><StackPanel x:Name="SettingsPanel" IsEnabled="False" Margin="0,0,16,0">
-     <TextBlock Text="Screen placement" FontSize="21" FontWeight="SemiBold"/>
-     <TextBlock Text="Changes apply live. Position is relative to your last recenter." Foreground="#9EAFC7" TextWrapping="Wrap" Margin="0,5,0,12"/>
-     <Border Background="#101B2C" CornerRadius="8" Margin="0,0,0,12">
-      <Canvas x:Name="Preview" Height="168" ClipToBounds="True" MouseLeftButtonDown="PreviewDown" MouseMove="PreviewMove" MouseLeftButtonUp="PreviewUp" ToolTip="Drag the screen to change horizontal position and distance">
-       <Line X1="270" X2="270" Y1="12" Y2="145" Stroke="#324761" StrokeDashArray="3,3"/>
-       <Ellipse Canvas.Left="261" Canvas.Top="142" Width="18" Height="18" Fill="#76DCC6"/>
-       <Line x:Name="ScreenLine" X1="210" X2="330" Y1="86" Y2="86" Stroke="#A5BEFF" StrokeThickness="6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
-       <Path x:Name="ScreenArc" Stroke="#A5BEFF" StrokeThickness="6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Visibility="Collapsed"/>
-       <TextBlock Text="TOP VIEW · drag the screen" Canvas.Left="12" Canvas.Top="10" FontSize="10" Foreground="#8297B7"/>
-      </Canvas>
-     </Border>
-     <DockPanel><TextBlock Text="Screen width"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" Text="{Binding ElementName=WidthSlider, Path=Value, StringFormat={}{0:F2} m}"/></DockPanel>
-     <Slider x:Name="WidthSlider" Minimum="1" Maximum="10" Value="5.7" ValueChanged="SettingsChanged"/>
-     <DockPanel><TextBlock Text="Distance"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" Text="{Binding ElementName=DistanceSlider, Path=Value, StringFormat={}{0:F2} m}"/></DockPanel>
-     <Slider x:Name="DistanceSlider" Minimum="1" Maximum="8" Value="3" ValueChanged="SettingsChanged"/>
-     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="20"/><ColumnDefinition/></Grid.ColumnDefinitions>
-      <StackPanel><TextBlock Text="Height offset"/><TextBlock Text="{Binding ElementName=HeightSlider, Path=Value, StringFormat={}{0:F2} m}" Foreground="#9EAFC7"/><Slider x:Name="HeightSlider" Minimum="-2" Maximum="2" Value="0" ValueChanged="SettingsChanged"/></StackPanel>
-      <StackPanel Grid.Column="2"><TextBlock Text="Left / right offset"/><TextBlock Text="{Binding ElementName=HorizontalSlider, Path=Value, StringFormat={}{0:F2} m}" Foreground="#9EAFC7"/><Slider x:Name="HorizontalSlider" Minimum="-3" Maximum="3" Value="0" ValueChanged="SettingsChanged"/></StackPanel>
-     </Grid>
-     <DockPanel Margin="0,6,0,0"><TextBlock Text="Screen curve"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" Text="{Binding ElementName=CurveSlider, Path=Value, StringFormat={}{0:F0} %}"/></DockPanel>
-     <Slider x:Name="CurveSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="Wraps the screen around you like a curved television. A curved screen is drawn as a real cylinder for each eye, so its outline, perspective and head-movement parallax are right; the top view above shows the shape. 0 % is flat. Works with the fixed screen and with head-follow. Applies live; saved per game."/>
-     <CheckBox x:Name="AmbilightCheck" Content="Ambilight — glow around the screen" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="Spreads the colours at the edge of the picture softly into the darkness around the screen, like the bias lighting behind a television. Each point of the glow blends the whole border, the nearest part most, so it follows the local colour close in and softens further out. It wraps round a curved screen and follows the scene smoothly rather than flickering. Applies live; saved per game."/>
-     <DockPanel Margin="20,2,0,0" IsEnabled="{Binding ElementName=AmbilightCheck, Path=IsChecked}"><TextBlock Text="Ambilight strength"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" Text="{Binding ElementName=AmbiStrengthSlider, Path=Value, StringFormat={}{0:F0} %}"/></DockPanel>
-     <Slider x:Name="AmbiStrengthSlider" Margin="20,0,0,4" Minimum="0" Maximum="100" Value="85" IsEnabled="{Binding ElementName=AmbilightCheck, Path=IsChecked}" ValueChanged="SettingsChanged" ToolTip="How bright the glow is next to the screen; it always fades out towards its edge. Applies live; saved per game."/>
-     <DockPanel Margin="0,6,0,4"><TextBlock Text="World colour" VerticalAlignment="Center" Margin="0,0,12,0"/>
-      <Border DockPanel.Dock="Right" Width="30" Height="24" CornerRadius="3" BorderBrush="#324761" BorderThickness="1" Margin="8,0,0,0"><Rectangle x:Name="WorldSwatch" Fill="Black" RadiusX="2" RadiusY="2"/></Border>
-      <TextBox x:Name="WorldHex" DockPanel.Dock="Right" Width="86" Text="#000000" MaxLength="7" VerticalContentAlignment="Center" TextChanged="WorldHexChanged" LostFocus="WorldHexLostFocus" ToolTip="Any colour as #RRGGBB. Leaving the box with half a colour in it puts the last whole one back."/>
-      <ComboBox x:Name="WorldList" SelectionChanged="WorldListChanged" ToolTip="The colour of the space around the screen, instead of black. Dark colours keep the picture's contrast; the ambilight glows over it. Applies live; saved per game."/></DockPanel>
-     <DockPanel Margin="0,6,0,0"><TextBlock x:Name="RoomLabel" Text="Room — walls lit by the screen"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" x:Name="RoomValue" Text="Off"/></DockPanel>
-     <Slider x:Name="RoomSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="Puts you in a dark room whose walls, floor and ceiling are lit by the picture and the ambilight, like a television or a cinema screen in a dark room. 0 is off; higher values make the walls paler, so they reflect more; 30-60 % looks like a cinema. With the room on, the world colour becomes its house lights and the screen is kept level (a tilted floor would feel wrong). Not with 'Screen follows my head'. Glass, reflections and a room light are below. Applies live; saved per game."/>
-     <DockPanel Margin="20,2,0,0"><TextBlock x:Name="GlassLabel" Text="Glass walls"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" x:Name="GlassValue" Text="Needs the room"/></DockPanel>
-     <Slider x:Name="GlassSlider" Margin="20,0,0,4" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="Turns the side walls, the back wall and the ceiling into glass in slim frames, so you look out over a ground that runs to a horizon in the world colour. With a black world colour it is a glass room at night: you see only the frames and reflections. 0 is solid walls, 100 clear glass. The wall with the screen and the floor stay solid. Glass or reflections also show 1 m floor tiles, so you can count the screen's size in metres. Clear glass keeps less light in, so the room gets a little darker. Applies live; saved per game."/>
-     <DockPanel Margin="20,2,0,0"><TextBlock x:Name="ReflectLabel" Text="Reflections"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" x:Name="ReflectValue" Text="Needs the room"/></DockPanel>
-     <Slider x:Name="ReflectSlider" Margin="20,0,0,4" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="How much the glass, the walls and a polished floor reflect: the screen, its glow and the room light appear mirrored, which shows how big the screen is and how far away. Reflections are stronger at a glancing angle. 0 is none. Applies live; saved per game."/>
-     <DockPanel Margin="20,2,0,0"><TextBlock x:Name="LightLabel" Text="Room light"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" x:Name="LightValue" Text="Needs the room"/></DockPanel>
-     <Slider x:Name="LightSlider" Margin="20,0,0,4" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="A soft light panel in the ceiling just above and behind you, so the room stays visible when the picture is dark. How much the walls pick it up depends on how pale they are (the Room slider). 0 is off. Applies live; saved per game."/>
-     <DockPanel Margin="20,2,0,4"><TextBlock Text="Light colour" VerticalAlignment="Center" Margin="0,0,12,0"/>
-      <ComboBox x:Name="LightColourList" SelectionChanged="SettingsChanged" ToolTip="The room light's colour, from warm (2700 K, like a table lamp) to daylight (6500 K). Applies live; saved per game."/></DockPanel>
-     <CheckBox x:Name="FollowCheck" Content="Screen follows my head" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
-     <DockPanel Margin="0,12,0,0"><TextBlock Text="3D strength" FontSize="18" FontWeight="SemiBold"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" Text="{Binding ElementName=StrengthSlider, Path=Value, StringFormat={}{0:F2}}"/></DockPanel>
-     <Slider x:Name="StrengthSlider" Minimum="0" Maximum="2" Value="1" ValueChanged="SettingsChanged"/>
-     <CheckBox x:Name="StereoCheck" Content="Enable stereo 3D" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
-     <CheckBox x:Name="ForegroundCheck" Content="Extra foreground depth passes (experimental)" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="Gives persistent nearby regions an extra detail pass when time allows. Uses more GPU time; improvement varies by scene. Toggle during playback to compare."/>
-     <DockPanel Margin="0,6,0,2"><TextBlock Text="Game frame timing" VerticalAlignment="Center" Margin="0,0,12,0"/>
-      <ComboBox x:Name="TimingList" SelectedIndex="0" SelectionChanged="SettingsChanged" ToolTip="Which game frame is shown with the depth. Latest frame (default): smooth and immediate; depth lags slightly behind moving things. Delayed to depth: the game image is held back by the depth delay so they line up much better, and motion stays smooth. Matched to depth: each depth estimate with the exact frame it came from; best alignment, but game motion only updates at the depth rate. Delayed and matched add delay. Applies live; saved per game.">
-       <ComboBoxItem Content="Latest frame (default)"/>
-       <ComboBoxItem Content="Delayed to depth — smooth, slightly behind"/>
-       <ComboBoxItem Content="Matched to depth — exact, updates at the depth rate"/>
-      </ComboBox></DockPanel>
-     <TextBlock Text="Delayed and matched line the depth up with the game better, but show the game later." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,5"/>
-     <CheckBox x:Name="FastModelCheck" Content="Fast depth model — ZipDepth" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="On (default): ZipDepth, about 6x less GPU time per depth estimate than Depth Anything V2 (2.0 vs 13.1 ms on an RTX 3090), so depth keeps up with the game much better. Off: Depth Anything V2, the original model; depth detail differs slightly between them. Applies live (depth pauses for under a second while the model loads); saved per game."/>
-     <CheckBox x:Name="SubpixelCheck" Content="Smooth depth steps (sub-pixel warp)" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="On (default): the stereo shift keeps its fractional part, so smoothly receding surfaces such as grass, roads and walls look smooth. Off: whole-pixel shifts, which quantise the scene into about 25 depth bands and can show ridges like a ploughed field. Off is very slightly sharper. Applies live; saved per game."/>
-     <CheckBox x:Name="SteadyCheck" Content="Steady depth — motion vectors" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="Reduces depth shimmer: each new depth estimate is blended with the previous one, moved to where things are now by the graphics card's hardware motion estimator (its video engine, not the shader cores). Only where the motion is verified, so moving edges should not trail. On by default; works on any GPU with a hardware motion estimator. Applies live; saved per game."/>
-     <CheckBox x:Name="FuseCheck" Content="Fuse with Depth Anything V2 (experimental)" IsEnabled="{Binding ElementName=FastModelCheck, Path=IsChecked}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="Runs Depth Anything V2 alongside ZipDepth: ZipDepth keeps depth fast, Depth Anything supplies more detailed layering, moved to the current frame with motion vectors. Best with another GPU chosen as the depth GPU; on one GPU it runs at most 10 times a second. Needs the fast depth model. Applies live; saved per game."/>
-     <TextBlock Text="Fusion is best with a second depth GPU. Both can be used together." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="20,0,0,5"/>
-     <DockPanel Margin="0,8,0,2"><TextBlock Text="Depth GPU" VerticalAlignment="Center" Margin="0,0,12,0"/><ComboBox x:Name="DepthGpuList" DisplayMemberPath="Label" SelectedValuePath="Id" SelectionChanged="SettingsChanged" ToolTip="Which graphics card runs the depth model. Another card stops depth competing with the game for GPU time; the capture step sends each frame across automatically. If the chosen card is missing, VRX uses the game's GPU. Takes effect the next time you press Attach / Play; saved per game."/></DockPanel>
-     <TextBlock Text="Another GPU keeps depth fast while the game uses its own card fully. Applies at the next Attach / Play." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,5"/>
-     <CheckBox x:Name="DismissCheck" Content="Dismiss SteamVR menu when playback starts" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
-     <TextBlock Text="Keyboard shortcuts" FontSize="18" FontWeight="SemiBold" Margin="0,12,0,10"/>
-     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="20"/><ColumnDefinition/></Grid.ColumnDefinitions>
-      <StackPanel><TextBlock Text="Recenter" Margin="0,0,0,5"/><ComboBox x:Name="RecenterKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
-      <StackPanel Grid.Column="2"><TextBlock Text="Dismiss SteamVR menu" Margin="0,0,0,5"/><ComboBox x:Name="MenuKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
-     </Grid>
-     <TextBlock Text="Shortcuts work during VR playback and also reach the game. Choose keys that do not conflict with your game controls." Foreground="#9EAFC7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,14"/>
-     <WrapPanel><Button x:Name="RecenterButton" Content="Recenter now" Click="RecenterClick" IsEnabled="False"/><Button x:Name="DismissButton" Content="Dismiss menu" Click="DismissClick" IsEnabled="False"/><Button Content="Reset this profile" Click="ResetClick" ToolTip="Puts this game back to the base settings (or VRX's defaults if no base has been saved)."/>
-     <Button x:Name="BaseButton" Content="Make base settings" Click="MakeBaseClick" ToolTip="Saves the settings shown here as the starting point for games you have not set up yet. Screen placement, 3D strength, depth options and shortcuts are all included; the game's own path and window are not. Games you have already set up keep their own settings."/>
-      <Button x:Name="ApplyAllButton" Content="Apply to all" Click="ApplyAllClick" ToolTip="Copies the settings shown here to every game you have already set up, after asking you to confirm. Screen placement, 3D strength, depth options, depth GPU and shortcuts are all included; each game keeps its own path and window. Games you have not set up yet still start from the base settings."/></WrapPanel>
-    </StackPanel></ScrollViewer>
-   </Border>
-  </Grid>
-  <StackPanel Grid.Row="2" Margin="0,15,0,0"><TextBlock x:Name="Status" Text="Ready · desktop controls only" TextWrapping="Wrap"/>
-   <Expander x:Name="SessionDetails" Header="Session details" Foreground="#A5B4CC" Margin="0,5,0,0"><TextBox x:Name="LogBox" Height="90" IsReadOnly="True" Background="#101827" Foreground="#A5B4CC" BorderThickness="0" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap"/></Expander>
   </StackPanel>
+
+  <!-- Easy: a few hints; everything else is hidden -->
+  <StackPanel Grid.Row="2" x:Name="EasyPanel" Margin="2,0,0,0">
+   <TextBlock Text="{l:Tr EasyHintSettings}" Style="{StaticResource Hint}" FontSize="13"/>
+   <TextBlock Text="{l:Tr EasyHintSteamVr}" Style="{StaticResource Hint}" FontSize="13"/>
+  </StackPanel>
+
+  <!-- Expert: every setting, in collapsible sections -->
+  <ScrollViewer Grid.Row="2" x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+   <StackPanel x:Name="SectionsPanel" Margin="0,0,10,0">
+
+    <!-- 1 Game & window -->
+    <Expander x:Name="GameSection" Header="{l:Tr SectionGame}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <DockPanel>
+       <DockPanel DockPanel.Dock="Top">
+        <Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="{l:Tr RefreshSymbol}" ToolTip="{l:Tr RefreshTip}" Click="RefreshClick" Margin="8,0,0,4" Padding="12,4" MinHeight="30"/>
+        <TextBlock Text="{l:Tr RunningApplications}" Style="{StaticResource SubHeader}" Margin="0,4,0,4" VerticalAlignment="Center"/>
+       </DockPanel>
+       <CheckBox DockPanel.Dock="Top" x:Name="ShowAll" Content="{l:Tr ShowAllProcesses}" Checked="ShowAllChanged" Unchecked="ShowAllChanged"/>
+       <ListBox x:Name="AppList" Height="230" Background="{StaticResource Well}" Foreground="{StaticResource Ink}" BorderThickness="0" SelectionChanged="AppSelected" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+        <ListBox.ItemTemplate><DataTemplate><Grid Margin="4,6"><Grid.ColumnDefinitions><ColumnDefinition Width="32"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+         <Image Source="{Binding Icon}" Width="24" Height="24" VerticalAlignment="Top"/>
+         <StackPanel Grid.Column="1"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Description}" FontSize="11" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/></StackPanel>
+        </Grid></DataTemplate></ListBox.ItemTemplate>
+       </ListBox>
+      </DockPanel>
+      <StackPanel Grid.Column="2">
+       <TextBlock Text="{l:Tr WindowToCapture}" Style="{StaticResource SubHeader}" Margin="0,4,0,6"/>
+       <ComboBox x:Name="WindowList" SelectionChanged="WindowSelected"/>
+       <TextBlock x:Name="PathLabel" Text="{l:Tr PathChoose}" Style="{StaticResource Hint}" Margin="0,8,0,4"/>
+       <TextBlock Text="{l:Tr GameHint}" Style="{StaticResource Hint}"/>
+       <StackPanel x:Name="AutoAttachPanel" Margin="0,8,0,0" ToolTip="{l:Tr AutoAttachTip}">
+        <CheckBox x:Name="AutoAttachCheck" Content="{l:Tr AutoAttachCheck}" FontWeight="SemiBold" Checked="AutoAttachChanged" Unchecked="AutoAttachChanged"/>
+        <DockPanel Margin="26,0,0,0">
+         <TextBlock x:Name="AutoAttachValue" DockPanel.Dock="Right" Style="{StaticResource Value}" MinWidth="36" VerticalAlignment="Center"/>
+         <TextBlock DockPanel.Dock="Left" Text="{l:Tr AutoAttachCountdown}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+         <Slider x:Name="AutoAttachSlider" Minimum="3" Maximum="30" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" Margin="0" ValueChanged="AutoAttachSecondsChanged"/>
+        </DockPanel>
+       </StackPanel>
+      </StackPanel>
+     </Grid>
+    </Expander>
+
+    <!-- 2 Screen -->
+    <Expander x:Name="ScreenSection" Header="{l:Tr SectionScreen}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <StackPanel x:Name="ScreenContent">
+      <TextBlock Text="{l:Tr ScreenHint}" Style="{StaticResource Hint}" Margin="0,0,0,10"/>
+      <Border Background="#101B2C" CornerRadius="8" Margin="0,0,0,12">
+       <Canvas x:Name="Preview" Width="540" Height="168" HorizontalAlignment="Center" ClipToBounds="True" Background="Transparent" MouseLeftButtonDown="PreviewDown" MouseMove="PreviewMove" MouseLeftButtonUp="PreviewUp" ToolTip="{l:Tr PreviewTip}">
+        <Line X1="270" X2="270" Y1="12" Y2="145" Stroke="#324761" StrokeDashArray="3,3"/>
+        <Ellipse Canvas.Left="261" Canvas.Top="142" Width="18" Height="18" Fill="{StaticResource Accent}"/>
+        <Line x:Name="ScreenLine" X1="210" X2="330" Y1="86" Y2="86" Stroke="#A5BEFF" StrokeThickness="6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+        <Path x:Name="ScreenArc" Stroke="#A5BEFF" StrokeThickness="6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Visibility="Collapsed"/>
+        <TextBlock Text="{l:Tr PreviewLabel}" Canvas.Left="12" Canvas.Top="10" FontSize="10" Foreground="#8297B7"/>
+       </Canvas>
+      </Border>
+      <Grid>
+       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="28"/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+       <StackPanel>
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueMetres, Element=WidthSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr ScreenWidth}"/></DockPanel>
+        <Slider x:Name="WidthSlider" Minimum="1" Maximum="10" Value="5.7" ValueChanged="SettingsChanged"/>
+       </StackPanel>
+       <StackPanel Grid.Column="2">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueMetres, Element=DistanceSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Distance}"/></DockPanel>
+        <Slider x:Name="DistanceSlider" Minimum="1" Maximum="8" Value="3" ValueChanged="SettingsChanged"/>
+       </StackPanel>
+       <StackPanel Grid.Row="1">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueMetres, Element=HeightSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr HeightOffset}"/></DockPanel>
+        <Slider x:Name="HeightSlider" Minimum="-2" Maximum="2" Value="0" ValueChanged="SettingsChanged"/>
+       </StackPanel>
+       <StackPanel Grid.Row="1" Grid.Column="2">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueMetres, Element=HorizontalSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr LeftRightOffset}"/></DockPanel>
+        <Slider x:Name="HorizontalSlider" Minimum="-3" Maximum="3" Value="0" ValueChanged="SettingsChanged"/>
+       </StackPanel>
+      </Grid>
+      <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=CurveSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr ScreenCurve}"/></DockPanel>
+      <Slider x:Name="CurveSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="{l:Tr ScreenCurveTip}"/>
+      <CheckBox x:Name="FollowCheck" Content="{l:Tr FollowHead}" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+      <WrapPanel Margin="0,10,0,0"><Button x:Name="RecenterButton" Content="{l:Tr RecenterNow}" ToolTip="{l:Tr RecenterTip}" Click="RecenterClick" IsEnabled="False"/></WrapPanel>
+     </StackPanel>
+    </Expander>
+
+    <!-- 3 Around the screen -->
+    <Expander x:Name="AroundSection" Header="{l:Tr SectionAround}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <StackPanel x:Name="AroundContent">
+      <CheckBox x:Name="AmbilightCheck" Content="{l:Tr Ambilight}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr AmbilightTip}"/>
+      <StackPanel Margin="26,2,0,4" IsEnabled="{Binding ElementName=AmbilightCheck, Path=IsChecked}">
+       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=AmbiStrengthSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr AmbilightStrength}"/></DockPanel>
+       <Slider x:Name="AmbiStrengthSlider" Minimum="0" Maximum="100" Value="85" ValueChanged="SettingsChanged" ToolTip="{l:Tr AmbilightStrengthTip}"/>
+      </StackPanel>
+      <TextBlock Text="{l:Tr WorldColour}" Style="{StaticResource Label}" Margin="0,4,0,6"/>
+      <DockPanel Margin="0,0,0,4">
+       <Border DockPanel.Dock="Right" Width="32" Height="28" CornerRadius="4" BorderBrush="#324761" BorderThickness="1" Margin="8,0,0,0"><Rectangle x:Name="WorldSwatch" Fill="Black" RadiusX="3" RadiusY="3"/></Border>
+       <TextBox x:Name="WorldHex" DockPanel.Dock="Right" Width="96" MaxLength="7" Margin="8,0,0,0" Padding="4,0" VerticalContentAlignment="Center" TextChanged="WorldHexChanged" LostFocus="WorldHexLostFocus" ToolTip="{l:Tr WorldHexTip}"/>
+       <ComboBox x:Name="WorldList" SelectionChanged="WorldListChanged" ToolTip="{l:Tr WorldListTip}"/>
+      </DockPanel>
+     </StackPanel>
+    </Expander>
+
+    <!-- 4 Room -->
+    <Expander x:Name="RoomSection" Header="{l:Tr SectionRoom}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <StackPanel x:Name="RoomContent">
+      <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" x:Name="RoomValue"/><TextBlock x:Name="RoomLabel" Style="{StaticResource Label}" Text="{l:Tr RoomLabel}"/></DockPanel>
+      <Slider x:Name="RoomSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="{l:Tr RoomTip}"/>
+      <Grid Margin="26,0,0,0">
+       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="28"/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+       <StackPanel>
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" x:Name="GlassValue"/><TextBlock x:Name="GlassLabel" Style="{StaticResource Label}" Text="{l:Tr GlassWalls}"/></DockPanel>
+        <Slider x:Name="GlassSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="{l:Tr GlassTip}"/>
+       </StackPanel>
+       <StackPanel Grid.Column="2">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" x:Name="ReflectValue"/><TextBlock x:Name="ReflectLabel" Style="{StaticResource Label}" Text="{l:Tr Reflections}"/></DockPanel>
+        <Slider x:Name="ReflectSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="{l:Tr ReflectTip}"/>
+       </StackPanel>
+       <StackPanel Grid.Row="1">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" x:Name="LightValue"/><TextBlock x:Name="LightLabel" Style="{StaticResource Label}" Text="{l:Tr RoomLight}"/></DockPanel>
+        <Slider x:Name="LightSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="{l:Tr RoomLightTip}"/>
+       </StackPanel>
+       <StackPanel Grid.Row="1" Grid.Column="2">
+        <TextBlock Text="{l:Tr LightColour}" Style="{StaticResource Label}" Margin="0,0,0,4"/>
+        <ComboBox x:Name="LightColourList" SelectionChanged="SettingsChanged" ToolTip="{l:Tr LightColourTip}"/>
+       </StackPanel>
+      </Grid>
+     </StackPanel>
+    </Expander>
+
+    <!-- 5 3D & depth -->
+    <Expander x:Name="DepthSection" Header="{l:Tr SectionDepth}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <StackPanel x:Name="DepthContent">
+      <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueNumber, Element=StrengthSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Strength3D}"/></DockPanel>
+      <Slider x:Name="StrengthSlider" Minimum="0" Maximum="2" Value="1" ValueChanged="SettingsChanged"/>
+      <CheckBox x:Name="StereoCheck" Content="{l:Tr EnableStereo}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+      <CheckBox x:Name="FastModelCheck" Content="{l:Tr FastModel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FastModelTip}"/>
+      <CheckBox x:Name="SubpixelCheck" Content="{l:Tr Subpixel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SubpixelTip}"/>
+      <CheckBox x:Name="SteadyCheck" Content="{l:Tr Steady}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SteadyTip}"/>
+      <CheckBox x:Name="FuseCheck" Content="{l:Tr Fuse}" IsEnabled="{Binding ElementName=FastModelCheck, Path=IsChecked}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FuseTip}"/>
+      <TextBlock Text="{l:Tr FuseHint}" Style="{StaticResource Hint}" Margin="26,0,0,8"/>
+      <TextBlock Text="{l:Tr DepthGpu}" Style="{StaticResource Label}" Margin="0,4,0,4"/>
+      <ComboBox x:Name="DepthGpuList" DisplayMemberPath="Label" SelectedValuePath="Id" SelectionChanged="SettingsChanged" ToolTip="{l:Tr DepthGpuTip}"/>
+      <TextBlock Text="{l:Tr DepthGpuHint}" Style="{StaticResource Hint}"/>
+      <CheckBox x:Name="ForegroundCheck" Content="{l:Tr ForegroundPasses}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr ForegroundTip}"/>
+      <TextBlock Text="{l:Tr FrameTiming}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
+      <ComboBox x:Name="TimingList" SelectedIndex="0" SelectionChanged="SettingsChanged" ToolTip="{l:Tr FrameTimingTip}">
+       <ComboBoxItem Content="{l:Tr TimingLatest}"/>
+       <ComboBoxItem Content="{l:Tr TimingDelayed}"/>
+       <ComboBoxItem Content="{l:Tr TimingMatched}"/>
+      </ComboBox>
+      <TextBlock Text="{l:Tr TimingHint}" Style="{StaticResource Hint}"/>
+     </StackPanel>
+    </Expander>
+
+    <!-- 6 SteamVR & shortcuts -->
+    <Expander x:Name="SteamVrSection" Header="{l:Tr SectionSteamVr}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <StackPanel x:Name="SteamVrContent">
+      <CheckBox x:Name="DismissCheck" Content="{l:Tr DismissOnStart}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+      <TextBlock Text="{l:Tr KeyboardShortcuts}" Style="{StaticResource SubHeader}"/>
+      <Grid>
+       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="28"/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <StackPanel><TextBlock Text="{l:Tr ShortcutRecenter}" Style="{StaticResource Label}" Margin="0,0,0,4"/><ComboBox x:Name="RecenterKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
+       <StackPanel Grid.Column="2"><TextBlock Text="{l:Tr ShortcutDismiss}" Style="{StaticResource Label}" Margin="0,0,0,4"/><ComboBox x:Name="MenuKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
+      </Grid>
+      <TextBlock Text="{l:Tr ShortcutsHint}" Style="{StaticResource Hint}" Margin="0,8,0,10"/>
+      <WrapPanel><Button x:Name="DismissButton" Content="{l:Tr DismissMenuNow}" Click="DismissClick" IsEnabled="False"/></WrapPanel>
+     </StackPanel>
+    </Expander>
+
+    <!-- 7 Profile -->
+    <Expander x:Name="ProfileSection" Header="{l:Tr SectionProfile}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <StackPanel x:Name="ProfileContent">
+      <TextBlock Text="{l:Tr ProfileHint}" Style="{StaticResource Hint}" Margin="0,0,0,10"/>
+      <WrapPanel>
+       <Button x:Name="ResetButton" Content="{l:Tr ResetProfile}" Click="ResetClick" ToolTip="{l:Tr ResetProfileTip}"/>
+       <Button x:Name="BaseButton" Content="{l:Tr MakeBase}" Click="MakeBaseClick" ToolTip="{l:Tr MakeBaseTip}"/>
+       <Button x:Name="ApplyAllButton" Content="{l:Tr ApplyAll}" Click="ApplyAllClick" ToolTip="{l:Tr ApplyAllTip}"/>
+      </WrapPanel>
+     </StackPanel>
+    </Expander>
+
+    <!-- 8 Session details -->
+    <Expander x:Name="SessionDetails" Header="{l:Tr SectionSession}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <TextBox x:Name="LogBox" Height="160" IsReadOnly="True" Background="{StaticResource Well}" Foreground="{StaticResource Soft}" BorderThickness="0" Padding="6" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
+    </Expander>
+   </StackPanel>
+  </ScrollViewer>
+
+  <!-- Status line -->
+  <Border Grid.Row="3" BorderBrush="{StaticResource CardEdge}" BorderThickness="0,1,0,0" Padding="2,10,2,0" Margin="0,8,0,0">
+   <TextBlock x:Name="Status" Text="{l:Tr StatusReady}" TextWrapping="Wrap" Foreground="{StaticResource Soft}"/>
+  </Border>
  </Grid>
 </Window>

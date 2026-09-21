@@ -45,21 +45,26 @@ public static partial class Gpus
         }
         var choices = new List<GpuChoice>
         {
-            new(Same, "Same GPU as the game (default)"),
-            new(Auto, "Any other GPU (automatic)"),
+            new(Same, Loc.Get("GpuSame")),
+            new(Auto, Loc.Get("GpuAuto")),
         };
         foreach (var gpu in found)
         {
             bool duplicate = found.Count(g => string.Equals(g.Name, gpu.Name, StringComparison.OrdinalIgnoreCase)) > 1;
-            string size = gpu.MB >= 1024 ? (gpu.MB / 1024.0).ToString("0.#", CultureInfo.InvariantCulture) + " GB" : gpu.MB + " MB";
-            choices.Add(new($"name:{gpu.Name}#{gpu.Nth}", duplicate ? $"{gpu.Name} ({size}, card {gpu.Nth + 1})" : $"{gpu.Name} ({size})"));
+            // Labels are for people (the user's number format); the id stays invariant.
+            string size = gpu.MB >= 1024 ? Loc.Format("GpuSizeGB", gpu.MB / 1024.0) : Loc.Format("GpuSizeMB", gpu.MB);
+            string id = "name:" + gpu.Name + "#" + gpu.Nth.ToString(CultureInfo.InvariantCulture);
+            choices.Add(new(id, duplicate ? Loc.Format("GpuLabelCard", gpu.Name, size, gpu.Nth + 1) : Loc.Format("GpuLabel", gpu.Name, size)));
         }
         return choices;
     }
 
     // Asks the engine for this PC's GPUs. It exits before any VR or model work, so
     // this never starts SteamVR. On any failure only the fixed choices are offered.
-    public static IReadOnlyList<GpuChoice> List()
+    public static IReadOnlyList<GpuChoice> List() => Parse(EngineLines());
+
+    // The engine's --list-gpus output lines; none on any failure.
+    public static IReadOnlyList<string> EngineLines()
     {
         try
         {
@@ -69,14 +74,15 @@ public static partial class Gpus
                 StandardOutputEncoding = System.Text.Encoding.UTF8,
             };
             using var process = Process.Start(start);
-            if (process == null) return Parse([]);
+            if (process == null) return [];
             var output = process.StandardOutput.ReadToEndAsync();
-            if (!process.WaitForExit(5000)) { try { process.Kill(); } catch (InvalidOperationException) { } return Parse([]); }
-            return Parse(output.Result.Split('\n').Select(l => l.TrimEnd('\r')));
+            if (!process.WaitForExit(5000)) { try { process.Kill(); } catch (InvalidOperationException) { } return []; }
+            return output.Result.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or DirectoryNotFoundException)
         {
-            return Parse([]);
+            Debug.WriteLine("[Gpus] --list-gpus failed: " + ex.Message);
+            return [];
         }
     }
 }

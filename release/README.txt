@@ -16,7 +16,14 @@ also shows it on its own flat screen ("Desktop Game Theatre") in front of VRX's.
 In Steam, right-click the game > Properties > General and untick "Use Desktop Game
 Theatre while SteamVR is active".
 
-Choose the game and window, then Attach / Play. All setup stays on the desktop.
+VRX opens in Easy mode (the switch at the top): start your game and bring it to
+the front, and VRX attaches after a short countdown, using the game's saved
+settings or your base settings for a new game. Expert mode shows every setting in
+sections you can open and close (Game & window, Screen, Around the screen, Room,
+3D & depth, SteamVR & shortcuts, Profile, Session details). VRX remembers the
+mode; if you used an earlier version it opens in Expert.
+
+In Expert, choose the game and window, then Attach / Play. All setup stays on the desktop.
 Settings save per executable under %LOCALAPPDATA%\VRX\profiles. Logs are under
 %LOCALAPPDATA%\VRX\sessions. Stop VR or close the desktop app to end playback.
 Uninstalling preserves those settings and logs; it removes only the compiled
@@ -49,7 +56,8 @@ wraps round a curved screen. "Ambilight strength" sets its brightness.
 "World colour" (per game, default black, applies live) colours the space around the
 screen: presets or any #RRGGBB.
 
-"Room - walls lit by the screen" (per game, default off, applies live) puts you in a
+"Room - walls lit by the screen" (per game, applies live; a new install starts
+with Room 20%, Glass walls 14%, Reflections 15% and Room light 15%) puts you in a
 dark room whose walls, floor and ceiling are lit by the picture and the ambilight.
 The slider sets how pale the walls are; 30-60% looks like a cinema. The world colour
 becomes the room's house lights and the screen is kept level while the room is on.
@@ -67,6 +75,16 @@ count the screen's size in metres.
 
 "Apply to all" copies the settings shown to every game already set up, after an
 OK/Cancel warning. Each game keeps its own path and window.
+
+"Auto-attach to the game in front" (Expert: Game & window section; always on in
+Easy; off by default in Expert, for all games) counts down - 5 seconds unless you change it (3 to 30) - and then attaches
+to the game in front, just as if you had picked it and pressed Attach / Play. A
+window counts when it fills its screen (full screen or borderless), or when it is
+a game you have set up before (web browsers only count full screen). Steam,
+SteamVR, Windows itself and VRX never count. A small banner at the top of the
+game's screen shows the countdown without taking the focus; switch to another
+window to cancel. After you stop VR, or if attaching fails, VRX leaves that window
+alone until you switch away from it and back.
 
 "Make base settings" saves the settings shown as the starting point for games you
 have not set up yet; games already set up keep their own. "Reset this profile"
