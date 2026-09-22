@@ -3,10 +3,13 @@ using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Automation;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shell;
 using System.Windows.Threading;
 
 namespace VRX.Desktop;
@@ -35,6 +38,10 @@ public partial class MainWindow : Window
     private bool modeLoading, sectionsLoading;
     private bool playing;                          // the engine has entered its frame loop
     private IReadOnlyList<string> gpuLines = [];   // the engine's --list-gpus output, re-labelled when the strings change
+    // The window: which mode it is laid out for (-1 before the first), whether Windows 11
+    // draws its border, and whether it goes back to maximized after being minimized.
+    private int placedMode = -1;
+    private bool dwmFrame, restoreMaximized;
     private sealed record Shortcut(string Name, int Code);
     public MainWindow(bool smokeTest)
     {
@@ -53,6 +60,7 @@ public partial class MainWindow : Window
         ShowGpuChoice(Gpus.Same);
         // From <Version> in the project file, so the UI always matches the build.
         VersionText.Text = DisplayVersion();
+        TitleVersion.Text = VersionText.Text.TrimStart('v');
         Title = Loc.Format("WindowTitle", VersionText.Text);
         if (smoke)
         {
@@ -97,6 +105,8 @@ public partial class MainWindow : Window
         PutAppSettings();
         autoTimer.Tick += (_, _) => AutoAttachTick();
         Closed += (_, _) => { autoTimer.Stop(); autoOverlay?.Close(); autoOverlay = null; };
+        // A remembered place on a monitor that has gone (or changed) is brought back on screen.
+        ContentRendered += (_, _) => KeepOnScreenSoon();
         ready = true;
         Loaded += async (_, _) =>
         {
@@ -640,9 +650,10 @@ public partial class MainWindow : Window
         EasyRecenterButton.Visibility = easyOnly;
         SettingsScroll.Visibility = expert ? Visibility.Visible : Visibility.Collapsed;
         Subtitle.Text = Loc.Get(expert ? "SubtitleExpert" : "SubtitleEasy");
+        bool remembered = ApplyWindowMode(expert);
 
         string mode = expert ? AppSettings.ExpertMode : AppSettings.EasyMode;
-        bool changed = appSettings.Mode != mode;
+        bool changed = appSettings.Mode != mode || remembered;
         appSettings.Mode = mode;
         if (!expert && !appSettings.AutoAttach)
         {
@@ -658,6 +669,246 @@ public partial class MainWindow : Window
         UpdateGameCard();
         System.Diagnostics.Debug.WriteLine($"[Mode] SetMode exit: {appSettings.Mode}, auto-attach {appSettings.AutoAttach}, saved {changed}");
     }
+
+    // ---- The window: compact Easy, remembered places, the title bar ----------------------
+
+    private const double ExpertDefaultWidth = 1080, ExpertDefaultHeight = 900, ExpertMinWidth = 800, ExpertMinHeight = 640;
+    // Easy's width: at least EasyMinContentWidth, and wide enough for the game card's
+    // buttons beside a readable game name, and for the switch beside the subtitle (a longer
+    // translation makes the window wider instead of squeezing them).
+    private const double EasyMinContentWidth = 560, EasyNameMinWidth = 250, EasySubtitleMinWidth = 240, EasyButtonsMaxWidth = 560;
+    private const double CardIconWidth = 44 + 14, CardNameGap = 12, HeaderGap = 16;
+    private const double ExpertResizeBorder = 6;
+    private static readonly Thickness ExpertMargin = new(24, 20, 24, 18), EasyMargin = new(20, 14, 20, 14);
+    private static readonly Geometry MaximizeGlyph = Frozen("M 0.5,0.5 L 9.5,0.5 L 9.5,9.5 L 0.5,9.5 Z");
+    private static readonly Geometry RestoreGlyph = Frozen("M 2.5,2.5 L 2.5,0.5 L 9.5,0.5 L 9.5,7.5 L 7.5,7.5 M 0.5,2.5 L 7.5,2.5 L 7.5,9.5 L 0.5,9.5 Z");
+
+    private static Geometry Frozen(string data)
+    {
+        var geometry = Geometry.Parse(data);
+        geometry.Freeze();
+        return geometry;
+    }
+
+    // Lays the window out for a mode. Easy: compact, its height following its content, not
+    // resizable or maximizable, at its remembered position. Expert: resizable, at its
+    // remembered bounds (maximized if it was). The place of the mode being left is
+    // remembered first; true when that changed the app settings.
+    private bool ApplyWindowMode(bool expert)
+    {
+        System.Diagnostics.Debug.WriteLine($"[Window] ApplyWindowMode enter: expert {expert}, placed {placedMode}");
+        int mode = expert ? 1 : 0;
+        if (placedMode == mode)
+        {
+            if (!expert) FitEasyWidth();
+            return false;
+        }
+        bool remembered = placedMode >= 0 && RememberPlace(placedMode == 1);
+        placedMode = mode;
+        NameRow.Visibility = expert ? Visibility.Visible : Visibility.Collapsed;
+        RootGrid.Margin = expert ? ExpertMargin : EasyMargin;
+        HeaderGrid.Margin = new Thickness(0, 0, 0, expert ? 16 : 12);
+        if (expert) PlaceExpert();
+        else PlaceEasy();
+        UpdateCaptionButtons();
+        System.Diagnostics.Debug.WriteLine($"[Window] ApplyWindowMode exit: {Width:F0} x {(SizeToContent == SizeToContent.Height ? "content" : Height.ToString("F0", CultureInfo.InvariantCulture))}, remembered {remembered}");
+        return remembered;
+    }
+
+    private void PlaceEasy()
+    {
+        var chrome = WindowChrome.GetWindowChrome(this);
+        if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal;
+        ResizeMode = ResizeMode.CanMinimize;
+        if (chrome != null) chrome.ResizeBorderThickness = new Thickness(0);
+        MinWidth = 0;
+        MinHeight = 0;
+        FitEasyWidth();
+        SizeToContent = SizeToContent.Height;
+        var place = appSettings.EasyWindow;
+        System.Diagnostics.Debug.WriteLine($"[Window] PlaceEasy: saved {place?.ToString() ?? "none"}, smoke {smoke}");
+        if (smoke) return;                             // the smoke test's window stays off screen
+        if (place != null)
+        {
+            Left = place.Left;
+            Top = place.Top;
+        }
+        else if (!IsLoaded)
+        {
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        }
+        KeepOnScreenSoon();
+    }
+
+    private void PlaceExpert()
+    {
+        var chrome = WindowChrome.GetWindowChrome(this);
+        SizeToContent = SizeToContent.Manual;
+        ResizeMode = ResizeMode.CanResize;
+        if (chrome != null) chrome.ResizeBorderThickness = new Thickness(ExpertResizeBorder);
+        MinWidth = ExpertMinWidth;
+        MinHeight = ExpertMinHeight;
+        var place = appSettings.ExpertWindow;
+        System.Diagnostics.Debug.WriteLine($"[Window] PlaceExpert: saved {place?.ToString() ?? "none"}, smoke {smoke}");
+        Width = place != null ? Math.Max(place.Width, ExpertMinWidth) : ExpertDefaultWidth;
+        Height = place != null ? Math.Max(place.Height, ExpertMinHeight) : ExpertDefaultHeight;
+        if (smoke) return;                             // the smoke test's window stays off screen
+        if (place != null)
+        {
+            Left = place.Left;
+            Top = place.Top;
+        }
+        else if (!IsLoaded)
+        {
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        }
+        if (place?.Maximized != true)
+        {
+            KeepOnScreenSoon();
+            return;
+        }
+        // Maximized: on screen first, so it maximizes on a monitor that exists.
+        if (!IsLoaded)
+        {
+            WindowState = WindowState.Maximized;
+            return;
+        }
+        KeepOnScreenNow();
+        WindowState = WindowState.Maximized;
+    }
+
+    // Easy's width, from what its content needs (see EasyMinContentWidth), within the screen.
+    private void FitEasyWidth()
+    {
+        if (StartButton == null || ModeSwitch == null || GameCard == null) return;
+        var unlimited = new Size(double.PositiveInfinity, double.PositiveInfinity);
+        double buttons = 0;
+        foreach (var button in new[] { StartButton, StopButton, EasyRecenterButton })
+        {
+            if (button.Visibility == Visibility.Collapsed) continue;
+            button.Measure(unlimited);
+            buttons += button.DesiredSize.Width;
+        }
+        ModeSwitch.Measure(unlimited);
+        double card = GameCard.BorderThickness.Left + GameCard.BorderThickness.Right + GameCard.Padding.Left + GameCard.Padding.Right +
+            CardIconWidth + EasyNameMinWidth + CardNameGap + Math.Min(buttons, EasyButtonsMaxWidth);
+        double header = ModeSwitch.DesiredSize.Width + HeaderGap + EasySubtitleMinWidth;
+        double content = Math.Max(EasyMinContentWidth, Math.Max(card, header));
+        double width = Math.Ceiling(content + EasyMargin.Left + EasyMargin.Right + WindowFrame.BorderThickness.Left + WindowFrame.BorderThickness.Right);
+        double screen = SystemParameters.WorkArea.Width;
+        if (screen > 0) width = Math.Min(width, screen);
+        System.Diagnostics.Debug.WriteLine($"[Window] FitEasyWidth: buttons {buttons:F0}, card {card:F0}, header {header:F0} -> {width:F0}");
+        Width = width;
+    }
+
+    // Remembers where the window is for a mode (Expert: bounds and maximized; Easy: position).
+    // False when there is nothing to remember yet.
+    private bool RememberPlace(bool expert)
+    {
+        Rect bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
+        if (bounds.IsEmpty || !double.IsFinite(bounds.Width) || !double.IsFinite(bounds.Height))
+        {
+            System.Diagnostics.Debug.WriteLine($"[Window] RememberPlace: nothing to remember ({WindowState})");
+            return false;
+        }
+        bool maximized = WindowState == WindowState.Maximized || (WindowState == WindowState.Minimized && restoreMaximized);
+        if (expert)
+        {
+            appSettings.ExpertWindow = AppSettings.ValidBounds(new WindowPlace { Left = bounds.Left, Top = bounds.Top, Width = bounds.Width, Height = bounds.Height, Maximized = maximized });
+        }
+        else
+        {
+            appSettings.EasyWindow = AppSettings.ValidPosition(new WindowPlace { Left = bounds.Left, Top = bounds.Top });
+        }
+        System.Diagnostics.Debug.WriteLine($"[Window] RememberPlace: {(expert ? "Expert " + appSettings.ExpertWindow : "Easy " + appSettings.EasyWindow)}");
+        return true;
+    }
+
+    // Brings the window back onto a monitor that exists, once the layout has settled.
+    private void KeepOnScreenSoon()
+    {
+        if (smoke || !IsLoaded) return;
+        Dispatcher.BeginInvoke(KeepOnScreenNow, DispatcherPriority.Loaded);
+    }
+
+    private void KeepOnScreenNow()
+    {
+        if (smoke || WindowState != WindowState.Normal) return;
+        WindowPlacement.KeepOnScreen(new WindowInteropHelper(this).Handle, placedMode == 1);
+    }
+
+    // The skin's native parts: Windows 11's rounded corners and border in the skin's colour.
+    private void WindowSourceInitialized(object? sender, EventArgs e)
+    {
+        nint hwnd = new WindowInteropHelper(this).Handle;
+        System.Diagnostics.Debug.WriteLine($"[Window] SourceInitialized: {hwnd:X}");
+        var edge = TryFindResource("WindowEdgeColor") is Color colour ? colour : Color.FromRgb(0x2A, 0x3B, 0x57);
+        dwmFrame = WindowPlacement.ApplyDwmSkin(hwnd, edge);
+        UpdateFrame();
+    }
+
+    private void WindowStateChanged(object? sender, EventArgs e)
+    {
+        if (WindowState != WindowState.Minimized) restoreMaximized = WindowState == WindowState.Maximized;
+        System.Diagnostics.Debug.WriteLine($"[Window] StateChanged: {WindowState}");
+        UpdateFrame();
+        UpdateCaptionButtons();
+    }
+
+    // The window's own border (only where Windows draws none), and, when maximized, room for
+    // the frame Windows pushes past the screen's edges.
+    private void UpdateFrame()
+    {
+        if (WindowFrame == null) return;
+        bool maximized = WindowState == WindowState.Maximized;
+        WindowFrame.BorderThickness = new Thickness(maximized || dwmFrame ? 0 : 1);
+        WindowFrame.Padding = maximized ? MaximizedOverhang() : new Thickness(0);
+    }
+
+    // How far a maximized window reaches past its monitor's work area, in WPF units.
+    private Thickness MaximizedOverhang()
+    {
+        nint hwnd = new WindowInteropHelper(this).Handle;
+        var work = WindowPlacement.WorkAreaOf(hwnd);
+        if (work.Area <= 0 || !WindowPlacement.TryGetBounds(hwnd, out var bounds)) return new Thickness(0);
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var overhang = new Thickness(Math.Max(0, work.Left - bounds.Left) / dpi.DpiScaleX, Math.Max(0, work.Top - bounds.Top) / dpi.DpiScaleY,
+            Math.Max(0, bounds.Right - work.Right) / dpi.DpiScaleX, Math.Max(0, bounds.Bottom - work.Bottom) / dpi.DpiScaleY);
+        System.Diagnostics.Debug.WriteLine($"[Window] MaximizedOverhang: window {bounds}, work {work} -> {overhang}");
+        return overhang;
+    }
+
+    // Maximize / Restore Down only in Expert; its glyph and name follow the window's state.
+    private void UpdateCaptionButtons()
+    {
+        if (MaxButton == null || MaxGlyph == null) return;
+        MaxButton.Visibility = placedMode == 1 ? Visibility.Visible : Visibility.Collapsed;
+        bool maximized = WindowState == WindowState.Maximized;
+        MaxGlyph.Data = maximized ? RestoreGlyph : MaximizeGlyph;
+        string name = Loc.Get(maximized ? "TitleRestore" : "TitleMaximize");
+        MaxButton.ToolTip = name;
+        AutomationProperties.SetName(MaxButton, name);
+    }
+
+    // The logo opens the window menu (as Alt+Space does) just below itself.
+    private void MenuClick(object sender, RoutedEventArgs e)
+    {
+        var source = PresentationSource.FromVisual(MenuButton);
+        if (source?.CompositionTarget == null) return;
+        var corner = MenuButton.PointToScreen(new Point(0, MenuButton.ActualHeight));
+        SystemCommands.ShowSystemMenu(this, source.CompositionTarget.TransformFromDevice.Transform(corner));
+    }
+
+    private void MinimizeClick(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
+
+    private void MaximizeClick(object sender, RoutedEventArgs e)
+    {
+        if (placedMode != 1) return;
+        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
+        else SystemCommands.MaximizeWindow(this);
+    }
+
+    private void CloseClick(object sender, RoutedEventArgs e) => SystemCommands.CloseWindow(this);
 
     // ---- Sections ----------------------------------------------------------------------
 
@@ -739,6 +990,8 @@ public partial class MainWindow : Window
         if (profile == null) PathLabel.Text = Loc.Get(AppList.SelectedItem == null ? "PathChoose" : "PathNoAccess");
         UpdateRoomControls();
         UpdateGameCard();
+        UpdateCaptionButtons();
+        if (placedMode == 0) FitEasyWidth();
         System.Diagnostics.Debug.WriteLine("[MainWindow] RefreshLanguage exit");
     }
 
@@ -949,6 +1202,7 @@ public partial class MainWindow : Window
     private async void WindowClosing(object? sender, CancelEventArgs e)
     {
         if (closing) return;
+        if (placedMode >= 0 && RememberPlace(placedMode == 1)) SaveAppSettings();
         SaveAndApply(); refreshTimer.Stop(); saveTimer.Stop();
         autoTimer.Stop(); HideAutoOverlay();
         if (!engine.Running) return;
@@ -1275,6 +1529,7 @@ public partial class MainWindow : Window
 
         SmokeTestAutoAttach(output, sample, one);
         SmokeTestModes(output, sample, one);
+        await SmokeTestWindow(output);
         SmokeTestStrings(root);
 
         PutProfile(one);
@@ -1308,8 +1563,8 @@ public partial class MainWindow : Window
         RefreshApps();
         if (Status.Text != sessionError) throw new Exception("Refreshing hid the session error");
         if (Loc.Missing.Count > 0) throw new Exception("Strings asked for but missing from Strings.resx: " + string.Join(", ", Loc.Missing));
-        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; strings: " +
-            Loc.NeutralStrings().Count.ToString(CultureInfo.InvariantCulture) + " keys, all referenced keys present, placeholders consistent, no literal text in MainWindow.xaml, pseudo-locale transforms every string; screenshots ui-easy, ui-expert-default, ui-expert-all-open, ui-expert-pseudo. No VR session started.");
+        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; window: places remembered culture-independently and kept on screen, Easy compact and growing to its content, Expert back at its size, title bar buttons named; strings: " +
+            Loc.NeutralStrings().Count.ToString(CultureInfo.InvariantCulture) + " keys, all referenced keys present, placeholders consistent, no literal text in MainWindow.xaml, pseudo-locale transforms every string; screenshots ui-easy-skin, ui-easy-skin-pseudo, ui-expert-skin, ui-expert-all-open, ui-expert-pseudo. No VR session started.");
     }
 
     // Easy | Expert and the sections: defaults for new and existing users, memory, Easy
@@ -1445,6 +1700,129 @@ public partial class MainWindow : Window
         System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestModes exit");
     }
 
+    // The window: remembered places (culture-independent, nonsense dropped), keeping on a
+    // monitor that exists, Easy compact and Expert back at its size, and the title bar.
+    // The window itself stays off screen; nothing is maximized.
+    private async Task SmokeTestWindow(string output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestWindow enter");
+        async Task Settle()
+        {
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            UpdateLayout();
+        }
+
+        // Places round-trip in any culture; a size or position that makes no sense is dropped.
+        var places = new ProfileStore(Path.Combine(output, "window-places"));
+        if (Directory.Exists(places.Root)) Directory.Delete(places.Root, true);
+        var culture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+            places.SaveAppSettings(new AppSettings
+            {
+                Mode = AppSettings.ExpertMode,
+                ExpertWindow = new WindowPlace { Left = -1500.5, Top = 20.25, Width = 1000.5, Height = 820, Maximized = true },
+                EasyWindow = new WindowPlace { Left = 300.5, Top = 200, Width = 5, Height = 5 },
+            });
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = culture;
+        }
+        string json = File.ReadAllText(places.AppSettingsFile);
+        if (!json.Contains("1000.5") || !json.Contains("-1500.5") || json.Contains("1000,5")) throw new Exception("Window places must be saved culture-independently: " + json);
+        var placesBack = places.LoadAppSettings();
+        if (placesBack.ExpertWindow is not { Left: -1500.5, Top: 20.25, Width: 1000.5, Height: 820, Maximized: true } ||
+            placesBack.EasyWindow is not { Left: 300.5, Top: 200, Width: 0, Height: 0, Maximized: false })
+            throw new Exception("Window places must round-trip (Expert: bounds and maximized; Easy: position only)");
+        File.WriteAllText(places.AppSettingsFile, "{\"Mode\":\"Expert\",\"ExpertWindow\":{\"Left\":10,\"Top\":10,\"Width\":-5,\"Height\":400},\"EasyWindow\":{\"Left\":1e9,\"Top\":0}}");
+        var nonsense = places.LoadAppSettings();
+        if (nonsense.ExpertWindow != null || nonsense.EasyWindow != null || !nonsense.IsExpert) throw new Exception("Nonsense window places must be dropped, keeping the rest");
+
+        // Keeping on screen (physical pixels): a primary monitor and one to its left.
+        var primary = new ScreenRect(0, 0, 1920, 1040);
+        var leftMonitor = new ScreenRect(-2560, -200, 0, 1240);
+        ScreenRect[] monitors = [primary, leftMonitor];
+        void ExpectClamp(ScreenRect window, bool resize, ScreenRect wanted, string what)
+        {
+            var got = WindowPlacement.Clamp(window, monitors, resize);
+            if (got != wanted) throw new Exception($"Keep on screen, {what}: {window} -> {got}, wanted {wanted}");
+        }
+        ExpectClamp(new ScreenRect(100, 100, 1100, 900), true, new ScreenRect(100, 100, 1100, 900), "inside stays");
+        ExpectClamp(new ScreenRect(-2000, 100, -1000, 900), true, new ScreenRect(-2000, 100, -1000, 900), "on the other monitor stays");
+        ExpectClamp(new ScreenRect(5000, 100, 6000, 900), true, new ScreenRect(920, 100, 1920, 900), "monitor gone: onto the nearest");
+        ExpectClamp(new ScreenRect(1800, 500, 2800, 1300), true, new ScreenRect(920, 240, 1920, 1040), "half off the edge: moved in");
+        ExpectClamp(new ScreenRect(-100, -50, 2100, 1300), true, new ScreenRect(0, 0, 1920, 1040), "too big: shrunk to the work area");
+        ExpectClamp(new ScreenRect(-100, -50, 2100, 1300), false, new ScreenRect(0, 0, 2200, 1350), "too big, no resizing: top-left on screen");
+        ExpectClamp(new ScreenRect(-2000, -300, -1000, 500), true, new ScreenRect(-2000, -200, -1000, 600), "above the other monitor: moved down");
+        if (WindowPlacement.Clamp(new ScreenRect(5, 5, 50, 50), [], true) != new ScreenRect(5, 5, 50, 50)) throw new Exception("No monitors: the window stays");
+        if (!WindowPlacement.WorkAreas().Any(a => a.Area > 0)) throw new Exception("No monitor work area found");
+
+        // The window: Expert at a size of the user's; Easy remembers it and is compact; back
+        // in Expert that size returns.
+        SetMode(true);
+        Width = 1000;
+        Height = 820;
+        await Settle();
+        SetMode(false);
+        await Settle();
+        if (appSettings.ExpertWindow is not { Width: 1000, Height: 820 } || store.LoadAppSettings().ExpertWindow is not { Width: 1000, Height: 820 })
+            throw new Exception($"Leaving Expert must remember its bounds (got {appSettings.ExpertWindow})");
+        if (SizeToContent != SizeToContent.Height || ResizeMode != ResizeMode.CanMinimize || MaxButton.IsVisible || WindowChrome.GetWindowChrome(this)?.ResizeBorderThickness != new Thickness(0))
+            throw new Exception("Easy must size to its content and not be resizable or maximizable");
+        if (ActualHeight > 0.6 * ExpertDefaultHeight || ActualWidth >= ExpertMinWidth)
+            throw new Exception($"Easy must be compact: {ActualWidth:F0} x {ActualHeight:F0}");
+        CheckNothingClipped("Easy", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
+        double easyWidth = ActualWidth, easyHeight = ActualHeight;
+        SetMode(true);
+        await Settle();
+        if (Width != 1000 || Height != 820 || SizeToContent != SizeToContent.Manual || ResizeMode != ResizeMode.CanResize || !MaxButton.IsVisible || MinWidth != ExpertMinWidth ||
+            WindowChrome.GetWindowChrome(this)?.ResizeBorderThickness != new Thickness(ExpertResizeBorder))
+            throw new Exception($"Expert must come back resizable at its remembered size (got {Width} x {Height})");
+        if (store.LoadAppSettings().EasyWindow is not { } easyPlace || easyPlace.Left != Left || easyPlace.Top != Top)
+            throw new Exception("Leaving Easy must remember its position");
+
+        // The title bar: VRX's own, with named, keyboard-reachable buttons usable in the chrome.
+        var chrome = WindowChrome.GetWindowChrome(this);
+        if (chrome == null || Math.Abs(chrome.CaptionHeight - TitleBar.ActualHeight) > 0.5 || TitleBar.ActualHeight > 40 || TitleVersion.Text.Length == 0)
+            throw new Exception("The window must have VRX's own slim title bar with the version");
+        foreach (var (button, key) in new[] { (MenuButton, "TitleMenu"), (MinButton, "TitleMinimize"), (MaxButton, "TitleMaximize"), (CloseButton, "TitleClose") })
+        {
+            if (AutomationProperties.GetName(button) != Loc.Get(key) || button.ToolTip as string != Loc.Get(key))
+                throw new Exception($"Title bar button {button.Name} must be named '{Loc.Get(key)}' (is '{AutomationProperties.GetName(button)}')");
+            if (!WindowChrome.GetIsHitTestVisibleInChrome(button) || !button.Focusable || !button.IsTabStop || !button.IsVisible)
+                throw new Exception($"Title bar button {button.Name} must be clickable in the title bar and reachable by keyboard");
+        }
+        if (MaxGlyph.Data != MaximizeGlyph) throw new Exception("A window that is not maximized shows the maximize glyph");
+        Width = ExpertDefaultWidth;
+        Height = ExpertDefaultHeight;
+        await Settle();
+        File.WriteAllText(Path.Combine(output, "smoke-window.txt"), FormattableString.Invariant($"Easy {easyWidth:F0} x {easyHeight:F0}; Expert default {ExpertDefaultWidth:F0} x {ExpertDefaultHeight:F0} (WPF units = pixels at 100%)"));
+        System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestWindow exit: Easy {easyWidth:F0} x {easyHeight:F0}");
+    }
+
+    // Every element lies wholly inside the window and its own content fits (nothing cut off).
+    private void CheckNothingClipped(string what, params FrameworkElement[] elements)
+    {
+        ArgumentNullException.ThrowIfNull(elements);
+        var window = new Rect(0, 0, ActualWidth, ActualHeight);
+        if (RootGrid.DesiredSize.Height > RootGrid.ActualHeight + RootGrid.Margin.Top + RootGrid.Margin.Bottom + 0.5 ||
+            RootGrid.DesiredSize.Width > RootGrid.ActualWidth + RootGrid.Margin.Left + RootGrid.Margin.Right + 0.5)
+            throw new Exception($"{what}: the content needs {RootGrid.DesiredSize} but has {RootGrid.ActualWidth:F0} x {RootGrid.ActualHeight:F0}");
+        foreach (var element in elements)
+        {
+            if (!element.IsVisible) throw new Exception($"{what}: {element.Name} is not visible");
+            var bounds = element.TransformToAncestor(this).TransformBounds(new Rect(element.RenderSize));
+            if (bounds.Left < -0.5 || bounds.Top < -0.5 || bounds.Right > window.Right + 0.5 || bounds.Bottom > window.Bottom + 0.5)
+                throw new Exception($"{what}: {element.Name} at {bounds} is outside the window {window.Width:F0} x {window.Height:F0}");
+            if (element.DesiredSize.Width > element.RenderSize.Width + element.Margin.Left + element.Margin.Right + 0.5 ||
+                element.DesiredSize.Height > element.RenderSize.Height + element.Margin.Top + element.Margin.Bottom + 0.5)
+                throw new Exception($"{what}: {element.Name} needs {element.DesiredSize} but has {element.RenderSize}");
+        }
+    }
+
     // Strings: every key used exists, placeholders match the arguments, MainWindow.xaml has
     // no literal text, and the pseudo-locale transforms every string. Reads the sources, so
     // it runs from the repository.
@@ -1572,7 +1950,29 @@ public partial class MainWindow : Window
         SetMode(false);
         Status.Text = Loc.Get("StatusReady");
         await Settle();
-        SaveWindowShot(Path.Combine(output, "ui-easy.png"));
+        SaveWindowShot(Path.Combine(output, "ui-easy-skin.png"));
+        // Easy in the pseudo-locale: the compact window grows to fit the longer text.
+        double plainWidth = ActualWidth, plainHeight = ActualHeight;
+        Loc.SetPseudo(true);
+        try
+        {
+            RefreshLanguage();
+            Status.Text = Loc.Get("StatusReady");
+            await Settle();
+            SaveWindowShot(Path.Combine(output, "ui-easy-skin-pseudo.png"));
+            CheckNothingClipped("Easy, pseudo-locale", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
+            if (ActualWidth < plainWidth || ActualHeight < plainHeight)
+                throw new Exception($"Easy must grow for longer text: {plainWidth:F0} x {plainHeight:F0} -> {ActualWidth:F0} x {ActualHeight:F0}");
+        }
+        finally
+        {
+            Loc.SetPseudo(false);
+            RefreshLanguage();
+        }
+        Status.Text = Loc.Get("StatusReady");
+        await Settle();
+        if (Math.Abs(ActualWidth - plainWidth) > 0.5 || Math.Abs(ActualHeight - plainHeight) > 0.5)
+            throw new Exception($"Easy must shrink back after the pseudo-locale: {ActualWidth:F0} x {ActualHeight:F0}, was {plainWidth:F0} x {plainHeight:F0}");
         SetMode(true);
         appSettings.AutoAttach = savedAuto;
         autoSettingsLoading = true; AutoAttachCheck.IsChecked = savedAuto; autoSettingsLoading = false;
@@ -1582,7 +1982,7 @@ public partial class MainWindow : Window
         PutSections();
         SettingsScroll.ScrollToTop();
         await Settle();
-        SaveWindowShot(Path.Combine(output, "ui-expert-default.png"));
+        SaveWindowShot(Path.Combine(output, "ui-expert-skin.png"));
         sectionsLoading = true;
         foreach (var (_, section) in SectionList()) section.IsExpanded = true;
         sectionsLoading = false;
@@ -1615,7 +2015,7 @@ public partial class MainWindow : Window
     private void CheckPseudoTexts()
     {
         var problems = new List<string>();
-        var dataOwners = new DependencyObject[] { AppList, WindowList, RecenterKeys, MenuKeys, VersionText, CardName, WorldHex, LogBox };
+        var dataOwners = new DependencyObject[] { AppList, WindowList, RecenterKeys, MenuKeys, VersionText, TitleVersion, CardName, WorldHex, LogBox };
         void Walk(DependencyObject node)
         {
             if (dataOwners.Contains(node)) return;
@@ -1636,12 +2036,12 @@ public partial class MainWindow : Window
         if (problems.Count > 0) throw new Exception("Pseudo-locale left text untransformed: " + string.Join("; ", problems.Distinct().Take(20)));
     }
 
-    // The window's client area (its content plus the content's margin), without the frame.
+    // The whole window: with the skin's title bar it is all client area.
     private void SaveWindowShot(string file)
     {
-        var content = (FrameworkElement)Content;
-        int width = (int)Math.Ceiling(content.ActualWidth + content.Margin.Left + content.Margin.Right);
-        int height = (int)Math.Ceiling(content.ActualHeight + content.Margin.Top + content.Margin.Bottom);
+        ArgumentNullException.ThrowIfNull(file);
+        int width = (int)Math.Ceiling(ActualWidth);
+        int height = (int)Math.Ceiling(ActualHeight);
         var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
         bitmap.Render(this);
         SavePng(bitmap, file);

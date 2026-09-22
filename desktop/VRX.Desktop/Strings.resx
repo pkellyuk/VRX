@@ -24,6 +24,11 @@
   <data name="ModeExpert" xml:space="preserve"><value>Expert</value></data>
   <data name="ModeExpertCaption" xml:space="preserve"><value>All settings</value></data>
   <data name="ModeExpertTip" xml:space="preserve"><value>Expert: every setting, grouped into sections you can open and close.</value></data>
+  <data name="TitleMenu" xml:space="preserve"><value>Window menu</value><comment>The VRX logo at the left of the title bar; opens the window menu (move, size, close).</comment></data>
+  <data name="TitleMinimize" xml:space="preserve"><value>Minimize</value><comment>Title bar button, as in Windows.</comment></data>
+  <data name="TitleMaximize" xml:space="preserve"><value>Maximize</value><comment>Title bar button (Expert only), as in Windows.</comment></data>
+  <data name="TitleRestore" xml:space="preserve"><value>Restore Down</value><comment>The maximize button while the window is maximized, as in Windows.</comment></data>
+  <data name="TitleClose" xml:space="preserve"><value>Close</value><comment>Title bar button, as in Windows.</comment></data>
 
   <!-- Easy mode and the game card -->
   <data name="EasyIntro" xml:space="preserve"><value>Start your game and bring it to the front - VRX attaches after a short countdown.</value></data>

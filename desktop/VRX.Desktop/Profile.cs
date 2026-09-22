@@ -161,6 +161,8 @@ public sealed class ProfileStore(string root)
         {
             loaded = File.Exists(AppSettingsFile) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(AppSettingsFile)) ?? new AppSettings() : new AppSettings();
             loaded.AutoAttachSeconds = AppSettings.ClampSeconds(loaded.AutoAttachSeconds);
+            loaded.ExpertWindow = AppSettings.ValidBounds(loaded.ExpertWindow);
+            loaded.EasyWindow = AppSettings.ValidPosition(loaded.EasyWindow);
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException)
         {
@@ -201,6 +203,8 @@ public sealed class ProfileStore(string root)
             AutoAttachSeconds = AppSettings.ClampSeconds(settings.AutoAttachSeconds),
             Mode = AppSettings.ValidMode(settings.Mode) ? settings.Mode : null,
             Sections = settings.Sections == null ? null : new Dictionary<string, bool>(settings.Sections, StringComparer.Ordinal),
+            ExpertWindow = AppSettings.ValidBounds(settings.ExpertWindow),
+            EasyWindow = AppSettings.ValidPosition(settings.EasyWindow),
         };
         AtomicWrite(AppSettingsFile, JsonSerializer.Serialize(copy, new JsonSerializerOptions { WriteIndented = true }));
     }

@@ -1,0 +1,86 @@
+<!-- The VRX skin: dark navy, a teal accent and white text, with VRX's own title bar.
+     Everything the window's look depends on is here, so another skin is another file
+     with the same keys, merged in App.xaml instead of this one. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <!-- Palette -->
+ <SolidColorBrush x:Key="Ink" Color="#E8EEF8"/>
+ <SolidColorBrush x:Key="Muted" Color="#9EAFC7"/>
+ <SolidColorBrush x:Key="Soft" Color="#A5B4CC"/>
+ <SolidColorBrush x:Key="Page" Color="#101827"/>
+ <SolidColorBrush x:Key="Card" Color="#192438"/>
+ <SolidColorBrush x:Key="CardEdge" Color="#24334C"/>
+ <SolidColorBrush x:Key="Well" Color="#111B2B"/>
+ <SolidColorBrush x:Key="Accent" Color="#76DCC6"/>
+ <SolidColorBrush x:Key="OnAccent" Color="#0E1A2A"/>
+ <SolidColorBrush x:Key="Raised" Color="#2A3B57"/>
+ <SolidColorBrush x:Key="RaisedEdge" Color="#3A4E6E"/>
+ <SolidColorBrush x:Key="Hover" Color="#22324C"/>
+ <SolidColorBrush x:Key="Field" Color="#0F1828"/>
+
+ <!-- Window chrome: the title bar, the window's edge (drawn by Windows 11 itself, in this
+      colour, or by the window on older Windows) and the caption buttons. -->
+ <SolidColorBrush x:Key="ChromeBar" Color="#0B1320"/>
+ <SolidColorBrush x:Key="ChromeEdge" Color="#1E2B42"/>
+ <SolidColorBrush x:Key="ChromeText" Color="#C9D5E8"/>
+ <Color x:Key="WindowEdgeColor">#2A3B57</Color>
+ <SolidColorBrush x:Key="WindowEdge" Color="{StaticResource WindowEdgeColor}"/>
+ <SolidColorBrush x:Key="CaptionHover" Color="#22324C"/>
+ <SolidColorBrush x:Key="CaptionPressed" Color="#2E4262"/>
+ <SolidColorBrush x:Key="CloseHover" Color="#C42B1C"/>
+ <SolidColorBrush x:Key="ClosePressed" Color="#B0281B"/>
+
+ <!-- A caption button: a flat 46 x 32 cell with a thin glyph, like Windows' own. -->
+ <Style x:Key="CaptionButton" TargetType="Button">
+  <Setter Property="Width" Value="46"/>
+  <Setter Property="Height" Value="32"/>
+  <Setter Property="Foreground" Value="{StaticResource ChromeText}"/>
+  <Setter Property="Background" Value="Transparent"/>
+  <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+  <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+  <Setter Property="Template">
+   <Setter.Value>
+    <ControlTemplate TargetType="Button">
+     <Border Background="{TemplateBinding Background}">
+      <Grid>
+       <Border x:Name="Focus" BorderBrush="{StaticResource Accent}" BorderThickness="1" Margin="2" Visibility="Collapsed"/>
+       <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="False"/>
+      </Grid>
+     </Border>
+     <ControlTemplate.Triggers>
+      <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="Visibility" Value="Visible"/></Trigger>
+     </ControlTemplate.Triggers>
+    </ControlTemplate>
+   </Setter.Value>
+  </Setter>
+  <Style.Triggers>
+   <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{StaticResource CaptionHover}"/><Setter Property="Foreground" Value="{StaticResource Ink}"/></Trigger>
+   <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="{StaticResource CaptionPressed}"/></Trigger>
+  </Style.Triggers>
+ </Style>
+ <!-- Close turns red, as in Windows. -->
+ <Style x:Key="CloseCaptionButton" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+  <Style.Triggers>
+   <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{StaticResource CloseHover}"/><Setter Property="Foreground" Value="White"/></Trigger>
+   <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="{StaticResource ClosePressed}"/><Setter Property="Foreground" Value="White"/></Trigger>
+  </Style.Triggers>
+ </Style>
+ <!-- The logo at the left of the title bar: opens the window menu, like a window's icon. -->
+ <Style x:Key="CaptionIcon" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+  <Setter Property="Width" Value="40"/>
+ </Style>
+ <!-- A caption glyph: 10 x 10, one pixel thin, drawn on half pixels so it stays crisp. -->
+ <Style x:Key="CaptionGlyph" TargetType="Path">
+  <Setter Property="Width" Value="10"/>
+  <Setter Property="Height" Value="10"/>
+  <Setter Property="Stretch" Value="None"/>
+  <Setter Property="StrokeThickness" Value="1"/>
+  <Setter Property="SnapsToDevicePixels" Value="True"/>
+  <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+ </Style>
+ <!-- The text in the title bar. -->
+ <Style x:Key="TitleText" TargetType="TextBlock">
+  <Setter Property="FontSize" Value="12"/>
+  <Setter Property="VerticalAlignment" Value="Center"/>
+  <Setter Property="Foreground" Value="{StaticResource ChromeText}"/>
+ </Style>
+</ResourceDictionary>

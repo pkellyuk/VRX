@@ -49,6 +49,15 @@ public sealed class AppSettings
     }
 
     public static int ClampSeconds(int seconds) => Math.Clamp(seconds, MinSeconds, MaxSeconds);
+
+    // Where the window was: Expert's bounds (and maximized or not) and Easy's position.
+    // Null until the window has been placed in that mode; nonsense values are dropped.
+    public WindowPlace? ExpertWindow { get; set; }
+    public WindowPlace? EasyWindow { get; set; }
+
+    public static WindowPlace? ValidBounds(WindowPlace? place) => place != null && place.HasPosition && place.HasSize ? place.Copy() : null;
+    public static WindowPlace? ValidPosition(WindowPlace? place) =>
+        place != null && place.HasPosition ? new WindowPlace { Left = place.Left, Top = place.Top } : null;
 }
 
 // A screen rectangle in physical pixels (right and bottom exclusive).
