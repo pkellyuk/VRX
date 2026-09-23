@@ -24,6 +24,7 @@
 #include <memory>
 #include <exception>
 #include <thread>
+#include <string>
 #include <vector>
 
 namespace {
@@ -91,6 +92,16 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     (void)live;
 #endif
     void* library = dlopen(loaderPath, RTLD_NOW | RTLD_LOCAL);
+    std::string steamLoader;
+    if (!library && std::strcmp(loaderPath, "libopenxr_loader.so.1") == 0) {
+        const char* home = std::getenv("HOME");
+        if (home && *home) {
+            steamLoader = std::string(home) +
+                "/.local/share/Steam/steamapps/common/SteamVR/bin/linux64/libopenxr_loader.so";
+            library = dlopen(steamLoader.c_str(), RTLD_NOW | RTLD_LOCAL);
+            if (library) std::printf("OpenXR loader: %s\n", steamLoader.c_str());
+        }
+    }
     if (!library) { std::fprintf(stderr, "OpenXR loader: %s\n", dlerror()); return 1; }
     XrFns xr{};
     xr.get = reinterpret_cast<PFN_xrGetInstanceProcAddr>(dlsym(library, "xrGetInstanceProcAddr"));

@@ -263,8 +263,12 @@ not yet connected to live frames. On the PICO 4 via Steam Link, a
 ring drops, and submitted 904 image-bearing OpenXR frames with zero
 runtime skips. The first live warp matched its CPU reference exactly.
 The user confirmed that the live image appeared in the headset. The
-SteamVR OpenXR loader for this host was supplied through
-`VRX_OPENXR_LOADER`, pointing to SteamVR's `bin/linux64/libopenxr_loader.so`.
+SteamVR OpenXR loader for this host lives in SteamVR's
+`bin/linux64/libopenxr_loader.so`. The renderer now finds that path under
+the user's Steam installation when no system loader is installed;
+`VRX_OPENXR_LOADER` remains an override. A three-second synthetic check
+using the fallback submitted 228 image-bearing OpenXR frames with zero
+runtime skips.
 
 The live path currently uses mapped shared-memory copy and CPU resampling.
 DMA-BUF import and asynchronous depth inference remain. A controlled Qt
