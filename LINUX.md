@@ -1,6 +1,6 @@
 # Linux port specification
 
-Status: implementation in progress, 2026-09-23. The Linux Vulkan/OpenXR renderer, GPU stereo warp and static ZipDepth still-image path are running; live capture, asynchronous inference and desktop control remain to be ported.
+Status: implementation in progress, 2026-09-23. The Linux Vulkan/OpenXR renderer, GPU stereo warp, static ZipDepth still-image path and live portal/PipeWire colour preview are running; asynchronous inference and desktop control remain to be ported.
 
 ## Goal and scope
 
@@ -236,14 +236,13 @@ test reached XR_SESSION_STATE_FOCUSED and submitted 1,311 image-bearing
 OpenXR frames with zero runtime skips. Vulkan prep and warp comparisons
 passed again; the user confirmed the stereo still image looked correct
 in the PICO 4. This validates the static ZipDepth-to-headset path on the
-reference setup. Live capture and asynchronous inference remain for L3.
+reference setup. L3 now has a live colour preview; asynchronous depth inference remains to be integrated.
 
 L3 has begun with `vrx-capture-probe`, a libportal/PipeWire ScreenCast
 client. It opens the desktop source chooser, connects to the selected
 PipeWire node, negotiates CPU-mappable BGRA/BGRx/RGBA frames, copies them
 into a bounded three-slot `SourceRing`, and reports frame sequence,
-presentation timestamp, layout generation, copied frames and drops. This
-is a capture diagnostic, not yet a headset live-feed path. On the first
+presentation timestamp, layout generation, copied frames and drops. This is the capture diagnostic used to validate the live adapter. On the first
 KDE portal attempt, source selection succeeded but the initial PipeWire
 format offer failed with `no more input formats`. Querying the source
 revealed BGRA/BGRx at 3840x2160 and a PipeWire object serial. Offering
@@ -252,8 +251,30 @@ An eight-second KDE monitor test streamed 308 BGRA frames into the ring:
 zero unsupported frames, zero ring drops, one layout generation and
 33,177,600 bytes in the latest frame. PipeWire did not attach header
 sequence/PTS metadata on this host; the ring uses monotonic arrival time
-and its own sequence. DMA-BUF import, source close/resize handling, and
-the capture-to-render handoff remain to be implemented.
+and its own sequence.
+
+The renderer now accepts `--live`. It opens the same portal chooser, runs
+PipeWire on a dedicated capture thread, resamples BGRA/BGRx/RGBA to the
+686x392 input, and publishes each completed RGB image to a three-slot
+`SourceRing`. OpenXR takes the latest completed frame without waiting for
+capture. Depth is flat in this first live preview; ZipDepth inference is
+not yet connected to live frames. On the PICO 4 via Steam Link, a
+12-second run selected the KDE monitor, received 426 frames with zero
+ring drops, and submitted 904 image-bearing OpenXR frames with zero
+runtime skips. The first live warp matched its CPU reference exactly.
+The user confirmed that the live image appeared in the headset. The
+SteamVR OpenXR loader for this host was supplied through
+`VRX_OPENXR_LOADER`, pointing to SteamVR's `bin/linux64/libopenxr_loader.so`.
+
+The live path currently uses mapped shared-memory copy and CPU resampling.
+DMA-BUF import and asynchronous depth inference remain. A controlled Qt
+window test then alternated source sizes while OpenXR was running. Capture
+reported 18 layout generations, 59 captured frames, zero ring drops and
+5,999 image-bearing OpenXR frames with zero runtime skips. Closing the
+window caused the live path to report `select a source again` and stop;
+the renderer now returns a nonzero status for this interrupted session.
+Permission withdrawal and reselect after source loss still need dedicated
+validation before L3 acceptance.
 
 ## Milestones and acceptance gates
 

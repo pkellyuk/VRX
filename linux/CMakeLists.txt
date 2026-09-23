@@ -78,6 +78,12 @@ if(TARGET PkgConfig::GIO AND PORTAL_INCLUDE_DIR AND PORTAL_LIBRARY AND
         "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr")
     target_link_libraries(vrx-capture-probe PRIVATE
         PkgConfig::GIO "${PORTAL_LIBRARY}" "${PIPEWIRE_LIBRARY}")
+    target_sources(vrx-xr-synthetic PRIVATE portal_capture.cpp)
+    target_include_directories(vrx-xr-synthetic PRIVATE
+        "${PORTAL_INCLUDE_DIR}" "${PIPEWIRE_INCLUDE_DIR}" "${SPA_INCLUDE_DIR}")
+    target_link_libraries(vrx-xr-synthetic PRIVATE
+        PkgConfig::GIO "${PORTAL_LIBRARY}" "${PIPEWIRE_LIBRARY}")
+    target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_HAS_CAPTURE=1)
 else()
     message(STATUS "libportal/PipeWire development files unavailable; vrx-capture-probe is disabled")
 endif()

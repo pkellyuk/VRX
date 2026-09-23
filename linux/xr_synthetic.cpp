@@ -1,5 +1,4 @@
-// First Linux headset milestone: a moving, fixed-in-space synthetic screen.
-// This deliberately has no capture, model, or controller dependencies.
+// Linux OpenXR/Vulkan diagnostic renderer for synthetic, still and live portal input.
 #define XR_NO_PROTOTYPES
 #define XR_USE_GRAPHICS_API_VULKAN
 #include <vulkan/vulkan.h>
@@ -8,6 +7,9 @@
 #include "stereo_warp.h"
 #include "vulkan_warp.h"
 #include "vulkan_prep.h"
+#ifdef VRX_HAS_CAPTURE
+#include "portal_capture.h"
+#endif
 #ifdef VRX_HAS_MODEL
 #include "model_depth.h"
 #include "still_image.h"
@@ -69,7 +71,25 @@ template <typename T> bool Resolve(XrFns& f, XrInstance instance, const char* na
 #define VK_CHECK(expr) do { VkResult r = (expr); if (r != VK_SUCCESS) { \
     std::fprintf(stderr, "%s failed: %d\n", #expr, r); return 1; } } while (0)
 
-int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda) {
+int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live) {
+#ifdef VRX_HAS_CAPTURE
+    std::unique_ptr<vrx::PortalCapture> capture;
+    if (live) {
+        capture = std::make_unique<vrx::PortalCapture>();
+        if (!capture->Open()) { std::fputs("Live capture source selection failed\n", stderr); return 1; }
+        vrx::PortalCapture::Frame first;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!capture->Latest(first) && capture->Healthy() &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        if (first.rgb.empty()) { std::fputs("No live capture frames received\n", stderr); return 1; }
+        std::printf("First live source frame %llu, layout %llu\n",
+                    static_cast<unsigned long long>(first.sequence),
+                    static_cast<unsigned long long>(first.layout));
+    }
+#else
+    (void)live;
+#endif
     void* library = dlopen(loaderPath, RTLD_NOW | RTLD_LOCAL);
     if (!library) { std::fprintf(stderr, "OpenXR loader: %s\n", dlerror()); return 1; }
     XrFns xr{};
@@ -298,6 +318,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     int renderedFrames = 0;
     int skippedFrames = 0;
     bool referenceMatched = prepMatched;
+    bool captureLost = false;
     while (std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count() < seconds) {
         XrEventDataBuffer event{};
         event.type = XR_TYPE_EVENT_DATA_BUFFER;
@@ -326,6 +347,13 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             eventResult = xr.pollEvent(instance, &event);
         }
         if (XR_FAILED(eventResult)) { std::fprintf(stderr, "xrPollEvent: %d\n", eventResult); break; }
+#ifdef VRX_HAS_CAPTURE
+        if (live && !capture->Healthy()) {
+            std::fputs("Live capture stopped; select a source again\n", stderr);
+            captureLost = true;
+            break;
+        }
+#endif
         if (!running) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); continue; }
         XrFrameWaitInfo wi{}; wi.type = XR_TYPE_FRAME_WAIT_INFO;
         XrFrameState state{}; state.type = XR_TYPE_FRAME_STATE;
@@ -343,6 +371,13 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             std::vector<unsigned char> rgb;
             std::vector<float> truth;
             const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count();
+#ifdef VRX_HAS_CAPTURE
+            if (live) {
+                vrx::PortalCapture::Frame latest;
+                if (capture->Latest(latest)) rgb = std::move(latest.rgb);
+                truth.assign(size_t(vrx::kSyntheticWidth) * vrx::kSyntheticHeight, 0.0f);
+            } else
+#endif
             if (stillPath) {
                 rgb = stillRgb;
                 truth = stillDepth;
@@ -355,7 +390,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             VkCommandBufferBeginInfo cbbi{}; cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             VK_CHECK(vkBeginCommandBuffer(command, &cbbi));
-            if (!stillPath) prep->Record(command);
+            if (!stillPath && !live) prep->Record(command);
             warp->Record(command);
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -397,7 +432,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             VK_CHECK(vkResetFences(device, 1, &fence));
             if (renderedFrames == 0)
                 referenceMatched = referenceMatched && warp->CompareReference(rgb, truth) &&
-                    (stillPath || prep->CompareReference(rgb));
+                    (stillPath || live || prep->CompareReference(rgb));
             XrSwapchainImageReleaseInfo ri{}; ri.type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO;
             XR_CHECK(xr.release(swapchain, &ri));
             ++renderedFrames;
@@ -414,6 +449,11 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     }
     std::printf("Submitted %d OpenXR frames (%d with an image, %d skipped by runtime)\n",
                 frames, renderedFrames, skippedFrames);
+#ifdef VRX_HAS_CAPTURE
+    if (live) std::printf("Live capture: %llu frames, %llu dropped\n",
+        static_cast<unsigned long long>(capture->Captured()),
+        static_cast<unsigned long long>(capture->Dropped()));
+#endif
     vkDeviceWaitIdle(device);
     vkDestroyFence(device, fence, nullptr);
     vkDestroyCommandPool(device, pool, nullptr);
@@ -426,7 +466,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     vkDestroyInstance(vkInstance, nullptr);
     xr.destroyInstance(instance);
     dlclose(library);
-    return renderedFrames > 0 && referenceMatched ? 0 : 1;
+    return renderedFrames > 0 && referenceMatched && !captureLost ? 0 : 1;
 }
 } // namespace
 
@@ -434,16 +474,18 @@ int main(int argc, char** argv) {
     double seconds = 10.0;
     const char* stillPath = nullptr;
     const char* modelPath = "bench/models/zipdepth_faithful_fp16_672x384.onnx";
-    bool cuda = false, durationSeen = false;
+    bool cuda = false, live = false, durationSeen = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("vrx-xr-synthetic [seconds=10] [--still=picture.png] [--model=model.onnx] [--cuda]");
+            std::puts("vrx-xr-synthetic [seconds=10] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]");
+            std::puts("--live selects a portal source and displays its current image with flat depth");
             std::puts("VRX_OPENXR_LOADER, VRX_WARP_SPV and VRX_PREP_SPV override runtime paths");
             return 0;
         }
         if (std::strncmp(argv[i], "--still=", 8) == 0) stillPath = argv[i] + 8;
         else if (std::strncmp(argv[i], "--model=", 8) == 0) modelPath = argv[i] + 8;
         else if (std::strcmp(argv[i], "--cuda") == 0) cuda = true;
+        else if (std::strcmp(argv[i], "--live") == 0) live = true;
         else if (!durationSeen) {
             char* end = nullptr;
             seconds = std::strtod(argv[i], &end);
@@ -451,17 +493,20 @@ int main(int argc, char** argv) {
             durationSeen = true;
         } else { std::fputs("Unexpected argument\n", stderr); return 2; }
     }
-    if (seconds <= 0 || seconds > 120 || (cuda && !stillPath) ||
+    if (seconds <= 0 || seconds > 120 || (cuda && !stillPath) || (live && (stillPath || cuda)) ||
         (stillPath && !*stillPath) || (modelPath && !*modelPath)) {
-        std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120] [--still=picture.png] [--model=model.onnx] [--cuda]\n", stderr);
+        std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]\n", stderr);
         return 2;
     }
+#ifndef VRX_HAS_CAPTURE
+    if (live) { std::fputs("Live capture support was not built (requires libportal and PipeWire)\n", stderr); return 2; }
+#endif
 #ifndef VRX_HAS_MODEL
     if (stillPath) { std::fputs("Still/model support was not built (requires ONNX Runtime and libpng)\n", stderr); return 2; }
 #endif
     const char* path = std::getenv("VRX_OPENXR_LOADER");
     try {
-        return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda);
+        return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "VRX Linux renderer: %s\n", error.what());
         return 1;
