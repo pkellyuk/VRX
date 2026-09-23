@@ -238,6 +238,17 @@ passed again; the user confirmed the stereo still image looked correct
 in the PICO 4. This validates the static ZipDepth-to-headset path on the
 reference setup. Live capture and asynchronous inference remain for L3.
 
+L3 has begun with `vrx-capture-probe`, a libportal/PipeWire ScreenCast
+client. It opens the desktop source chooser, connects to the selected
+PipeWire node, negotiates CPU-mappable BGRA/BGRx/RGBA frames, copies them
+into a bounded three-slot `SourceRing`, and reports frame sequence,
+presentation timestamp, layout generation, copied frames and drops. This
+is a capture diagnostic, not yet a headset live-feed path. On the first
+KDE portal attempt, source selection succeeded but the initial BGRA-only
+PipeWire format offer failed with `no more input formats`. A broader
+format offer is being validated. DMA-BUF import, source close/resize
+handling, and the capture-to-render handoff remain to be implemented.
+
 ## Milestones and acceptance gates
 
 | Gate | Deliverable | Required evidence |

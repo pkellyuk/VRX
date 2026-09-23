@@ -3,6 +3,7 @@ project(vrx_linux LANGUAGES CXX)
 
 find_package(Vulkan REQUIRED)
 find_package(Threads REQUIRED)
+find_package(PkgConfig QUIET)
 
 add_executable(vrx-probe probe.cpp)
 target_compile_features(vrx-probe PRIVATE cxx_std_17)
@@ -60,10 +61,34 @@ else()
     message(STATUS "Still-image model mode requires ONNX Runtime development files and libpng")
 endif()
 
+if(PkgConfig_FOUND)
+    pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0)
+endif()
+find_path(PORTAL_INCLUDE_DIR libportal/portal.h)
+find_library(PORTAL_LIBRARY NAMES portal)
+find_path(PIPEWIRE_INCLUDE_DIR pipewire/pipewire.h PATH_SUFFIXES pipewire-0.3)
+find_path(SPA_INCLUDE_DIR spa/param/video/raw-utils.h PATH_SUFFIXES spa-0.2)
+find_library(PIPEWIRE_LIBRARY NAMES pipewire-0.3)
+if(TARGET PkgConfig::GIO AND PORTAL_INCLUDE_DIR AND PORTAL_LIBRARY AND
+   PIPEWIRE_INCLUDE_DIR AND SPA_INCLUDE_DIR AND PIPEWIRE_LIBRARY)
+    add_executable(vrx-capture-probe capture_probe.cpp)
+    target_compile_features(vrx-capture-probe PRIVATE cxx_std_17)
+    target_include_directories(vrx-capture-probe PRIVATE
+        "${PORTAL_INCLUDE_DIR}" "${PIPEWIRE_INCLUDE_DIR}" "${SPA_INCLUDE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr")
+    target_link_libraries(vrx-capture-probe PRIVATE
+        PkgConfig::GIO "${PORTAL_LIBRARY}" "${PIPEWIRE_LIBRARY}")
+else()
+    message(STATUS "libportal/PipeWire development files unavailable; vrx-capture-probe is disabled")
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_test(NAME vrx-probe-help COMMAND vrx-probe --help)
     add_test(NAME vrx-xr-synthetic-help COMMAND vrx-xr-synthetic --help)
+    if(TARGET vrx-capture-probe)
+        add_test(NAME vrx-capture-probe-help COMMAND vrx-capture-probe --help)
+    endif()
     if(TARGET vrx-model-probe)
         add_test(NAME vrx-model-probe-help COMMAND vrx-model-probe --help)
         set(ZIPDEPTH_MODEL "${CMAKE_CURRENT_SOURCE_DIR}/../bench/models/zipdepth_faithful_fp16_672x384.onnx")
