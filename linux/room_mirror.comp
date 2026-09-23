@@ -1,0 +1,39 @@
+#version 450
+
+// Windows room.h RoomMirrorPicture: reduce the captured screen to the linear
+// mirror image used when reflected rays meet the screen. The source is packed
+// RGBA8 exactly like VulkanWarp::SceneBuffer; the decode table comes from
+// RoomDecodeTable, so CPU and GPU share the same sRGB values.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(std430, set = 0, binding = 0) readonly buffer Source { uint pixels[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Decode { float linearByte[256]; };
+layout(std430, set = 0, binding = 2) writeonly buffer Mirror { vec4 texels[]; };
+layout(push_constant) uniform Parameters {
+    uint srcW;
+    uint srcH;
+    uint mirrorW;
+    uint mirrorH;
+    uint stride;
+} p;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    uint j = gl_GlobalInvocationID.y;
+    if (i >= p.mirrorW || j >= p.mirrorH) return;
+    uint x0 = i * p.srcW / p.mirrorW;
+    uint x1 = (i + 1u) * p.srcW / p.mirrorW;
+    uint y0 = j * p.srcH / p.mirrorH;
+    uint y1 = (j + 1u) * p.srcH / p.mirrorH;
+    vec3 sum = vec3(0.0);
+    uint count = 0u;
+    for (uint y = y0; y < y1; y += p.stride) {
+        for (uint x = x0; x < x1; x += p.stride) {
+            uint pixel = pixels[y * p.srcW + x];
+            sum.r += linearByte[pixel & 255u];
+            sum.g += linearByte[(pixel >> 8) & 255u];
+            sum.b += linearByte[(pixel >> 16) & 255u];
+            ++count;
+        }
+    }
+    texels[j * p.mirrorW + i] = vec4(count > 0u ? sum / float(count) : vec3(0.0), 1.0);
+}

@@ -33,12 +33,33 @@ add_custom_command(
 )
 add_custom_target(vrx-model-prep-shader DEPENDS "${PREP_SPV}")
 
+set(ROOM_MIRROR_SPV "${CMAKE_CURRENT_BINARY_DIR}/room_mirror.comp.spv")
+add_custom_command(
+    OUTPUT "${ROOM_MIRROR_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.1 -S comp
+            "${CMAKE_CURRENT_SOURCE_DIR}/room_mirror.comp" -o "${ROOM_MIRROR_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/room_mirror.comp"
+    VERBATIM
+)
+add_custom_target(vrx-room-mirror-shader ALL DEPENDS "${ROOM_MIRROR_SPV}")
+
 add_executable(vrx-xr-synthetic xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp model_prep_cpu.cpp)
 add_dependencies(vrx-xr-synthetic vrx-stereo-shader vrx-model-prep-shader)
 target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}" VRX_PREP_SPV_PATH="${PREP_SPV}")
 target_compile_features(vrx-xr-synthetic PRIVATE cxx_std_17)
 target_include_directories(vrx-xr-synthetic PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
 target_link_libraries(vrx-xr-synthetic PRIVATE Vulkan::Vulkan Threads::Threads ${CMAKE_DL_LIBS})
+
+add_executable(vrx-room-mirror-probe room_mirror_probe.cpp)
+add_dependencies(vrx-room-mirror-probe vrx-room-mirror-shader)
+target_compile_features(vrx-room-mirror-probe PRIVATE cxx_std_17)
+target_compile_definitions(vrx-room-mirror-probe PRIVATE VRX_ROOM_MIRROR_SPV_PATH="${ROOM_MIRROR_SPV}")
+target_include_directories(vrx-room-mirror-probe PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
+target_link_libraries(vrx-room-mirror-probe PRIVATE Vulkan::Vulkan)
+
+add_executable(vrx-room-reference room_reference.cpp)
+target_compile_features(vrx-room-reference PRIVATE cxx_std_17)
+target_include_directories(vrx-room-reference PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
 
 find_path(ORT_INCLUDE_DIR onnxruntime_cxx_api.h PATH_SUFFIXES onnxruntime)
 find_library(ORT_LIBRARY NAMES onnxruntime)
@@ -96,6 +117,11 @@ include(CTest)
 if(BUILD_TESTING)
     add_test(NAME vrx-probe-help COMMAND vrx-probe --help)
     add_test(NAME vrx-xr-synthetic-help COMMAND vrx-xr-synthetic --help)
+    add_test(NAME vrx-room-reference COMMAND vrx-room-reference)
+    option(VRX_TEST_VULKAN_GPU "Run hardware Vulkan probes in CTest" OFF)
+    if(VRX_TEST_VULKAN_GPU)
+        add_test(NAME vrx-room-mirror-probe COMMAND vrx-room-mirror-probe)
+    endif()
     if(TARGET vrx-capture-probe)
         add_test(NAME vrx-capture-probe-help COMMAND vrx-capture-probe --help)
     endif()

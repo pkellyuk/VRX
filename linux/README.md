@@ -81,6 +81,26 @@ the 15-second test reached XR_SESSION_STATE_FOCUSED and submitted 1,311
 image-bearing frames with no runtime skips. The user confirmed the stereo
 still image looked correct in the PICO 4. The model probe also reports the CPU/GPU depth difference.
 
+## Room reference fixture
+
+`vrx-room-reference` runs the portable Windows room CPU reference on Linux with
+the synthetic source. It checks flat room geometry, a tracked floor, emitter
+layout and radiance, the reduced mirror image, diffuse and lit lightmap
+samples, and Fresnel reflection ordering. Its printed sample values are the
+starting comparison points for the Vulkan EMIT, MIRROR, LIGHT and eye passes.
+The first Vulkan room asset, `room_mirror.comp`, builds to SPIR-V and follows
+the reference's per-texel reduction and sRGB decode table.
+`vrx-room-mirror-probe` executes it on Vulkan and compares every linear RGBA
+channel with `RoomMirrorPicture` at a 1e-5 tolerance. The GPU probe is built by
+default but only enters CTest when configured with `-DVRX_TEST_VULKAN_GPU=ON`.
+The headset renderer does
+not draw the room yet.
+
+```sh
+build/linux-release/vrx-room-reference
+build/linux-release/vrx-room-mirror-probe
+```
+
 ## Live source and early Linux controller
 
 `--live` opens the desktop ScreenCast chooser and displays a selected window

@@ -359,8 +359,15 @@ logged all four snapshots and stopped cleanly after 2,336 image-bearing OpenXR
 frames with zero runtime skips, 1,296 capture frames with zero drops, and 1,234
 ZipDepth updates. The user confirmed that the width, position and stereo
 changes all looked correct in the PICO 4. The Linux profile format remains
-independent of Windows. The required room renderer, room controls, reference
-comparisons and portable packaging remain before L4 acceptance.
+independent of Windows. A Linux `vrx-room-reference` fixture now builds
+`room.h` natively and checks room geometry, STAGE floor placement, picture
+emitters, the mirror image, diffuse/ceiling-lit lightmap samples and Fresnel
+ordering. Its sample values provide a parity baseline for the forthcoming
+Vulkan passes. The first Vulkan room shader, `room_mirror.comp`, now compiles to
+SPIR-V. Its probe executed on Vulkan and matched `RoomMirrorPicture` in all
+37,376 output channels within 1e-5 (worst difference 0.00000006). EMIT, LIGHT
+and eye passes, room controls, full GPU/CPU image comparisons and portable
+packaging remain before L4 acceptance.
 
 ## Milestones and acceptance gates
 
