@@ -273,8 +273,10 @@ reported 18 layout generations, 59 captured frames, zero ring drops and
 5,999 image-bearing OpenXR frames with zero runtime skips. Closing the
 window caused the live path to report `select a source again` and stop;
 the renderer now returns a nonzero status for this interrupted session.
-Permission withdrawal and reselect after source loss still need dedicated
-validation before L3 acceptance.
+A fresh monitor selection after the test-window source closed also
+worked: 1,477 captured frames, zero ring drops and 3,531 image-bearing
+OpenXR frames in 45 seconds. Explicit portal permission withdrawal
+remains to be validated before L3 acceptance.
 
 ## Milestones and acceptance gates
 
