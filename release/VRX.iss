@@ -23,6 +23,12 @@ UninstallDisplayIcon={app}\VRX.Desktop.exe
 Compression=lzma2/fast
 SolidCompression=yes
 WizardStyle=modern
+#ifdef SignedUninstallerDir
+; Signed builds (release\build-release.ps1 -Stage Payload/Package): the uninstaller is
+; signed separately, then embedded from this folder.
+SignedUninstaller=yes
+SignedUninstallerDir={#SignedUninstallerDir}
+#endif
 CloseApplications=yes
 RestartApplications=no
 [Tasks]

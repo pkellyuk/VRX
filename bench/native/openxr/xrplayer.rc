@@ -1,0 +1,36 @@
+// Version information for the engine, xrplayer.exe (and the bench build, xrapp5.exe).
+// Code signing requires every signed file to name its product and version: keep these in
+// step with desktop\VRX.Desktop\VRX.Desktop.csproj <Version> and release\VRX.iss.
+#include <winver.h>
+
+#define VRX_VERSION_BINARY 1,7,6,0
+#define VRX_VERSION_TEXT   "1.7.6"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    VRX_VERSION_BINARY
+ PRODUCTVERSION VRX_VERSION_BINARY
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+ FILEFLAGS      0
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080904b0"
+        BEGIN
+            VALUE "CompanyName",      "VRX"
+            VALUE "FileDescription",  "VRX 3D engine"
+            VALUE "FileVersion",      VRX_VERSION_TEXT
+            VALUE "InternalName",     "xrplayer"
+            VALUE "LegalCopyright",   "Copyright (C) 2026 Paul Kelly. GPL-3.0."
+            VALUE "OriginalFilename", "xrplayer.exe"
+            VALUE "ProductName",      "VRX"
+            VALUE "ProductVersion",   VRX_VERSION_TEXT
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0809, 1200
+    END
+END

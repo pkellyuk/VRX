@@ -1,0 +1,128 @@
+# Builds a VRX release from this repository on GitHub's Windows servers, and has it
+# code-signed by SignPath (free for open source, certificate by SignPath Foundation).
+#
+# Every input is pinned: the native NuGet packages (release/NativePackages.csproj), the
+# OpenXR loader (release/vendor), and the two depth models, which are rebuilt from their
+# upstream sources and hash-checked (release/build-models.ps1).
+#
+# Signing runs only once the repository variables SIGNPATH_ORGANIZATION_ID and
+# SIGNPATH_PROJECT_SLUG and the secret SIGNPATH_API_TOKEN are set; until then the build
+# produces the same files unsigned. Each signing request waits for manual approval in
+# SignPath. Two requests per release:
+#   1. program-files: VRX.Desktop.exe/.dll, engine\xrplayer.exe and the uninstaller
+#   2. installer:     VRX-Setup-<version>.exe, built from the signed files of request 1
+name: Release build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+    branches: ['xsigning']      # while the signed build is being set up; remove after merging
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 300
+    env:
+      SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && vars.SIGNPATH_PROJECT_SLUG != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Choose the output folder
+        run: |
+          "OUT=$env:RUNNER_TEMP\vrx-release" | Add-Content $env:GITHUB_ENV
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup -y --no-progress
+          if ($LASTEXITCODE) { throw 'Inno Setup install failed' }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" 2>&1 | Select-Object -First 1
+
+      - name: Build the payload
+        run: ./release/build-release.ps1 -Stage Payload -OutputRoot $env:OUT
+
+      - name: Upload files to sign
+        id: upload-to-sign
+        uses: actions/upload-artifact@v7
+        with:
+          name: to-sign
+          path: ${{ env.OUT }}/to-sign/
+          if-no-files-found: error
+
+      - name: Sign VRX's programs and the uninstaller (SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: program-files
+          github-artifact-id: ${{ steps.upload-to-sign.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 14400
+          output-artifact-directory: ${{ env.OUT }}/signed
+
+      - name: Build the installer and ZIP
+        run: |
+          if ($env:SIGN -eq 'true') { ./release/build-release.ps1 -Stage Package -OutputRoot $env:OUT -SignedFiles "$env:OUT\signed" }
+          else { ./release/build-release.ps1 -Stage Package -OutputRoot $env:OUT }
+
+      - name: Upload the installer to sign
+        if: env.SIGN == 'true'
+        id: upload-installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-to-sign
+          path: ${{ env.OUT }}/VRX-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Sign the installer (SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 14400
+          output-artifact-directory: ${{ env.OUT }}/signed-installer
+
+      - name: Put the signed installer in place
+        if: env.SIGN == 'true'
+        run: |
+          $installer = Get-ChildItem "$env:OUT\signed-installer" -Filter 'VRX-Setup-*.exe' | Select-Object -First 1
+          if (!$installer -or (Get-AuthenticodeSignature $installer.FullName).Status -ne 'Valid') { throw 'The installer is not validly signed' }
+          Copy-Item $installer.FullName $env:OUT -Force
+          ./release/build-release.ps1 -Stage Checksums -OutputRoot $env:OUT
+
+      - name: Show signatures
+        run: |
+          Get-ChildItem $env:OUT -File -Filter *.exe | ForEach-Object { '{0}: {1}' -f $_.Name, (Get-AuthenticodeSignature $_.FullName).Status }
+          Get-ChildItem "$env:OUT\VRX-*-win-x64" -Recurse -Include VRX.Desktop.exe, VRX.Desktop.dll, xrplayer.exe | ForEach-Object { '{0}: {1}' -f $_.Name, (Get-AuthenticodeSignature $_.FullName).Status }
+          Get-Content "$env:OUT\SHA256SUMS.txt"
+
+      - name: Upload the release
+        uses: actions/upload-artifact@v7
+        with:
+          name: vrx-release
+          path: |
+            ${{ env.OUT }}/VRX-Setup-*.exe
+            ${{ env.OUT }}/VRX-*-win-x64.zip
+            ${{ env.OUT }}/SHA256SUMS.txt
+          if-no-files-found: error

@@ -1,7 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set VCVARS=C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat
+rem The newest Visual Studio with the C++ tools (vswhere), else the developer PC's VS 18.
+set "VCVARS="
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" for /f "usebackq delims=" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VCVARS=%%I\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS set "VCVARS=C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
+echo === Visual Studio: %VCVARS%
 if not exist "%VCVARS%" (
   echo ERROR: vcvars64.bat not found at %VCVARS%
   exit /b 1
@@ -24,9 +29,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem The runtime loader lives with SteamVR; copy it next to the exe so the
-rem LoadLibraryW fallback also works.
-copy /y "C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\openxr_loader.dll" "%OUT%\" >nul 2>&1
+rem The OpenXR loader goes next to the exe (the engine loads it from there): the pinned,
+rem Valve-signed copy in release\vendor, else SteamVR's own.
+set "LOADER=%~dp0..\..\..\release\vendor\openxr_loader.dll"
+if not exist "%LOADER%" set "LOADER=C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\openxr_loader.dll"
+copy /y "%LOADER%" "%OUT%\" >nul 2>&1
 
 echo BUILD OK: %OUT%\xrprobe.exe
 
@@ -64,7 +71,13 @@ if errorlevel 1 (
 
 echo.
 echo === building xrapp5 (desktop capture + GPU-resident model input + colour-res warp) ===
-cl /nologo /std:c++20 /EHsc /O2 /W3 /I"%INC%" /I"%ORTINC%" /Fo"%OUT%\\" /Fe"%OUT%\%APP5_NAME%.exe" "%~dp0xrapp5.cpp" ^
+rem Version information (product name and version), required for code signing.
+rc /nologo /fo "%OUT%\xrplayer.res" "%~dp0xrplayer.rc"
+if errorlevel 1 (
+  echo BUILD FAILED ^(xrplayer.rc^)
+  exit /b 1
+)
+cl /nologo /std:c++20 /EHsc /O2 /W3 /I"%INC%" /I"%ORTINC%" /Fo"%OUT%\\" /Fe"%OUT%\%APP5_NAME%.exe" "%~dp0xrapp5.cpp" "%OUT%\xrplayer.res" ^
    /link /LIBPATH:"%ORTLIB%" onnxruntime.lib d3d12.lib d3d11.lib dxgi.lib dxguid.lib d3dcompiler.lib ole32.lib windowscodecs.lib windowsapp.lib user32.lib dwmapi.lib shcore.lib
 if errorlevel 1 (
   echo BUILD FAILED ^(xrapp5^)

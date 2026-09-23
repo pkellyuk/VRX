@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- First signing request of a release: VRX's own programs and Inno Setup's uninstaller
+     (release\build-release.ps1 -Stage Payload writes them to to-sign\; the GitHub Actions
+     build uploads that folder as a ZIP). Everything else VRX ships is already signed by
+     Microsoft or Valve and is not sent. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="VRX.Desktop.exe" product-name="VRX">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="VRX.Desktop.dll" product-name="VRX">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="engine/xrplayer.exe" product-name="VRX">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file-set>
+      <include path="uninstaller/uninst-*.e32.exe" product-name="VRX" min-matches="1" max-matches="1" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
+  </zip-file>
+</artifact-configuration>

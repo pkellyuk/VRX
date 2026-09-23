@@ -28,6 +28,8 @@ release/out/
 
 # Native runtime libraries copied next to the executables by build.bat
 *.dll
+# ... except the pinned OpenXR loader a release is built with (release/vendor/README.txt)
+!release/vendor/openxr_loader.dll
 
 # --- Large downloaded reference material --------------------------------
 # Web copies of specs/docs; re-fetch with refs/fetch.ps1

@@ -86,25 +86,28 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 - **Game frame timing** (per game, applies live) chooses which game frame is shown with the depth. **Latest frame** (default) is smooth and immediate, but depth lags slightly behind moving things. **Delayed to depth** holds the game image back by the measured depth delay so the two line up, while motion stays at the capture rate. **Matched to depth** (the earlier frame matching) shows each depth estimate with the exact frame it came from: the best alignment, but the game only updates at the depth rate. Offline on four clips with depth 67 ms behind, against the latest frame: delayed cut depth mismatch from 0.050 to 0.016 and improved edge alignment from 0.59 to 0.72, with 26 game updates per second against matched's 15. Delayed and matched both add delay, so they suit slower games. See [XSYNC.md](XSYNC.md).
 - **Extra foreground depth passes** are experimental and default on; their benefit varies.
 - GPU contention can reduce depth update speed. A steady 60 depth updates per second is not guaranteed.
-- SteamVR dashboard dismissal is best-effort. The installer is unsigned.
+- SteamVR dashboard dismissal is best-effort. Releases up to v1.7.6 are unsigned, so on a
+  new Windows 11 install Smart App Control can block the engine; signed releases are being
+  set up (see [Code signing and privacy](#code-signing-and-privacy)).
 
 ## Build locally
 
-The current build scripts expect Visual Studio Community at
-`C:\Program Files\Microsoft Visual Studio\18\Community`, with C++ tools and a
-Windows SDK, plus the .NET 10 SDK and SteamVR. Adjust `VCVARS` in
-`bench/native/openxr/build.bat` if Visual Studio is installed elsewhere.
+You need Visual Studio with the C++ tools and a Windows SDK (the newest one is found
+with `vswhere`), the .NET 10 SDK, Python 3.12 and Git. The OpenXR loader VRX ships is
+kept in `release/vendor`, so SteamVR is not needed to build.
 
-Native dependencies must be available in the user NuGet cache:
-`Microsoft.ML.OnnxRuntime.DirectML` 1.24.4 and `Microsoft.AI.DirectML` 1.15.4.
-Both models must exist in `bench/models`; model files are not tracked in Git.
-The default ZipDepth model (`zipdepth_faithful_fp16_672x384.onnx`) is generated
-by `bench/zipdepth_export.py`, whose header lists the one-time setup. The
-Depth Anything V2 model is `model_fixed_686x392.onnx`.
-
-From the repository root in PowerShell, run each build step and confirm it succeeds:
+From the repository root in PowerShell, fetch the pinned native packages
+(`Microsoft.ML.OnnxRuntime.DirectML` 1.24.4 and `Microsoft.AI.DirectML` 1.15.4) into the
+NuGet cache, and build the two depth models from their upstream sources. Model files are
+not tracked in Git; `release/build-models.ps1` downloads the pinned sources, exports
+`bench/models/model_fixed_686x392.onnx` (Depth Anything V2) and
+`bench/models/zipdepth_faithful_fp16_672x384.onnx` (ZipDepth, the default) and checks
+both against the SHA-256 of the released models. Then run each build step and confirm it
+succeeds:
 
 ```powershell
+dotnet restore release/NativePackages.csproj
+./release/build-models.ps1
 cmd /c "bench\native\openxr\build.bat --desktop"
 $env:LIB = ''
 dotnet build desktop/VRX.Desktop/VRX.Desktop.csproj -c Release
@@ -119,6 +122,19 @@ To package an installer and portable ZIP, install Inno Setup 6 and run
 `./release/build-release.ps1`. Outputs go into a fresh folder under `release/out`.
 Third-party notices and license texts are retained under `release` and bundled
 with the release.
+
+Releases are built by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)),
+which runs the same script in stages around code signing.
+
+## Code signing and privacy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by
+[SignPath Foundation](https://signpath.org). Signed releases are being set up; releases up
+to v1.7.6 are unsigned. See the [code signing policy](https://vrx3d.uk/code-signing.html)
+for what is signed, how it is built and the team roles.
+
+VRX makes no network connections and collects no data: see the
+[privacy policy](https://vrx3d.uk/privacy.html).
 
 ## License
 

@@ -9,6 +9,8 @@
     <ApplicationIcon>Assets\vrx.ico</ApplicationIcon>
     <Version>1.7.6</Version>
     <Product>VRX</Product>
+    <Company>VRX</Company>
+    <Copyright>Copyright (C) 2026 Paul Kelly. GPL-3.0.</Copyright>
     <Description>Desktop-controlled stereo gaming in VR</Description>
     <!-- Strings.resx is English; translations (Strings.<culture>.resx) become satellite
          assemblies and are chosen from the Windows display language. -->
