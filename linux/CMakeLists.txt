@@ -185,8 +185,27 @@ else()
     message(STATUS "libportal/PipeWire development files unavailable; vrx-capture-probe is disabled")
 endif()
 
+# The VRX desktop app (Avalonia, .NET 10) is built with dotnet when it is
+# available, on the PATH or installed for this user by dotnet-install.sh.
+find_program(DOTNET_EXECUTABLE dotnet HINTS "$ENV{HOME}/.dotnet")
+if(DOTNET_EXECUTABLE)
+    get_filename_component(DOTNET_ROOT_DIRECTORY "${DOTNET_EXECUTABLE}" DIRECTORY)
+    set(VRX_LINUX_APP "${CMAKE_CURRENT_SOURCE_DIR}/VRX.Linux/bin/Release/net10.0/vrx-linux")
+    add_custom_target(vrx-linux-app ALL
+        COMMAND "${CMAKE_COMMAND}" -E env DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+                "${DOTNET_EXECUTABLE}" build -c Release --nologo -v quiet "${CMAKE_CURRENT_SOURCE_DIR}/VRX.Linux"
+        COMMENT "Building the VRX desktop app (linux/VRX.Linux)"
+        VERBATIM)
+else()
+    message(STATUS ".NET SDK not found; the VRX desktop app (linux/VRX.Linux) is not built")
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
+    if(DOTNET_EXECUTABLE)
+        add_test(NAME vrx-linux-app-check COMMAND "${VRX_LINUX_APP}" --check)
+        set_tests_properties(vrx-linux-app-check PROPERTIES ENVIRONMENT "DOTNET_ROOT=${DOTNET_ROOT_DIRECTORY}")
+    endif()
     add_test(NAME vrx-probe-help COMMAND vrx-probe --help)
     add_test(NAME vrx-xr-synthetic-help COMMAND vrx-xr-synthetic --help)
     add_test(NAME vrx-room-reference COMMAND vrx-room-reference)

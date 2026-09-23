@@ -1,0 +1,260 @@
+<!-- The Linux VRX window, laid out as desktop/VRX.Desktop/MainWindow.xaml: a header with
+     the Easy | Expert switch, the card with Attach / Play, Stop VR and Recenter, a few
+     hints in Easy, and every setting in collapsible sections in Expert. Linux differences:
+     named profiles instead of per-executable ones, the desktop's screen-sharing dialog as
+     the window/screen chooser, no auto-attach, and settings the Linux engine cannot apply
+     yet are shown disabled. -->
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="using:Vrx.Linux" x:Class="Vrx.Linux.MainWindow"
+        Title="VRX" Icon="/Assets/vrx-256.png" Width="1080" Height="900" MinWidth="560" MinHeight="300"
+        Background="{StaticResource Page}" Foreground="{StaticResource Ink}" FontSize="14"
+        x:CompileBindings="False">
+ <Grid Name="RootGrid" Margin="24,20,24,18" RowDefinitions="Auto,Auto,*,Auto">
+
+  <!-- Header: name and version (Expert), subtitle, and the Easy | Expert switch -->
+  <Grid Name="HeaderGrid" Margin="0,0,0,16" ColumnDefinitions="*,Auto">
+   <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+    <StackPanel Name="NameRow" Orientation="Horizontal">
+     <TextBlock Text="VRX" FontSize="32" FontWeight="Bold"/>
+     <TextBlock Name="VersionText" FontSize="15" Foreground="{StaticResource Accent}" VerticalAlignment="Bottom" Margin="10,0,0,6"/>
+    </StackPanel>
+    <TextBlock Name="Subtitle" Foreground="{StaticResource Soft}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+   </StackPanel>
+   <Border Grid.Column="1" Name="ModeSwitch" Background="{StaticResource ChromeBar}" BorderBrush="{StaticResource WindowEdge}"
+           BorderThickness="1" CornerRadius="24" Padding="4" VerticalAlignment="Center">
+    <StackPanel Orientation="Horizontal">
+     <RadioButton Name="EasyMode" GroupName="Mode" Theme="{StaticResource ModeSegment}"
+                  ToolTip.Tip="Easy: the card, Attach / Play, Stop VR and Recenter. Settings come from the profile in use; everything else is hidden.">
+      <StackPanel>
+       <TextBlock Text="Easy" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+       <TextBlock Text="Just play" FontSize="11" HorizontalAlignment="Center" Opacity="0.8"/>
+      </StackPanel>
+     </RadioButton>
+     <RadioButton Name="ExpertMode" GroupName="Mode" Theme="{StaticResource ModeSegment}"
+                  ToolTip.Tip="Expert: every setting, grouped into sections you can open and close.">
+      <StackPanel>
+       <TextBlock Text="Expert" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+       <TextBlock Text="All settings" FontSize="11" HorizontalAlignment="Center" Opacity="0.8"/>
+      </StackPanel>
+     </RadioButton>
+    </StackPanel>
+   </Border>
+  </Grid>
+
+  <!-- Always visible: the card with Attach / Play and Stop VR (Easy adds Recenter) -->
+  <StackPanel Grid.Row="1" Name="TopArea">
+   <TextBlock Name="EasyIntro" FontSize="18" TextWrapping="Wrap" Margin="2,0,0,14"
+              Text="Press Attach / Play, then choose your game's window or screen in the desktop's sharing dialog."/>
+   <Border Name="GameCard" Background="{StaticResource Card}" BorderBrush="{StaticResource CardEdge}" BorderThickness="1"
+           CornerRadius="12" Padding="18,14,10,6" Margin="0,0,0,14">
+    <Grid ColumnDefinitions="Auto,*,Auto">
+     <Border Width="44" Height="44" CornerRadius="10" Background="{StaticResource Well}" VerticalAlignment="Top" Margin="0,0,14,8">
+      <Path Name="CardIcon" Width="24" Height="24" Stretch="Uniform" Stroke="{StaticResource Accent}" StrokeThickness="2"
+            Data="M 2 5 L 22 5 L 22 17 L 2 17 Z M 8 21 L 16 21 M 12 17 L 12 21"/>
+     </Border>
+     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,8">
+      <TextBlock Text="PROFILE" FontSize="11" Foreground="{StaticResource Muted}"/>
+      <ComboBox Name="CardProfile" FontSize="16" FontWeight="SemiBold" MinWidth="220" Margin="0,2,0,2"
+                ToolTip.Tip="The profile in use: its screen, room and 3D settings. Edit profiles in Expert."/>
+      <TextBlock Name="CardState" Foreground="{StaticResource Soft}" TextWrapping="Wrap"/>
+     </StackPanel>
+     <WrapPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" MaxWidth="560">
+      <Button Name="StartButton" Classes="Primary" Content="Attach / Play"/>
+      <Button Name="StopButton" Content="Stop VR" IsEnabled="False"/>
+      <Button Name="EasyRecenterButton" Content="Recenter" IsEnabled="False"
+              ToolTip.Tip="Puts the screen straight in front of where the headset is looking now. Not available on Linux yet."/>
+     </WrapPanel>
+    </Grid>
+   </Border>
+  </StackPanel>
+
+  <!-- Easy: a few hints; everything else is hidden -->
+  <StackPanel Grid.Row="2" Name="EasyPanel" Margin="2,0,0,0">
+   <TextBlock Classes="Hint" FontSize="13" Text="VRX uses the profile shown on the card. Switch to Expert to change its settings or make another."/>
+   <TextBlock Classes="Hint" FontSize="13" Text="Start SteamVR before playing. Press Stop VR to finish."/>
+  </StackPanel>
+
+  <!-- Expert: every setting, in collapsible sections -->
+  <ScrollViewer Grid.Row="2" Name="SettingsScroll" VerticalScrollBarVisibility="Auto" IsVisible="False">
+   <StackPanel Name="SectionsPanel" Margin="0,0,10,0">
+
+    <!-- 1 Game & window -->
+    <l:Section Name="GameSection" Header="Game &amp; window">
+     <Grid ColumnDefinitions="*,24,*">
+      <DockPanel>
+       <TextBlock DockPanel.Dock="Top" Text="Profiles" Classes="SubHeader" Margin="0,4,0,4"/>
+       <ListBox Name="ProfileList" Height="230" Background="{StaticResource Well}" BorderThickness="0"/>
+      </DockPanel>
+      <StackPanel Grid.Column="2">
+       <TextBlock Text="What to capture" Classes="SubHeader" Margin="0,4,0,6"/>
+       <RadioButton Name="SourceWindow" GroupName="Source" Content="A window"/>
+       <RadioButton Name="SourceScreen" GroupName="Source" Content="A whole screen"/>
+       <RadioButton Name="SourceAny" GroupName="Source" Content="Ask each time (window or screen)"/>
+       <TextBlock Classes="Hint" Margin="0,8,0,4"
+                  Text="Attach / Play opens the desktop's screen-sharing dialog, which lists only what you choose here. Pick your game's window, or the screen it plays on."/>
+       <TextBlock Classes="Hint" Text="Settings are saved in the selected profile as you change them. Start SteamVR before playing."/>
+      </StackPanel>
+     </Grid>
+    </l:Section>
+
+    <!-- 2 Screen -->
+    <l:Section Name="ScreenSection" Header="Screen">
+     <StackPanel>
+      <TextBlock Classes="Hint" Margin="0,0,0,10" Text="Changes apply live. Position is relative to where the headset started."/>
+      <Border Background="#101B2C" CornerRadius="8" Margin="0,0,0,12">
+       <Canvas Name="Preview" Width="540" Height="168" HorizontalAlignment="Center" ClipToBounds="True" Background="Transparent"
+               ToolTip.Tip="Drag the screen to change horizontal position and distance">
+        <Line StartPoint="270,12" EndPoint="270,145" Stroke="#324761" StrokeDashArray="3,3"/>
+        <Ellipse Canvas.Left="261" Canvas.Top="142" Width="18" Height="18" Fill="{StaticResource Accent}"/>
+        <Line Name="ScreenLine" StartPoint="210,86" EndPoint="330,86" Stroke="#A5BEFF" StrokeThickness="6" StrokeLineCap="Round"/>
+        <TextBlock Text="TOP VIEW · drag the screen" Canvas.Left="12" Canvas.Top="10" FontSize="10" Foreground="#8297B7"/>
+       </Canvas>
+      </Border>
+      <Grid ColumnDefinitions="*,28,*" RowDefinitions="Auto,Auto">
+       <StackPanel>
+        <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="WidthValue"/><TextBlock Classes="Label" Text="Screen width"/></DockPanel>
+        <Slider Name="WidthSlider" Minimum="0.5" Maximum="10" SmallChange="0.05" LargeChange="0.5"/>
+       </StackPanel>
+       <StackPanel Grid.Column="2">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="DistanceValue"/><TextBlock Classes="Label" Text="Distance"/></DockPanel>
+        <Slider Name="DistanceSlider" Minimum="0.5" Maximum="8" SmallChange="0.05" LargeChange="0.5"/>
+       </StackPanel>
+       <StackPanel Grid.Row="1">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="HeightValue"/><TextBlock Classes="Label" Text="Height offset"/></DockPanel>
+        <Slider Name="HeightSlider" Minimum="-2" Maximum="2" SmallChange="0.05" LargeChange="0.5"/>
+       </StackPanel>
+       <StackPanel Grid.Row="1" Grid.Column="2">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="HorizontalValue"/><TextBlock Classes="Label" Text="Left / right offset"/></DockPanel>
+        <Slider Name="HorizontalSlider" Minimum="-3" Maximum="3" SmallChange="0.05" LargeChange="0.5"/>
+       </StackPanel>
+      </Grid>
+      <DockPanel IsEnabled="False"><TextBlock DockPanel.Dock="Right" Classes="Value" Text="0 %"/><TextBlock Classes="Label" Text="Screen curve"/></DockPanel>
+      <Slider IsEnabled="False" Minimum="0" Maximum="100" ToolTip.Tip="Not available on Linux yet."/>
+      <CheckBox IsEnabled="False" Content="Screen follows my head" ToolTip.Tip="Not available on Linux yet."/>
+      <WrapPanel Margin="0,10,0,0">
+       <Button Name="RecenterButton" Content="Recenter now" IsEnabled="False"
+               ToolTip.Tip="Puts the screen straight in front of where the headset is looking now. Not available on Linux yet."/>
+      </WrapPanel>
+      <TextBlock Classes="Hint" Text="Screen curve, following the head and recentering are not available on Linux yet."/>
+     </StackPanel>
+    </l:Section>
+
+    <!-- 3 Around the screen -->
+    <l:Section Name="AroundSection" Header="Around the screen">
+     <StackPanel>
+      <CheckBox IsEnabled="False" Content="Ambilight — glow around the screen"/>
+      <TextBlock Classes="Hint" Text="On Linux the glow and world colour are part of the room (below). A separate ambilight and world colour are not available yet."/>
+     </StackPanel>
+    </l:Section>
+
+    <!-- 4 Room -->
+    <l:Section Name="RoomSection" Header="Room">
+     <StackPanel>
+      <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="RoomValue"/><TextBlock Classes="Label" Text="Room — walls lit by the screen"/></DockPanel>
+      <Slider Name="RoomSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10"
+              ToolTip.Tip="Puts you in a dark room whose walls, floor and ceiling are lit by the picture, like a cinema. 0 is off; 30-60 % looks like a cinema. Applies live; saved in the profile."/>
+      <Grid Margin="26,0,0,0" ColumnDefinitions="*,28,*" RowDefinitions="Auto,Auto">
+       <StackPanel>
+        <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="GlassValue"/><TextBlock Classes="Label" Text="Glass walls"/></DockPanel>
+        <Slider Name="GlassSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10"
+                ToolTip.Tip="Turns the side walls, back wall and ceiling into glass in slim frames. 0 is solid walls, 100 clear glass. Glass or reflections also show 1 m floor tiles."/>
+       </StackPanel>
+       <StackPanel Grid.Column="2">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="ReflectValue"/><TextBlock Classes="Label" Text="Reflections"/></DockPanel>
+        <Slider Name="ReflectSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10"
+                ToolTip.Tip="How much the glass, the walls and a polished floor reflect the screen and the room light. 0 is none."/>
+       </StackPanel>
+       <StackPanel Grid.Row="1">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="LightValue"/><TextBlock Classes="Label" Text="Room light"/></DockPanel>
+        <Slider Name="LightSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10"
+                ToolTip.Tip="A soft light panel in the ceiling just above and behind you, so the room stays visible when the picture is dark. 0 is off."/>
+       </StackPanel>
+       <StackPanel Grid.Row="1" Grid.Column="2">
+        <TextBlock Text="Light colour" Classes="Label" Margin="0,0,0,4"/>
+        <ComboBox Name="LightColourList" HorizontalAlignment="Stretch"
+                  ToolTip.Tip="The room light's colour, from warm (2700 K, like a table lamp) to daylight (6500 K)."/>
+       </StackPanel>
+      </Grid>
+     </StackPanel>
+    </l:Section>
+
+    <!-- 5 3D & depth -->
+    <l:Section Name="DepthSection" Header="3D &amp; depth">
+     <StackPanel>
+      <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="StrengthValue"/><TextBlock Classes="Label" Text="3D strength"/></DockPanel>
+      <Slider Name="StrengthSlider" Minimum="0" Maximum="2" SmallChange="0.05" LargeChange="0.25"/>
+      <CheckBox Name="CudaCheck" Content="Depth from ZipDepth on the GPU (CUDA)"
+                ToolTip.Tip="Estimates depth from the picture with the ZipDepth model on an NVIDIA GPU. Off shows the picture flat. Takes effect at the next Attach / Play."/>
+      <TextBlock Classes="Hint" Margin="26,0,0,8" Text="Takes effect at the next Attach / Play."/>
+      <CheckBox IsEnabled="False" IsChecked="True" Content="Sub-pixel warp"/>
+      <CheckBox IsEnabled="False" Content="Steady depth"/>
+      <CheckBox IsEnabled="False" Content="Fuse with a second depth model"/>
+      <TextBlock Text="Frame timing" Classes="Label" Margin="0,8,0,4"/>
+      <ComboBox IsEnabled="False" SelectedIndex="0" HorizontalAlignment="Stretch">
+       <ComboBoxItem Content="Latest - lowest latency"/>
+      </ComboBox>
+      <TextBlock Classes="Hint" Text="Linux always uses the sub-pixel warp and the latest frame; steadying, fusion and other timing modes are not available yet."/>
+     </StackPanel>
+    </l:Section>
+
+    <!-- 6 SteamVR & shortcuts -->
+    <l:Section Name="SteamVrSection" Header="SteamVR &amp; shortcuts">
+     <StackPanel>
+      <CheckBox IsEnabled="False" Content="Dismiss SteamVR menu when playback starts"/>
+      <TextBlock Classes="Hint" Text="Dismissing the SteamVR menu and keyboard shortcuts are not available on Linux yet."/>
+     </StackPanel>
+    </l:Section>
+
+    <!-- 7 Profile -->
+    <l:Section Name="ProfileSection" Header="Profile">
+     <StackPanel>
+      <TextBlock Classes="Hint" Margin="0,0,0,10"
+                 Text="Settings are saved in the selected profile as you change them. These buttons make, rename and copy profiles."/>
+      <DockPanel Margin="0,0,0,8">
+       <TextBlock DockPanel.Dock="Left" Text="Name" Classes="Label" VerticalAlignment="Center" Margin="0,0,12,0"/>
+       <TextBox Name="ProfileName" MaxLength="80" VerticalContentAlignment="Center"/>
+      </DockPanel>
+      <WrapPanel>
+       <Button Name="NewProfileButton" Content="New profile" ToolTip.Tip="Makes a profile with this name from the base settings."/>
+       <Button Name="RenameButton" Content="Rename" ToolTip.Tip="Gives the selected profile this name."/>
+       <Button Name="DeleteButton" Content="Delete" ToolTip.Tip="Deletes the selected profile, after asking you to confirm."/>
+      </WrapPanel>
+      <WrapPanel>
+       <Button Name="ResetButton" Content="Reset this profile"
+               ToolTip.Tip="Puts this profile back to the base settings (or VRX's defaults if no base has been saved)."/>
+       <Button Name="BaseButton" Content="Make base settings"
+               ToolTip.Tip="Saves the settings shown here as the starting point for new profiles."/>
+       <Button Name="ApplyAllButton" Content="Apply to all"
+               ToolTip.Tip="Copies the settings shown here to every profile, after asking you to confirm."/>
+      </WrapPanel>
+     </StackPanel>
+    </l:Section>
+
+    <!-- 8 Session details -->
+    <l:Section Name="SessionDetails" Header="Session details">
+     <TextBox Name="LogBox" Height="160" IsReadOnly="True" Background="{StaticResource Well}" Foreground="{StaticResource Soft}"
+              BorderThickness="0" Padding="6" TextWrapping="Wrap" AcceptsReturn="True" FontFamily="monospace" FontSize="12"/>
+    </l:Section>
+   </StackPanel>
+  </ScrollViewer>
+
+  <!-- Status line -->
+  <Border Grid.Row="3" BorderBrush="{StaticResource CardEdge}" BorderThickness="0,1,0,0" Padding="2,10,2,0" Margin="0,8,0,0">
+   <TextBlock Name="Status" TextWrapping="Wrap" Foreground="{StaticResource Soft}"/>
+  </Border>
+
+  <!-- A confirmation, drawn over the window (delete, apply to all) -->
+  <Border Name="ConfirmLayer" Grid.RowSpan="4" Margin="-24,-20,-24,-18" Background="#C0101827" IsVisible="False">
+   <Border Background="{StaticResource Card}" BorderBrush="{StaticResource CardEdge}" BorderThickness="1" CornerRadius="12"
+           Padding="22,18,14,10" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center">
+    <StackPanel>
+     <TextBlock Name="ConfirmText" TextWrapping="Wrap" Margin="0,0,8,16"/>
+     <WrapPanel HorizontalAlignment="Right">
+      <Button Name="ConfirmYes" Classes="Primary" Content="OK"/>
+      <Button Name="ConfirmNo" Content="Cancel"/>
+     </WrapPanel>
+    </StackPanel>
+   </Border>
+  </Border>
+ </Grid>
+</Window>

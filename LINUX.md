@@ -1,6 +1,6 @@
 # Linux port specification
 
-Status: implementation in progress, 2026-09-23. The Linux Vulkan/OpenXR renderer, GPU stereo warp, static and live ZipDepth paths, portal/PipeWire capture, and the flat-screen room GPU passes are running. The room eye shader shares the Windows HLSL, and the controller has Linux-native room controls. Headset visual acceptance, longer performance measurements, recentering and distribution remain.
+Status: implementation in progress, 2026-09-23. The Linux Vulkan/OpenXR renderer, GPU stereo warp, static and live ZipDepth paths, portal/PipeWire capture, and the flat-screen room GPU passes are running. The room eye shader shares the Windows HLSL, and the Avalonia desktop app has Linux-native room controls. Headset visual acceptance, longer performance measurements, recentering and distribution remain.
 
 ## Goal and scope
 
@@ -48,7 +48,7 @@ must implement.
 | CPU stereo reference, geometry and effects | `xr_common.h`, `screen_anchor.h`, `screen_curve.h`, `room.h`, `depth_fusion.h` | Reuse portable math and reference output; isolate Windows-only includes and helpers. |
 | Hardware motion estimation | `motion_estimator.h` | Defer; this is D3D12 video-specific. Disable steadying and fusion until a tested Linux replacement exists. |
 | Versioned live settings | `desktop_control.h`, `Profile.Control()` in `Profile.cs` | Use Windows behavior as a reference. The Linux `VRXL` snapshots have their own versioned fields and do not use Windows file I/O or key codes. |
-| Desktop app | `desktop/VRX.Desktop` | Use its behavior as a reference, but keep Linux profiles and the PyQt controller native to Linux. WPF/XAML, Win32 window enumeration and Windows profile files are not dependencies. |
+| Desktop app | `desktop/VRX.Desktop` | The Linux app (`linux/VRX.Linux`, Avalonia) follows its layout and Easy/Expert modes, with Linux profiles. WPF, Win32 window enumeration and Windows profile files are not dependencies. |
 | Models and release | `release/build-models.ps1`, `release/build-release.ps1` | Retain model hashes; provide Linux acquisition/build and packaging scripts with Linux dependency notices. |
 
 `xrapp.cpp`, `xrapp3.cpp`, `xrapp4.cpp` and the native probes document earlier
@@ -154,7 +154,8 @@ pass visual and timing tests.
 ## Controller, settings and input
 
 Keep Linux controller profiles independent of Windows save files and keyed by a
-user-editable name. The PyQt controller needs source selection, Start/Stop VR,
+user-editable name. The Linux desktop app (Avalonia, laid out like the Windows
+WPF app with its Easy and Expert modes) needs source selection, Start/Stop VR,
 Recenter, basic screen/depth controls, a status line, and accessible logs. Add
 room controls when the Vulkan room renderer is validated. Hide or clearly
 disable settings that Linux cannot apply yet.
@@ -338,7 +339,8 @@ a three-second synthetic regression had zero of 774,144 tensor values
 outside the established 0.0028 tolerance, with worst error 0.0000124.
 
 
-L4 has begun with `linux/controller.py`, an early PyQt6 session window.
+L4 began with `linux/controller.py`, an early PyQt6 session window (since
+replaced by the Avalonia app in `linux/VRX.Linux`).
 It starts the engine in `--until-stop --live` mode, offers flat or strict
 CUDA ZipDepth, shows process output, stops an active session by SIGTERM,
 and saves named launch profiles atomically under the XDG config directory.
@@ -438,4 +440,4 @@ headset and a real captured game or video window.
   and [CUDA provider](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html)
   for the supported inference configuration.
 - [Avalonia supported platforms](https://docs.avaloniaui.net/docs/supported-platforms)
-  if the Linux controller uses Avalonia.
+  for the Linux desktop app.

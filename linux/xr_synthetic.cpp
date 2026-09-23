@@ -92,7 +92,8 @@ template <typename T> bool Resolve(XrFns& f, XrInstance instance, const char* na
     std::fprintf(stderr, "%s failed: %d\n", #expr, r); return 1; } } while (0)
 
 int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live, bool roomEnabled, const char* settingsPath, const char* roomDumpPath,
-        uint32_t syntheticColorWidth, uint32_t syntheticColorHeight, bool useDmabuf, const char* colorDumpPath) {
+        uint32_t syntheticColorWidth, uint32_t syntheticColorHeight, bool useDmabuf, const char* colorDumpPath,
+        int sourceKind) {
     vrx::LiveSettings settings;
     if (settingsPath && !vrx::ReadLiveSettings(settingsPath, settings)) {
         std::fprintf(stderr, "Invalid or missing Linux settings: %s\n", settingsPath);
@@ -250,7 +251,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         std::printf("Capture DMA-BUF: %s (%zu importable modifiers)\n",
             !useDmabuf ? "disabled" : dmabufModifiers.empty() ? "unavailable" : "offered", dmabufModifiers.size());
         capture = std::make_unique<vrx::PortalCapture>();
-        if (!capture->Open(dmabufModifiers)) { std::fputs("Live capture source selection failed\n", stderr); return 1; }
+        const auto source = sourceKind == 1 ? vrx::PortalCapture::Source::Window :
+                            sourceKind == 2 ? vrx::PortalCapture::Source::Screen : vrx::PortalCapture::Source::Any;
+        if (!capture->Open(dmabufModifiers, source)) { std::fputs("Live capture source selection failed\n", stderr); return 1; }
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (!capture->Captured() && capture->Healthy() && std::chrono::steady_clock::now() < deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -977,12 +980,14 @@ int main(int argc, char** argv) {
     unsigned colorWidth = 0, colorHeight = 0;
     bool useDmabuf = true;
     const char* colorDumpPath = nullptr;
+    int sourceKind = 0;   // 0 any, 1 window, 2 screen
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
             std::puts("vrx-xr-synthetic [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]");
             std::puts("--live selects a portal source; add --cuda for asynchronous ZipDepth");
             std::puts("--color=WxH presents the synthetic scene at that colour size (depth stays 686x392)");
             std::puts("--no-dmabuf receives live frames in shared memory instead of GPU buffers");
+            std::puts("--source=window|screen|any limits what the desktop chooser offers (default any)");
             std::puts("--dump-color=frame.ppm writes the first presented colour frame");
             std::puts("VRX_OPENXR_LOADER, VRX_WARP_SPV and VRX_PREP_SPV override runtime paths");
             return 0;
@@ -996,6 +1001,9 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "--settings=", 11) == 0) settingsPath = argv[i] + 11;
         else if (std::strncmp(argv[i], "--room-dump=", 12) == 0) { roomDumpPath = argv[i] + 12; room = true; }
         else if (std::strcmp(argv[i], "--no-dmabuf") == 0) useDmabuf = false;
+        else if (std::strcmp(argv[i], "--source=any") == 0) sourceKind = 0;
+        else if (std::strcmp(argv[i], "--source=window") == 0) sourceKind = 1;
+        else if (std::strcmp(argv[i], "--source=screen") == 0) sourceKind = 2;
         else if (std::strncmp(argv[i], "--dump-color=", 13) == 0 && argv[i][13]) colorDumpPath = argv[i] + 13;
         else if (std::strncmp(argv[i], "--color=", 8) == 0) {
             char extra = 0;
@@ -1034,7 +1042,7 @@ int main(int argc, char** argv) {
     const char* path = std::getenv("VRX_OPENXR_LOADER");
     try {
         return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live, room, settingsPath, roomDumpPath,
-                   colorWidth, colorHeight, useDmabuf, colorDumpPath);
+                   colorWidth, colorHeight, useDmabuf, colorDumpPath, sourceKind);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "VRX Linux renderer: %s\n", error.what());
         return 1;

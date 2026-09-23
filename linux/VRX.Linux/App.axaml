@@ -1,0 +1,167 @@
+<!-- The VRX skin, after desktop/VRX.Desktop (App.xaml, Skins/Vrx.xaml): dark navy, a teal
+     accent and white text. Fluent supplies the controls; the rounded buttons, the Easy |
+     Expert switch and the section cards have their own templates, as in the WPF app. -->
+<Application xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:l="using:Vrx.Linux" x:Class="Vrx.Linux.App" RequestedThemeVariant="Dark">
+ <Application.Resources>
+  <!-- Palette -->
+  <SolidColorBrush x:Key="Ink" Color="#E8EEF8"/>
+  <SolidColorBrush x:Key="Muted" Color="#9EAFC7"/>
+  <SolidColorBrush x:Key="Soft" Color="#A5B4CC"/>
+  <SolidColorBrush x:Key="Page" Color="#101827"/>
+  <SolidColorBrush x:Key="Card" Color="#192438"/>
+  <SolidColorBrush x:Key="CardEdge" Color="#24334C"/>
+  <SolidColorBrush x:Key="Well" Color="#111B2B"/>
+  <SolidColorBrush x:Key="Accent" Color="#76DCC6"/>
+  <SolidColorBrush x:Key="OnAccent" Color="#0E1A2A"/>
+  <SolidColorBrush x:Key="Raised" Color="#2A3B57"/>
+  <SolidColorBrush x:Key="RaisedEdge" Color="#3A4E6E"/>
+  <SolidColorBrush x:Key="Hover" Color="#22324C"/>
+  <SolidColorBrush x:Key="Field" Color="#0F1828"/>
+  <SolidColorBrush x:Key="ChromeBar" Color="#0B1320"/>
+  <SolidColorBrush x:Key="WindowEdge" Color="#2A3B57"/>
+  <!-- Fluent controls on the skin's colours -->
+  <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundChecked" Color="#0E1A2A"/>
+  <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver" Color="#0E1A2A"/>
+  <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPressed" Color="#0E1A2A"/>
+  <SolidColorBrush x:Key="TextControlBackground" Color="#0F1828"/>
+  <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#0F1828"/>
+  <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#0F1828"/>
+  <SolidColorBrush x:Key="TextControlBorderBrush" Color="#3A4E6E"/>
+  <SolidColorBrush x:Key="ComboBoxBackground" Color="#0F1828"/>
+  <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#22324C"/>
+  <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#3A4E6E"/>
+  <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#192438"/>
+  <SolidColorBrush x:Key="ListBoxItemBackgroundSelected" Color="#2A3B57"/>
+  <SolidColorBrush x:Key="ListBoxItemBackgroundSelectedPointerOver" Color="#2A3B57"/>
+  <SolidColorBrush x:Key="ListBoxItemBackgroundPointerOver" Color="#1F2C44"/>
+
+  <!-- Buttons: rounded; "Primary" is the accent button (Attach / Play). -->
+  <ControlTheme x:Key="{x:Type Button}" TargetType="Button">
+   <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+   <Setter Property="Background" Value="{StaticResource Raised}"/>
+   <Setter Property="BorderBrush" Value="{StaticResource RaisedEdge}"/>
+   <Setter Property="BorderThickness" Value="1"/>
+   <Setter Property="Padding" Value="16,8"/>
+   <Setter Property="Margin" Value="0,0,8,8"/>
+   <Setter Property="MinHeight" Value="36"/>
+   <Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template">
+    <ControlTemplate>
+     <Border Name="Face" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+             BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+      <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                        Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+     </Border>
+    </ControlTemplate>
+   </Setter>
+   <Style Selector="^:pointerover /template/ Border#Face"><Setter Property="Opacity" Value="0.86"/></Style>
+   <Style Selector="^:pressed /template/ Border#Face"><Setter Property="Opacity" Value="0.7"/></Style>
+   <Style Selector="^:focus-visible /template/ Border#Face"><Setter Property="BorderBrush" Value="{StaticResource Accent}"/></Style>
+   <Style Selector="^:disabled /template/ Border#Face"><Setter Property="Opacity" Value="0.4"/></Style>
+   <Style Selector="^:disabled"><Setter Property="Cursor" Value="Arrow"/></Style>
+   <Style Selector="^.Primary">
+    <Setter Property="Background" Value="{StaticResource Accent}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+    <Setter Property="Foreground" Value="{StaticResource OnAccent}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+   </Style>
+  </ControlTheme>
+
+  <!-- Easy | Expert: a two-segment switch. -->
+  <ControlTheme x:Key="ModeSegment" TargetType="RadioButton">
+   <Setter Property="Foreground" Value="#C9D5E8"/>
+   <Setter Property="MinWidth" Value="140"/>
+   <Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="Template">
+    <ControlTemplate>
+     <Border Name="Segment" Background="Transparent" CornerRadius="20" Padding="22,7">
+      <ContentPresenter Content="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
+     </Border>
+    </ControlTemplate>
+   </Setter>
+   <Style Selector="^:pointerover /template/ Border#Segment"><Setter Property="Background" Value="{StaticResource Hover}"/></Style>
+   <Style Selector="^:checked /template/ Border#Segment"><Setter Property="Background" Value="{StaticResource Accent}"/></Style>
+   <Style Selector="^:checked"><Setter Property="Foreground" Value="{StaticResource OnAccent}"/></Style>
+   <Style Selector="^:focus-visible /template/ Border#Segment">
+    <Setter Property="BorderBrush" Value="#E8EEF8"/><Setter Property="BorderThickness" Value="1"/>
+   </Style>
+  </ControlTheme>
+
+  <!-- A collapsible section: a card whose header row opens and closes it. -->
+  <ControlTheme x:Key="SectionToggle" TargetType="ToggleButton">
+   <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+   <Setter Property="Cursor" Value="Hand"/>
+   <Setter Property="HorizontalAlignment" Value="Stretch"/>
+   <Setter Property="Template">
+    <ControlTemplate>
+     <Border Name="Row" Background="Transparent" CornerRadius="12" Padding="18,13">
+      <DockPanel>
+       <Path Name="Chevron" DockPanel.Dock="Left" Data="M 0 0 L 5 5 L 0 10" Stroke="{StaticResource Accent}"
+             StrokeThickness="2" Width="8" Height="10" VerticalAlignment="Center" Margin="0,0,14,0"/>
+       <ContentPresenter Content="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"
+                         VerticalAlignment="Center" FontSize="17" FontWeight="SemiBold"/>
+      </DockPanel>
+     </Border>
+    </ControlTemplate>
+   </Setter>
+   <Style Selector="^:pointerover /template/ Border#Row"><Setter Property="Background" Value="#1F2C44"/></Style>
+   <Style Selector="^:focus-visible /template/ Border#Row"><Setter Property="Background" Value="{StaticResource Hover}"/></Style>
+   <Style Selector="^:checked /template/ Path#Chevron"><Setter Property="RenderTransform" Value="rotate(90deg)"/></Style>
+  </ControlTheme>
+  <ControlTheme x:Key="{x:Type l:Section}" TargetType="l:Section">
+   <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+   <Setter Property="Margin" Value="0,0,0,10"/>
+   <Setter Property="Template">
+    <ControlTemplate>
+     <Border Background="{StaticResource Card}" BorderBrush="{StaticResource CardEdge}" BorderThickness="1" CornerRadius="12">
+      <DockPanel>
+       <ToggleButton DockPanel.Dock="Top" Theme="{StaticResource SectionToggle}" Content="{TemplateBinding Header}"
+                     IsChecked="{TemplateBinding IsExpanded, Mode=TwoWay}"/>
+       <ContentPresenter Content="{TemplateBinding Content}" Margin="22,0,22,18" IsVisible="{TemplateBinding IsExpanded}"/>
+      </DockPanel>
+     </Border>
+    </ControlTemplate>
+   </Setter>
+  </ControlTheme>
+ </Application.Resources>
+
+ <Application.Styles>
+  <FluentTheme>
+   <FluentTheme.Palettes>
+    <ColorPaletteResources x:Key="Dark" Accent="#76DCC6" RegionColor="#101827" AltHigh="#101827"
+                           BaseHigh="#E8EEF8" BaseMediumHigh="#C9D5E8" BaseMedium="#A5B4CC" BaseMediumLow="#5A6F90"
+                           BaseLow="#2A3B57" ChromeMediumLow="#192438" ChromeMedium="#22324C" ChromeLow="#111B2B"
+                           ChromeHigh="#3A4E6E" ListLow="#1F2C44" ListMedium="#2A3B57"/>
+   </FluentTheme.Palettes>
+  </FluentTheme>
+  <!-- Text roles -->
+  <Style Selector="TextBlock.Label"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,0,0,2"/></Style>
+  <Style Selector="TextBlock.Value">
+   <Setter Property="Foreground" Value="{StaticResource Soft}"/><Setter Property="Margin" Value="12,0,0,0"/>
+   <Setter Property="HorizontalAlignment" Value="Right"/>
+  </Style>
+  <Style Selector="TextBlock.Hint">
+   <Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="FontSize" Value="12"/>
+   <Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,2,0,8"/>
+  </Style>
+  <Style Selector="TextBlock.SubHeader">
+   <Setter Property="FontSize" Value="15"/><Setter Property="FontWeight" Value="SemiBold"/>
+   <Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,10,0,6"/>
+  </Style>
+  <Style Selector="CheckBox"><Setter Property="Margin" Value="0,6,0,6"/></Style>
+  <!-- List rows: dark hover and selection, as in the WPF app. -->
+  <Style Selector="ListBoxItem"><Setter Property="Margin" Value="2,1"/><Setter Property="CornerRadius" Value="6"/></Style>
+  <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+   <Setter Property="Background" Value="#1F2C44"/>
+  </Style>
+  <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+   <Setter Property="Background" Value="{StaticResource Raised}"/>
+   <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+   <Setter Property="BorderThickness" Value="1"/>
+   <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+  </Style>
+  <Style Selector="Slider"><Setter Property="Margin" Value="0,0,0,4"/></Style>
+ </Application.Styles>
+</Application>

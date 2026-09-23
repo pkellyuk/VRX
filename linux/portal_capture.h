@@ -39,7 +39,9 @@ public:
     // Opens the desktop chooser; starts capture after selection. `modifiers`:
     // DRM format modifiers for B8G8R8A8 the renderer can import; empty for
     // shared memory only.
-    bool Open(const std::vector<uint64_t>& modifiers = {});
+    // What the desktop chooser offers.
+    enum class Source { Any, Window, Screen };
+    bool Open(const std::vector<uint64_t>& modifiers = {}, Source source = Source::Any);
     // The colour texture's size, once the first format is known.
     bool ColorSize(uint32_t& width, uint32_t& height) const;
     bool DmaBuf() const;             // frames arrive as DMA-BUFs

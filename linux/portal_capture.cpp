@@ -47,6 +47,7 @@ struct PortalCapture::Impl {
     ResampleTables tables;
     // DMA-BUF: modifiers the renderer can import; the negotiated one.
     std::vector<uint64_t> modifiers;
+    XdpOutputType outputs = static_cast<XdpOutputType>(XDP_OUTPUT_WINDOW | XDP_OUTPUT_MONITOR);
     std::atomic<bool> dmabuf{false};
     uint64_t modifier = 0;
     // DMA-BUF buffers held for the renderer: the newest not yet taken, those
@@ -357,11 +358,12 @@ void PortalCapture::Impl::Process(void* data) {
 bool PortalCapture::Impl::Open() {
     portal_loop = g_main_loop_new(nullptr, FALSE);
     portal = xdp_portal_new();
-    xdp_portal_create_screencast_session(portal,
-        static_cast<XdpOutputType>(XDP_OUTPUT_WINDOW | XDP_OUTPUT_MONITOR),
+    xdp_portal_create_screencast_session(portal, outputs,
         XDP_SCREENCAST_FLAG_NONE, XDP_CURSOR_MODE_EMBEDDED, XDP_PERSIST_MODE_NONE,
         nullptr, nullptr, Created, this);
-    std::puts("Select a window or monitor in the ScreenCast chooser.");
+    std::puts(outputs == XDP_OUTPUT_WINDOW ? "Select a window in the ScreenCast chooser." :
+              outputs == XDP_OUTPUT_MONITOR ? "Select a screen in the ScreenCast chooser." :
+              "Select a window or monitor in the ScreenCast chooser.");
     g_main_loop_run(portal_loop);
     if (failed || !session) return false;
     GVariant* streams = xdp_session_get_streams(session);
@@ -445,8 +447,11 @@ PortalCapture::Impl::~Impl() {
 }
 PortalCapture::PortalCapture() : impl_(std::make_unique<Impl>()) {}
 PortalCapture::~PortalCapture() = default;
-bool PortalCapture::Open(const std::vector<uint64_t>& modifiers) {
+bool PortalCapture::Open(const std::vector<uint64_t>& modifiers, Source source) {
     impl_->modifiers = modifiers;
+    impl_->outputs = source == Source::Window ? XDP_OUTPUT_WINDOW :
+                     source == Source::Screen ? XDP_OUTPUT_MONITOR :
+                     static_cast<XdpOutputType>(XDP_OUTPUT_WINDOW | XDP_OUTPUT_MONITOR);
     return impl_->Open();
 }
 bool PortalCapture::ColorSize(uint32_t& width, uint32_t& height) const {

@@ -2,8 +2,8 @@
 
 The port design and release gates are in [LINUX.md](../LINUX.md). This directory
 contains a Linux OpenXR/Vulkan renderer, static and live ZipDepth paths,
-a portal/PipeWire capture adapter, a basic controller, and prerequisite probes.
-The controller and packaging are still under development.
+a portal/PipeWire capture adapter, the VRX desktop app (Avalonia), and
+prerequisite probes. Packaging is still under development.
 
 ## Build
 
@@ -108,7 +108,7 @@ build/linux-release/vrx-room-reference
 build/linux-release/vrx-room-gpu-probe
 ```
 
-## Live source and early Linux controller
+## Live source and the VRX desktop app
 
 `--live` opens the desktop ScreenCast chooser and displays a selected window
 or monitor in the headset. It uses flat depth unless `--cuda` is added;
@@ -123,28 +123,42 @@ when no system OpenXR loader is installed; `VRX_OPENXR_LOADER` overrides it.
 build/linux/vrx-xr-synthetic --until-stop --live --cuda
 ```
 
-The Linux controller requires Python 3 and PyQt6. It starts the engine,
-opens the portal chooser, stops the process, displays logs, and saves named
-profiles under the XDG config directory. Profiles store the depth choice,
-screen placement and stereo strength, plus Room, Glass, Reflections, ceiling
-light and light colour. Numeric room controls apply live; the depth backend
-choice takes effect at the next launch. The controller writes an atomic
-`VRXL 2` snapshot to a temporary session directory. `VRXL 1` snapshots still
-load with the room off. The engine accepts `--settings=path` and reloads valid
-snapshots during a run. The controller starts the Vulkan room renderer even
-when Room is 0, so moving the slider above 0 can enable it without restarting.
-Set `VRX_LINUX_ENGINE` if the executable is outside the normal
-`build/linux-release` or `build/linux` locations. When using the isolated CUDA
-runtime bundle, start the controller with the same `LD_LIBRARY_PATH` used for
-the command-line renderer.
+`--source=window`, `--source=screen` or `--source=any` (the default) limits
+what the desktop chooser offers.
+
+The VRX desktop app, `linux/VRX.Linux`, is an Avalonia (.NET 10) app laid out
+like the Windows WPF app: an Easy | Expert switch, the card with Attach / Play,
+Stop VR and Recenter, and in Expert the same collapsible sections. It starts the
+engine, shows its log and state, stops it with SIGTERM (forcing it after five
+seconds), and keeps named profiles under the XDG config directory
+(`linux-profiles.json`, the format the earlier PyQt controller used) plus its
+own choices in `linux-app.json`. Settings are saved in the selected profile as
+they change, and screen, stereo and room controls apply live through an atomic
+`VRXL 2` snapshot; `VRXL 1` snapshots still load with the room off. Linux
+differences: Wayland does not let an app list other windows, so "Game &
+window" chooses between a window, a whole screen or either, and the desktop's
+sharing dialog does the choosing; there is no auto-attach; settings the Linux
+engine cannot apply yet (recenter, curve, follow-head, a separate ambilight,
+steadying, timing modes, SteamVR menu options) are shown disabled. The app
+starts the room renderer even when Room is 0, so it can be turned on live.
+
+Build it with the .NET 10 SDK (a user-local install from `dotnet-install.sh`
+works) and start it with `linux/vrx-linux`, which finds a user-local .NET and
+reads optional environment such as the CUDA library path from
+`~/.config/vrx/environment`. `linux/install-desktop.sh` adds VRX, with its logo,
+to the user's application menu. Set `VRX_LINUX_ENGINE` if the engine is outside
+the normal `build/linux-release` or `build/linux` locations.
 
 ```sh
-python3 linux/controller.py
+dotnet build -c Release linux/VRX.Linux
+linux/vrx-linux
+linux/install-desktop.sh
 ```
 
-Stopping during an active OpenXR session requests clean SIGTERM shutdown.
-If the portal chooser has not yet returned, the controller forces shutdown
-after five seconds.
+`vrx-linux --check` tests profiles, the snapshot format and the engine
+arguments without a display (it is in CTest when .NET is found).
+`VRX_LINUX_SCREENSHOT=<directory>` renders the window in both modes to PNG
+files and exits.
 
 ## Windows-style room renderer
 

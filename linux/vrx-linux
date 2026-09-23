@@ -1,0 +1,24 @@
+#!/bin/sh
+# Starts the VRX Linux desktop app (VRX.Linux) built in this repository.
+# Optional environment for VRX (for example LD_LIBRARY_PATH for the CUDA and
+# ONNX Runtime libraries) can be put in ${XDG_CONFIG_HOME:-~/.config}/vrx/environment
+# as shell assignments; they are exported to the app and the engine it starts.
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+environment="${XDG_CONFIG_HOME:-$HOME/.config}/vrx/environment"
+if [ -f "$environment" ]; then
+    set -a
+    . "$environment"
+    set +a
+fi
+# A .NET runtime installed for this user only (dotnet-install.sh) is not on the default path.
+if [ -z "${DOTNET_ROOT:-}" ] && [ -x "$HOME/.dotnet/dotnet" ] && ! command -v dotnet >/dev/null 2>&1; then
+    export DOTNET_ROOT="$HOME/.dotnet"
+fi
+app="$here/VRX.Linux/bin/Release/net10.0/vrx-linux"
+if [ ! -x "$app" ]; then
+    echo "VRX Linux app is not built. Build it with:" >&2
+    echo "  dotnet build -c Release $here/VRX.Linux" >&2
+    exit 1
+fi
+exec "$app" "$@"
