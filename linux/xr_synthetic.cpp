@@ -8,6 +8,7 @@
 #include "vulkan_warp.h"
 #include "live_settings.h"
 #include "vulkan_prep.h"
+#include "vulkan_room.h"
 #ifdef VRX_HAS_CAPTURE
 #include "portal_capture.h"
 #endif
@@ -27,6 +28,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <memory>
+#include <limits>
 #include <exception>
 #include <thread>
 #include <string>
@@ -47,6 +49,8 @@ struct XrFns {
     PFN_xrCreateSession createSession = nullptr;
     PFN_xrDestroySession destroySession = nullptr;
     PFN_xrCreateReferenceSpace createSpace = nullptr;
+    PFN_xrEnumerateReferenceSpaces enumerateSpaces = nullptr;
+    PFN_xrLocateSpace locateSpace = nullptr;
     PFN_xrDestroySpace destroySpace = nullptr;
     PFN_xrEnumerateSwapchainFormats formats = nullptr;
     PFN_xrCreateSwapchain createSwapchain = nullptr;
@@ -56,6 +60,8 @@ struct XrFns {
     PFN_xrBeginSession beginSession = nullptr;
     PFN_xrEndSession endSession = nullptr;
     PFN_xrWaitFrame waitFrame = nullptr;
+    PFN_xrLocateViews locateViews = nullptr;
+    PFN_xrEnumerateViewConfigurationViews enumerateViewConfig = nullptr;
     PFN_xrBeginFrame beginFrame = nullptr;
     PFN_xrEndFrame endFrame = nullptr;
     PFN_xrAcquireSwapchainImage acquire = nullptr;
@@ -79,7 +85,7 @@ template <typename T> bool Resolve(XrFns& f, XrInstance instance, const char* na
 #define VK_CHECK(expr) do { VkResult r = (expr); if (r != VK_SUCCESS) { \
     std::fprintf(stderr, "%s failed: %d\n", #expr, r); return 1; } } while (0)
 
-int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live, const char* settingsPath) {
+int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live, bool roomEnabled, const char* settingsPath, const char* roomDumpPath) {
     vrx::LiveSettings settings;
     if (settingsPath && !vrx::ReadLiveSettings(settingsPath, settings)) {
         std::fprintf(stderr, "Invalid or missing Linux settings: %s\n", settingsPath);
@@ -107,6 +113,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
 #else
     (void)live;
 #endif
+    roomEnabled = roomEnabled || (settingsPath && settings.room > 0);
     void* library = dlopen(loaderPath, RTLD_NOW | RTLD_LOCAL);
     std::string steamLoader;
     if (!library && std::strcmp(loaderPath, "libopenxr_loader.so.1") == 0) {
@@ -142,6 +149,10 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     XR_RESOLVE("xrCreateSession", createSession);
     XR_RESOLVE("xrDestroySession", destroySession);
     XR_RESOLVE("xrCreateReferenceSpace", createSpace);
+    if (roomEnabled) {
+        XR_RESOLVE("xrEnumerateReferenceSpaces", enumerateSpaces);
+        XR_RESOLVE("xrLocateSpace", locateSpace);
+    }
     XR_RESOLVE("xrDestroySpace", destroySpace);
     XR_RESOLVE("xrEnumerateSwapchainFormats", formats);
     XR_RESOLVE("xrCreateSwapchain", createSwapchain);
@@ -151,6 +162,10 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     XR_RESOLVE("xrBeginSession", beginSession);
     XR_RESOLVE("xrEndSession", endSession);
     XR_RESOLVE("xrWaitFrame", waitFrame);
+    if (roomEnabled) {
+        XR_RESOLVE("xrLocateViews", locateViews);
+        XR_RESOLVE("xrEnumerateViewConfigurationViews", enumerateViewConfig);
+    }
     XR_RESOLVE("xrBeginFrame", beginFrame);
     XR_RESOLVE("xrEndFrame", endFrame);
     XR_RESOLVE("xrAcquireSwapchainImage", acquire);
@@ -162,6 +177,18 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     XrSystemId system = XR_NULL_SYSTEM_ID;
     XR_CHECK(xr.getSystem(instance, &systemInfo, &system));
+    if (roomEnabled) {
+        uint32_t viewCount = 0;
+        XR_CHECK(xr.enumerateViewConfig(instance, system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+                                         0, &viewCount, nullptr));
+        std::vector<XrViewConfigurationView> configViews(viewCount);
+        for (auto& view : configViews) view.type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
+        XR_CHECK(xr.enumerateViewConfig(instance, system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+                                         viewCount, &viewCount, configViews.data()));
+        if (viewCount >= 2) std::printf("OpenXR recommended room eye size: %ux%u (room uses %ux%u)\n",
+            configViews[0].recommendedImageRectWidth, configViews[0].recommendedImageRectHeight,
+            vrx::VulkanRoom::EyeWidth, vrx::VulkanRoom::EyeHeight);
+    }
     XrGraphicsRequirementsVulkan2KHR req{};
     req.type = XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN2_KHR;
     XR_CHECK(xr.requirements(instance, system, &req));
@@ -241,6 +268,20 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     rsci.poseInReferenceSpace.orientation.w = 1.0f;
     XrSpace space = XR_NULL_HANDLE;
     XR_CHECK(xr.createSpace(session, &rsci, &space));
+    XrSpace stageSpace = XR_NULL_HANDLE;
+    if (roomEnabled) {
+        uint32_t referenceCount = 0;
+        XR_CHECK(xr.enumerateSpaces(session, 0, &referenceCount, nullptr));
+        std::vector<XrReferenceSpaceType> referenceTypes(referenceCount);
+        XR_CHECK(xr.enumerateSpaces(session, referenceCount, &referenceCount, referenceTypes.data()));
+        if (std::find(referenceTypes.begin(), referenceTypes.end(), XR_REFERENCE_SPACE_TYPE_STAGE) != referenceTypes.end()) {
+            XrReferenceSpaceCreateInfo stageInfo = rsci;
+            stageInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
+            XrResult stageResult = xr.createSpace(session, &stageInfo, &stageSpace);
+            if (XR_SUCCEEDED(stageResult)) std::puts("Room floor: OpenXR STAGE space available");
+            else std::printf("Room floor: STAGE space unavailable (%d); using seated estimate\n", stageResult);
+        } else std::puts("Room floor: STAGE space unavailable; using seated estimate");
+    }
     uint32_t formatCount = 0;
     XR_CHECK(xr.formats(session, 0, &formatCount, nullptr));
     std::vector<int64_t> formats(formatCount);
@@ -275,6 +316,23 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     constexpr VkDeviceSize eyeBytes = VkDeviceSize(vrx::kSyntheticWidth) * vrx::kSyntheticHeight * 4;
     auto warp = std::make_unique<vrx::VulkanWarp>(gpu, device, format);
     auto prep = std::make_unique<vrx::VulkanPrep>(gpu, device, warp->SceneBuffer());
+    std::unique_ptr<vrx::VulkanRoom> room;
+    XrSwapchain roomSwapchain = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageVulkan2KHR> roomImages;
+    if (roomEnabled) {
+        XrSwapchainCreateInfo roomInfo = swci;
+        roomInfo.width = vrx::VulkanRoom::EyeWidth;
+        roomInfo.height = vrx::VulkanRoom::EyeHeight;
+        XR_CHECK(xr.createSwapchain(session, &roomInfo, &roomSwapchain));
+        uint32_t roomImageCount = 0;
+        XR_CHECK(xr.images(roomSwapchain, 0, &roomImageCount, nullptr));
+        roomImages.resize(roomImageCount);
+        for (auto& image : roomImages) image.type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR;
+        XR_CHECK(xr.images(roomSwapchain, roomImageCount, &roomImageCount,
+            reinterpret_cast<XrSwapchainImageBaseHeader*>(roomImages.data())));
+        room = std::make_unique<vrx::VulkanRoom>(gpu, device, warp->SceneBuffer(), warp->ColorBuffer(), format);
+        std::puts("Windows room shader enabled: lighting, glass, tiles and reflections");
+    }
     VkCommandPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pci.queueFamilyIndex = family;
@@ -327,7 +385,20 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
 
     warp->SetStrength(settings.strength);
     XrCompositionLayerQuad quads[2]{};
-    const XrCompositionLayerBaseHeader* layers[2]{};
+    const XrCompositionLayerBaseHeader* layers[3]{};
+    XrCompositionLayerProjection projection{};
+    XrCompositionLayerProjectionView projectionViews[2]{};
+    projection.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
+    projection.space = space;
+    projection.viewCount = 2;
+    projection.views = projectionViews;
+    for (int eye = 0; eye < 2; ++eye) {
+        projectionViews[eye].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+        projectionViews[eye].subImage.swapchain = roomSwapchain;
+        projectionViews[eye].subImage.imageRect.extent = {
+            int32_t(vrx::VulkanRoom::EyeWidth), int32_t(vrx::VulkanRoom::EyeHeight)};
+        projectionViews[eye].subImage.imageArrayIndex = eye;
+    }
     for (int eye = 0; eye < 2; ++eye) {
         quads[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
         quads[eye].space = space;
@@ -340,8 +411,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         quads[eye].pose.position.x = settings.horizontal;
         quads[eye].pose.position.y = settings.height;
         quads[eye].size = {settings.width, settings.width * vrx::kSyntheticHeight / vrx::kSyntheticWidth};
-        layers[eye] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[eye]);
+        layers[eye + (roomEnabled ? 1 : 0)] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[eye]);
     }
+    if (roomEnabled) layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
     const auto beginTime = std::chrono::steady_clock::now();
     bool running = false;
     int frames = 0;
@@ -400,7 +472,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             if (vrx::ReadLiveSettings(settingsPath, updated)) {
                 if (updated.width != settings.width || updated.distance != settings.distance ||
                     updated.height != settings.height || updated.horizontal != settings.horizontal ||
-                    updated.strength != settings.strength)
+                    updated.strength != settings.strength || updated.room != settings.room ||
+                    updated.glass != settings.glass || updated.reflect != settings.reflect ||
+                    updated.light != settings.light || updated.lightRgb != settings.lightRgb)
                     std::printf("Live settings: width %.2f m, distance %.2f m, height %.2f m, horizontal %.2f m, stereo %.2fx\n",
                         updated.width, updated.distance, updated.height, updated.horizontal, updated.strength);
                 settings = updated;
@@ -418,6 +492,33 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         XrFrameBeginInfo fbi{}; fbi.type = XR_TYPE_FRAME_BEGIN_INFO;
         XR_CHECK(xr.beginFrame(session, &fbi));
         uint32_t index = 0;
+        bool roomFrameReady = false;
+        uint32_t roomIndex = 0;
+        XrView roomViews[2]{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+        if (state.shouldRender && roomEnabled) {
+            XrViewLocateInfo locate{};
+            locate.type = XR_TYPE_VIEW_LOCATE_INFO;
+            locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+            locate.displayTime = state.predictedDisplayTime;
+            locate.space = space;
+            XrViewState viewState{}; viewState.type = XR_TYPE_VIEW_STATE;
+            uint32_t count = 0;
+            XR_CHECK(xr.locateViews(session, &locate, &viewState, 2, &count, roomViews));
+            roomFrameReady = settings.room > 0 && count == 2 &&
+                (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) &&
+                (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT);
+            if (roomFrameReady) {
+                for (int eye = 0; eye < 2; ++eye) {
+                    projectionViews[eye].pose = roomViews[eye].pose;
+                    projectionViews[eye].fov = roomViews[eye].fov;
+                }
+                XrSwapchainImageAcquireInfo ai{}; ai.type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO;
+                XR_CHECK(xr.acquire(roomSwapchain, &ai, &roomIndex));
+                XrSwapchainImageWaitInfo wi{}; wi.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO;
+                wi.timeout = XR_INFINITE_DURATION;
+                XR_CHECK(xr.waitImage(roomSwapchain, &wi));
+            }
+        }
         if (state.shouldRender) {
             XrSwapchainImageAcquireInfo ai{}; ai.type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO;
             XR_CHECK(xr.acquire(swapchain, &ai, &index));
@@ -448,12 +549,25 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 vrx::MakeTruth(truth, elapsed);
             }
             warp->Upload(rgb, truth);
+            if (roomFrameReady) {
+                float floorLocalY = std::numeric_limits<float>::quiet_NaN();
+                if (stageSpace != XR_NULL_HANDLE) {
+                    XrSpaceLocation floorLocation{}; floorLocation.type = XR_TYPE_SPACE_LOCATION;
+                    if (XR_SUCCEEDED(xr.locateSpace(stageSpace, space, state.predictedDisplayTime, &floorLocation)) &&
+                        (floorLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+                        (floorLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+                        floorLocalY = floorLocation.pose.position.y;
+                }
+                room->Prepare(rgb, settings, roomViews, floorLocalY);
+                if (roomDumpPath && renderedFrames == 0) room->EnableCapture();
+            }
             VK_CHECK(vkResetCommandBuffer(command, 0));
             VkCommandBufferBeginInfo cbbi{}; cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             VK_CHECK(vkBeginCommandBuffer(command, &cbbi));
             if (!stillPath && !live) prep->Record(command);
             warp->Record(command);
+            if (roomFrameReady) room->Record(command, roomImages[roomIndex].image);
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.srcAccessMask = 0;
@@ -489,14 +603,24 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             submit.commandBufferCount = 1;
             submit.pCommandBuffers = &command;
+            const auto gpuStart = std::chrono::steady_clock::now();
             VK_CHECK(vkQueueSubmit(queue, 1, &submit, fence));
             VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX));
+            if (roomFrameReady && renderedFrames == 0)
+                std::printf("First room frame GPU submit/wait: %.2f ms\n",
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gpuStart).count());
             VK_CHECK(vkResetFences(device, 1, &fence));
+            if (roomFrameReady && roomDumpPath && renderedFrames == 0) {
+                room->SaveCapture(roomDumpPath);
+                referenceMatched = referenceMatched && room->CompareReference();
+                std::printf("Room eye capture: %s\n", roomDumpPath);
+            }
             if (renderedFrames == 0)
                 referenceMatched = referenceMatched && warp->CompareReference(rgb, truth) &&
                     (stillPath || live || prep->CompareReference(rgb));
             XrSwapchainImageReleaseInfo ri{}; ri.type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO;
             XR_CHECK(xr.release(swapchain, &ri));
+            if (roomFrameReady) XR_CHECK(xr.release(roomSwapchain, &ri));
             ++renderedFrames;
         }
         if (!state.shouldRender) ++skippedFrames;
@@ -504,8 +628,17 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         fe.type = XR_TYPE_FRAME_END_INFO;
         fe.displayTime = state.predictedDisplayTime;
         fe.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-        fe.layerCount = state.shouldRender ? 2u : 0u;
-        fe.layers = state.shouldRender ? layers : nullptr;
+        const XrCompositionLayerBaseHeader* frameLayers[3]{};
+        if (state.shouldRender) {
+            if (roomFrameReady) {
+                frameLayers[0] = layers[0]; frameLayers[1] = layers[1]; frameLayers[2] = layers[2];
+            } else {
+                frameLayers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[0]);
+                frameLayers[1] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[1]);
+            }
+        }
+        fe.layerCount = state.shouldRender ? (roomFrameReady ? 3u : 2u) : 0u;
+        fe.layers = state.shouldRender ? frameLayers : nullptr;
         XR_CHECK(xr.endFrame(session, &fe));
         ++frames;
     }
@@ -533,7 +666,10 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     vkDeviceWaitIdle(device);
     vkDestroyFence(device, fence, nullptr);
     vkDestroyCommandPool(device, pool, nullptr);
+    room.reset();
+    if (roomSwapchain != XR_NULL_HANDLE) xr.destroySwapchain(roomSwapchain);
     xr.destroySwapchain(swapchain);
+    if (stageSpace != XR_NULL_HANDLE) xr.destroySpace(stageSpace);
     xr.destroySpace(space);
     xr.destroySession(session);
     prep.reset();
@@ -551,11 +687,12 @@ int main(int argc, char** argv) {
     double seconds = 10.0;
     const char* stillPath = nullptr;
     const char* modelPath = "bench/models/zipdepth_faithful_fp16_672x384.onnx";
-    bool cuda = false, live = false, durationSeen = false, untilStop = false;
+    bool cuda = false, live = false, room = false, durationSeen = false, untilStop = false;
     const char* settingsPath = nullptr;
+    const char* roomDumpPath = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("vrx-xr-synthetic [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--settings=path]");
+            std::puts("vrx-xr-synthetic [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]");
             std::puts("--live selects a portal source; add --cuda for asynchronous ZipDepth");
             std::puts("VRX_OPENXR_LOADER, VRX_WARP_SPV and VRX_PREP_SPV override runtime paths");
             return 0;
@@ -564,8 +701,10 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "--model=", 8) == 0) modelPath = argv[i] + 8;
         else if (std::strcmp(argv[i], "--cuda") == 0) cuda = true;
         else if (std::strcmp(argv[i], "--live") == 0) live = true;
+        else if (std::strcmp(argv[i], "--room") == 0) room = true;
         else if (std::strcmp(argv[i], "--until-stop") == 0) untilStop = true;
         else if (std::strncmp(argv[i], "--settings=", 11) == 0) settingsPath = argv[i] + 11;
+        else if (std::strncmp(argv[i], "--room-dump=", 12) == 0) { roomDumpPath = argv[i] + 12; room = true; }
         else if (!durationSeen) {
             char* end = nullptr;
             seconds = std::strtod(argv[i], &end);
@@ -577,8 +716,8 @@ int main(int argc, char** argv) {
     if ((untilStop && durationSeen) || (!untilStop && (seconds <= 0 || seconds > 120)) ||
         (cuda && !stillPath && !live) || (live && stillPath) ||
         (stillPath && !*stillPath) || (modelPath && !*modelPath) ||
-        (settingsPath && !*settingsPath)) {
-        std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--settings=path]\n", stderr);
+        (settingsPath && !*settingsPath) || (roomDumpPath && !*roomDumpPath)) {
+        std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]\n", stderr);
         return 2;
     }
 #ifndef VRX_HAS_CAPTURE
@@ -594,7 +733,7 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, OnStopSignal);
     const char* path = std::getenv("VRX_OPENXR_LOADER");
     try {
-        return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live, settingsPath);
+        return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live, room, settingsPath, roomDumpPath);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "VRX Linux renderer: %s\n", error.what());
         return 1;

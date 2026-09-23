@@ -10,7 +10,7 @@ from PyQt6.QtCore import QProcess, QProcessEnvironment, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QDoubleSpinBox,
-    QPlainTextEdit, QVBoxLayout, QWidget,
+    QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,10 +23,14 @@ MODEL = ROOT / "bench/models/zipdepth_faithful_fp16_672x384.onnx"
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "vrx"
 PROFILES = CONFIG / "linux-profiles.json"
 DEFAULTS = {"cuda": True, "width": 2.0, "distance": 2.0,
-            "height": 0.0, "horizontal": 0.0, "strength": 1.0}
+            "height": 0.0, "horizontal": 0.0, "strength": 1.0,
+            "room": 30, "glass": 60, "reflect": 25, "light": 30,
+            "light_color": "#FFB46B"}
 RANGES = {"width": (0.5, 10.0), "distance": (0.5, 8.0),
           "height": (-2.0, 2.0), "horizontal": (-3.0, 3.0),
           "strength": (0.0, 2.0)}
+ROOM_RANGES = {"room": (0, 100), "glass": (0, 100),
+               "reflect": (0, 100), "light": (0, 100)}
 
 
 def normalize_profile(value):
@@ -38,6 +42,15 @@ def normalize_profile(value):
         if isinstance(number, bool) or not isinstance(number, (int, float)) or not low <= number <= high:
             raise ValueError(f"{key} must be between {low} and {high}")
         profile[key] = float(number)
+    for key, (low, high) in ROOM_RANGES.items():
+        number = profile[key]
+        if isinstance(number, bool) or not isinstance(number, int) or not low <= number <= high:
+            raise ValueError(f"{key} must be between {low} and {high}")
+    color = profile["light_color"]
+    if not isinstance(color, str) or len(color) != 7 or color[0] != "#" or any(
+            c not in "0123456789abcdefABCDEF" for c in color[1:]):
+        raise ValueError("light_color must be #RRGGBB")
+    profile["light_color"] = color.upper()
     return {key: profile[key] for key in DEFAULTS}
 
 
@@ -46,7 +59,7 @@ def load_profiles():
         return {"Default": DEFAULTS.copy()}
     try:
         document = json.loads(PROFILES.read_text(encoding="utf-8"))
-        if document.get("version") != 1 or not isinstance(document.get("profiles"), dict):
+        if document.get("version") not in (1, 2) or not isinstance(document.get("profiles"), dict):
             raise ValueError("unsupported profile format")
         profiles = {str(name): normalize_profile(value)
                     for name, value in document["profiles"].items()}
@@ -58,7 +71,7 @@ def load_profiles():
 def save_profiles(profiles):
     CONFIG.mkdir(parents=True, exist_ok=True)
     temporary = PROFILES.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps({"version": 1, "profiles": profiles}, indent=2) + "\n",
+    temporary.write_text(json.dumps({"version": 2, "profiles": profiles}, indent=2) + "\n",
                          encoding="utf-8")
     os.replace(temporary, PROFILES)
 
@@ -111,6 +124,19 @@ class Controller(QMainWindow):
             control.valueChanged.connect(self.settings_changed)
             form.addRow(label, control)
             self.controls[key] = control
+        for key, label in (("room", "Room light from screen"),
+                           ("glass", "Glass"), ("reflect", "Reflections"),
+                           ("light", "Ceiling light")):
+            control = QSpinBox()
+            control.setRange(*ROOM_RANGES[key])
+            control.setSuffix(" %")
+            control.valueChanged.connect(self.settings_changed)
+            form.addRow(label, control)
+            self.controls[key] = control
+        self.light_color = QLineEdit(DEFAULTS["light_color"])
+        self.light_color.setMaxLength(7)
+        self.light_color.textChanged.connect(self.settings_changed)
+        form.addRow("Light colour (#RRGGBB)", self.light_color)
         layout.addLayout(form)
         buttons = QHBoxLayout()
         self.save_button = QPushButton("Save profile")
@@ -142,6 +168,7 @@ class Controller(QMainWindow):
                 self.cuda.setChecked(self.profiles[name]["cuda"])
                 for key, control in self.controls.items():
                     control.setValue(self.profiles[name][key])
+                self.light_color.setText(self.profiles[name]["light_color"])
             finally:
                 self.loading_profile = False
             self.settings_changed()
@@ -154,10 +181,12 @@ class Controller(QMainWindow):
         profiles = {**self.profiles, name: {
             "cuda": self.cuda.isChecked(),
             **{key: control.value() for key, control in self.controls.items()},
+            "light_color": self.light_color.text().strip().upper(),
         }}
         try:
+            profiles[name] = normalize_profile(profiles[name])
             save_profiles(profiles)
-        except OSError as error:
+        except (OSError, ValueError) as error:
             QMessageBox.critical(self, "Save profile", str(error))
             return
         self.profiles = profiles
@@ -171,8 +200,15 @@ class Controller(QMainWindow):
             self.settings_timer.start(100)
 
     def write_runtime_settings(self):
+        color = self.light_color.text().strip()
+        if len(color) != 7 or color[0] != "#" or any(
+                c not in "0123456789abcdefABCDEF" for c in color[1:]):
+            raise ValueError("Light colour must be #RRGGBB")
         values = [self.controls[key].value() for key in RANGES]
-        snapshot = "VRXL 1 " + " ".join(f"{value:.3f}" for value in values) + "\n"
+        room_values = [self.controls[key].value() for key in ROOM_RANGES]
+        snapshot = ("VRXL 2 " + " ".join(f"{value:.3f}" for value in values) +
+                    " " + " ".join(str(value) for value in room_values) +
+                    f" {int(color[1:], 16)}\n")
         temporary = self.runtime_settings.with_suffix(".tmp")
         temporary.write_text(snapshot, encoding="ascii")
         os.replace(temporary, self.runtime_settings)
@@ -180,7 +216,7 @@ class Controller(QMainWindow):
     def apply_runtime_settings(self):
         try:
             self.write_runtime_settings()
-        except OSError as error:
+        except (OSError, ValueError) as error:
             self.status.setText(f"Cannot apply live settings: {error}")
             self.logs.appendPlainText(f"Cannot apply live settings: {error}")
 
@@ -198,10 +234,10 @@ class Controller(QMainWindow):
             return
         try:
             self.write_runtime_settings()
-        except OSError as error:
+        except (OSError, ValueError) as error:
             QMessageBox.critical(self, "Settings", f"Cannot write live settings: {error}")
             return
-        arguments = ["--until-stop", "--live", f"--settings={self.runtime_settings}"]
+        arguments = ["--until-stop", "--live", "--room", f"--settings={self.runtime_settings}"]
         if self.cuda.isChecked():
             arguments += ["--cuda", f"--model={MODEL}"]
         self.logs.appendPlainText("Starting: " + " ".join([str(ENGINE), *arguments]))

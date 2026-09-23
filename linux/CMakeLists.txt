@@ -43,19 +43,63 @@ add_custom_command(
 )
 add_custom_target(vrx-room-mirror-shader ALL DEPENDS "${ROOM_MIRROR_SPV}")
 
-add_executable(vrx-xr-synthetic xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp model_prep_cpu.cpp)
-add_dependencies(vrx-xr-synthetic vrx-stereo-shader vrx-model-prep-shader)
-target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}" VRX_PREP_SPV_PATH="${PREP_SPV}")
+set(ROOM_EMIT_SPV "${CMAKE_CURRENT_BINARY_DIR}/room_emit.comp.spv")
+add_custom_command(
+    OUTPUT "${ROOM_EMIT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.1 -S comp
+            "${CMAKE_CURRENT_SOURCE_DIR}/room_emit.comp" -o "${ROOM_EMIT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/room_emit.comp"
+    VERBATIM
+)
+add_custom_target(vrx-room-emit-shader ALL DEPENDS "${ROOM_EMIT_SPV}")
+
+set(ROOM_LIGHT_SPV "${CMAKE_CURRENT_BINARY_DIR}/room_light.comp.spv")
+add_custom_command(
+    OUTPUT "${ROOM_LIGHT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.1 -S comp
+            "${CMAKE_CURRENT_SOURCE_DIR}/room_light.comp" -o "${ROOM_LIGHT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/room_light.comp"
+    VERBATIM
+)
+add_custom_target(vrx-room-light-shader ALL DEPENDS "${ROOM_LIGHT_SPV}")
+
+add_executable(vrx-room-eye-source room_eye_source.cpp)
+target_compile_features(vrx-room-eye-source PRIVATE cxx_std_17)
+target_include_directories(vrx-room-eye-source PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
+set(ROOM_EYE_HLSL "${CMAKE_CURRENT_BINARY_DIR}/room_eye.comp.hlsl")
+set(ROOM_EYE_SPV "${CMAKE_CURRENT_BINARY_DIR}/room_eye.comp.spv")
+add_custom_command(
+    OUTPUT "${ROOM_EYE_HLSL}"
+    COMMAND vrx-room-eye-source "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr/xrapp5.cpp" "${ROOM_EYE_HLSL}"
+    DEPENDS vrx-room-eye-source "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr/xrapp5.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr/room.h"
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT "${ROOM_EYE_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR}" -D -S comp -V --target-env vulkan1.1
+            --shift-sampler-binding comp 4 --shift-image-binding comp 5
+            --shift-ubo-binding comp 6 -e main -o "${ROOM_EYE_SPV}" "${ROOM_EYE_HLSL}"
+    DEPENDS "${ROOM_EYE_HLSL}"
+    VERBATIM
+)
+add_custom_target(vrx-room-eye-shader ALL DEPENDS "${ROOM_EYE_SPV}")
+
+add_executable(vrx-xr-synthetic xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp vulkan_room.cpp model_prep_cpu.cpp)
+add_dependencies(vrx-xr-synthetic vrx-stereo-shader vrx-model-prep-shader vrx-room-mirror-shader vrx-room-emit-shader vrx-room-light-shader vrx-room-eye-shader)
+target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}" VRX_PREP_SPV_PATH="${PREP_SPV}"
+    VRX_ROOM_MIRROR_SPV_PATH="${ROOM_MIRROR_SPV}" VRX_ROOM_EMIT_SPV_PATH="${ROOM_EMIT_SPV}"
+    VRX_ROOM_LIGHT_SPV_PATH="${ROOM_LIGHT_SPV}" VRX_ROOM_EYE_SPV_PATH="${ROOM_EYE_SPV}")
 target_compile_features(vrx-xr-synthetic PRIVATE cxx_std_17)
 target_include_directories(vrx-xr-synthetic PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
 target_link_libraries(vrx-xr-synthetic PRIVATE Vulkan::Vulkan Threads::Threads ${CMAKE_DL_LIBS})
 
-add_executable(vrx-room-mirror-probe room_mirror_probe.cpp)
-add_dependencies(vrx-room-mirror-probe vrx-room-mirror-shader)
-target_compile_features(vrx-room-mirror-probe PRIVATE cxx_std_17)
-target_compile_definitions(vrx-room-mirror-probe PRIVATE VRX_ROOM_MIRROR_SPV_PATH="${ROOM_MIRROR_SPV}")
-target_include_directories(vrx-room-mirror-probe PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
-target_link_libraries(vrx-room-mirror-probe PRIVATE Vulkan::Vulkan)
+add_executable(vrx-room-gpu-probe room_gpu_probe.cpp)
+add_dependencies(vrx-room-gpu-probe vrx-room-mirror-shader vrx-room-emit-shader vrx-room-light-shader)
+target_compile_features(vrx-room-gpu-probe PRIVATE cxx_std_17)
+target_compile_definitions(vrx-room-gpu-probe PRIVATE VRX_ROOM_MIRROR_SPV_PATH="${ROOM_MIRROR_SPV}" VRX_ROOM_EMIT_SPV_PATH="${ROOM_EMIT_SPV}" VRX_ROOM_LIGHT_SPV_PATH="${ROOM_LIGHT_SPV}")
+target_include_directories(vrx-room-gpu-probe PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
+target_link_libraries(vrx-room-gpu-probe PRIVATE Vulkan::Vulkan)
 
 add_executable(vrx-room-reference room_reference.cpp)
 target_compile_features(vrx-room-reference PRIVATE cxx_std_17)
@@ -120,7 +164,7 @@ if(BUILD_TESTING)
     add_test(NAME vrx-room-reference COMMAND vrx-room-reference)
     option(VRX_TEST_VULKAN_GPU "Run hardware Vulkan probes in CTest" OFF)
     if(VRX_TEST_VULKAN_GPU)
-        add_test(NAME vrx-room-mirror-probe COMMAND vrx-room-mirror-probe)
+        add_test(NAME vrx-room-gpu-probe COMMAND vrx-room-gpu-probe)
     endif()
     if(TARGET vrx-capture-probe)
         add_test(NAME vrx-capture-probe-help COMMAND vrx-capture-probe --help)

@@ -1,0 +1,83 @@
+#version 450
+
+// Port of the Windows room EMIT pass. One 256-thread group reduces each picture
+// patch or glow block in RoomGroupSum's order; the final emitter is the lamp.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, set = 0, binding = 0) readonly buffer Source { uint pixels[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Decode { float linearByte[256]; };
+layout(std430, set = 0, binding = 2) buffer Emitters { vec4 emit[]; };
+layout(std430, set = 0, binding = 3) readonly buffer Glow { uint glow[]; };
+layout(push_constant) uniform Parameters {
+    uint srcW;
+    uint srcH;
+    uint stride;
+    uint gridX;
+    uint gridY;
+    uint glowW;
+    uint glowH;
+    uint blocksX;
+    uint blocksY;
+    uint glowBlock;
+    uint emitterCount;
+    uint glowOn;
+    float alpha;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+    vec4 lightL;
+} p;
+shared vec3 part[256];
+
+vec3 decoded(uint pixel) {
+    return vec3(linearByte[pixel & 255u],
+                linearByte[(pixel >> 8) & 255u],
+                linearByte[(pixel >> 16) & 255u]);
+}
+
+void main() {
+    uint e = gl_WorkGroupID.x;
+    uint thread = gl_LocalInvocationIndex;
+    if (e >= p.emitterCount) return;
+    uint patches = p.gridX * p.gridY;
+    uint lampIndex = patches + p.blocksX * p.blocksY;
+    if (e >= lampIndex) {
+        if (thread == 0u) emit[e * 6u + 5u] = vec4(p.lightL.rgb, 0.0);
+        return;
+    }
+    bool screen = e < patches;
+    uint count = 0u;
+    vec3 sum = vec3(0.0);
+    if (screen) {
+        uint i = e % p.gridX, j = e / p.gridX;
+        uint x0 = i * p.srcW / p.gridX, x1 = (i + 1u) * p.srcW / p.gridX;
+        uint y0 = j * p.srcH / p.gridY, y1 = (j + 1u) * p.srcH / p.gridY;
+        uint nx = (x1 - x0 + p.stride - 1u) / p.stride;
+        uint ny = (y1 - y0 + p.stride - 1u) / p.stride;
+        count = nx * ny;
+        for (uint k = thread; k < count; k += 256u) {
+            uint x = x0 + (k % nx) * p.stride;
+            uint y = y0 + (k / nx) * p.stride;
+            sum += decoded(pixels[y * p.srcW + x]);
+        }
+    } else if (p.glowOn != 0u && emit[e * 6u + 4u].w != 0.0) {
+        uint b = e - patches;
+        uint gx0 = (b % p.blocksX) * p.glowBlock;
+        uint gy0 = (b / p.blocksX) * p.glowBlock;
+        uint bw = min(p.glowBlock, p.glowW - gx0);
+        uint bh = min(p.glowBlock, p.glowH - gy0);
+        count = bw * bh;
+        for (uint k = thread; k < count; k += 256u)
+            sum += decoded(glow[(gy0 + k / bw) * p.glowW + gx0 + k % bw]);
+    }
+    part[thread] = sum;
+    barrier();
+    for (uint step = 128u; step > 0u; step >>= 1u) {
+        if (thread < step) part[thread] += part[thread + step];
+        barrier();
+    }
+    if (thread == 0u) {
+        vec3 mean = count > 0u ? part[0] / float(count) : vec3(0.0);
+        vec3 old = emit[e * 6u + 5u].rgb;
+        emit[e * 6u + 5u] = vec4(screen ? old + (mean - old) * p.alpha : mean, 0.0);
+    }
+}

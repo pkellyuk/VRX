@@ -88,17 +88,18 @@ the synthetic source. It checks flat room geometry, a tracked floor, emitter
 layout and radiance, the reduced mirror image, diffuse and lit lightmap
 samples, and Fresnel reflection ordering. Its printed sample values are the
 starting comparison points for the Vulkan EMIT, MIRROR, LIGHT and eye passes.
-The first Vulkan room asset, `room_mirror.comp`, builds to SPIR-V and follows
-the reference's per-texel reduction and sRGB decode table.
-`vrx-room-mirror-probe` executes it on Vulkan and compares every linear RGBA
-channel with `RoomMirrorPicture` at a 1e-5 tolerance. The GPU probe is built by
+The Vulkan `room_mirror.comp`, `room_emit.comp` and `room_light.comp` shaders
+build to SPIR-V. `vrx-room-gpu-probe` executes all three and compares MIRROR
+against `RoomMirrorPicture`, EMIT against `RoomEmitRadiance`, and every texel of
+the six-face LIGHT pass against `RoomTexel`, all at a 1e-5 tolerance. The fixture
+exercises picture patches, active and inactive glow blocks, partial temporal
+blending, a lit ceiling panel, glass/reflection finish and a nonblack world. The GPU probe is built by
 default but only enters CTest when configured with `-DVRX_TEST_VULKAN_GPU=ON`.
-The headset renderer does
-not draw the room yet.
+The headset renderer does not draw the room yet.
 
 ```sh
 build/linux-release/vrx-room-reference
-build/linux-release/vrx-room-mirror-probe
+build/linux-release/vrx-room-gpu-probe
 ```
 
 ## Live source and early Linux controller
@@ -114,15 +115,16 @@ when no system OpenXR loader is installed; `VRX_OPENXR_LOADER` overrides it.
 build/linux/vrx-xr-synthetic --until-stop --live --cuda
 ```
 
-The early controller requires Python 3 and PyQt6. It starts the engine,
+The Linux controller requires Python 3 and PyQt6. It starts the engine,
 opens the portal chooser, stops the process, displays logs, and saves named
-launch profiles under the XDG config directory. Profiles store the flat/CUDA
-depth choice plus screen width, distance,
-height, horizontal offset and stereo strength. The five numeric controls apply
-live while VR is running and can be saved and reloaded in named profiles.
-The depth backend choice takes effect at the next launch. The controller writes
-an atomic `VRXL 1` settings snapshot to a temporary session directory; the
-engine accepts `--settings=path` and reloads valid snapshots during a run.
+profiles under the XDG config directory. Profiles store the depth choice,
+screen placement and stereo strength, plus Room, Glass, Reflections, ceiling
+light and light colour. Numeric room controls apply live; the depth backend
+choice takes effect at the next launch. The controller writes an atomic
+`VRXL 2` snapshot to a temporary session directory. `VRXL 1` snapshots still
+load with the room off. The engine accepts `--settings=path` and reloads valid
+snapshots during a run. The controller starts the Vulkan room renderer even
+when Room is 0, so moving the slider above 0 can enable it without restarting.
 Set `VRX_LINUX_ENGINE` if the executable is outside the normal
 `build/linux-release` or `build/linux` locations. When using the isolated CUDA
 runtime bundle, start the controller with the same `LD_LIBRARY_PATH` used for
@@ -135,6 +137,40 @@ python3 linux/controller.py
 Stopping during an active OpenXR session requests clean SIGTERM shutdown.
 If the portal chooser has not yet returned, the controller forces shutdown
 after five seconds.
+
+## Windows-style room renderer
+
+`--room` adds a tracked per-eye room projection layer behind the stereo screen.
+The Linux GPU runs EMIT, MIRROR and LIGHT compute passes; the eye pass is
+generated at build time from the Windows HLSL in `xrapp5.cpp` and constants in
+`room.h`, then compiled to Vulkan SPIR-V. It draws the same room geometry,
+ceiling panel, framed glass, tiles and per-eye reflections. The glow uses the
+portable Windows ambilight reference at 64×45 texels, with temporal blending;
+this is lower resolution than the Windows 256-texel-wide glow to keep its CPU
+step near 1 ms. The room uses the Windows default black world colour.
+SteamVR STAGE floor position is used when available, with the seated estimate
+as fallback. The PICO 4 test target uses a 1322×1322 room image per eye, half
+its reported 2644×2644 recommendation. The stereo screen remains a separate
+quad layer; its dark footprint in the room projection prevents bright gaps.
+
+```sh
+build/linux/vrx-xr-synthetic 15 --room
+build/linux/vrx-xr-synthetic 15 --room-dump=/tmp/vrx-room-eyes.ppm
+```
+
+`--room-dump` also compares a grid of eye pixels with `room.h` and saves the
+first rendered stereo room image for inspection. It implies `--room`. The
+Vulkan EMIT, MIRROR and LIGHT passes can be checked against the CPU reference
+with `build/linux/vrx-room-gpu-probe` (or the opt-in
+`VRX_TEST_VULKAN_GPU` CTest option). The room was tested on the NVIDIA RTX
+5060 Ti with SteamVR; the generated shader needs Vulkan storage-image writes
+without format. `--room` reports a clear startup error if the GPU lacks that
+feature or the runtime offers no RGBA swapchain format.
+
+`VRXL 2` is a single line: the five `VRXL 1` floats, then Room, Glass,
+Reflections and ceiling light percentages (0–100), then the decimal value of
+an RGB light colour. The Linux controller writes and validates it. Room 0
+omits the projection layer while retaining the existing stereo quads.
 
 ## Build and run the probe
 

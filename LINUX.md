@@ -1,6 +1,6 @@
 # Linux port specification
 
-Status: implementation in progress, 2026-09-23. The Linux Vulkan/OpenXR renderer, GPU stereo warp, static and live ZipDepth paths, and portal/PipeWire capture are running; desktop control and distribution remain to be ported.
+Status: implementation in progress, 2026-09-23. The Linux Vulkan/OpenXR renderer, GPU stereo warp, static and live ZipDepth paths, portal/PipeWire capture, and the flat-screen room GPU passes are running. The room eye shader shares the Windows HLSL, and the controller has Linux-native room controls. Headset visual acceptance, longer performance measurements, recentering and distribution remain.
 
 ## Goal and scope
 
@@ -161,9 +161,10 @@ disable settings that Linux cannot apply yet.
 
 Store Linux settings under XDG config/data locations. Use a versioned Linux
 profile schema and a separate versioned live-settings snapshot; write both
-atomically and validate ranges before applying them. The current `VRXL 1`
-snapshot carries width, distance, height, horizontal offset and stereo strength.
-Extend it with a new version when room controls arrive. Numeric serialization
+atomically and validate ranges before applying them. `VRXL 1` snapshots carry width, distance, height, horizontal offset and stereo
+strength and load with the room off. `VRXL 2` appends Room, Glass, Reflections,
+ceiling light and RGB light colour. The controller writes version 2 and can
+load older Linux profiles with defaults for those controls. Numeric serialization
 must be culture-independent. Windows JSON profiles and the `VRX 11` desktop
 snapshot require no direct compatibility or import path. Never use a Windows
 virtual-key number as a Linux key symbol.
@@ -195,8 +196,8 @@ synchronization between these passes and OpenXR image submission. Port the
 flat-screen room composition first; curved-front geometry may follow after
 first release if the room remains correct for the supported flat screen.
 
-Extend the Linux live-settings format with a new version for these controls;
-do not overload `VRXL 1` fields. Use `room.h` and `XROOM.md` as the reference
+The Linux live-settings format uses `VRXL 2` for these controls, preserving
+`VRXL 1` parsing without overloading its fields. Use `room.h` and `XROOM.md` as the reference
 for geometry, emitter reduction, form factors, bounce, Fresnel coating and
 reflection edge filtering. Compare Vulkan lightmap and eye images against CPU
 reference outputs across room-off, diffuse, glass, reflections and room-light
@@ -365,9 +366,13 @@ emitters, the mirror image, diffuse/ceiling-lit lightmap samples and Fresnel
 ordering. Its sample values provide a parity baseline for the forthcoming
 Vulkan passes. The first Vulkan room shader, `room_mirror.comp`, now compiles to
 SPIR-V. Its probe executed on Vulkan and matched `RoomMirrorPicture` in all
-37,376 output channels within 1e-5 (worst difference 0.00000006). EMIT, LIGHT
-and eye passes, room controls, full GPU/CPU image comparisons and portable
-packaging remain before L4 acceptance.
+37,376 output channels within 1e-5 (worst difference 0.00000006). The Vulkan
+`room_emit.comp` shader also matches `RoomEmitRadiance` across all 627 emitter
+channels within 1e-5, including glow blocks and a ceiling light. The flat-room
+`room_light.comp` pass matches `RoomTexel` across all 73,728 colour channels of
+the six-face lightmap within 1e-5, including the glass/reflection finish and
+nonblack world colour. The eye pass, room controls, headset image comparisons
+and portable packaging remain before L4 acceptance.
 
 ## Milestones and acceptance gates
 

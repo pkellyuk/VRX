@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -11,6 +12,11 @@ struct LiveSettings {
     float height = 0.0f;
     float horizontal = 0.0f;
     float strength = 1.0f;
+    int room = 30;
+    int glass = 60;
+    int reflect = 25;
+    int light = 30;
+    uint32_t lightRgb = 0xFFB46B;
 };
 
 inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
@@ -23,13 +29,20 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
     std::istringstream input(line);
     if (!(input >> tag >> version >> candidate.width >> candidate.distance >>
           candidate.height >> candidate.horizontal >> candidate.strength) ||
-        tag != "VRXL" || version != 1 || (input >> extra) ||
+        tag != "VRXL" || (version != 1 && version != 2)) return false;
+    if (version == 1) {
+        candidate.room = 0;
+    } else if (!(input >> candidate.room >> candidate.glass >> candidate.reflect >>
+                 candidate.light >> candidate.lightRgb)) return false;
+    if ((input >> extra) ||
         !std::isfinite(candidate.width) || candidate.width < 0.5f || candidate.width > 10.0f ||
         !std::isfinite(candidate.distance) || candidate.distance < 0.5f || candidate.distance > 8.0f ||
         !std::isfinite(candidate.height) || candidate.height < -2.0f || candidate.height > 2.0f ||
         !std::isfinite(candidate.horizontal) || candidate.horizontal < -3.0f || candidate.horizontal > 3.0f ||
-        !std::isfinite(candidate.strength) || candidate.strength < 0.0f || candidate.strength > 2.0f)
-        return false;
+        !std::isfinite(candidate.strength) || candidate.strength < 0.0f || candidate.strength > 2.0f ||
+        candidate.room < 0 || candidate.room > 100 || candidate.glass < 0 || candidate.glass > 100 ||
+        candidate.reflect < 0 || candidate.reflect > 100 || candidate.light < 0 || candidate.light > 100 ||
+        candidate.lightRgb > 0xFFFFFFu) return false;
     out = candidate;
     return true;
 }
