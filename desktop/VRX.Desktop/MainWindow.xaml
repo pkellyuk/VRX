@@ -44,6 +44,7 @@
       <TextBlock x:Name="CardState" Foreground="{StaticResource Soft}" TextWrapping="Wrap"/>
      </StackPanel>
      <WrapPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" MaxWidth="560">
+      <Button x:Name="ChooseButton" Content="{l:Tr ChooseButton}" ToolTip="{l:Tr ChooseTip}" Click="ChooseClick"/>
       <Button x:Name="StartButton" Style="{StaticResource Primary}" Content="{l:Tr AttachPlay}" Click="StartClick" IsEnabled="False"/>
       <Button x:Name="StopButton" Content="{l:Tr StopVr}" Click="StopClick" IsEnabled="False"/>
       <Button x:Name="EasyRecenterButton" Content="{l:Tr Recenter}" ToolTip="{l:Tr RecenterTip}" Click="RecenterClick" IsEnabled="False"/>

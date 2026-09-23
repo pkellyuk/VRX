@@ -86,6 +86,12 @@ game's screen shows the countdown without taking the focus; switch to another
 window to cancel. After you stop VR, or if attaching fails, VRX leaves that window
 alone until you switch away from it and back.
 
+"Choose..." (on the game card, in Easy and Expert) shows every window VRX can play as a
+tile with a live picture, most recent first, plus a tile for each display. Click one to
+play it straight away. A display ("Whole screen") plays everything shown on it, such as
+your desktop or a video player, until you press Stop VR; all displays share one set of
+settings.
+
 "Make base settings" saves the settings shown as the starting point for games you
 have not set up yet; games already set up keep their own. "Reset this profile"
 returns a game to those base settings, or to VRX's defaults if none are saved.

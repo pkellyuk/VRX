@@ -8,7 +8,8 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace VRX.Desktop;
-public sealed record GameWindow(nint Handle, string Title)
+// Monitor >= 0: not a window but a whole display (ScreenSources), by the engine's --monitor=N.
+public sealed record GameWindow(nint Handle, string Title, int Monitor = -1)
 {
     public override string ToString() => string.IsNullOrWhiteSpace(Title) ? Loc.Format("WindowUntitled", Handle.ToString("X", System.Globalization.CultureInfo.InvariantCulture)) : Title;
 }
@@ -16,6 +17,7 @@ public sealed record RunningApp(int Pid, string Name, string FullPath, List<Game
 {
     public bool CanAttach => FullPath.Length > 0 && Windows.Count > 0;
     public string Description => !CanAttach ? Loc.Get("AppNoGameWindow") :
+        ScreenSources.IsScreen(this) ? (Windows.Count == 1 ? Loc.Get("ScreenDescriptionOne") : Loc.Format("ScreenDescriptionOther", Windows.Count)) :
         Windows.Count == 1 ? Loc.Format("AppDescriptionOne", Pid) : Loc.Format("AppDescriptionOther", Pid, Windows.Count);
 }
 public static class RunningApps
@@ -67,6 +69,34 @@ public static class RunningApps
     // A window that can be captured: visible, with a client area, and not a console.
     public static bool IsCaptureWindow(bool visible, int clientWidth, int clientHeight, string? className) =>
         visible && clientWidth > 0 && clientHeight > 0 && className is not ("ConsoleWindowClass" or "CASCADIA_HOSTING_WINDOW_CLASS");
+    [DllImport("user32.dll")] private static extern bool IsIconic(nint hwnd);
+    public static bool IsMinimized(nint hwnd) => hwnd != 0 && IsIconic(hwnd);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint hwnd, int attribute, out int value, int size);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern nint GetWindowLongPtr(nint hwnd, int index);
+    private const int DwmCloaked = 14, ExStyle = -20;
+    private const long ToolWindow = 0x80;
+
+    // The chooser shows only what a person would call a window: titled, not a tool window,
+    // not the desktop or taskbar, and not "cloaked" (hidden by Windows, such as a suspended
+    // Store app, which EnumWindows still reports as visible).
+    public static bool IsChooserWindow(GameWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        if (window.Monitor >= 0 || string.IsNullOrWhiteSpace(window.Title)) return false;
+        if (DwmGetWindowAttribute(window.Handle, DwmCloaked, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return false;
+        if ((GetWindowLongPtr(window.Handle, ExStyle) & ToolWindow) != 0) return false;
+        var cls = new StringBuilder(256); GetClassName(window.Handle, cls, cls.Capacity);
+        return cls.ToString() is not ("Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd");
+    }
+
+    // Top-level windows front to back (Windows' z-order): the chooser lists recent ones first.
+    public static Dictionary<nint, int> ZOrder()
+    {
+        var order = new Dictionary<nint, int>();
+        EnumWindows((hwnd, _) => { order[hwnd] = order.Count; return true; }, 0);
+        return order;
+    }
+
     public static List<RunningApp> List(bool showAll)
     {
         var windows = new Dictionary<int, List<GameWindow>>();

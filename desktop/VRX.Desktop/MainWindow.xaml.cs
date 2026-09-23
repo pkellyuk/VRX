@@ -81,7 +81,7 @@ public partial class MainWindow : Window
             if (line.Contains("RunFrameLoop: enter"))
             {
                 playing = true;
-                Status.Text = Loc.Format("StatusPlaying", Path.GetFileName(profile?.ExecutablePath));
+                Status.Text = Loc.Format("StatusPlaying", ProfileName(profile?.ExecutablePath));
                 UpdateGameCard();
             }
         });
@@ -133,6 +133,8 @@ public partial class MainWindow : Window
         {
             refreshing = true;
             var list = RunningApps.List(ShowAll.IsChecked == true);
+            // "Whole screen" (every display) is listed last, like a game with one window per display.
+            if (ScreenSources.App(store.Root, ScreenSources.List()) is { } screens) list.Add(screens);
             AppList.ItemsSource = list;
             var selected = list.FirstOrDefault(a => old != null && a.Pid == old.Pid && a.FullPath == old.FullPath) ??
                 (old == null ? list.FirstOrDefault(a => string.Equals(a.FullPath, lastExecutable, StringComparison.OrdinalIgnoreCase)) : null);
@@ -161,7 +163,7 @@ public partial class MainWindow : Window
         var app = AppList.SelectedItem as RunningApp;
         WindowList.ItemsSource = app?.Windows;
         WindowList.SelectedIndex = app?.Windows.Count > 0 ? 0 : -1;
-        PathLabel.Text = app?.FullPath.Length > 0 ? app.FullPath : Loc.Get("PathNoAccess");
+        PathLabel.Text = ScreenSources.IsScreen(app) ? Loc.Get("PathWholeScreen") : app?.FullPath.Length > 0 ? app.FullPath : Loc.Get("PathNoAccess");
         if (app?.CanAttach == true)
         {
             try
@@ -287,7 +289,7 @@ public partial class MainWindow : Window
             var p = ReadProfile(); store.Save(p); profile = p;
             if (engine.Running) engine.Update(p);
             if (sessionError.Length == 0)
-                Status.Text = Loc.Format(engine.Running ? "StatusSavedPlaying" : "StatusSaved", Path.GetFileName(p.ExecutablePath));
+                Status.Text = Loc.Format(engine.Running ? "StatusSavedPlaying" : "StatusSaved", ProfileName(p.ExecutablePath));
             return true;
         }
         catch (Exception ex) { Status.Text = ex.Message; return false; }
@@ -505,6 +507,7 @@ public partial class MainWindow : Window
         bool running = engine.Running;
         SetSettingsEnabled(profile != null && !stopping);
         StartButton.IsEnabled = !running && profile != null && WindowList.SelectedItem is GameWindow;
+        ChooseButton.IsEnabled = !running && !stopping;
         StopButton.IsEnabled = running && !stopping;
         RecenterButton.IsEnabled = EasyRecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
         AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = !running;
@@ -559,7 +562,48 @@ public partial class MainWindow : Window
         if (name.Length > 60) name = name[..57] + "...";
         return name;
     }
+    // The name settings are saved and played under: the executable, or "Whole screen".
+    private string ProfileName(string? path) =>
+        path != null && string.Equals(path, ScreenSources.ProfileKey(store.Root), StringComparison.OrdinalIgnoreCase) ? Loc.Get("WholeScreen") : Path.GetFileName(path) ?? "";
+
     private void StartClick(object sender, RoutedEventArgs e) => StartSession();
+
+    // "Choose...": pick a window or a whole display from live pictures, then play it at once,
+    // through the same path as picking it in the lists and pressing Attach / Play.
+    private void ChooseClick(object sender, RoutedEventArgs e)
+    {
+        System.Diagnostics.Debug.WriteLine("[Chooser] ChooseClick enter");
+        if (engine.Running || stopping) return;
+        List<RunningApp> apps;
+        List<ScreenSource> screens;
+        try { apps = RunningApps.List(false); screens = ScreenSources.List(); }
+        catch (Exception ex) { Status.Text = Loc.Format("StatusRefreshFailed", ex.Message); return; }
+        var chooser = new ChooserWindow(apps, screens, ScreenSources.App(store.Root, screens), (WindowList.SelectedItem as GameWindow)?.Handle ?? 0) { Owner = this };
+        if (chooser.ShowDialog() != true || chooser.Picked is not { } picked)
+        {
+            System.Diagnostics.Debug.WriteLine("[Chooser] ChooseClick exit: nothing picked");
+            return;
+        }
+        if (!SelectChoice(picked)) { Status.Text = Loc.Get("StatusChoiceGone"); return; }
+        System.Diagnostics.Debug.WriteLine($"[Chooser] ChooseClick: starting {picked.App.Name} '{picked.Window.Title}'");
+        StartSession();
+    }
+
+    // Selects a chooser pick in the game and window lists (as a manual pick would, loading its
+    // settings). False when it is no longer there.
+    private bool SelectChoice(ChooserWindow.Choice picked)
+    {
+        ArgumentNullException.ThrowIfNull(picked);
+        RefreshApps();
+        if (AppList.ItemsSource is not IEnumerable<RunningApp> list) return false;
+        var app = ScreenSources.IsScreen(picked.App) ? list.FirstOrDefault(ScreenSources.IsScreen) :
+            list.FirstOrDefault(a => a.Pid == picked.App.Pid && string.Equals(a.FullPath, picked.App.FullPath, StringComparison.OrdinalIgnoreCase));
+        var window = app?.Windows.FirstOrDefault(w => w.Handle == picked.Window.Handle && w.Monitor == picked.Window.Monitor);
+        if (app == null || window == null) return false;
+        if (!ReferenceEquals(AppList.SelectedItem, app)) AppList.SelectedItem = app;   // loads its settings
+        WindowList.SelectedItem = window;
+        return profile != null && ReferenceEquals(WindowList.SelectedItem, window);
+    }
     // Attach / Play, for the button and for auto-attach alike. True when the engine started.
     private bool StartSession()
     {
@@ -676,7 +720,7 @@ public partial class MainWindow : Window
     // Easy's width: at least EasyMinContentWidth, and wide enough for the game card's
     // buttons beside a readable game name, and for the switch beside the subtitle (a longer
     // translation makes the window wider instead of squeezing them).
-    private const double EasyMinContentWidth = 560, EasyNameMinWidth = 250, EasySubtitleMinWidth = 240, EasyButtonsMaxWidth = 560;
+    private const double EasyMinContentWidth = 560, EasyNameMinWidth = 236, EasySubtitleMinWidth = 240, EasyButtonsMaxWidth = 560;
     private const double CardIconWidth = 44 + 14, CardNameGap = 12, HeaderGap = 16;
     private const double ExpertResizeBorder = 6;
     private static readonly Thickness ExpertMargin = new(24, 20, 24, 18), EasyMargin = new(20, 14, 20, 14);
@@ -783,7 +827,7 @@ public partial class MainWindow : Window
         if (StartButton == null || ModeSwitch == null || GameCard == null) return;
         var unlimited = new Size(double.PositiveInfinity, double.PositiveInfinity);
         double buttons = 0;
-        foreach (var button in new[] { StartButton, StopButton, EasyRecenterButton })
+        foreach (var button in new[] { ChooseButton, StartButton, StopButton, EasyRecenterButton })
         {
             if (button.Visibility == Visibility.Collapsed) continue;
             button.Measure(unlimited);
@@ -1534,6 +1578,7 @@ public partial class MainWindow : Window
         SmokeTestAutoAttach(output, sample, one);
         SmokeTestModes(output, sample, one);
         await SmokeTestWindow(output);
+        await SmokeTestChooser(output, sample, one);
         SmokeTestStrings(root);
 
         PutProfile(one);
@@ -1830,6 +1875,73 @@ public partial class MainWindow : Window
     // Strings: every key used exists, placeholders match the arguments, MainWindow.xaml has
     // no literal text, and the pseudo-locale transforms every string. Reads the sources, so
     // it runs from the repository.
+    // "Choose...": the displays, the shared Whole screen settings, the engine's command line
+    // for a display and for a game, and the chooser itself (tiles, then a screenshot).
+    private async Task SmokeTestChooser(string output, RunningApp sample, Profile one)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(sample);
+        ArgumentNullException.ThrowIfNull(one);
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestChooser enter");
+        var screens = ScreenSources.List();
+        if (screens.Count == 0) throw new Exception("No displays listed");
+        if (screens.Select(s => s.Index).Where((index, i) => index != i).Any()) throw new Exception("Display indexes must count from 0 in order");
+        if (screens.Count(s => s.Primary) != 1) throw new Exception($"Expected one main display, found {screens.Count(s => s.Primary)}");
+        if (screens.Any(s => s.PixelWidth <= 0 || s.PixelHeight <= 0 || s.Width <= 0 || s.Height <= 0 || s.Handle == 0)) throw new Exception("A display has no size or handle");
+        if (ScreenSources.Snapshot(screens[0], 560) is not { PixelWidth: 560 } snapshot || snapshot.PixelHeight <= 0) throw new Exception("No display snapshot");
+        // Opaque (GDI's zero alpha would make it invisible) and not blank.
+        var pixels = new byte[snapshot.PixelWidth * snapshot.PixelHeight * 4];
+        snapshot.CopyPixels(pixels, snapshot.PixelWidth * 4, 0);
+        if (snapshot.Format != PixelFormats.Bgr32 || pixels.All(b => b == 0)) throw new Exception($"Display snapshot is {snapshot.Format} and {(pixels.All(b => b == 0) ? "blank" : "has content")}");
+
+        var screenApp = ScreenSources.App(store.Root, screens) ?? throw new Exception("No Whole screen entry");
+        if (!ScreenSources.IsScreen(screenApp) || !screenApp.CanAttach || screenApp.Windows.Count != screens.Count ||
+            screenApp.Windows.Select(w => w.Monitor).Where((monitor, i) => monitor != i).Any())
+            throw new Exception("The Whole screen entry must list every display, in order");
+        if (ScreenSources.IsScreen(sample)) throw new Exception("A game must not count as a display");
+        if (screenApp.Description != (screens.Count == 1 ? Loc.Get("ScreenDescriptionOne") : Loc.Format("ScreenDescriptionOther", screens.Count)))
+            throw new Exception($"Whole screen description: {screenApp.Description}");
+        // One set of settings, keyed like a game's, never by a real executable.
+        string key = ScreenSources.ProfileKey(store.Root);
+        var screenProfile = store.Load(key);
+        screenProfile.Width = 7.25;
+        store.Save(screenProfile);
+        if (store.Load(key).Width != 7.25 || store.FileFor(key) == store.FileFor(one.ExecutablePath)) throw new Exception("Whole screen settings did not round-trip on their own");
+        if (ProfileName(key) != Loc.Get("WholeScreen") || ProfileName(one.ExecutablePath) != "game.exe") throw new Exception("Profile names for the status line");
+
+        // The engine: a display by --monitor=N only; a game by its process and window only.
+        var display = screenApp.Windows[^1];
+        var screenArgs = EngineSession.Arguments(screenApp, display, screenProfile, "control.txt");
+        if (!screenArgs.Contains("--monitor=" + display.Monitor.ToString(CultureInfo.InvariantCulture)) ||
+            screenArgs.Any(a => a.StartsWith("--pid=") || a.StartsWith("--hwnd=") || a.StartsWith("--exe")) || screenArgs[0] != "0" || !screenArgs.Contains("--control=control.txt"))
+            throw new Exception("Display arguments: " + string.Join(' ', screenArgs));
+        var gameArgs = EngineSession.Arguments(sample, sample.Windows[0], one, "control.txt");
+        if (gameArgs.Any(a => a.StartsWith("--monitor")) || !gameArgs.Contains("--pid=1234") || !gameArgs.Contains("--hwnd=42") || !gameArgs.Contains("--exe=game.exe"))
+            throw new Exception("Game arguments: " + string.Join(' ', gameArgs));
+
+        // The chooser: one tile per display, windows that pass the filter, off screen.
+        var apps = RunningApps.List(false);
+        var chooser = new ChooserWindow(apps, screens, screenApp, display.Handle)
+        {
+            Owner = this, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = -20000
+        };
+        chooser.Show();
+        try
+        {
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            chooser.UpdateLayout();
+            int expectedWindows = apps.Where(a => a.CanAttach).Sum(a => a.Windows.Count(RunningApps.IsChooserWindow));
+            if (chooser.ScreenTileCount != screens.Count || chooser.WindowTileCount != expectedWindows)
+                throw new Exception($"Chooser tiles: {chooser.WindowTileCount} windows (expected {expectedWindows}), {chooser.ScreenTileCount} displays (expected {screens.Count})");
+            if (chooser.Picked != null) throw new Exception("The chooser must start with nothing picked");
+            var bitmap = new RenderTargetBitmap((int)chooser.ActualWidth, (int)chooser.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(chooser);
+            SavePng(bitmap, Path.Combine(output, "ui-chooser.png"));
+        }
+        finally { chooser.Close(); }
+        System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestChooser exit: {screens.Count} display(s), {apps.Count} app(s)");
+    }
+
     private static void SmokeTestStrings(string root)
     {
         ArgumentNullException.ThrowIfNull(root);
@@ -1856,24 +1968,27 @@ public partial class MainWindow : Window
             if (value.Any(char.IsAsciiLetterLower) && pseudo[1..^1].Replace("·", "").Trim() == value) problems.Add($"{key}: pseudo form is not accented");
         }
 
-        // MainWindow.xaml: {l:Tr Key} (no placeholders) and {l:TrValue Key, ...} (one).
+        // The windows' XAML: {l:Tr Key} (no placeholders) and {l:TrValue Key, ...} (one).
         string source = Path.Combine(root, "desktop", "VRX.Desktop");
-        string xaml = File.ReadAllText(Path.Combine(source, "MainWindow.xaml"));
-        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(xaml, @"\{l:(Tr|TrValue)\s+(\w+)"))
+        foreach (string xamlName in new[] { "MainWindow.xaml", "ChooserWindow.xaml" })
         {
-            string key = m.Groups[2].Value;
-            used.Add(key);
-            if (!strings.ContainsKey(key)) { problems.Add($"MainWindow.xaml: missing key {key}"); continue; }
-            int wanted = m.Groups[1].Value == "TrValue" ? 1 : 0;
-            if (PlaceholderCount(key) != wanted) problems.Add($"MainWindow.xaml: {key} has {PlaceholderCount(key)} placeholder(s), wanted {wanted}");
+            string xaml = File.ReadAllText(Path.Combine(source, xamlName));
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(xaml, @"\{l:(Tr|TrValue)\s+(\w+)"))
+            {
+                string key = m.Groups[2].Value;
+                used.Add(key);
+                if (!strings.ContainsKey(key)) { problems.Add($"{xamlName}: missing key {key}"); continue; }
+                int wanted = m.Groups[1].Value == "TrValue" ? 1 : 0;
+                if (PlaceholderCount(key) != wanted) problems.Add($"{xamlName}: {key} has {PlaceholderCount(key)} placeholder(s), wanted {wanted}");
+            }
+            // No literal text: every text-bearing attribute is a markup extension, and no element
+            // has text content. (No symbols are exempt; even ↻ is in Strings.resx.)
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(xaml, @"\s(Content|Text|Header|ToolTip|Title)=""([^""]*)"""))
+                if (!m.Groups[2].Value.StartsWith('{')) problems.Add($"{xamlName}: literal {m.Groups[1].Value}=\"{m.Groups[2].Value}\"");
+            string withoutComments = System.Text.RegularExpressions.Regex.Replace(xaml, "<!--.*?-->", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(withoutComments, @">\s*([^<\s][^<]*)<"))
+                problems.Add($"{xamlName}: literal element text '{m.Groups[1].Value.Trim()}'");
         }
-        // No literal text: every text-bearing attribute is a markup extension, and no element
-        // has text content. (No symbols are exempt; even ↻ is in Strings.resx.)
-        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(xaml, @"\s(Content|Text|Header|ToolTip|Title)=""([^""]*)"""))
-            if (!m.Groups[2].Value.StartsWith('{')) problems.Add($"MainWindow.xaml: literal {m.Groups[1].Value}=\"{m.Groups[2].Value}\"");
-        string withoutComments = System.Text.RegularExpressions.Regex.Replace(xaml, "<!--.*?-->", "", System.Text.RegularExpressions.RegexOptions.Singleline);
-        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(withoutComments, @">\s*([^<\s][^<]*)<"))
-            problems.Add($"MainWindow.xaml: literal element text '{m.Groups[1].Value.Trim()}'");
 
         // Code: Loc.Get with a literal key (no placeholders) and Loc.Format with a literal key
         // and as many arguments as placeholders; a conditional key (cond ? A : B) checks each.

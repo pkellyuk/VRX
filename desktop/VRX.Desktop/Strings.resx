@@ -253,6 +253,24 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorProfileInvalid" xml:space="preserve"><value>This game's saved settings are invalid. They have not been overwritten.</value></data>
   <data name="ErrorStopFirst" xml:space="preserve"><value>Stop the current session first.</value></data>
   <data name="ErrorAnotherSession" xml:space="preserve"><value>Another VRX session is running. Close that session before attaching here.</value></data>
+  <data name="ErrorScreenChanged" xml:space="preserve"><value>The displays have changed since the list was made. Choose again.</value></data>
+  <data name="ChooseButton" xml:space="preserve"><value>Choose…</value><comment>Opens the chooser: pictures of every window and display.</comment></data>
+  <data name="ChooseTip" xml:space="preserve"><value>Pick a window or a whole screen from live pictures and play it in VR</value></data>
+  <data name="ChooserTitle" xml:space="preserve"><value>Choose what to play</value></data>
+  <data name="ChooserIntro" xml:space="preserve"><value>Click a window or a screen to play it in VR.</value></data>
+  <data name="ChooserWindows" xml:space="preserve"><value>Windows</value></data>
+  <data name="ChooserNoWindows" xml:space="preserve"><value>No windows to show. Start your game, then choose again.</value></data>
+  <data name="ChooserScreens" xml:space="preserve"><value>Whole screen</value></data>
+  <data name="ChooserScreensHint" xml:space="preserve"><value>Everything shown on that display, such as your desktop or a video player. It plays until you press Stop VR.</value></data>
+  <data name="ChooserMainDisplay" xml:space="preserve"><value>Main display</value></data>
+  <data name="ChooserMinimized" xml:space="preserve"><value>{0} · minimised</value><comment>{0} = executable name</comment></data>
+  <data name="WholeScreen" xml:space="preserve"><value>Whole screen</value></data>
+  <data name="ScreenTitle" xml:space="preserve"><value>Display {0} · {1} × {2}</value><comment>{0} = display number, {1} x {2} = resolution in pixels</comment></data>
+  <data name="ScreenTitlePrimary" xml:space="preserve"><value>Display {0} · {1} × {2} · main</value><comment>{0} = display number, {1} x {2} = resolution in pixels</comment></data>
+  <data name="ScreenDescriptionOne" xml:space="preserve"><value>1 display</value></data>
+  <data name="ScreenDescriptionOther" xml:space="preserve"><value>{0} displays</value><comment>{0} = number of displays</comment></data>
+  <data name="PathWholeScreen" xml:space="preserve"><value>Everything shown on the display. One set of settings is shared by all displays.</value></data>
+  <data name="StatusChoiceGone" xml:space="preserve"><value>That window or display is no longer there. Choose again.</value></data>
   <data name="ErrorEngineBlockedPolicy" xml:space="preserve"><value>Windows blocked VRX's 3D engine (engine\xrplayer.exe). This is usually Smart App Control, which stops new programs that are not digitally signed yet, and VRX's programs are not signed yet. To play now, turn Smart App Control off in Windows Security &gt; App &amp; browser control &gt; Smart App Control settings; Windows may not let you turn it back on without a reset. On a work or school PC, ask its administrator.</value></data>
   <data name="ErrorEngineBlockedAntivirus" xml:space="preserve"><value>Your antivirus stopped VRX's 3D engine (engine\xrplayer.exe) from running. If you downloaded VRX from its GitHub release, you can check the download against SHA256SUMS.txt, then allow the file in your antivirus and report it as a false positive.</value></data>
   <data name="ErrorProcessChanged" xml:space="preserve"><value>The selected process has closed or changed. Refresh the list.</value></data>

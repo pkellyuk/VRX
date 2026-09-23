@@ -41,7 +41,15 @@ public sealed class EngineSession
             foreach (var item in existing) item.Dispose();
             if (found) throw new InvalidOperationException(Loc.Get("ErrorAnotherSession"));
         }
-        if (!string.Equals(RunningApps.ProcessPath(app.Pid), app.FullPath, StringComparison.OrdinalIgnoreCase))
+        bool screen = window.Monitor >= 0;
+        if (screen)
+        {
+            // A display: it must still be the display that was listed (same place in the order).
+            var now = ScreenSources.List();
+            if (window.Monitor >= now.Count || now[window.Monitor].Handle != window.Handle)
+                throw new InvalidOperationException(Loc.Get("ErrorScreenChanged"));
+        }
+        else if (!string.Equals(RunningApps.ProcessPath(app.Pid), app.FullPath, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(Loc.Get("ErrorProcessChanged"));
         string root = RepositoryRoot();
         string engine = EnginePath();
@@ -51,19 +59,15 @@ public sealed class EngineSession
         var start = new ProcessStartInfo(engine) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8 };
-        // Culture-invariant numbers: the engine parses these whatever the Windows language.
-        var invariant = System.Globalization.CultureInfo.InvariantCulture;
-        foreach (string arg in new[] { "0", "--exe=" + Path.GetFileName(app.FullPath), "--exe-path=" + app.FullPath,
-            "--pid=" + app.Pid.ToString(invariant), "--hwnd=" + window.Handle.ToInt64().ToString(invariant), "--control=" + control }) start.ArgumentList.Add(arg);
-        if (profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) start.ArgumentList.Add("--depth-gpu=" + profile.DepthGpu);
+        foreach (string arg in Arguments(app, window, profile, control)) start.ArgumentList.Add(arg);
         var child = new Process { StartInfo = start };
-        Debug.WriteLine($"[Engine] start {engine} for {app.FullPath} pid {app.Pid}");
+        Debug.WriteLine($"[Engine] start {engine} for {(screen ? "display " + window.Monitor : app.FullPath)} pid {app.Pid}: {string.Join(' ', start.ArgumentList)}");
         try
         {
             child.Start(); process = child;
             Debug.WriteLine($"[Engine] started pid {child.Id}");
             _ = Observe(child, sessionRoot);
-            RunningApps.SetForegroundWindow(window.Handle);
+            if (!screen) RunningApps.SetForegroundWindow(window.Handle);
         }
         catch (System.ComponentModel.Win32Exception ex) when (BlockedMessage(ex.NativeErrorCode) is { } blocked)
         {
@@ -72,6 +76,24 @@ public sealed class EngineSession
             throw new InvalidOperationException(blocked, ex);
         }
         catch { child.Dispose(); process = null; throw; }
+    }
+    // The engine's command line: a game's window by its process and handle, or a whole
+    // display by its place in Windows' display order (--monitor=N).
+    public static List<string> Arguments(RunningApp app, GameWindow window, Profile profile, string controlFile)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(window);
+        ArgumentNullException.ThrowIfNull(profile);
+        ArgumentException.ThrowIfNullOrEmpty(controlFile);
+        // Culture-invariant numbers: the engine parses these whatever the Windows language.
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        var args = new List<string> { "0" };
+        if (window.Monitor >= 0) args.Add("--monitor=" + window.Monitor.ToString(invariant));
+        else args.AddRange(["--exe=" + Path.GetFileName(app.FullPath), "--exe-path=" + app.FullPath,
+            "--pid=" + app.Pid.ToString(invariant), "--hwnd=" + window.Handle.ToInt64().ToString(invariant)]);
+        args.Add("--control=" + controlFile);
+        if (profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) args.Add("--depth-gpu=" + profile.DepthGpu);
+        return args;
     }
     // Windows refusing to run the engine, in plain words: Smart App Control or App Control for
     // Business (4551), AppLocker or a software restriction policy (1260), antivirus (225, 226).
