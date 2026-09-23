@@ -312,9 +312,14 @@ CUDA ZipDepth, shows process output, stops an active session by SIGTERM,
 and saves named launch profiles atomically under the XDG config directory.
 The engine's `--until-stop` mode was checked with a synthetic headset run:
 SIGTERM ended it cleanly after 1,180 image-bearing OpenXR frames and zero
-runtime skips. An offscreen Qt/profile smoke check passed. The controller
-still needs live screen/depth controls, profile migration, packaging and an
-end-to-end UI-driven headset run before L4 acceptance.
+runtime skips. An offscreen Qt/profile smoke check passed. A UI-driven live CUDA run with the normal desktop environment launched the
+portal chooser, reached SteamVR, streamed logs into the controller, and
+stopped cleanly from its Stop VR action with exit code 0. It submitted
+1,549 image-bearing OpenXR frames with zero runtime skips, captured 905
+frames with zero ring drops, and completed 851 depth updates. Median/p95
+arrival-to-depth was 27.83/31.40 ms across those updates. The controller
+still needs live screen/depth controls, Windows profile migration and
+packaging before L4 acceptance.
 
 ## Milestones and acceptance gates
 
