@@ -54,7 +54,11 @@ public sealed class AppSettings
     // Null until the window has been placed in that mode; nonsense values are dropped.
     public WindowPlace? ExpertWindow { get; set; }
     public WindowPlace? EasyWindow { get; set; }
+    // The chooser's size (and maximized or not); it always opens centred on VRX's window.
+    public WindowPlace? ChooserWindow { get; set; }
 
+    public static WindowPlace? ValidSize(WindowPlace? place) =>
+        place != null && place.HasSize ? new WindowPlace { Width = place.Width, Height = place.Height, Maximized = place.Maximized } : null;
     public static WindowPlace? ValidBounds(WindowPlace? place) => place != null && place.HasPosition && place.HasSize ? place.Copy() : null;
     public static WindowPlace? ValidPosition(WindowPlace? place) =>
         place != null && place.HasPosition ? new WindowPlace { Left = place.Left, Top = place.Top } : null;

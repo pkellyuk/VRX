@@ -1,8 +1,8 @@
 <Window x:Class="VRX.Desktop.ChooserWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:l="clr-namespace:VRX.Desktop"
- Title="{l:Tr ChooserTitle}" Icon="Assets/vrx.ico" Width="1000" Height="700" ResizeMode="NoResize" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+ Title="{l:Tr ChooserTitle}" Icon="Assets/vrx.ico" Width="1000" Height="700" MinWidth="620" MinHeight="440" ResizeMode="CanResize" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
  Background="{StaticResource Page}" Foreground="{StaticResource Ink}" FontFamily="Segoe UI" FontSize="14" UseLayoutRounding="True">
  <!-- The same skin as the main window: VRX's own title bar over a client-area-only window. -->
- <WindowChrome.WindowChrome><WindowChrome CaptionHeight="32" ResizeBorderThickness="0" GlassFrameThickness="0,0,0,1" CornerRadius="0" UseAeroCaptionButtons="False"/></WindowChrome.WindowChrome>
+ <WindowChrome.WindowChrome><WindowChrome CaptionHeight="32" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1" CornerRadius="0" UseAeroCaptionButtons="False"/></WindowChrome.WindowChrome>
  <Window.Resources>
   <!-- A tile: a card that lights up in the accent when pointed at; the one VRX has selected
        now (Tag "Current") keeps an accent edge. -->
@@ -30,7 +30,7 @@
    </Setter>
   </Style>
  </Window.Resources>
- <Border Background="{StaticResource Page}" BorderBrush="{StaticResource WindowEdge}" BorderThickness="1">
+ <Border x:Name="Frame" Background="{StaticResource Page}" BorderBrush="{StaticResource WindowEdge}" BorderThickness="1">
   <Grid>
    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
 
@@ -40,9 +40,14 @@
     <Border Grid.ColumnSpan="3" Height="1" VerticalAlignment="Bottom" Background="{StaticResource ChromeEdge}"/>
     <Image Source="Assets/vrx.ico" Width="16" Height="16" Margin="15,0,12,0" RenderOptions.BitmapScalingMode="HighQuality" IsHitTestVisible="False"/>
     <TextBlock Grid.Column="1" Style="{StaticResource TitleText}" Text="{l:Tr ChooserTitle}" FontWeight="SemiBold" Foreground="{StaticResource Ink}" IsHitTestVisible="False"/>
-    <Button Grid.Column="2" x:Name="CloseButton" Style="{StaticResource CloseCaptionButton}" Click="CloseClick" ToolTip="{l:Tr TitleClose}" AutomationProperties.Name="{l:Tr TitleClose}">
-     <Path Style="{StaticResource CaptionGlyph}" Data="M 0,0 L 10,10 M 10,0 L 0,10"/>
-    </Button>
+    <StackPanel Grid.Column="2" Orientation="Horizontal">
+     <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="MaximizeClick" ToolTip="{l:Tr TitleMaximize}" AutomationProperties.Name="{l:Tr TitleMaximize}">
+      <Path x:Name="MaxGlyph" Style="{StaticResource CaptionGlyph}" Data="M 0.5,0.5 L 9.5,0.5 L 9.5,9.5 L 0.5,9.5 Z"/>
+     </Button>
+     <Button x:Name="CloseButton" Style="{StaticResource CloseCaptionButton}" Click="CloseClick" ToolTip="{l:Tr TitleClose}" AutomationProperties.Name="{l:Tr TitleClose}">
+      <Path Style="{StaticResource CaptionGlyph}" Data="M 0,0 L 10,10 M 10,0 L 0,10"/>
+     </Button>
+    </StackPanel>
    </Grid>
 
    <TextBlock Grid.Row="1" x:Name="Intro" Text="{l:Tr ChooserIntro}" FontSize="16" TextWrapping="Wrap" Margin="24,18,24,6"/>

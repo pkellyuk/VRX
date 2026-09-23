@@ -163,6 +163,7 @@ public sealed class ProfileStore(string root)
             loaded.AutoAttachSeconds = AppSettings.ClampSeconds(loaded.AutoAttachSeconds);
             loaded.ExpertWindow = AppSettings.ValidBounds(loaded.ExpertWindow);
             loaded.EasyWindow = AppSettings.ValidPosition(loaded.EasyWindow);
+            loaded.ChooserWindow = AppSettings.ValidSize(loaded.ChooserWindow);
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException)
         {
@@ -205,6 +206,7 @@ public sealed class ProfileStore(string root)
             Sections = settings.Sections == null ? null : new Dictionary<string, bool>(settings.Sections, StringComparer.Ordinal),
             ExpertWindow = AppSettings.ValidBounds(settings.ExpertWindow),
             EasyWindow = AppSettings.ValidPosition(settings.EasyWindow),
+            ChooserWindow = AppSettings.ValidSize(settings.ChooserWindow),
         };
         AtomicWrite(AppSettingsFile, JsonSerializer.Serialize(copy, new JsonSerializerOptions { WriteIndented = true }));
     }

@@ -138,6 +138,21 @@ public static class WindowPlacement
 
     // Moves the window back onto a monitor that exists. Easy's height follows its content,
     // so it is only moved; Expert may also be shrunk to fit.
+    // How far a maximized skinned window (WindowChrome) hangs past its monitor's work area,
+    // in WPF units: its content is padded by this so nothing is cut off at the edges.
+    public static System.Windows.Thickness MaximizedOverhang(System.Windows.Window window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        nint hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        var work = WorkAreaOf(hwnd);
+        if (work.Area <= 0 || !TryGetBounds(hwnd, out var bounds)) return new System.Windows.Thickness(0);
+        var dpi = VisualTreeHelper.GetDpi(window);
+        var overhang = new System.Windows.Thickness(Math.Max(0, work.Left - bounds.Left) / dpi.DpiScaleX, Math.Max(0, work.Top - bounds.Top) / dpi.DpiScaleY,
+            Math.Max(0, bounds.Right - work.Right) / dpi.DpiScaleX, Math.Max(0, bounds.Bottom - work.Bottom) / dpi.DpiScaleY);
+        Debug.WriteLine($"[Window] MaximizedOverhang: window {bounds}, work {work} -> {overhang}");
+        return overhang;
+    }
+
     public static void KeepOnScreen(nint hwnd, bool allowResize)
     {
         Debug.WriteLine($"[Placement] KeepOnScreen enter: {hwnd:X}, resize {allowResize}");

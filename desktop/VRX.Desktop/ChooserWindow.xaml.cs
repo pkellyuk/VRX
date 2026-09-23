@@ -29,19 +29,30 @@ public sealed partial class ChooserWindow : Window
         public bool Visible;
     }
 
-    // Three tiles to a row in the 1000-wide chooser, with room for the scroll bar.
+    // Three tiles to a row at the chooser's default 1000 width, with room for the scroll bar;
+    // resizing it fits more or fewer to a row.
     private const double PictureWidth = 272, PictureHeight = 153;
     private const int SnapshotWidth = 560;
     private readonly List<Tile> tiles = [];
     private nint hwnd;
 
-    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow)
+    // The size it was left at, for next time (AppSettings.ChooserWindow); set when it closes.
+    public WindowPlace? Place { get; private set; }
+
+    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null)
     {
         ArgumentNullException.ThrowIfNull(apps);
         ArgumentNullException.ThrowIfNull(screens);
-        System.Diagnostics.Debug.WriteLine($"[Chooser] enter: {apps.Count} app(s), {screens.Count} display(s), current {currentWindow:X}");
+        System.Diagnostics.Debug.WriteLine($"[Chooser] enter: {apps.Count} app(s), {screens.Count} display(s), current {currentWindow:X}, place {place?.ToString() ?? "default"}");
         InitializeComponent();
         Title = Loc.Get("ChooserTitle");
+        // The remembered size, never bigger than the screen it opens on (it opens centred on VRX).
+        if (place is { HasSize: true })
+        {
+            Width = Math.Clamp(place.Width, MinWidth, Math.Max(MinWidth, SystemParameters.WorkArea.Width));
+            Height = Math.Clamp(place.Height, MinHeight, Math.Max(MinHeight, SystemParameters.WorkArea.Height));
+        }
+        bool maximize = place?.Maximized == true;
 
         // Windows, most recently used first (Windows' z-order), each with its app's icon.
         var order = RunningApps.ZOrder();
@@ -63,7 +74,9 @@ public sealed partial class ChooserWindow : Window
 
         // The display pictures are taken now, before the chooser is on screen, so it is not in them.
         RefreshSnapshots();
-        SourceInitialized += (_, _) => Attach();
+        SourceInitialized += (_, _) => { Attach(); if (maximize) WindowState = WindowState.Maximized; };
+        StateChanged += (_, _) => UpdateFrame();
+        Closing += (_, _) => RememberPlace();
         LayoutUpdated += (_, _) => PlaceThumbnails();
         Scroll.ScrollChanged += (_, _) => PlaceThumbnails();
         Closed += (_, _) => Detach();
@@ -114,6 +127,33 @@ public sealed partial class ChooserWindow : Window
     }
 
     private void CloseClick(object sender, RoutedEventArgs e) => Close();
+
+    private void MaximizeClick(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
+        else SystemCommands.MaximizeWindow(this);
+    }
+
+    // Maximized, Windows pushes the frame past the screen's edges: pad the content back in,
+    // drop the edge line, and turn the maximize glyph into restore.
+    private void UpdateFrame()
+    {
+        bool maximized = WindowState == WindowState.Maximized;
+        Frame.BorderThickness = new Thickness(maximized ? 0 : 1);
+        Frame.Padding = maximized ? WindowPlacement.MaximizedOverhang(this) : new Thickness(0);
+        MaxGlyph.Data = maximized ? MainWindow.RestoreGlyph : MainWindow.MaximizeGlyph;
+        string name = Loc.Get(maximized ? "TitleRestore" : "TitleMaximize");
+        MaxButton.ToolTip = name;
+        System.Windows.Automation.AutomationProperties.SetName(MaxButton, name);
+        System.Diagnostics.Debug.WriteLine($"[Chooser] UpdateFrame: maximized {maximized}, padding {Frame.Padding}");
+    }
+
+    private void RememberPlace()
+    {
+        Rect bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, ActualWidth, ActualHeight) : RestoreBounds;
+        Place = AppSettings.ValidSize(new WindowPlace { Width = bounds.Width, Height = bounds.Height, Maximized = WindowState == WindowState.Maximized });
+        System.Diagnostics.Debug.WriteLine($"[Chooser] RememberPlace: {Place?.ToString() ?? "none"}");
+    }
 
     // Once the window exists: ask Windows for each window's live picture.
     private void Attach()

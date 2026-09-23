@@ -578,8 +578,15 @@ public partial class MainWindow : Window
         List<ScreenSource> screens;
         try { apps = RunningApps.List(false); screens = ScreenSources.List(); }
         catch (Exception ex) { Status.Text = Loc.Format("StatusRefreshFailed", ex.Message); return; }
-        var chooser = new ChooserWindow(apps, screens, ScreenSources.App(store.Root, screens), (WindowList.SelectedItem as GameWindow)?.Handle ?? 0) { Owner = this };
-        if (chooser.ShowDialog() != true || chooser.Picked is not { } picked)
+        var chooser = new ChooserWindow(apps, screens, ScreenSources.App(store.Root, screens), (WindowList.SelectedItem as GameWindow)?.Handle ?? 0,
+            appSettings.ChooserWindow) { Owner = this };
+        bool chose = chooser.ShowDialog() == true;
+        if (chooser.Place != null)
+        {
+            appSettings.ChooserWindow = chooser.Place;
+            SaveAppSettings();
+        }
+        if (!chose || chooser.Picked is not { } picked)
         {
             System.Diagnostics.Debug.WriteLine("[Chooser] ChooseClick exit: nothing picked");
             return;
@@ -724,8 +731,8 @@ public partial class MainWindow : Window
     private const double CardIconWidth = 44 + 14, CardNameGap = 12, HeaderGap = 16;
     private const double ExpertResizeBorder = 6;
     private static readonly Thickness ExpertMargin = new(24, 20, 24, 18), EasyMargin = new(20, 14, 20, 14);
-    private static readonly Geometry MaximizeGlyph = Frozen("M 0.5,0.5 L 9.5,0.5 L 9.5,9.5 L 0.5,9.5 Z");
-    private static readonly Geometry RestoreGlyph = Frozen("M 2.5,2.5 L 2.5,0.5 L 9.5,0.5 L 9.5,7.5 L 7.5,7.5 M 0.5,2.5 L 7.5,2.5 L 7.5,9.5 L 0.5,9.5 Z");
+    internal static readonly Geometry MaximizeGlyph = Frozen("M 0.5,0.5 L 9.5,0.5 L 9.5,9.5 L 0.5,9.5 Z");
+    internal static readonly Geometry RestoreGlyph = Frozen("M 2.5,2.5 L 2.5,0.5 L 9.5,0.5 L 9.5,7.5 L 7.5,7.5 M 0.5,2.5 L 7.5,2.5 L 7.5,9.5 L 0.5,9.5 Z");
 
     private static Geometry Frozen(string data)
     {
@@ -910,17 +917,7 @@ public partial class MainWindow : Window
     }
 
     // How far a maximized window reaches past its monitor's work area, in WPF units.
-    private Thickness MaximizedOverhang()
-    {
-        nint hwnd = new WindowInteropHelper(this).Handle;
-        var work = WindowPlacement.WorkAreaOf(hwnd);
-        if (work.Area <= 0 || !WindowPlacement.TryGetBounds(hwnd, out var bounds)) return new Thickness(0);
-        var dpi = VisualTreeHelper.GetDpi(this);
-        var overhang = new Thickness(Math.Max(0, work.Left - bounds.Left) / dpi.DpiScaleX, Math.Max(0, work.Top - bounds.Top) / dpi.DpiScaleY,
-            Math.Max(0, bounds.Right - work.Right) / dpi.DpiScaleX, Math.Max(0, bounds.Bottom - work.Bottom) / dpi.DpiScaleY);
-        System.Diagnostics.Debug.WriteLine($"[Window] MaximizedOverhang: window {bounds}, work {work} -> {overhang}");
-        return overhang;
-    }
+    private Thickness MaximizedOverhang() => WindowPlacement.MaximizedOverhang(this);
 
     // Maximize / Restore Down only in Expert; its glyph and name follow the window's state.
     private void UpdateCaptionButtons()
@@ -1921,7 +1918,7 @@ public partial class MainWindow : Window
 
         // The chooser: one tile per display, windows that pass the filter, off screen.
         var apps = RunningApps.List(false);
-        var chooser = new ChooserWindow(apps, screens, screenApp, display.Handle)
+        var chooser = new ChooserWindow(apps, screens, screenApp, display.Handle, new WindowPlace { Width = 820, Height = 560 })
         {
             Owner = this, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = -20000
         };
@@ -1937,8 +1934,20 @@ public partial class MainWindow : Window
             var bitmap = new RenderTargetBitmap((int)chooser.ActualWidth, (int)chooser.ActualHeight, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(chooser);
             SavePng(bitmap, Path.Combine(output, "ui-chooser.png"));
+            // Resizable, from the remembered size, within its minimum.
+            if (chooser.ResizeMode != ResizeMode.CanResize || chooser.Width != 820 || chooser.Height != 560 || !chooser.MaxButton.IsVisible)
+                throw new Exception($"The chooser must open resizable at its remembered size (got {chooser.Width} x {chooser.Height}, {chooser.ResizeMode})");
+            chooser.Width = 930; chooser.Height = 610;
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         }
         finally { chooser.Close(); }
+        if (chooser.Place is not { Width: 930, Height: 610, Maximized: false })
+            throw new Exception($"The chooser must report its size when it closes (got {chooser.Place})");
+        var chooserStore = new ProfileStore(Path.Combine(output, "chooser-settings"));
+        chooserStore.SaveAppSettings(new AppSettings { ChooserWindow = chooser.Place });
+        if (chooserStore.LoadAppSettings().ChooserWindow is not { Width: 930, Height: 610 } ||
+            AppSettings.ValidSize(new WindowPlace { Width = -4, Height = 300 }) != null)
+            throw new Exception("The chooser's size must round-trip through app-settings.json, and nonsense sizes be dropped");
         System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestChooser exit: {screens.Count} display(s), {apps.Count} app(s)");
     }
 
