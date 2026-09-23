@@ -1,6 +1,6 @@
 # Linux port specification
 
-Status: implementation in progress, 2026-09-23. The Linux Vulkan/OpenXR renderer, GPU stereo warp, static ZipDepth still-image path and live portal/PipeWire colour preview are running; asynchronous inference and desktop control remain to be ported.
+Status: implementation in progress, 2026-09-23. The Linux Vulkan/OpenXR renderer, GPU stereo warp, static and live ZipDepth paths, and portal/PipeWire capture are running; desktop control and distribution remain to be ported.
 
 ## Goal and scope
 
@@ -236,7 +236,7 @@ test reached XR_SESSION_STATE_FOCUSED and submitted 1,311 image-bearing
 OpenXR frames with zero runtime skips. Vulkan prep and warp comparisons
 passed again; the user confirmed the stereo still image looked correct
 in the PICO 4. This validates the static ZipDepth-to-headset path on the
-reference setup. L3 now has a live colour preview; asynchronous depth inference remains to be integrated.
+reference setup. L3 now has a live colour and asynchronous ZipDepth path.
 
 L3 has begun with `vrx-capture-probe`, a libportal/PipeWire ScreenCast
 client. It opens the desktop source chooser, connects to the selected
@@ -271,7 +271,14 @@ using the fallback submitted 228 image-bearing OpenXR frames with zero
 runtime skips.
 
 The live path currently uses mapped shared-memory copy and CPU resampling.
-DMA-BUF import and asynchronous depth inference remain. A controlled Qt
+With `--live --cuda`, an inference worker takes the newest completed
+RGB source frame, prepares the checked ZipDepth NCHW tensor on the CPU,
+runs the CUDA-only ONNX Runtime session, applies the existing percentile
+normalization and dilation, and publishes a depth map tagged with the
+source sequence. OpenXR uses the latest completed depth without waiting
+for a new one. The default `--live` mode retains flat depth as a capture
+diagnostic. DMA-BUF import and GPU-side live model preparation remain
+optimization work. A controlled Qt
 window test then alternated source sizes while OpenXR was running. Capture
 reported 18 layout generations, 59 captured frames, zero ring drops and
 5,999 image-bearing OpenXR frames with zero runtime skips. Closing the
@@ -281,6 +288,23 @@ A fresh monitor selection after the test-window source closed also
 worked: 1,477 captured frames, zero ring drops and 3,531 image-bearing
 OpenXR frames in 45 seconds. Explicit portal permission withdrawal
 remains to be validated before L3 acceptance.
+
+A 15-second live CUDA ZipDepth run captured 514 frames, completed 445
+depth updates, and submitted 860 image-bearing OpenXR frames with zero
+capture drops or runtime skips. A 12-second timed run captured 410 frames,
+completed 355 depth updates and submitted 672 image-bearing frames, again
+with zero drops or skips. The last depth was tagged to capture sequence
+409 while capture had reached 410. Across 355 depth samples, median/p95
+CPU preparation was 16.81/18.42 ms, model plus depth postprocessing was
+9.19/13.23 ms, and frame-arrival-to-completed-depth was 28.11/32.31 ms.
+Arrival time is stamped after PipeWire frame copy and CPU downsampling;
+these figures exclude upstream capture time and headset display latency.
+The user confirmed the live depth effect looked correct in the PICO 4.
+The strict CUDA session still disables CPU execution fallback. The live
+CPU preparation uses the same reference math as the Vulkan shader check;
+a three-second synthetic regression had zero of 774,144 tensor values
+outside the established 0.0028 tolerance, with worst error 0.0000124.
+
 
 ## Milestones and acceptance gates
 

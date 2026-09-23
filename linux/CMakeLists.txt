@@ -33,7 +33,7 @@ add_custom_command(
 )
 add_custom_target(vrx-model-prep-shader DEPENDS "${PREP_SPV}")
 
-add_executable(vrx-xr-synthetic xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp)
+add_executable(vrx-xr-synthetic xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp model_prep_cpu.cpp)
 add_dependencies(vrx-xr-synthetic vrx-stereo-shader vrx-model-prep-shader)
 target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}" VRX_PREP_SPV_PATH="${PREP_SPV}")
 target_compile_features(vrx-xr-synthetic PRIVATE cxx_std_17)
@@ -84,6 +84,10 @@ if(TARGET PkgConfig::GIO AND PORTAL_INCLUDE_DIR AND PORTAL_LIBRARY AND
     target_link_libraries(vrx-xr-synthetic PRIVATE
         PkgConfig::GIO "${PORTAL_LIBRARY}" "${PIPEWIRE_LIBRARY}")
     target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_HAS_CAPTURE=1)
+    if(TARGET vrx-model-probe AND PNG_FOUND)
+        target_sources(vrx-xr-synthetic PRIVATE live_depth.cpp)
+        target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_HAS_LIVE_DEPTH=1)
+    endif()
 else()
     message(STATUS "libportal/PipeWire development files unavailable; vrx-capture-probe is disabled")
 endif()

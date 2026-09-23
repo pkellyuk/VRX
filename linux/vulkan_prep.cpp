@@ -1,4 +1,5 @@
 #include "vulkan_prep.h"
+#include "model_prep_cpu.h"
 #include "synthetic_scene.h"
 #include <algorithm>
 #include <cmath>
@@ -27,19 +28,7 @@ struct Parameters {
 };
 static_assert(sizeof(Parameters) == 40, "model prep push constant mismatch");
 
-float SampleChannel(const std::vector<unsigned char>& rgb, int channel, float u, float v) {
-    const float sx = std::clamp(u * kSyntheticWidth - 0.5f, 0.0f, float(kSyntheticWidth - 1));
-    const float sy = std::clamp(v * kSyntheticHeight - 0.5f, 0.0f, float(kSyntheticHeight - 1));
-    const int x0 = int(sx), y0 = int(sy);
-    const int x1 = std::min(x0 + 1, kSyntheticWidth - 1);
-    const int y1 = std::min(y0 + 1, kSyntheticHeight - 1);
-    const float a = sx - x0, b = sy - y0;
-    auto pixel = [&](int x, int y) {
-        return float(rgb[(size_t(y) * kSyntheticWidth + x) * 3 + channel]) / 255.0f;
-    };
-    return (pixel(x0, y0) * (1 - a) + pixel(x1, y0) * a) * (1 - b) +
-           (pixel(x0, y1) * (1 - a) + pixel(x1, y1) * a) * b;
-}
+
 }
 
 VulkanPrep::VulkanPrep(VkPhysicalDevice gpu, VkDevice device, VkBuffer packedScene)
@@ -190,24 +179,15 @@ bool VulkanPrep::CompareReference(const std::vector<unsigned char>& rgb) const {
     const auto* got = ModelInput();
     size_t bad = 0;
     float worst = 0.0f;
-    constexpr int taps = 2;
     constexpr float tolerance = 0.0028f; // Windows sampled-path threshold.
     const size_t plane = size_t(width) * height;
-    for (int channel = 0; channel < 3; ++channel)
-        for (int y = 0; y < height; ++y)
-            for (int x = 0; x < width; ++x) {
-                float expected = 0.0f;
-                for (int j = 0; j < taps; ++j)
-                    for (int i = 0; i < taps; ++i)
-                        expected += SampleChannel(rgb, channel,
-                            (x + (i + 0.5f) / taps) / width,
-                            (y + (j + 0.5f) / taps) / height);
-                expected /= float(taps * taps);
-                const float actual = got[size_t(channel) * plane + size_t(y) * width + x];
-                const float delta = std::fabs(actual - expected);
-                if (!std::isfinite(actual) || delta > tolerance) ++bad;
-                worst = std::max(worst, delta);
-            }
+    const auto expected = PrepareModelInput(rgb);
+    for (size_t i = 0; i < expected.size(); ++i) {
+        const float actual = got[i];
+        const float delta = std::fabs(actual - expected[i]);
+        if (!std::isfinite(actual) || delta > tolerance) ++bad;
+        worst = std::max(worst, delta);
+    }
     std::printf("GPU/CPU ZipDepth input check: %zu of %zu values outside %.4f (worst %.7f)\n",
         bad, 3 * plane, tolerance, worst);
     return bad == 0;

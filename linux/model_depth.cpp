@@ -32,7 +32,7 @@ std::vector<float> ResampleDepth(const float* raw) {
     return grid;
 }
 
-void NormalizeNear(std::vector<float>& values) {
+void NormalizeNear(std::vector<float>& values, bool verbose) {
     const auto [minIt, maxIt] = std::minmax_element(values.begin(), values.end());
     const float minimum = *minIt, maximum = *maxIt;
     if (!std::isfinite(minimum) || !std::isfinite(maximum) || maximum - minimum < 1e-6f)
@@ -59,7 +59,7 @@ void NormalizeNear(std::vector<float>& values) {
     if (high - low < 1e-6f) { low = minimum; high = maximum; }
     const float inverse = 1.0f / (high - low);
     for (float& value : values) value = std::clamp((value - low) * inverse, 0.0f, 1.0f);
-    std::printf("ZipDepth normalization: %.6f..%.6f -> 0..1\n", low, high);
+    if (verbose) std::printf("ZipDepth normalization: %.6f..%.6f -> 0..1\n", low, high);
 }
 
 void DilateNear(std::vector<float>& values) {
@@ -115,7 +115,7 @@ ModelDepth::ModelDepth(const char* modelPath, bool requireCuda)
     std::printf("ZipDepth model loaded with %s provider\n", requireCuda ? "CUDA" : "CPU");
 }
 
-std::vector<float> ModelDepth::Run(const float* nchw) {
+std::vector<float> ModelDepth::Run(const float* nchw, bool verbose) {
     if (!nchw) throw std::runtime_error("Null ZipDepth input");
     const int64_t shape[4] = {1, 3, modelH, modelW};
     auto input = Ort::Value::CreateTensor<float>(memory_, const_cast<float*>(nchw), 3 * modelPixels, shape, 4);
@@ -129,10 +129,10 @@ std::vector<float> ModelDepth::Run(const float* nchw) {
         result[0].GetTensorTypeAndShapeInfo().GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
         throw std::runtime_error("ZipDepth returned an invalid tensor");
     std::vector<float> near = ResampleDepth(result[0].GetTensorData<float>());
-    NormalizeNear(near);
+    NormalizeNear(near, verbose);
     DilateNear(near);
-    std::printf("ZipDepth inference: %.1f ms, normalized depth %dx%d\n",
-                milliseconds, kSyntheticWidth, kSyntheticHeight);
+    if (verbose) std::printf("ZipDepth inference: %.1f ms, normalized depth %dx%d\n",
+                             milliseconds, kSyntheticWidth, kSyntheticHeight);
     return near;
 }
 } // namespace vrx

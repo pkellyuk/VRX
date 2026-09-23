@@ -10,6 +10,9 @@
 #ifdef VRX_HAS_CAPTURE
 #include "portal_capture.h"
 #endif
+#ifdef VRX_HAS_LIVE_DEPTH
+#include "live_depth.h"
+#endif
 #ifdef VRX_HAS_MODEL
 #include "model_depth.h"
 #include "still_image.h"
@@ -88,6 +91,10 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                     static_cast<unsigned long long>(first.sequence),
                     static_cast<unsigned long long>(first.layout));
     }
+#ifdef VRX_HAS_LIVE_DEPTH
+    std::unique_ptr<vrx::LiveDepth> liveDepth;
+    if (live && cuda) liveDepth = std::make_unique<vrx::LiveDepth>(*capture, modelPath, true);
+#endif
 #else
     (void)live;
 #endif
@@ -330,6 +337,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     int skippedFrames = 0;
     bool referenceMatched = prepMatched;
     bool captureLost = false;
+    bool depthFailed = false;
     while (std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count() < seconds) {
         XrEventDataBuffer event{};
         event.type = XR_TYPE_EVENT_DATA_BUFFER;
@@ -365,6 +373,13 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             break;
         }
 #endif
+#ifdef VRX_HAS_LIVE_DEPTH
+        if (liveDepth && !liveDepth->Healthy()) {
+            std::fprintf(stderr, "Live depth failed: %s\n", liveDepth->Error().c_str());
+            depthFailed = true;
+            break;
+        }
+#endif
         if (!running) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); continue; }
         XrFrameWaitInfo wi{}; wi.type = XR_TYPE_FRAME_WAIT_INFO;
         XrFrameState state{}; state.type = XR_TYPE_FRAME_STATE;
@@ -386,7 +401,12 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             if (live) {
                 vrx::PortalCapture::Frame latest;
                 if (capture->Latest(latest)) rgb = std::move(latest.rgb);
-                truth.assign(size_t(vrx::kSyntheticWidth) * vrx::kSyntheticHeight, 0.0f);
+#ifdef VRX_HAS_LIVE_DEPTH
+                const auto depth = liveDepth ? liveDepth->Latest() : nullptr;
+                if (depth) truth = depth->near;
+                else
+#endif
+                    truth.assign(size_t(vrx::kSyntheticWidth) * vrx::kSyntheticHeight, 0.0f);
             } else
 #endif
             if (stillPath) {
@@ -465,6 +485,20 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         static_cast<unsigned long long>(capture->Captured()),
         static_cast<unsigned long long>(capture->Dropped()));
 #endif
+#ifdef VRX_HAS_LIVE_DEPTH
+    if (liveDepth) {
+        const auto depth = liveDepth->Latest();
+        std::printf("Live ZipDepth: %llu updates, latest source sequence %llu\n",
+            static_cast<unsigned long long>(liveDepth->Completed()),
+            static_cast<unsigned long long>(depth ? depth->sourceSequence : 0));
+        const auto timings = liveDepth->Timings();
+        std::printf("Live ZipDepth timing (%llu samples): prep %.2f/%.2f ms, model %.2f/%.2f ms, arrival-to-depth %.2f/%.2f ms (median/p95)\n",
+            static_cast<unsigned long long>(timings.samples),
+            timings.prepMedianMs, timings.prepP95Ms,
+            timings.modelMedianMs, timings.modelP95Ms,
+            timings.arrivalToDepthMedianMs, timings.arrivalToDepthP95Ms);
+    }
+#endif
     vkDeviceWaitIdle(device);
     vkDestroyFence(device, fence, nullptr);
     vkDestroyCommandPool(device, pool, nullptr);
@@ -477,7 +511,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     vkDestroyInstance(vkInstance, nullptr);
     xr.destroyInstance(instance);
     dlclose(library);
-    return renderedFrames > 0 && referenceMatched && !captureLost ? 0 : 1;
+    return renderedFrames > 0 && referenceMatched && !captureLost && !depthFailed ? 0 : 1;
 }
 } // namespace
 
@@ -489,7 +523,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
             std::puts("vrx-xr-synthetic [seconds=10] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]");
-            std::puts("--live selects a portal source and displays its current image with flat depth");
+            std::puts("--live selects a portal source; add --cuda for asynchronous ZipDepth");
             std::puts("VRX_OPENXR_LOADER, VRX_WARP_SPV and VRX_PREP_SPV override runtime paths");
             return 0;
         }
@@ -504,7 +538,7 @@ int main(int argc, char** argv) {
             durationSeen = true;
         } else { std::fputs("Unexpected argument\n", stderr); return 2; }
     }
-    if (seconds <= 0 || seconds > 120 || (cuda && !stillPath) || (live && (stillPath || cuda)) ||
+    if (seconds <= 0 || seconds > 120 || (cuda && !stillPath && !live) || (live && stillPath) ||
         (stillPath && !*stillPath) || (modelPath && !*modelPath)) {
         std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]\n", stderr);
         return 2;
@@ -514,6 +548,9 @@ int main(int argc, char** argv) {
 #endif
 #ifndef VRX_HAS_MODEL
     if (stillPath) { std::fputs("Still/model support was not built (requires ONNX Runtime and libpng)\n", stderr); return 2; }
+#endif
+#ifndef VRX_HAS_LIVE_DEPTH
+    if (live && cuda) { std::fputs("Live ZipDepth support was not built\n", stderr); return 2; }
 #endif
     const char* path = std::getenv("VRX_OPENXR_LOADER");
     try {
