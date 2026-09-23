@@ -43,10 +43,15 @@ int main() {
     assert(s.ambilight == 0 && s.ambilightStrength == 55 && s.curve == 40 && s.worldRgb == 0);
     // VRXL 7: the world colour.
     assert(Read("VRXL 7 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1 40 0 55 1842204\n", s));
-    assert(s.worldRgb == 0x1C1C1Cu && s.ambilightStrength == 55);
+    assert(s.worldRgb == 0x1C1C1Cu && s.ambilightStrength == 55 && s.follow == 0);
+    // VRXL 8: the screen follows the head.
+    assert(Read("VRXL 8 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1 40 0 55 1842204 1\n", s));
+    assert(s.follow == 1 && s.worldRgb == 0x1C1C1Cu);
     // Rejected, leaving the previous settings.
     const char* bad[] = {
-        "VRXL 8 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0 0\n", // unknown version
+        "VRXL 9 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0 0 0\n", // unknown version
+        "VRXL 8 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0 2\n",   // follow neither on nor off
+        "VRXL 8 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0\n",     // missing follow
         "VRXL 7 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 16777216\n", // world colour above 0xFFFFFF
         "VRXL 7 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85\n",   // missing world colour
         "VRXL 6 2 2 0 0 1 30 60 25 30 0 1 0 0 2 85\n",   // ambilight neither on nor off

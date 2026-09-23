@@ -597,6 +597,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     DepthDelayEstimate depthDelay;
     uint64_t lastDepthSequence = 0;
     int loggedTiming = -1;
+    bool loggedFollow = false;   // the follow setting last acted on
     // The curved screen and what it was built from (negative: not yet built).
     Cylinder cylinder;
     float curveWidth = -1.0f, curveHeight = -1.0f, curveDistance = -1.0f, curveFraction = -1.0f;
@@ -804,8 +805,17 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 for (const auto& view : roomViews)
                     tanHalfX = std::min({tanHalfX, std::tan(std::fabs(view.fov.angleLeft)), std::tan(std::fabs(view.fov.angleRight))});
                 if (!(tanHalfX > 0.01f && tanHalfX < 100.0f)) tanHalfX = 1.0f;
-                screen.level = roomEnabled && settings.room > 0;
-                if (screen.Place(roomViews[0].pose, roomViews[1].pose, shared, tanHalfX, screenAspect)) {
+                // Following the head (as xrapp5): the screen is re-placed in front of
+                // the headset every frame, and the room, which needs it fixed, rests.
+                const bool follows = settings.follow != 0;
+                if (follows != loggedFollow) {
+                    std::puts(follows ? "Screen follows the head (the room rests)" : "Screen fixed in place");
+                    if (!follows) screen.pending = true;   // stays where the head now points
+                    loggedFollow = follows;
+                }
+                if (follows) screen.pending = true;
+                screen.level = roomEnabled && settings.room > 0 && !follows;
+                if (screen.Place(roomViews[0].pose, roomViews[1].pose, shared, tanHalfX, screenAspect) && !follows) {
                     std::puts("Screen placed in front of the current headset direction");
                     floorLatched = false;
                 }
@@ -836,7 +846,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             }
             // VulkanRoom decides each frame whether there is a room, a curved
             // screen or a glow to draw; the images are acquired once it has.
-            roomFrameReady = eyeLayer && ((roomEnabled && settings.room > 0) || cylinder.curved ||
+            roomFrameReady = eyeLayer && ((roomEnabled && settings.room > 0 && !settings.follow) || cylinder.curved ||
                                           (settings.ambilight && glowSwapchain != XR_NULL_HANDLE) ||
                                           (settings.worldRgb != 0 && worldSwapchain != XR_NULL_HANDLE)) &&
                              validViews && !screen.pending;
@@ -1028,7 +1038,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 const auto prepStart = std::chrono::steady_clock::now();
                 // Without --room (or live settings asking for it) only the curve is drawn.
                 vrx::LiveSettings drawn = settings;
-                if (!roomEnabled) drawn.room = 0;
+                if (!roomEnabled || settings.follow) drawn.room = 0;
                 roomDrawn = live ? room->Prepare(ambient.data(), ambientWidth, ambientHeight,
                                                  drawn, roomViews, screen, stageFloorY, cylinder)
                                  : room->Prepare(color.data(), colorWidth, colorHeight,

@@ -112,6 +112,7 @@ public partial class MainWindow : Window
             slider.ValueChanged += (_, _) => SettingsChanged();
         CudaCheck.IsCheckedChanged += (_, _) => SettingsChanged();
         AmbilightCheck.IsCheckedChanged += (_, _) => SettingsChanged();
+        FollowCheck.IsCheckedChanged += (_, _) => SettingsChanged();
         WorldList.SelectionChanged += (_, _) => WorldListChanged();
         WorldHex.TextChanged += (_, _) => WorldHexChanged();
         WorldHex.LostFocus += (_, _) => { if (!LinuxProfile.TryNormalizeColor(WorldHex.Text ?? "", out _)) WorldHex.Text = lastWorldHex; };
@@ -267,6 +268,7 @@ public partial class MainWindow : Window
         AmbilightCheck.IsChecked = p.Ambilight;
         AmbiStrengthSlider.Value = p.AmbilightStrength;
         WorldHex.Text = p.WorldColor;
+        FollowCheck.IsChecked = p.Follow;
         CudaCheck.IsChecked = p.Cuda;
         TimingList.SelectedIndex = p.Timing;
         FillLightColourList(p.LightColor);
@@ -335,7 +337,8 @@ public partial class MainWindow : Window
         Math.Clamp(TimingList.SelectedIndex, LinuxProfile.TimingLatest, LinuxProfile.TimingMatched),
         (int)Math.Round(CurveSlider.Value),
         AmbilightCheck.IsChecked == true, (int)Math.Round(AmbiStrengthSlider.Value),
-        LinuxProfile.TryNormalizeColor(WorldHex.Text ?? "", out var world) ? world : lastWorldHex);
+        LinuxProfile.TryNormalizeColor(WorldHex.Text ?? "", out var world) ? world : lastWorldHex,
+        FollowCheck.IsChecked == true);
 
     void SettingsChanged()
     {
@@ -497,14 +500,19 @@ public partial class MainWindow : Window
         HeightValue.Text = Metres(HeightSlider.Value);
         HorizontalValue.Text = Metres(HorizontalSlider.Value);
         StrengthValue.Text = StrengthSlider.Value.ToString("F2", CultureInfo.CurrentCulture);
-        RoomValue.Text = RoomSlider.Value < 0.5 ? "Off" : Percent(RoomSlider.Value);
-        GlassValue.Text = Percent(GlassSlider.Value);
-        ReflectValue.Text = Percent(ReflectSlider.Value);
-        LightValue.Text = LightSlider.Value < 0.5 ? "Off" : Percent(LightSlider.Value);
+        // The room needs the fixed screen (as in the WPF app): while the screen follows
+        // the head its controls rest, keeping their values.
+        bool follows = FollowCheck.IsChecked == true, withRoom = !follows && RoomSlider.Value >= 0.5;
+        const string needsFixed = "Needs the fixed screen";
+        RoomSlider.IsEnabled = !follows;
+        RoomValue.Text = follows ? needsFixed : RoomSlider.Value < 0.5 ? "Off" : Percent(RoomSlider.Value);
+        GlassValue.Text = follows ? needsFixed : Percent(GlassSlider.Value);
+        ReflectValue.Text = follows ? needsFixed : Percent(ReflectSlider.Value);
+        LightValue.Text = follows ? needsFixed : LightSlider.Value < 0.5 ? "Off" : Percent(LightSlider.Value);
         CurveValue.Text = CurveSlider.Value < 0.5 ? "Flat" : Percent(CurveSlider.Value);
         AmbiStrengthValue.Text = Percent(AmbiStrengthSlider.Value);
         AmbilightOptions.IsEnabled = AmbilightCheck.IsChecked == true;
-        GlassSlider.IsEnabled = ReflectSlider.IsEnabled = LightSlider.IsEnabled = LightColourList.IsEnabled = RoomSlider.Value >= 0.5;
+        GlassSlider.IsEnabled = ReflectSlider.IsEnabled = LightSlider.IsEnabled = LightColourList.IsEnabled = withRoom;
         DrawPreview();
     }
 

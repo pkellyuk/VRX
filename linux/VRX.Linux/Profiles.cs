@@ -9,7 +9,8 @@ namespace Vrx.Linux;
 public sealed record LinuxProfile(
     bool Cuda, double Width, double Distance, double Height, double Horizontal, double Strength,
     int Room, int Glass, int Reflect, int Light, string LightColor, int Timing = LinuxProfile.TimingDelayed,
-    int Curve = 0, bool Ambilight = true, int AmbilightStrength = 85, string WorldColor = "#000000")
+    int Curve = 0, bool Ambilight = true, int AmbilightStrength = 85, string WorldColor = "#000000",
+    bool Follow = false)
 {
     // Game frame timing (frame_timing.h): which captured frame is shown with the depth.
     // Linux defaults to delayed, which looked smoother than latest on the PICO 4.
@@ -20,7 +21,7 @@ public sealed record LinuxProfile(
     // Ambilight: the glow round the screen and its strength (ambilight.h). On by default on
     // Linux (Windows starts with it off), where the room always had the glow before.
     public static readonly LinuxProfile Default =
-        new(true, 2.0, 2.0, 0.0, 0.0, 1.0, 30, 60, 25, 30, "#FFB46B", TimingDelayed, 0, true, 85, "#000000");
+        new(true, 2.0, 2.0, 0.0, 0.0, 1.0, 30, 60, 25, 30, "#FFB46B", TimingDelayed, 0, true, 85, "#000000", false);
 
     // The same ranges the engine accepts (live_settings.h).
     public static readonly (double Low, double High) WidthRange = (0.5, 10.0);
@@ -150,7 +151,7 @@ public static class ProfileStore
             Percent("room", d.Room), Percent("glass", d.Glass), Percent("reflect", d.Reflect),
             Percent("light", d.Light), Color("light_color", d.LightColor), Timing(), Percent("curve", d.Curve),
             Flag("ambilight", d.Ambilight), Percent("ambilight_strength", d.AmbilightStrength),
-            Color("world_color", d.WorldColor)).Normalized();
+            Color("world_color", d.WorldColor), Flag("follow", d.Follow)).Normalized();
     }
 
     // Written to a temporary file and renamed, so a crash never leaves half a file.
@@ -183,6 +184,7 @@ public static class ProfileStore
                 writer.WriteBoolean("ambilight", p.Ambilight);
                 writer.WriteNumber("ambilight_strength", p.AmbilightStrength);
                 writer.WriteString("world_color", p.WorldColor);
+                writer.WriteBoolean("follow", p.Follow);
                 writer.WriteEndObject();
             }
             writer.WriteEndObject();
