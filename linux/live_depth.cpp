@@ -79,6 +79,7 @@ void LiveDepth::Work() {
             auto result = std::make_shared<Result>();
             result->near = model_->Run(input.tensor.data(), false, &smoother);
             const auto modelEnd = std::chrono::steady_clock::now();
+            result->modelMs = std::chrono::duration<double, std::milli>(modelEnd - modelStart).count();
             result->sourceSequence = input.sequence;
             result->sourceLayout = input.layout;
             result->captureArrival = input.arrival;

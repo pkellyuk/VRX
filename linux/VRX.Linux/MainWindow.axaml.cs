@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     EngineSession? engine;
     bool stopping, playing;
     uint recenterCount;                       // Recenter requests in this session
+    string playingText = "Playing";           // the card while playing, with the engine's frame rate
     string lastError = "";
     readonly Queue<string> logLines = new();
     readonly DispatcherTimer liveTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
@@ -513,6 +514,7 @@ public partial class MainWindow : Window
         engine.Output += line => Dispatcher.UIThread.Post(() => EngineOutput(line));
         engine.Exited += code => Dispatcher.UIThread.Post(() => EngineExited(code));
         playing = stopping = false;
+        playingText = "Playing";
         lastError = "";
         AppendLog("Starting: " + engine.CommandLine);
         try
@@ -560,6 +562,13 @@ public partial class MainWindow : Window
             CardState.Text = "Choose your game's window or screen in the sharing dialog";
         else if (line.StartsWith("First live source frame", StringComparison.Ordinal))
             CardState.Text = "Starting VR…";
+        else if (line.StartsWith("Performance: ", StringComparison.Ordinal))
+        {
+            // "Performance: 89.9 fps (drawn 89.9, ...": the rate the headset is fed.
+            var rate = line["Performance: ".Length..].Split(' ')[0];
+            if (double.TryParse(rate, NumberStyles.Float, CultureInfo.InvariantCulture, out var fps))
+                playingText = $"Playing · {fps:F0} fps";
+        }
         else if (line is "OpenXR session state: 4" or "OpenXR session state: 5")
         {
             if (!playing) Status.Text = $"Playing · {current}";
@@ -594,7 +603,7 @@ public partial class MainWindow : Window
         CudaCheck.IsEnabled = !running;
         foreach (var source in new[] { SourceWindow, SourceScreen, SourceAny }) source.IsEnabled = !running;
         CardState.Text = running
-            ? (stopping ? "Stopping VR…" : playing ? "Playing" : CardState.Text)
+            ? (stopping ? "Stopping VR…" : playing ? playingText : CardState.Text)
             : appSettings.Source switch
             {
                 AppSettings.SourceWindow => "Ready · press Attach / Play and choose your game's window",

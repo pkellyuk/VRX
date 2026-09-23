@@ -410,6 +410,19 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     for (VkFence& slotFence : fences) VK_CHECK(vkCreateFence(device, &fci, nullptr, &slotFence));
     VkCommandBuffer command = commands[0];
     VkFence fence = fences[0];
+    // GPU timestamps per frame in flight: start, after capture scale, depth
+    // prep and warp, after the room, and after the swapchain copies. Read when
+    // the frame's fence has signalled, so reading never waits.
+    constexpr uint32_t kTimestamps = 4;
+    VkQueryPool timestamps = VK_NULL_HANDLE;
+    if (families[family].timestampValidBits) {
+        VkQueryPoolCreateInfo qpci{};
+        qpci.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        qpci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qpci.queryCount = kFrameSlots * kTimestamps;
+        VK_CHECK(vkCreateQueryPool(device, &qpci, nullptr, &timestamps));
+    }
+    const double timestampMs = gpuProps.limits.timestampPeriod / 1e6;
 
     std::vector<unsigned char> stillRgb;
     std::vector<float> stillDepth;
@@ -513,6 +526,34 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         uint64_t sequence = 0, layout = 0;
         double arrival = 0;
         bool heldGpuFrame = false;       // its DMA-BUF goes back to the source
+        bool timed = false, roomDrawn = false;
+    };
+    // The two-second performance report (as xrapp5's), accumulated per frame.
+    struct Report {
+        std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+        int frames = 0, drawn = 0;
+        double cpuMs = 0;
+        int depthFrames = 0, shownFrames = 0;
+        double depthAgeMs = 0, shownAgeMs = 0;
+        uint64_t captured = 0, dropped = 0, depthUpdates = 0;
+        std::vector<double> gpuMs, prepWarpMs, roomMs, copyMs;
+    } report;
+#ifdef VRX_HAS_CAPTURE
+    if (live) {
+        report.captured = capture->Captured();
+        report.dropped = capture->Dropped();
+    }
+#endif
+    auto nowSeconds = [] {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+    auto median = [](std::vector<double>& values) {
+        std::sort(values.begin(), values.end());
+        return values.empty() ? 0.0 : values[values.size() / 2];
+    };
+    auto p95 = [](std::vector<double>& values) {
+        std::sort(values.begin(), values.end());
+        return values.empty() ? 0.0 : values[std::min(values.size() - 1, values.size() * 95 / 100)];
     };
     SlotWork slots[kFrameSlots];
     uint64_t frameIndex = 0;
@@ -527,6 +568,14 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         }
         if (vkResetFences(device, 1, &fences[slot]) != VK_SUCCESS) return false;
         work.submitted = false;
+        uint64_t ticks[kTimestamps]{};
+        if (work.timed && vkGetQueryPoolResults(device, timestamps, slot * kTimestamps, kTimestamps, sizeof(ticks),
+                                                ticks, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+            report.gpuMs.push_back(double(ticks[3] - ticks[0]) * timestampMs);
+            report.prepWarpMs.push_back(double(ticks[1] - ticks[0]) * timestampMs);
+            if (work.roomDrawn) report.roomMs.push_back(double(ticks[2] - ticks[1]) * timestampMs);
+            report.copyMs.push_back(double(ticks[3] - ticks[2]) * timestampMs);
+        }
         if (work.liveNew) {
             const float* input = prep->ModelInput(slot);
 #ifdef VRX_HAS_LIVE_DEPTH
@@ -757,7 +806,15 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 depthAvailable = depth && liveLayout == depth->sourceLayout &&
                     UsableDepth(liveDepth->Healthy(), liveSequence, liveArrival,
                                 depth->sourceSequence, depth->captureArrival);
-                if (depthAvailable) truth = depth->near;
+                if (depthAvailable) {
+                    truth = depth->near;
+                    report.depthAgeMs += (nowSeconds() - depth->captureArrival) * 1000.0;
+                    ++report.depthFrames;
+                }
+                if (liveSequence) {
+                    report.shownAgeMs += (nowSeconds() - liveArrival) * 1000.0;
+                    ++report.shownFrames;
+                }
 #else
                 depthAvailable = false;
 #endif
@@ -820,6 +877,10 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             previousFrame.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                  0, 1, &previousFrame, 0, nullptr, 0, nullptr);
+            if (timestamps) {
+                vkCmdResetQueryPool(command, timestamps, slot * kTimestamps, kTimestamps);
+                vkCmdWriteTimestamp(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamps, slot * kTimestamps);
+            }
             warp->RecordUpload(command);
             // The first frame is always checked; with --dump-color, one about six seconds in too.
             const bool laterDump = colorDumpPath && !laterDumped && renderedFrames >= 400 && (!live || liveNew);
@@ -832,7 +893,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             const bool prepFrame = live ? liveNew : !stillPath;
             if (prepFrame) prep->Record(command);
             warp->Record(command, checkFrame);
+            if (timestamps) vkCmdWriteTimestamp(command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, slot * kTimestamps + 1);
             if (roomDrawn) room->Record(command, roomImages[roomIndex].image);
+            if (timestamps) vkCmdWriteTimestamp(command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, slot * kTimestamps + 2);
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.srcAccessMask = 0;
@@ -863,6 +926,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+            if (timestamps) vkCmdWriteTimestamp(command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, slot * kTimestamps + 3);
             VK_CHECK(vkEndCommandBuffer(command));
             VkSubmitInfo submit{};
             submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -877,6 +941,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             work.layout = liveLayout;
             work.arrival = liveArrival;
             work.heldGpuFrame = heldGpuFrame;
+            work.timed = timestamps != VK_NULL_HANDLE;
+            work.roomDrawn = roomDrawn;
             // Checked frames read results back now; other frames finish while
             // the next is recorded.
             if (checkFrame && !completeSlot(slot, true)) { std::fputs("Vulkan frame wait failed\n", stderr); return 1; }
@@ -940,6 +1006,50 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         fe.layers = layerCount ? frameLayers : nullptr;
         const auto endStart = std::chrono::steady_clock::now();
         XR_CHECK(xr.endFrame(session, &fe));
+        ++report.frames;
+        if (state.shouldRender) {
+            ++report.drawn;
+            report.cpuMs += std::chrono::duration<double, std::milli>(endStart - frameWorkStart).count();
+        }
+        if (const double elapsedReport = std::chrono::duration<double>(std::chrono::steady_clock::now() - report.start).count();
+            elapsedReport >= 2.0) {
+            char capturePart[96] = "", depthPart[160] = "", gpuPart[160] = "";
+#ifdef VRX_HAS_CAPTURE
+            if (live) {
+                const uint64_t captured = capture->Captured(), dropped = capture->Dropped();
+                std::snprintf(capturePart, sizeof(capturePart), " | capture %.1f fps, %llu dropped",
+                    (captured - report.captured) / elapsedReport, static_cast<unsigned long long>(dropped - report.dropped));
+                report.captured = captured;
+                report.dropped = dropped;
+            }
+#endif
+#ifdef VRX_HAS_LIVE_DEPTH
+            if (liveDepth) {
+                const uint64_t completed = liveDepth->Completed();
+                const auto latest = liveDepth->Latest();
+                std::snprintf(depthPart, sizeof(depthPart), " | depth %.1f updates/s, model %.1f ms, depth age %.1f ms",
+                    (completed - report.depthUpdates) / elapsedReport, latest ? latest->modelMs : 0.0,
+                    report.depthFrames ? report.depthAgeMs / report.depthFrames : 0.0);
+                report.depthUpdates = completed;
+            }
+#endif
+            if (report.shownFrames) {
+                const size_t used = std::strlen(depthPart);
+                std::snprintf(depthPart + used, sizeof(depthPart) - used, ", frame age %.1f ms",
+                              report.shownAgeMs / report.shownFrames);
+            }
+            if (!report.gpuMs.empty())
+                std::snprintf(gpuPart, sizeof(gpuPart), " | GPU %.2f / %.2f ms p50/p95: prep+warp %.2f, room %.2f, copy %.2f ms p50",
+                    median(report.gpuMs), p95(report.gpuMs), median(report.prepWarpMs), median(report.roomMs), median(report.copyMs));
+            std::printf("Performance: %.1f fps (drawn %.1f, CPU %.2f ms/frame)%s%s%s\n",
+                report.frames / elapsedReport, report.drawn / elapsedReport,
+                report.drawn ? report.cpuMs / report.drawn : 0.0, capturePart, depthPart, gpuPart);
+            const uint64_t captured = report.captured, dropped = report.dropped, depthUpdates = report.depthUpdates;
+            report = Report{};
+            report.captured = captured;
+            report.dropped = dropped;
+            report.depthUpdates = depthUpdates;
+        }
         if (state.shouldRender && renderedFrames > 1) {
             const auto done = std::chrono::steady_clock::now();
             endFrameMs.push_back(std::chrono::duration<double, std::milli>(done - endStart).count());
@@ -987,6 +1097,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     if (capture) capture->ReleaseGpuFrames();
 #endif
     for (VkFence slotFence : fences) vkDestroyFence(device, slotFence, nullptr);
+    if (timestamps) vkDestroyQueryPool(device, timestamps, nullptr);
     vkDestroyCommandPool(device, pool, nullptr);
     room.reset();
     if (roomSwapchain != XR_NULL_HANDLE) xr.destroySwapchain(roomSwapchain);
