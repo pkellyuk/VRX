@@ -57,14 +57,31 @@ public sealed class EngineSession
             "--pid=" + app.Pid.ToString(invariant), "--hwnd=" + window.Handle.ToInt64().ToString(invariant), "--control=" + control }) start.ArgumentList.Add(arg);
         if (profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) start.ArgumentList.Add("--depth-gpu=" + profile.DepthGpu);
         var child = new Process { StartInfo = start };
+        Debug.WriteLine($"[Engine] start {engine} for {app.FullPath} pid {app.Pid}");
         try
         {
             child.Start(); process = child;
+            Debug.WriteLine($"[Engine] started pid {child.Id}");
             _ = Observe(child, sessionRoot);
             RunningApps.SetForegroundWindow(window.Handle);
         }
+        catch (System.ComponentModel.Win32Exception ex) when (BlockedMessage(ex.NativeErrorCode) is { } blocked)
+        {
+            Debug.WriteLine($"[Engine] Windows refused to run the engine: error {ex.NativeErrorCode}, {ex.Message}");
+            child.Dispose(); process = null;
+            throw new InvalidOperationException(blocked, ex);
+        }
         catch { child.Dispose(); process = null; throw; }
     }
+    // Windows refusing to run the engine, in plain words: Smart App Control or App Control for
+    // Business (4551), AppLocker or a software restriction policy (1260), antivirus (225, 226).
+    // Null for any other start error, which is shown as Windows words it.
+    public static string? BlockedMessage(int error) => error switch
+    {
+        4551 or 1260 => Loc.Get("ErrorEngineBlockedPolicy"),
+        225 or 226 => Loc.Get("ErrorEngineBlockedAntivirus"),
+        _ => null
+    };
     private async Task Observe(Process child, string sessionRoot)
     {
         using var log = new StreamWriter(Path.Combine(sessionRoot, "engine.log"));

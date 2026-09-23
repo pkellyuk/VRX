@@ -1215,6 +1215,10 @@ public partial class MainWindow : Window
     {
         string root = EngineSession.RepositoryRoot(), output = Path.Combine(root, "desktop", "out");
         Directory.CreateDirectory(output);
+        foreach (int error in new[] { 4551, 1260, 225, 226 })
+            if (EngineSession.BlockedMessage(new System.ComponentModel.Win32Exception(error).NativeErrorCode) is not { Length: > 0 } text || !text.Contains("xrplayer.exe"))
+                throw new Exception($"Windows blocking the engine (error {error}) must be explained in plain words");
+        if (EngineSession.BlockedMessage(2) != null) throw new Exception("Other engine start errors must keep Windows' own message");
         var observed = RunningApps.List(false);
         File.WriteAllLines(Path.Combine(output, "enumerated-apps.txt"), observed.Select(a => $"{a.Pid} | {a.FullPath} | {string.Join("; ", a.Windows)}"));
         var one = new Profile { ExecutablePath = Path.Combine(output, "one", "game.exe"), Width = 6.25, Distance = 3.5, Height = .2, Horizontal = .4, Strength = .8, MenuKey = 0x78 };

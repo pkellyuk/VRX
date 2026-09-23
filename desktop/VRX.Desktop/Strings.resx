@@ -253,6 +253,8 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorProfileInvalid" xml:space="preserve"><value>This game's saved settings are invalid. They have not been overwritten.</value></data>
   <data name="ErrorStopFirst" xml:space="preserve"><value>Stop the current session first.</value></data>
   <data name="ErrorAnotherSession" xml:space="preserve"><value>Another VRX session is running. Close that session before attaching here.</value></data>
+  <data name="ErrorEngineBlockedPolicy" xml:space="preserve"><value>Windows blocked VRX's 3D engine (engine\xrplayer.exe). This is usually Smart App Control, which stops new programs that are not digitally signed yet, and VRX's programs are not signed yet. To play now, turn Smart App Control off in Windows Security &gt; App &amp; browser control &gt; Smart App Control settings; Windows may not let you turn it back on without a reset. On a work or school PC, ask its administrator.</value></data>
+  <data name="ErrorEngineBlockedAntivirus" xml:space="preserve"><value>Your antivirus stopped VRX's 3D engine (engine\xrplayer.exe) from running. If you downloaded VRX from its GitHub release, you can check the download against SHA256SUMS.txt, then allow the file in your antivirus and report it as a false positive.</value></data>
   <data name="ErrorProcessChanged" xml:space="preserve"><value>The selected process has closed or changed. Refresh the list.</value></data>
   <data name="ErrorRendererMissing" xml:space="preserve"><value>VRX renderer is missing. Reinstall VRX or build the project.</value></data>
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
