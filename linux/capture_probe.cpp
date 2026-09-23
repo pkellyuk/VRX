@@ -2,6 +2,7 @@
 #include <libportal/portal.h>
 #include <pipewire/pipewire.h>
 #include <spa/buffer/meta.h>
+#include <spa/debug/pod.h>
 #include <spa/param/video/raw-utils.h>
 
 #include <algorithm>
@@ -19,6 +20,9 @@ struct Capture {
     XdpPortal* portal = nullptr;
     XdpSession* session = nullptr;
     pw_stream* stream = nullptr;
+    pw_node* source_node = nullptr;
+    spa_hook node_listener{};
+    pw_node_events node_events{};
     spa_hook stream_listener{};
     spa_video_info_raw format{};
     uint64_t frames = 0;
@@ -26,11 +30,13 @@ struct Capture {
     uint64_t unsupported = 0;
     uint64_t generation = 0;
     uint64_t last_sequence = 0;
+    std::string source_serial;
     int64_t last_pts = -1;
     SourceRing<3> ring;
     std::array<std::vector<uint8_t>, 3> slot_bgra;
     uint64_t dropped = 0;
     bool failed = false;
+    bool stopping = false;
 };
 
 void show_error(const char* stage, GError* error) {
@@ -66,7 +72,8 @@ void on_state(void* data, pw_stream_state, pw_stream_state state, const char* er
     std::cout << "PipeWire state: " << pw_stream_state_as_string(state);
     if (error) std::cout << " (" << error << ')';
     std::cout << std::endl;
-    if (state == PW_STREAM_STATE_ERROR || state == PW_STREAM_STATE_UNCONNECTED)
+    if (state == PW_STREAM_STATE_ERROR ||
+        (state == PW_STREAM_STATE_UNCONNECTED && !capture.stopping))
         capture.failed = true;
 }
 
@@ -89,6 +96,22 @@ void on_format(void* data, uint32_t id, const spa_pod* param) {
     capture.format = next;
     std::cout << "Format generation " << capture.generation << ": " << next.size.width << 'x'
               << next.size.height << " SPA format " << next.format << std::endl;
+}
+
+void on_node_info(void* data, const pw_node_info* info) {
+    auto& capture = *static_cast<Capture*>(data);
+    const char* serial = info && info->props ? spa_dict_lookup(info->props, PW_KEY_OBJECT_SERIAL) : nullptr;
+    if (serial && capture.source_serial != serial) {
+        capture.source_serial = serial;
+        std::cout << "Source object serial " << serial << std::endl;
+    }
+}
+
+void on_node_param(void*, int, uint32_t id, uint32_t index, uint32_t,
+                   const spa_pod* param) {
+    if (id != SPA_PARAM_EnumFormat || !param) return;
+    std::cout << "Source EnumFormat " << index << ':' << std::endl;
+    spa_debug_pod(2, nullptr, param);
 }
 
 void on_process(void* data) {
@@ -176,7 +199,12 @@ int main(int argc, char** argv) {
     guint32 node_id = 0;
     GVariant* properties = nullptr;
     g_variant_get(first, "(u@a{sv})", &node_id, &properties);
-    std::cout << "Portal selected node " << node_id << std::endl;
+    gchar* printed_properties = g_variant_print(properties, TRUE);
+    std::cout << "Portal selected node " << node_id << " properties "
+              << printed_properties << std::endl;
+    g_free(printed_properties);
+    guint64 serial = 0;
+    const bool has_serial = g_variant_lookup(properties, "pipewire-serial", "t", &serial);
     g_variant_unref(properties);
     g_variant_unref(first);
     const int remote_fd = xdp_session_open_pipewire_remote(capture.session);
@@ -193,7 +221,22 @@ int main(int argc, char** argv) {
         std::cerr << "Could not connect to portal PipeWire remote" << std::endl;
         return 1;
     }
-    const std::string target = std::to_string(node_id);
+    pw_registry* registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
+    capture.source_node = static_cast<pw_node*>(pw_registry_bind(
+        registry, node_id, PW_TYPE_INTERFACE_Node, PW_VERSION_NODE, 0));
+    if (capture.source_node) {
+        capture.node_events.version = PW_VERSION_NODE_EVENTS;
+        capture.node_events.info = on_node_info;
+        capture.node_events.param = on_node_param;
+        pw_node_add_listener(capture.source_node, &capture.node_listener, &capture.node_events, &capture);
+        pw_node_enum_params(capture.source_node, 0, SPA_PARAM_EnumFormat, 0, UINT32_MAX, nullptr);
+        for (int i = 0; i < 20; ++i) pw_loop_iterate(pw_main_loop_get_loop(pw_loop), 50);
+    }
+    const std::string target = has_serial ? std::to_string(serial) :
+        (!capture.source_serial.empty() ? capture.source_serial : std::to_string(node_id));
+    std::cout << "Target object " << target
+              << ((has_serial || !capture.source_serial.empty()) ? " (serial)" : " (node ID fallback)")
+              << std::endl;
     capture.stream = pw_stream_new(core, "VRX capture probe", pw_properties_new(
         PW_KEY_MEDIA_TYPE, "Video", PW_KEY_MEDIA_CATEGORY, "Capture",
         PW_KEY_MEDIA_ROLE, "Screen", PW_KEY_TARGET_OBJECT, target.c_str(), nullptr));
@@ -205,6 +248,12 @@ int main(int argc, char** argv) {
     pw_stream_add_listener(capture.stream, &capture.stream_listener, &events, &capture);
     uint8_t pod_storage[1024];
     spa_pod_builder builder = SPA_POD_BUILDER_INIT(pod_storage, sizeof(pod_storage));
+    const spa_rectangle default_size = {1920, 1080};
+    const spa_rectangle min_size = {1, 1};
+    const spa_rectangle max_size = {8192, 8192};
+    const spa_fraction default_rate = {60, 1};
+    const spa_fraction min_rate = {0, 1};
+    const spa_fraction max_rate = {240, 1};
     const spa_pod* formats[] = {
         static_cast<const spa_pod*>(spa_pod_builder_add_object(&builder,
             SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
@@ -212,7 +261,11 @@ int main(int argc, char** argv) {
             SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
             SPA_FORMAT_VIDEO_format, SPA_POD_CHOICE_ENUM_Id(4,
                 SPA_VIDEO_FORMAT_BGRA, SPA_VIDEO_FORMAT_BGRA,
-                SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_RGBA)))
+                SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_RGBA),
+            SPA_FORMAT_VIDEO_size, SPA_POD_CHOICE_RANGE_Rectangle(
+                &default_size, &min_size, &max_size),
+            SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_RANGE_Fraction(
+                &default_rate, &min_rate, &max_rate)))
     };
     if (pw_stream_connect(capture.stream, PW_DIRECTION_INPUT, PW_ID_ANY,
                           static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS), formats, 1) < 0) {
@@ -229,7 +282,10 @@ int main(int argc, char** argv) {
               << " unsupported=" << capture.unsupported << " dropped=" << capture.dropped
               << " generation=" << capture.generation << " latest_bytes="
               << (latest ? capture.slot_bgra[latest->index].size() : 0) << std::endl;
+    capture.stopping = true;
     pw_stream_destroy(capture.stream);
+    if (capture.source_node) pw_proxy_destroy(reinterpret_cast<pw_proxy*>(capture.source_node));
+    pw_proxy_destroy(reinterpret_cast<pw_proxy*>(registry));
     pw_core_disconnect(core);
     pw_context_destroy(context);
     pw_main_loop_destroy(pw_loop);

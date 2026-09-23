@@ -244,10 +244,16 @@ PipeWire node, negotiates CPU-mappable BGRA/BGRx/RGBA frames, copies them
 into a bounded three-slot `SourceRing`, and reports frame sequence,
 presentation timestamp, layout generation, copied frames and drops. This
 is a capture diagnostic, not yet a headset live-feed path. On the first
-KDE portal attempt, source selection succeeded but the initial BGRA-only
-PipeWire format offer failed with `no more input formats`. A broader
-format offer is being validated. DMA-BUF import, source close/resize
-handling, and the capture-to-render handoff remain to be implemented.
+KDE portal attempt, source selection succeeded but the initial PipeWire
+format offer failed with `no more input formats`. Querying the source
+revealed BGRA/BGRx at 3840x2160 and a PipeWire object serial. Offering
+size and frame-rate ranges and targeting that serial fixed negotiation.
+An eight-second KDE monitor test streamed 308 BGRA frames into the ring:
+zero unsupported frames, zero ring drops, one layout generation and
+33,177,600 bytes in the latest frame. PipeWire did not attach header
+sequence/PTS metadata on this host; the ring uses monotonic arrival time
+and its own sequence. DMA-BUF import, source close/resize handling, and
+the capture-to-render handoff remain to be implemented.
 
 ## Milestones and acceptance gates
 
