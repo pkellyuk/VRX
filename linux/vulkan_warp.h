@@ -12,6 +12,7 @@ public:
     VulkanWarp& operator=(const VulkanWarp&) = delete;
     void Upload(const std::vector<unsigned char>& rgb, const std::vector<float>& nearness);
     void Record(VkCommandBuffer command);
+    void SetStrength(float strength) { strength_ = strength; }
     VkBuffer SceneBuffer() const { return scene_.buffer; }
     VkBuffer ColorBuffer() const { return color_.buffer; }
     bool CompareReference(const std::vector<unsigned char>& rgb,
@@ -28,6 +29,7 @@ private:
     VkPhysicalDevice gpu_;
     VkDevice device_;
     VkFormat format_;
+    float strength_ = 1.0f;
     Buffer scene_, nearness_, color_, depth_;
     VkDescriptorSetLayout descriptorLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;

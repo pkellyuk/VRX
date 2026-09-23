@@ -4,11 +4,12 @@ import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 
 from PyQt6.QtCore import QProcess, QProcessEnvironment, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
+    QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QDoubleSpinBox,
     QPlainTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -21,17 +22,35 @@ ENGINE = Path(os.environ["VRX_LINUX_ENGINE"]).expanduser().resolve() if "VRX_LIN
 MODEL = ROOT / "bench/models/zipdepth_faithful_fp16_672x384.onnx"
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "vrx"
 PROFILES = CONFIG / "linux-profiles.json"
+DEFAULTS = {"cuda": True, "width": 2.0, "distance": 2.0,
+            "height": 0.0, "horizontal": 0.0, "strength": 1.0}
+RANGES = {"width": (0.5, 10.0), "distance": (0.5, 8.0),
+          "height": (-2.0, 2.0), "horizontal": (-3.0, 3.0),
+          "strength": (0.0, 2.0)}
+
+
+def normalize_profile(value):
+    if not isinstance(value, dict) or not isinstance(value.get("cuda"), bool):
+        raise ValueError("profile must contain a CUDA choice")
+    profile = {**DEFAULTS, **value}
+    for key, (low, high) in RANGES.items():
+        number = profile[key]
+        if isinstance(number, bool) or not isinstance(number, (int, float)) or not low <= number <= high:
+            raise ValueError(f"{key} must be between {low} and {high}")
+        profile[key] = float(number)
+    return {key: profile[key] for key in DEFAULTS}
 
 
 def load_profiles():
     if not PROFILES.exists():
-        return {"Default": {"cuda": True}}
+        return {"Default": DEFAULTS.copy()}
     try:
         document = json.loads(PROFILES.read_text(encoding="utf-8"))
         if document.get("version") != 1 or not isinstance(document.get("profiles"), dict):
             raise ValueError("unsupported profile format")
-        return {str(name): {"cuda": bool(value["cuda"])}
-                for name, value in document["profiles"].items() if isinstance(value, dict)}
+        profiles = {str(name): normalize_profile(value)
+                    for name, value in document["profiles"].items()}
+        return profiles or {"Default": DEFAULTS.copy()}
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise RuntimeError(f"Cannot load Linux profiles: {error}") from error
 
@@ -58,6 +77,12 @@ class Controller(QMainWindow):
         self.kill_timer.setSingleShot(True)
         self.kill_timer.timeout.connect(self.force_stop)
         self.profiles = load_profiles()
+        self.session_directory = tempfile.TemporaryDirectory(prefix="vrx-linux-")
+        self.runtime_settings = Path(self.session_directory.name) / "settings"
+        self.loading_profile = False
+        self.settings_timer = QTimer(self)
+        self.settings_timer.setSingleShot(True)
+        self.settings_timer.timeout.connect(self.apply_runtime_settings)
 
         central = QWidget(self)
         layout = QVBoxLayout(central)
@@ -70,6 +95,22 @@ class Controller(QMainWindow):
         form.addRow("Profile name", self.profile_name)
         self.cuda = QCheckBox("Use ZipDepth on CUDA")
         form.addRow("Depth", self.cuda)
+        self.controls = {}
+        for key, label, suffix in (
+            ("width", "Screen width", " m"),
+            ("distance", "Screen distance", " m"),
+            ("height", "Screen height", " m"),
+            ("horizontal", "Screen horizontal", " m"),
+            ("strength", "Stereo strength", "×"),
+        ):
+            control = QDoubleSpinBox()
+            control.setRange(*RANGES[key])
+            control.setSingleStep(0.1)
+            control.setDecimals(2)
+            control.setSuffix(suffix)
+            control.valueChanged.connect(self.settings_changed)
+            form.addRow(label, control)
+            self.controls[key] = control
         layout.addLayout(form)
         buttons = QHBoxLayout()
         self.save_button = QPushButton("Save profile")
@@ -96,23 +137,52 @@ class Controller(QMainWindow):
     def select_profile(self, name):
         if name in self.profiles:
             self.profile_name.setText(name)
-            self.cuda.setChecked(self.profiles[name]["cuda"])
+            self.loading_profile = True
+            try:
+                self.cuda.setChecked(self.profiles[name]["cuda"])
+                for key, control in self.controls.items():
+                    control.setValue(self.profiles[name][key])
+            finally:
+                self.loading_profile = False
+            self.settings_changed()
 
     def save_profile(self):
         name = self.profile_name.text().strip()
         if not name or len(name) > 80:
             QMessageBox.warning(self, "Profile name", "Enter a name of 1 to 80 characters.")
             return
-        self.profiles[name] = {"cuda": self.cuda.isChecked()}
+        profiles = {**self.profiles, name: {
+            "cuda": self.cuda.isChecked(),
+            **{key: control.value() for key, control in self.controls.items()},
+        }}
         try:
-            save_profiles(self.profiles)
+            save_profiles(profiles)
         except OSError as error:
             QMessageBox.critical(self, "Save profile", str(error))
             return
+        self.profiles = profiles
         if self.profile_choices.findText(name) < 0:
             self.profile_choices.addItem(name)
         self.profile_choices.setCurrentText(name)
         self.status.setText(f"Saved profile: {name}")
+
+    def settings_changed(self):
+        if not self.loading_profile and self.process.state() != QProcess.ProcessState.NotRunning:
+            self.settings_timer.start(100)
+
+    def write_runtime_settings(self):
+        values = [self.controls[key].value() for key in RANGES]
+        snapshot = "VRXL 1 " + " ".join(f"{value:.3f}" for value in values) + "\n"
+        temporary = self.runtime_settings.with_suffix(".tmp")
+        temporary.write_text(snapshot, encoding="ascii")
+        os.replace(temporary, self.runtime_settings)
+
+    def apply_runtime_settings(self):
+        try:
+            self.write_runtime_settings()
+        except OSError as error:
+            self.status.setText(f"Cannot apply live settings: {error}")
+            self.logs.appendPlainText(f"Cannot apply live settings: {error}")
 
     def set_running(self, running):
         self.start_button.setEnabled(not running)
@@ -126,7 +196,12 @@ class Controller(QMainWindow):
         if self.cuda.isChecked() and not MODEL.is_file():
             QMessageBox.critical(self, "Model missing", f"Fetch the checked ZipDepth model first:\n{MODEL}")
             return
-        arguments = ["--until-stop", "--live"]
+        try:
+            self.write_runtime_settings()
+        except OSError as error:
+            QMessageBox.critical(self, "Settings", f"Cannot write live settings: {error}")
+            return
+        arguments = ["--until-stop", "--live", f"--settings={self.runtime_settings}"]
         if self.cuda.isChecked():
             arguments += ["--cuda", f"--model={MODEL}"]
         self.logs.appendPlainText("Starting: " + " ".join([str(ENGINE), *arguments]))
@@ -161,6 +236,7 @@ class Controller(QMainWindow):
             self.status.setText("Could not start VR. See log for details.")
 
     def finished(self, code, status):
+        self.settings_timer.stop()
         self.kill_timer.stop()
         self.read_output()
         self.set_running(False)
@@ -172,6 +248,7 @@ class Controller(QMainWindow):
             if not self.process.waitForFinished(3000):
                 self.process.kill()
                 self.process.waitForFinished(1000)
+        self.session_directory.cleanup()
         super().closeEvent(event)
 
 

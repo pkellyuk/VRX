@@ -318,8 +318,11 @@ stopped cleanly from its Stop VR action with exit code 0. It submitted
 1,549 image-bearing OpenXR frames with zero runtime skips, captured 905
 frames with zero ring drops, and completed 851 depth updates. Median/p95
 arrival-to-depth was 27.83/31.40 ms across those updates. The controller
-still needs live screen/depth controls, Windows profile migration and
-packaging before L4 acceptance.
+now has live width, distance, height, horizontal and stereo
+strength controls stored in named profiles. Its flat/CUDA choice still requires
+a new session. The live snapshot parser and controller profile reload have
+smoke coverage; headset validation of changes during a session remains.
+Windows profile migration and packaging also remain before L4 acceptance.
 
 ## Milestones and acceptance gates
 

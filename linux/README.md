@@ -96,9 +96,14 @@ build/linux/vrx-xr-synthetic --until-stop --live --cuda
 
 The early controller requires Python 3 and PyQt6. It starts the engine,
 opens the portal chooser, stops the process, displays logs, and saves named
-launch profiles under the XDG config directory. Profiles currently store only
-the flat/CUDA depth choice. It has no screen placement or live settings
-controls yet. Set `VRX_LINUX_ENGINE` if the executable is outside the normal
+launch profiles under the XDG config directory. Profiles store the flat/CUDA
+depth choice plus screen width, distance,
+height, horizontal offset and stereo strength. The five numeric controls apply
+live while VR is running and can be saved and reloaded in named profiles.
+The depth backend choice takes effect at the next launch. The controller writes
+an atomic `VRXL 1` settings snapshot to a temporary session directory; the
+engine accepts `--settings=path` and reloads valid snapshots during a run.
+Set `VRX_LINUX_ENGINE` if the executable is outside the normal
 `build/linux-release` or `build/linux` locations. When using the isolated CUDA
 runtime bundle, start the controller with the same `LD_LIBRARY_PATH` used for
 the command-line renderer.

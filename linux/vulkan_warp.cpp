@@ -182,6 +182,7 @@ void VulkanWarp::Upload(const std::vector<unsigned char>& rgb, const std::vector
 
 void VulkanWarp::Record(VkCommandBuffer command) {
     Parameters params{};
+    params.scale = strength_;
     params.bgra = format_ == VK_FORMAT_B8G8R8A8_SRGB || format_ == VK_FORMAT_B8G8R8A8_UNORM;
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout_,
@@ -217,7 +218,7 @@ bool VulkanWarp::CompareReference(const std::vector<unsigned char>& rgb,
     const bool bgra = format_ == VK_FORMAT_B8G8R8A8_SRGB || format_ == VK_FORMAT_B8G8R8A8_UNORM;
     for (int eye = 0; eye < 2; ++eye) {
         const float offset = eye == 0 ? -0.032f : 0.032f;
-        WarpEyeFill(rgb, nearness, offset, float(kSyntheticWidth), 1.0f,
+        WarpEyeFill(rgb, nearness, offset, float(kSyntheticWidth), strength_,
             1.0f / 1.4f, 1.0f / 4.0f, 0.1f, 100.0f, true, kFillMirror,
             reference.data(), referenceDepth.data(), true);
         for (int y = 0; y < kSyntheticHeight; ++y) for (int x = 0; x < kSyntheticWidth; ++x) {

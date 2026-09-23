@@ -6,6 +6,7 @@
 #include <openxr/openxr_platform.h>
 #include "stereo_warp.h"
 #include "vulkan_warp.h"
+#include "live_settings.h"
 #include "vulkan_prep.h"
 #ifdef VRX_HAS_CAPTURE
 #include "portal_capture.h"
@@ -78,7 +79,12 @@ template <typename T> bool Resolve(XrFns& f, XrInstance instance, const char* na
 #define VK_CHECK(expr) do { VkResult r = (expr); if (r != VK_SUCCESS) { \
     std::fprintf(stderr, "%s failed: %d\n", #expr, r); return 1; } } while (0)
 
-int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live) {
+int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live, const char* settingsPath) {
+    vrx::LiveSettings settings;
+    if (settingsPath && !vrx::ReadLiveSettings(settingsPath, settings)) {
+        std::fprintf(stderr, "Invalid or missing Linux settings: %s\n", settingsPath);
+        return 2;
+    }
 #ifdef VRX_HAS_CAPTURE
     std::unique_ptr<vrx::PortalCapture> capture;
     if (live) {
@@ -319,6 +325,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     (void)cuda;
 #endif
 
+    warp->SetStrength(settings.strength);
     XrCompositionLayerQuad quads[2]{};
     const XrCompositionLayerBaseHeader* layers[2]{};
     for (int eye = 0; eye < 2; ++eye) {
@@ -329,8 +336,10 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         quads[eye].subImage.imageRect.extent = {vrx::kSyntheticWidth, vrx::kSyntheticHeight};
         quads[eye].subImage.imageArrayIndex = eye;
         quads[eye].pose.orientation.w = 1.0f;
-        quads[eye].pose.position.z = -2.0f;
-        quads[eye].size = {2.0f, 2.0f * vrx::kSyntheticHeight / vrx::kSyntheticWidth};
+        quads[eye].pose.position.z = -settings.distance;
+        quads[eye].pose.position.x = settings.horizontal;
+        quads[eye].pose.position.y = settings.height;
+        quads[eye].size = {settings.width, settings.width * vrx::kSyntheticHeight / vrx::kSyntheticWidth};
         layers[eye] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[eye]);
     }
     const auto beginTime = std::chrono::steady_clock::now();
@@ -341,6 +350,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     bool referenceMatched = prepMatched;
     bool captureLost = false;
     bool depthFailed = false;
+    auto nextSettingsCheck = std::chrono::steady_clock::now();
     while (!stopRequested && (seconds == 0 ||
            std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count() < seconds)) {
         XrEventDataBuffer event{};
@@ -384,6 +394,23 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             break;
         }
 #endif
+        if (settingsPath && std::chrono::steady_clock::now() >= nextSettingsCheck) {
+            nextSettingsCheck = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+            vrx::LiveSettings updated;
+            if (vrx::ReadLiveSettings(settingsPath, updated)) {
+                if (updated.width != settings.width || updated.distance != settings.distance ||
+                    updated.height != settings.height || updated.horizontal != settings.horizontal ||
+                    updated.strength != settings.strength)
+                    std::printf("Live settings: width %.2f m, distance %.2f m, height %.2f m, horizontal %.2f m, stereo %.2fx\n",
+                        updated.width, updated.distance, updated.height, updated.horizontal, updated.strength);
+                settings = updated;
+                warp->SetStrength(settings.strength);
+                for (auto& quad : quads) {
+                    quad.pose.position = {settings.horizontal, settings.height, -settings.distance};
+                    quad.size = {settings.width, settings.width * vrx::kSyntheticHeight / vrx::kSyntheticWidth};
+                }
+            }
+        }
         if (!running) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); continue; }
         XrFrameWaitInfo wi{}; wi.type = XR_TYPE_FRAME_WAIT_INFO;
         XrFrameState state{}; state.type = XR_TYPE_FRAME_STATE;
@@ -525,9 +552,10 @@ int main(int argc, char** argv) {
     const char* stillPath = nullptr;
     const char* modelPath = "bench/models/zipdepth_faithful_fp16_672x384.onnx";
     bool cuda = false, live = false, durationSeen = false, untilStop = false;
+    const char* settingsPath = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("vrx-xr-synthetic [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]");
+            std::puts("vrx-xr-synthetic [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--settings=path]");
             std::puts("--live selects a portal source; add --cuda for asynchronous ZipDepth");
             std::puts("VRX_OPENXR_LOADER, VRX_WARP_SPV and VRX_PREP_SPV override runtime paths");
             return 0;
@@ -537,6 +565,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--cuda") == 0) cuda = true;
         else if (std::strcmp(argv[i], "--live") == 0) live = true;
         else if (std::strcmp(argv[i], "--until-stop") == 0) untilStop = true;
+        else if (std::strncmp(argv[i], "--settings=", 11) == 0) settingsPath = argv[i] + 11;
         else if (!durationSeen) {
             char* end = nullptr;
             seconds = std::strtod(argv[i], &end);
@@ -547,8 +576,9 @@ int main(int argc, char** argv) {
     if (untilStop) seconds = 0;
     if ((untilStop && durationSeen) || (!untilStop && (seconds <= 0 || seconds > 120)) ||
         (cuda && !stillPath && !live) || (live && stillPath) ||
-        (stillPath && !*stillPath) || (modelPath && !*modelPath)) {
-        std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]\n", stderr);
+        (stillPath && !*stillPath) || (modelPath && !*modelPath) ||
+        (settingsPath && !*settingsPath)) {
+        std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--settings=path]\n", stderr);
         return 2;
     }
 #ifndef VRX_HAS_CAPTURE
@@ -564,7 +594,7 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, OnStopSignal);
     const char* path = std::getenv("VRX_OPENXR_LOADER");
     try {
-        return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live);
+        return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live, settingsPath);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "VRX Linux renderer: %s\n", error.what());
         return 1;
