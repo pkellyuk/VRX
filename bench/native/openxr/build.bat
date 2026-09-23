@@ -90,7 +90,10 @@ if defined DMLPKG2 if exist "!DMLPKG2!\runtimes\win-x64\native\DirectML.dll" cop
 rem The Windows SDK's redistributable shader compiler, next to the exe so that the
 rem engine loads it instead of System32's (which changes with Windows updates): the
 rem shipped shader cache is keyed by the compiler's version (xrapp5.cpp, CompileCs).
-set "D3DCOMPILER=%WindowsSdkDir%Redist\D3D\x64\d3dcompiler_47.dll"
+rem The pinned, tested copy in release\vendor first, so every build uses the same one;
+rem else this PC's Windows SDK.
+set "D3DCOMPILER=%~dp0..\..\..\release\vendor\d3dcompiler_47.dll"
+if not exist "%D3DCOMPILER%" set "D3DCOMPILER=%WindowsSdkDir%Redist\D3D\x64\d3dcompiler_47.dll"
 if not exist "%D3DCOMPILER%" set "D3DCOMPILER=%ProgramFiles(x86)%\Windows Kits\10\Redist\D3D\x64\d3dcompiler_47.dll"
 if not exist "%D3DCOMPILER%" (
   echo BUILD FAILED ^(Windows SDK d3dcompiler_47.dll redistributable not found^)

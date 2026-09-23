@@ -93,8 +93,9 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 ## Build locally
 
 You need Visual Studio with the C++ tools and a Windows SDK (the newest one is found
-with `vswhere`), the .NET 10 SDK, Python 3.12 and Git. The OpenXR loader VRX ships is
-kept in `release/vendor`, so SteamVR is not needed to build.
+with `vswhere`), the .NET 10 SDK, Python 3.12 and Git. The OpenXR loader and the HLSL
+shader compiler VRX ships are pinned in `release/vendor`, so SteamVR is not needed to
+build and every build compiles the same shaders.
 
 From the repository root in PowerShell, fetch the pinned native packages
 (`Microsoft.ML.OnnxRuntime.DirectML` 1.24.4 and `Microsoft.AI.DirectML` 1.15.4) into the

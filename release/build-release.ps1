@@ -68,6 +68,10 @@ function Build-Payload
         $loader = Join-Path $engine 'openxr_loader.dll'
         if ((Get-FileHash -LiteralPath $loader -Algorithm SHA256).Hash -ne '9DAE7F85DCFF14352DF31D699153CEA72100D39BA3F3BA86C236291EF9265BAF') { throw 'openxr_loader.dll is not the pinned release\vendor copy' }
         if ((Get-AuthenticodeSignature -LiteralPath $loader).Status -ne 'Valid') { throw 'openxr_loader.dll signature is not valid' }
+        # So must the shader compiler: the shipped shader cache is compiled with it.
+        $shaderCompiler = Join-Path $engine 'd3dcompiler_47.dll'
+        if ((Get-FileHash -LiteralPath $shaderCompiler -Algorithm SHA256).Hash -ne 'A05F99734F7C4822FEFC12B367AF21FD0976ED6608752FB1E1E80B6ECE7ECBBB') { throw 'd3dcompiler_47.dll is not the pinned release\vendor copy' }
+        if ((Get-AuthenticodeSignature -LiteralPath $shaderCompiler).Status -ne 'Valid') { throw 'd3dcompiler_47.dll signature is not valid' }
         Copy-Item "$ortPackage\runtimes\win-x64\native\*.dll" $engine
         Copy-Item "$dmlPackage\bin\x64-win\DirectML.dll" $engine
         # Both built from their upstream sources and hash-checked by build-models.ps1.
