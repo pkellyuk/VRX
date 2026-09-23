@@ -96,7 +96,7 @@ add_custom_command(
 add_custom_target(vrx-room-eye-shader ALL DEPENDS "${ROOM_EYE_SPV}")
 
 add_executable(vrx-xr-synthetic xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp vulkan_room.cpp model_prep_cpu.cpp
-    vulkan_capture_scale.cpp vulkan_dmabuf.cpp)
+    vulkan_capture_scale.cpp vulkan_dmabuf.cpp vulkan_frame_history.cpp)
 add_dependencies(vrx-xr-synthetic vrx-stereo-shader vrx-model-prep-shader vrx-capture-scale-shader
     vrx-room-mirror-shader vrx-room-emit-shader vrx-room-light-shader vrx-room-eye-shader)
 target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}" VRX_PREP_SPV_PATH="${PREP_SPV}"

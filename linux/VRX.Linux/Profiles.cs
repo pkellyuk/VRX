@@ -8,8 +8,12 @@ namespace Vrx.Linux;
 // profiles are independent of the Windows desktop app's.
 public sealed record LinuxProfile(
     bool Cuda, double Width, double Distance, double Height, double Horizontal, double Strength,
-    int Room, int Glass, int Reflect, int Light, string LightColor)
+    int Room, int Glass, int Reflect, int Light, string LightColor, int Timing = 0)
 {
+    // Game frame timing (frame_timing.h): which captured frame is shown with the depth.
+    public const int TimingLatest = 0, TimingDelayed = 1, TimingMatched = 2;
+    public static readonly string[] TimingNames = { "latest", "delayed", "matched" };
+
     public static readonly LinuxProfile Default =
         new(true, 2.0, 2.0, 0.0, 0.0, 1.0, 30, 60, 25, 30, "#FFB46B");
 
@@ -33,6 +37,8 @@ public sealed record LinuxProfile(
                                               (nameof(Reflect), Reflect), (nameof(Light), Light) })
             if (value < PercentLow || value > PercentHigh)
                 throw new ArgumentException($"{name} must be between {PercentLow} and {PercentHigh}");
+        if (Timing < TimingLatest || Timing > TimingMatched)
+            throw new ArgumentException("Timing must be latest, delayed or matched");
         return this with { LightColor = NormalizeColor(LightColor) };
     }
 
@@ -110,6 +116,12 @@ public static class ProfileStore
             !value.TryGetProperty(key, out var v) ? fallback :
             v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i :
             throw new FormatException($"{key} must be a whole number");
+        int Timing()
+        {
+            if (!value.TryGetProperty("timing", out var v)) return d.Timing;
+            var index = v.ValueKind == JsonValueKind.String ? Array.IndexOf(LinuxProfile.TimingNames, v.GetString()) : -1;
+            return index >= 0 ? index : throw new FormatException("timing must be latest, delayed or matched");
+        }
         string Color(string key, string fallback) =>
             !value.TryGetProperty(key, out var v) ? fallback :
             v.ValueKind == JsonValueKind.String ? v.GetString()! : throw new FormatException($"{key} must be text");
@@ -117,7 +129,7 @@ public static class ProfileStore
             Number("width", d.Width), Number("distance", d.Distance), Number("height", d.Height),
             Number("horizontal", d.Horizontal), Number("strength", d.Strength),
             Percent("room", d.Room), Percent("glass", d.Glass), Percent("reflect", d.Reflect),
-            Percent("light", d.Light), Color("light_color", d.LightColor)).Normalized();
+            Percent("light", d.Light), Color("light_color", d.LightColor), Timing()).Normalized();
     }
 
     // Written to a temporary file and renamed, so a crash never leaves half a file.
@@ -145,6 +157,7 @@ public static class ProfileStore
                 writer.WriteNumber("reflect", p.Reflect);
                 writer.WriteNumber("light", p.Light);
                 writer.WriteString("light_color", p.LightColor);
+                writer.WriteString("timing", LinuxProfile.TimingNames[p.Timing]);
                 writer.WriteEndObject();
             }
             writer.WriteEndObject();

@@ -13,6 +13,8 @@
 #include "vulkan_capture_scale.h"
 #include "vulkan_dmabuf.h"
 #include "playback_policy.h"
+#include "frame_timing.h"
+#include "vulkan_frame_history.h"
 #include "capture_scale.h"
 #ifdef VRX_HAS_CAPTURE
 #include "portal_capture.h"
@@ -389,6 +391,11 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     if (!dmabufModifiers.empty())
         captureScale = std::make_unique<vrx::VulkanCaptureScale>(gpu, device, family, warp->SceneBuffer(),
                                                                  colorWidth, colorHeight);
+    // Live frames kept on the GPU for Delayed and Matched frame timing.
+    std::unique_ptr<vrx::VulkanFrameHistory> history;
+    if (live)
+        history = std::make_unique<vrx::VulkanFrameHistory>(gpu, device, warp->SceneBuffer(),
+                                                            VkDeviceSize(colorWidth) * colorHeight * 4);
     VkCommandPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pci.queueFamilyIndex = family;
@@ -516,6 +523,19 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     // first tracked frame and on each Recenter, then moved by the settings
     // relative to that point. With the room on it keeps only the heading.
     ScreenAnchor screen;
+    // Frame timing (frame_timing.h): what each history slot holds, which slot
+    // the colour buffer holds, and the smoothed delay from capture to depth.
+    struct KeptFrame {
+        bool valid = false;
+        uint64_t sequence = 0, layout = 0;
+        double arrival = 0;
+    };
+    KeptFrame kept[vrx::VulkanFrameHistory::kSlots];
+    uint32_t nextKept = 0;
+    int sceneSlot = -1;
+    DepthDelayEstimate depthDelay;
+    uint64_t lastDepthSequence = 0;
+    int loggedTiming = -1;
     // The room's floor, read from STAGE once per placement (or reference-space change).
     float stageFloorY = std::numeric_limits<float>::quiet_NaN();
     bool floorLatched = false;
@@ -765,6 +785,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             prep->SetFrameSlot(slot);
             bool liveNew = false;                 // a new source frame enters the colour buffer
             bool heldGpuFrame = false;
+            int newSlot = -1, showSlot = -1;      // frame history slots (frame timing)
+            uint64_t shownSequence = 0;
+            double shownArrival = 0;
             vrx::DmabufImage* scaleSource = nullptr;
 #ifdef VRX_HAS_CAPTURE
             if (live) {
@@ -803,21 +826,68 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 }
 #ifdef VRX_HAS_LIVE_DEPTH
                 const auto depth = liveDepth ? liveDepth->Latest() : nullptr;
-                depthAvailable = depth && liveLayout == depth->sourceLayout &&
-                    UsableDepth(liveDepth->Healthy(), liveSequence, liveArrival,
+                if (depth && depth->sourceSequence != lastDepthSequence) {
+                    depthDelay.Update(depth->completedAt - depth->captureArrival);
+                    lastDepthSequence = depth->sourceSequence;
+                }
+#endif
+                // Keep each new frame; a new layout makes the kept frames unusable.
+                if (liveNew) {
+                    for (auto& frame : kept)
+                        if (frame.valid && frame.layout != liveLayout) frame = {};
+                    newSlot = int(nextKept++ % vrx::VulkanFrameHistory::kSlots);
+                    kept[newSlot] = {true, liveSequence, liveLayout, liveArrival};
+                }
+                // The kept frames, oldest first, and the one to show: the newest
+                // (Latest), the newest at least the depth delay old but never older
+                // than the depth's own frame (Delayed), or the depth's frame (Matched).
+                std::vector<TimedFrame> times;
+                std::vector<int> timeSlots;
+                for (uint32_t i = 0; i < vrx::VulkanFrameHistory::kSlots; ++i) {
+                    const uint32_t k = (nextKept + i) % vrx::VulkanFrameHistory::kSlots;   // oldest first
+                    if (!kept[k].valid) continue;
+                    times.push_back({kept[k].sequence, kept[k].arrival});
+                    timeSlots.push_back(int(k));
+                }
+                if (!times.empty()) {
+                    int pick = int(times.size()) - 1;
+                    const FrameTiming timing = FrameTiming(settings.timing);
+#ifdef VRX_HAS_LIVE_DEPTH
+                    int depthFrame = -1;
+                    if (depth && depth->sourceLayout == liveLayout)
+                        for (int i = 0; i < int(times.size()); ++i)
+                            if (times[i].seq == depth->sourceSequence) depthFrame = i;
+                    if (timing == FrameTiming::Delayed) {
+                        pick = PickDelayedFrame(times, nowSeconds(), depthDelay.value);
+                        if (depthFrame >= 0 && times[pick].seq < times[depthFrame].seq) pick = depthFrame;
+                    } else if (timing == FrameTiming::Matched && depthFrame >= 0) {
+                        pick = depthFrame;
+                    }
+#endif
+                    showSlot = timeSlots[pick];
+                    shownSequence = kept[showSlot].sequence;
+                    shownArrival = kept[showSlot].arrival;
+                }
+                if (settings.timing != loggedTiming) {
+                    std::printf("Frame timing: %s\n", FrameTimingName(FrameTiming(settings.timing)));
+                    loggedTiming = settings.timing;
+                }
+#ifdef VRX_HAS_LIVE_DEPTH
+                depthAvailable = depth && shownSequence && liveLayout == depth->sourceLayout &&
+                    UsableDepth(liveDepth->Healthy(), shownSequence, shownArrival,
                                 depth->sourceSequence, depth->captureArrival);
                 if (depthAvailable) {
                     truth = depth->near;
                     report.depthAgeMs += (nowSeconds() - depth->captureArrival) * 1000.0;
                     ++report.depthFrames;
                 }
-                if (liveSequence) {
-                    report.shownAgeMs += (nowSeconds() - liveArrival) * 1000.0;
-                    ++report.shownFrames;
-                }
 #else
                 depthAvailable = false;
 #endif
+                if (shownSequence) {
+                    report.shownAgeMs += (nowSeconds() - shownArrival) * 1000.0;
+                    ++report.shownFrames;
+                }
                 if (!depthAvailable)
                     truth.assign(size_t(vrx::kSyntheticWidth) * vrx::kSyntheticHeight, 0.0f);
             } else
@@ -892,6 +962,15 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             // Live: prepare each new source frame for depth. Synthetic: every frame, for the check.
             const bool prepFrame = live ? liveNew : !stillPath;
             if (prepFrame) prep->Record(command);
+            // Depth is prepared from the new frame above; the frame shown may be an older one.
+            if (history && newSlot >= 0) {
+                history->RecordStore(command, uint32_t(newSlot));
+                sceneSlot = newSlot;
+            }
+            if (history && showSlot >= 0 && showSlot != sceneSlot) {
+                history->RecordLoad(command, uint32_t(showSlot));
+                sceneSlot = showSlot;
+            }
             warp->Record(command, checkFrame);
             if (timestamps) vkCmdWriteTimestamp(command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, slot * kTimestamps + 1);
             if (roomDrawn) room->Record(command, roomImages[roomIndex].image);
@@ -1013,7 +1092,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         }
         if (const double elapsedReport = std::chrono::duration<double>(std::chrono::steady_clock::now() - report.start).count();
             elapsedReport >= 2.0) {
-            char capturePart[96] = "", depthPart[160] = "", gpuPart[160] = "";
+            char capturePart[96] = "", depthPart[224] = "", gpuPart[160] = "";
 #ifdef VRX_HAS_CAPTURE
             if (live) {
                 const uint64_t captured = capture->Captured(), dropped = capture->Dropped();
@@ -1035,8 +1114,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
 #endif
             if (report.shownFrames) {
                 const size_t used = std::strlen(depthPart);
-                std::snprintf(depthPart + used, sizeof(depthPart) - used, ", frame age %.1f ms",
-                              report.shownAgeMs / report.shownFrames);
+                std::snprintf(depthPart + used, sizeof(depthPart) - used, " | %s: frame age %.1f ms, depth delay %.1f ms",
+                              FrameTimingName(FrameTiming(settings.timing)), report.shownAgeMs / report.shownFrames,
+                              depthDelay.value * 1000.0);
             }
             if (!report.gpuMs.empty())
                 std::snprintf(gpuPart, sizeof(gpuPart), " | GPU %.2f / %.2f ms p50/p95: prep+warp %.2f, room %.2f, copy %.2f ms p50",

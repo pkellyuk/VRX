@@ -80,6 +80,7 @@ void LiveDepth::Work() {
             result->near = model_->Run(input.tensor.data(), false, &smoother);
             const auto modelEnd = std::chrono::steady_clock::now();
             result->modelMs = std::chrono::duration<double, std::milli>(modelEnd - modelStart).count();
+            result->completedAt = std::chrono::duration<double>(modelEnd.time_since_epoch()).count();
             result->sourceSequence = input.sequence;
             result->sourceLayout = input.layout;
             result->captureArrival = input.arrival;

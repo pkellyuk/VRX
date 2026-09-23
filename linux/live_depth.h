@@ -22,6 +22,7 @@ public:
         uint64_t sourceLayout = 0;
         double captureArrival = 0;
         double modelMs = 0;          // ZipDepth and its postprocessing for this map
+        double completedAt = 0;      // steady-clock seconds, as captureArrival
     };
     struct Timing {
         uint64_t samples = 0;

@@ -119,7 +119,7 @@ VulkanWarp::VulkanWarp(VkPhysicalDevice gpu, VkDevice device, VkFormat format,
     const auto storage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     const auto transferSrc = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     const auto transferDst = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    CreateBuffer(scene_, colorPixels * 4, storage | transferDst, false);
+    CreateBuffer(scene_, colorPixels * 4, storage | transferDst | transferSrc, false);
     CreateBuffer(nearness_, depthPixels * 4, storage | transferDst, false);
     CreateBuffer(color_, 2 * colorPixels * 4, storage | transferSrc, false);
     CreateBuffer(depth_, 2 * colorPixels * 4, storage | transferSrc, false);

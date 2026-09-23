@@ -121,9 +121,15 @@ wait on a GPU fence every frame. The Linux work should proceed as follows:
   The live room glow uses a quarter-size copy of that input, and its float
   history now lives in CPU memory (the 8-bit history stopped converging).
   Ambilight is still computed on the CPU (about 1 ms) at 64x45.
-- **2g. Separate queues and latency policy.** Schedule depth preparation away
-  from the render queue and add GPU source-image history before adding Windows'
-  Delayed/Matched timing modes.
+- **2g. Separate queues and latency policy.** Delayed/Matched timing is done
+  (below). Depth preparation still runs on the render queue; it costs about
+  2 ms of the 5 ms GPU frame and has not needed a queue of its own yet.
+- **Frame timing (Latest, Delayed, Matched).** Done, as xrapp5 with the shared
+  `frame_timing.h`: each new live frame is kept in an 8-frame GPU history
+  after depth is prepared from it; Delayed shows the newest frame at least the
+  smoothed depth delay old (never older than the depth's own frame) and
+  Matched the depth's own frame. The choice is per profile and applies live
+  (`VRXL 4`). On the PICO 4, Delayed looked smoother than Latest.
 
 DMA-BUF import is valuable, but it is not the only route to a higher-resolution
 first image. A staged upload path can establish the visual and performance
@@ -169,7 +175,7 @@ portable packaging and clean recovery checks as described by the L4 gate in
 [LINUX.md](LINUX.md). The Windows-style room is required for that release and is
 already present, but its performance and portability need further work.
 
-Curved screen, Delayed/Matched timing, fusion/steady processing, a motion
+Curved screen, fusion/steady processing, a motion
 estimator, a second GPU, Depth Anything and foreground crop remain L5 work
 under [LINUX.md](LINUX.md).
 

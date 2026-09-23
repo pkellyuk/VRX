@@ -164,8 +164,8 @@ Store Linux settings under XDG config/data locations. Use a versioned Linux
 profile schema and a separate versioned live-settings snapshot; write both
 atomically and validate ranges before applying them. `VRXL 1` snapshots carry width, distance, height, horizontal offset and stereo
 strength and load with the room off. `VRXL 3` adds a recenter counter after the
-`VRXL 2` fields. `VRXL 2` appends Room, Glass, Reflections,
-ceiling light and RGB light colour. The desktop app writes version 3 and can
+`VRXL 2` fields, and `VRXL 4` the game frame timing (latest, delayed, matched). `VRXL 2` appends Room, Glass, Reflections,
+ceiling light and RGB light colour. The desktop app writes version 4 and can
 load older Linux profiles with defaults for those controls. Numeric serialization
 must be culture-independent. Windows JSON profiles and the `VRX 11` desktop
 snapshot require no direct compatibility or import path. Never use a Windows
@@ -386,7 +386,7 @@ and portable packaging remain before L4 acceptance.
 | L2: depth and warp | ZipDepth, preprocessing and flat stereo warp work with synthetic/still input. | Compare GPU preprocessing and eye images against CPU references; document tolerances and representative worst cases; record capture-to-depth and render times. |
 | L3: live source | Portal/PipeWire window and monitor capture feed the frame ring. | Sustained play, resize, source close, permission loss and reselect tests; no frame-ring reuse or GPU synchronization validation errors. |
 | L4: first playable release | Linux UI launches/stops engine, writes live settings and saves named profiles; the Vulkan room includes picture lighting, glass, frames, tiles, ceiling light and reflections with live controls. | End-to-end source-to-headset session, clean stop, logs, profile reload, clear recovery messages, CPU/reference room image comparisons, PICO 4 visual checks, room GPU timing and a portable package. This is the release gate. |
-| L5: further parity | Delayed/Matched timing, curved screen, advanced ambilight, Depth Anything, motion steadying, fusion and multi-GPU support as separate changes. | Each feature has a Windows/reference image comparison, latency budget and hardware coverage before enabling its control. |
+| L5: further parity | Delayed/Matched timing (done), curved screen, advanced ambilight, Depth Anything, motion steadying, fusion and multi-GPU support as separate changes. | Each feature has a Windows/reference image comparison, latency budget and hardware coverage before enabling its control. |
 
 For the MVP, measure and report median and 95th-percentile capture-to-display
 latency, capture rate, depth update rate, dropped frames, GPU memory and frame

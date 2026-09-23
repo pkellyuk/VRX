@@ -98,6 +98,7 @@ public partial class MainWindow : Window
                                        RoomSlider, GlassSlider, ReflectSlider, LightSlider })
             slider.ValueChanged += (_, _) => SettingsChanged();
         CudaCheck.IsCheckedChanged += (_, _) => SettingsChanged();
+        TimingList.SelectionChanged += (_, _) => SettingsChanged();
         LightColourList.SelectionChanged += (_, _) => SettingsChanged();
         CardProfile.SelectionChanged += (_, _) => ProfileChosen(CardProfile.SelectedItem as string);
         ProfileList.SelectionChanged += (_, _) => ProfileChosen(ProfileList.SelectedItem as string);
@@ -246,6 +247,7 @@ public partial class MainWindow : Window
         ReflectSlider.Value = p.Reflect;
         LightSlider.Value = p.Light;
         CudaCheck.IsChecked = p.Cuda;
+        TimingList.SelectedIndex = p.Timing;
         FillLightColourList(p.LightColor);
         ProfileName.Text = name;
         loading = wasLoading;
@@ -279,7 +281,8 @@ public partial class MainWindow : Window
         Math.Round(HorizontalSlider.Value, 2), Math.Round(StrengthSlider.Value, 2),
         (int)Math.Round(RoomSlider.Value), (int)Math.Round(GlassSlider.Value), (int)Math.Round(ReflectSlider.Value),
         (int)Math.Round(LightSlider.Value),
-        LightColourList.SelectedIndex >= 0 ? lightHexes[LightColourList.SelectedIndex] : LinuxProfile.Default.LightColor);
+        LightColourList.SelectedIndex >= 0 ? lightHexes[LightColourList.SelectedIndex] : LinuxProfile.Default.LightColor,
+        Math.Clamp(TimingList.SelectedIndex, LinuxProfile.TimingLatest, LinuxProfile.TimingMatched));
 
     void SettingsChanged()
     {
