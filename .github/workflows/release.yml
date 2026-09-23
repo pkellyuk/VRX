@@ -17,7 +17,6 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
-    branches: ['xsigning']      # while the signed build is being set up; remove after merging
 
 permissions:
   contents: read
