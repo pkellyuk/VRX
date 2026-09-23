@@ -20,8 +20,8 @@ void Check(VkResult result, const char* call) {
 struct Parameters {
     float focalPx = float(kSyntheticWidth);
     float scale = 1.0f;
-    float invZNear = 1.0f / 1.4f;
-    float invZFar = 1.0f / 4.0f;
+    float invZNear = 1.0f / 1.2f;
+    float invZFar = 1.0f / 12.0f;
     float nearZ = 0.1f;
     float farZ = 100.0f;
     float eyeOffset = 0.032f;
@@ -180,9 +180,18 @@ void VulkanWarp::Upload(const std::vector<unsigned char>& rgb, const std::vector
     std::memcpy(nearness_.mapped, nearness.data(), size_t(pixels) * sizeof(float));
 }
 
+void VulkanWarp::SetStereoGeometry(float screenDistance, float ipd, bool depthAvailable) {
+    if (std::isfinite(screenDistance) && screenDistance > 0.0f) screenDistance_ = screenDistance;
+    if (std::isfinite(ipd) && ipd >= 0.04f && ipd <= 0.09f) ipd_ = ipd;
+    depthAvailable_ = depthAvailable;
+}
+
 void VulkanWarp::Record(VkCommandBuffer command) {
     Parameters params{};
-    params.scale = strength_;
+    params.scale = depthAvailable_ ? strength_ : 0.0f;
+    params.invZNear -= 1.0f / screenDistance_;
+    params.invZFar -= 1.0f / screenDistance_;
+    params.eyeOffset = 0.5f * ipd_;
     params.bgra = format_ == VK_FORMAT_B8G8R8A8_SRGB || format_ == VK_FORMAT_B8G8R8A8_UNORM;
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout_,
@@ -216,10 +225,12 @@ bool VulkanWarp::CompareReference(const std::vector<unsigned char>& rgb,
     int maxChannelDifference = 0;
     float maxDepthDifference = 0.0f;
     const bool bgra = format_ == VK_FORMAT_B8G8R8A8_SRGB || format_ == VK_FORMAT_B8G8R8A8_UNORM;
+    const float invZNear = 1.0f / 1.2f - 1.0f / screenDistance_;
+    const float invZFar = 1.0f / 12.0f - 1.0f / screenDistance_;
     for (int eye = 0; eye < 2; ++eye) {
-        const float offset = eye == 0 ? -0.032f : 0.032f;
+        const float offset = eye == 0 ? -0.5f * ipd_ : 0.5f * ipd_;
         WarpEyeFill(rgb, nearness, offset, float(kSyntheticWidth), strength_,
-            1.0f / 1.4f, 1.0f / 4.0f, 0.1f, 100.0f, true, kFillMirror,
+            invZNear, invZFar, 0.1f, 100.0f, depthAvailable_, kFillMirror,
             reference.data(), referenceDepth.data(), true);
         for (int y = 0; y < kSyntheticHeight; ++y) for (int x = 0; x < kSyntheticWidth; ++x) {
             size_t referenceIndex = size_t(y) * kStereoRowPitch + size_t(x) * 4;

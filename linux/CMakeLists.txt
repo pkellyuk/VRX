@@ -101,6 +101,13 @@ target_compile_definitions(vrx-room-gpu-probe PRIVATE VRX_ROOM_MIRROR_SPV_PATH="
 target_include_directories(vrx-room-gpu-probe PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
 target_link_libraries(vrx-room-gpu-probe PRIVATE Vulkan::Vulkan)
 
+add_executable(vrx-depth-range-test depth_range_test.cpp)
+target_compile_features(vrx-depth-range-test PRIVATE cxx_std_17)
+
+add_executable(vrx-capture-scale-test capture_scale_test.cpp)
+target_compile_features(vrx-capture-scale-test PRIVATE cxx_std_17)
+target_include_directories(vrx-capture-scale-test PRIVATE ../bench/native/openxr)
+
 add_executable(vrx-room-reference room_reference.cpp)
 target_compile_features(vrx-room-reference PRIVATE cxx_std_17)
 target_include_directories(vrx-room-reference PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
@@ -162,6 +169,8 @@ if(BUILD_TESTING)
     add_test(NAME vrx-probe-help COMMAND vrx-probe --help)
     add_test(NAME vrx-xr-synthetic-help COMMAND vrx-xr-synthetic --help)
     add_test(NAME vrx-room-reference COMMAND vrx-room-reference)
+    add_test(NAME vrx-capture-scale COMMAND vrx-capture-scale-test)
+    add_test(NAME vrx-depth-range COMMAND vrx-depth-range-test)
     option(VRX_TEST_VULKAN_GPU "Run hardware Vulkan probes in CTest" OFF)
     if(VRX_TEST_VULKAN_GPU)
         add_test(NAME vrx-room-gpu-probe COMMAND vrx-room-gpu-probe)

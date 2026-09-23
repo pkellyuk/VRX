@@ -32,31 +32,15 @@ std::vector<float> ResampleDepth(const float* raw) {
     return grid;
 }
 
-void NormalizeNear(std::vector<float>& values, bool verbose) {
+void NormalizeNear(std::vector<float>& values, bool verbose, RangeSmoother* smoother) {
     const auto [minIt, maxIt] = std::minmax_element(values.begin(), values.end());
     const float minimum = *minIt, maximum = *maxIt;
     if (!std::isfinite(minimum) || !std::isfinite(maximum) || maximum - minimum < 1e-6f)
         throw std::runtime_error("Invalid ZipDepth output range");
-    constexpr int bins = 1024;
-    size_t histogram[bins]{};
-    const float k = float(bins - 1) / (maximum - minimum);
-    for (float value : values) {
-        if (!std::isfinite(value)) throw std::runtime_error("Non-finite ZipDepth output");
-        ++histogram[std::clamp(int((value - minimum) * k), 0, bins - 1)];
-    }
-    const size_t loCount = size_t(values.size() * 0.005);
-    const size_t hiCount = size_t(values.size() * 0.995);
-    size_t accumulated = 0;
-    int loBin = 0, hiBin = bins - 1;
-    bool haveLow = false;
-    for (int i = 0; i < bins; ++i) {
-        accumulated += histogram[i];
-        if (!haveLow && accumulated > loCount) { loBin = i; haveLow = true; }
-        if (accumulated >= hiCount) { hiBin = i; break; }
-    }
-    float low = minimum + loBin / k;
-    float high = minimum + (hiBin + 1) / k;
-    if (high - low < 1e-6f) { low = minimum; high = maximum; }
+    float low = 0.0f, high = 1.0f;
+    const double now = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    DepthRange(values, smoother, now, low, high);
     const float inverse = 1.0f / (high - low);
     for (float& value : values) value = std::clamp((value - low) * inverse, 0.0f, 1.0f);
     if (verbose) std::printf("ZipDepth normalization: %.6f..%.6f -> 0..1\n", low, high);
@@ -115,7 +99,7 @@ ModelDepth::ModelDepth(const char* modelPath, bool requireCuda)
     std::printf("ZipDepth model loaded with %s provider\n", requireCuda ? "CUDA" : "CPU");
 }
 
-std::vector<float> ModelDepth::Run(const float* nchw, bool verbose) {
+std::vector<float> ModelDepth::Run(const float* nchw, bool verbose, RangeSmoother* smoother) {
     if (!nchw) throw std::runtime_error("Null ZipDepth input");
     const int64_t shape[4] = {1, 3, modelH, modelW};
     auto input = Ort::Value::CreateTensor<float>(memory_, const_cast<float*>(nchw), 3 * modelPixels, shape, 4);
@@ -129,7 +113,7 @@ std::vector<float> ModelDepth::Run(const float* nchw, bool verbose) {
         result[0].GetTensorTypeAndShapeInfo().GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
         throw std::runtime_error("ZipDepth returned an invalid tensor");
     std::vector<float> near = ResampleDepth(result[0].GetTensorData<float>());
-    NormalizeNear(near, verbose);
+    NormalizeNear(near, verbose, smoother);
     DilateNear(near);
     if (verbose) std::printf("ZipDepth inference: %.1f ms, normalized depth %dx%d\n",
                              milliseconds, kSyntheticWidth, kSyntheticHeight);

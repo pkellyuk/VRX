@@ -9,6 +9,7 @@
 #include "live_settings.h"
 #include "vulkan_prep.h"
 #include "vulkan_room.h"
+#include "playback_policy.h"
 #ifdef VRX_HAS_CAPTURE
 #include "portal_capture.h"
 #endif
@@ -21,6 +22,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -162,10 +164,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     XR_RESOLVE("xrBeginSession", beginSession);
     XR_RESOLVE("xrEndSession", endSession);
     XR_RESOLVE("xrWaitFrame", waitFrame);
-    if (roomEnabled) {
-        XR_RESOLVE("xrLocateViews", locateViews);
-        XR_RESOLVE("xrEnumerateViewConfigurationViews", enumerateViewConfig);
-    }
+    XR_RESOLVE("xrLocateViews", locateViews);
+    if (roomEnabled) XR_RESOLVE("xrEnumerateViewConfigurationViews", enumerateViewConfig);
     XR_RESOLVE("xrBeginFrame", beginFrame);
     XR_RESOLVE("xrEndFrame", endFrame);
     XR_RESOLVE("xrAcquireSwapchainImage", acquire);
@@ -384,6 +384,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
 #endif
 
     warp->SetStrength(settings.strength);
+    warp->SetStereoGeometry(settings.distance, 0.064f, true);
     XrCompositionLayerQuad quads[2]{};
     const XrCompositionLayerBaseHeader* layers[3]{};
     XrCompositionLayerProjection projection{};
@@ -422,6 +423,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     bool referenceMatched = prepMatched;
     bool captureLost = false;
     bool depthFailed = false;
+    std::vector<double> roomPrepMs, gpuWaitMs, frameWorkMs, endFrameMs;
     auto nextSettingsCheck = std::chrono::steady_clock::now();
     while (!stopRequested && (seconds == 0 ||
            std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count() < seconds)) {
@@ -491,11 +493,12 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         XR_CHECK(xr.waitFrame(session, &wi, &state));
         XrFrameBeginInfo fbi{}; fbi.type = XR_TYPE_FRAME_BEGIN_INFO;
         XR_CHECK(xr.beginFrame(session, &fbi));
+        const auto frameWorkStart = std::chrono::steady_clock::now();
         uint32_t index = 0;
         bool roomFrameReady = false;
         uint32_t roomIndex = 0;
         XrView roomViews[2]{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
-        if (state.shouldRender && roomEnabled) {
+        if (state.shouldRender) {
             XrViewLocateInfo locate{};
             locate.type = XR_TYPE_VIEW_LOCATE_INFO;
             locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -504,9 +507,16 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             XrViewState viewState{}; viewState.type = XR_TYPE_VIEW_STATE;
             uint32_t count = 0;
             XR_CHECK(xr.locateViews(session, &locate, &viewState, 2, &count, roomViews));
-            roomFrameReady = settings.room > 0 && count == 2 &&
+            const bool validViews = count == 2 &&
                 (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) &&
                 (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT);
+            if (validViews) {
+                const auto& left = roomViews[0].pose.position;
+                const auto& right = roomViews[1].pose.position;
+                const float dx = right.x - left.x, dy = right.y - left.y, dz = right.z - left.z;
+                warp->SetStereoGeometry(settings.distance, std::sqrt(dx * dx + dy * dy + dz * dz), true);
+            }
+            roomFrameReady = roomEnabled && settings.room > 0 && validViews;
             if (roomFrameReady) {
                 for (int eye = 0; eye < 2; ++eye) {
                     projectionViews[eye].pose = roomViews[eye].pose;
@@ -528,6 +538,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             XR_CHECK(xr.waitImage(swapchain, &swi));
             std::vector<unsigned char> rgb;
             std::vector<float> truth;
+            bool depthAvailable = true;
             const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count();
 #ifdef VRX_HAS_CAPTURE
             if (live) {
@@ -535,9 +546,14 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 if (capture->Latest(latest)) rgb = std::move(latest.rgb);
 #ifdef VRX_HAS_LIVE_DEPTH
                 const auto depth = liveDepth ? liveDepth->Latest() : nullptr;
-                if (depth) truth = depth->near;
-                else
+                depthAvailable = depth && latest.layout == depth->sourceLayout &&
+                    UsableDepth(liveDepth->Healthy(), latest.sequence, latest.arrival,
+                                depth->sourceSequence, depth->captureArrival);
+                if (depthAvailable) truth = depth->near;
+#else
+                depthAvailable = false;
 #endif
+                if (!depthAvailable)
                     truth.assign(size_t(vrx::kSyntheticWidth) * vrx::kSyntheticHeight, 0.0f);
             } else
 #endif
@@ -548,6 +564,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 vrx::MakeScene(rgb, elapsed);
                 vrx::MakeTruth(truth, elapsed);
             }
+            warp->SetStereoGeometry(settings.distance, 0.0f, depthAvailable);
             warp->Upload(rgb, truth);
             if (roomFrameReady) {
                 float floorLocalY = std::numeric_limits<float>::quiet_NaN();
@@ -558,7 +575,10 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                         (floorLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
                         floorLocalY = floorLocation.pose.position.y;
                 }
+                const auto prepStart = std::chrono::steady_clock::now();
                 room->Prepare(rgb, settings, roomViews, floorLocalY);
+                roomPrepMs.push_back(std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - prepStart).count());
                 if (roomDumpPath && renderedFrames == 0) room->EnableCapture();
             }
             VK_CHECK(vkResetCommandBuffer(command, 0));
@@ -606,10 +626,15 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             const auto gpuStart = std::chrono::steady_clock::now();
             VK_CHECK(vkQueueSubmit(queue, 1, &submit, fence));
             VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX));
-            if (roomFrameReady && renderedFrames == 0)
-                std::printf("First room frame GPU submit/wait: %.2f ms\n",
-                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gpuStart).count());
+            if (roomFrameReady) {
+                const double ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - gpuStart).count();
+                gpuWaitMs.push_back(ms);
+                if (renderedFrames == 0)
+                    std::printf("First room frame GPU submit/wait: %.2f ms\n", ms);
+            }
             VK_CHECK(vkResetFences(device, 1, &fence));
+            if (roomFrameReady && renderedFrames == 0) room->PrintTiming();
             if (roomFrameReady && roomDumpPath && renderedFrames == 0) {
                 room->SaveCapture(roomDumpPath);
                 referenceMatched = referenceMatched && room->CompareReference();
@@ -639,11 +664,28 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         }
         fe.layerCount = state.shouldRender ? (roomFrameReady ? 3u : 2u) : 0u;
         fe.layers = state.shouldRender ? frameLayers : nullptr;
+        const auto endStart = std::chrono::steady_clock::now();
         XR_CHECK(xr.endFrame(session, &fe));
+        if (roomFrameReady) {
+            const auto done = std::chrono::steady_clock::now();
+            endFrameMs.push_back(std::chrono::duration<double, std::milli>(done - endStart).count());
+            frameWorkMs.push_back(std::chrono::duration<double, std::milli>(done - frameWorkStart).count());
+        }
         ++frames;
     }
     std::printf("Submitted %d OpenXR frames (%d with an image, %d skipped by runtime)\n",
                 frames, renderedFrames, skippedFrames);
+    auto printTiming = [](const char* name, std::vector<double> values) {
+        if (values.empty()) return;
+        std::sort(values.begin(), values.end());
+        const size_t p95 = std::min(values.size() - 1, (values.size() * 95) / 100);
+        std::printf("%s %.2f / %.2f ms (median / p95, %zu frames)\n",
+                    name, values[values.size() / 2], values[p95], values.size());
+    };
+    printTiming("Room CPU prepare", roomPrepMs);
+    printTiming("Vulkan submit/wait", gpuWaitMs);
+    printTiming("OpenXR endFrame", endFrameMs);
+    printTiming("Frame work after beginFrame", frameWorkMs);
 #ifdef VRX_HAS_CAPTURE
     if (live) std::printf("Live capture: %llu frames, %llu dropped\n",
         static_cast<unsigned long long>(capture->Captured()),

@@ -51,6 +51,7 @@ LiveDepth::Timing LiveDepth::Timings() const {
 }
 void LiveDepth::Work() {
     uint64_t lastSequence = 0;
+    RangeSmoother smoother;
     try {
         while (!stop_) {
             if (capture_.Captured() <= lastSequence) {
@@ -64,7 +65,7 @@ void LiveDepth::Work() {
             auto input = PrepareModelInput(source.rgb);
             const auto modelStart = std::chrono::steady_clock::now();
             auto result = std::make_shared<Result>();
-            result->near = model_->Run(input.data(), false);
+            result->near = model_->Run(input.data(), false, &smoother);
             const auto modelEnd = std::chrono::steady_clock::now();
             result->sourceSequence = source.sequence;
             result->sourceLayout = source.layout;

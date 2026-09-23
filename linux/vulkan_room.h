@@ -22,6 +22,7 @@ public:
     void Record(VkCommandBuffer command, VkImage destination);
     void EnableCapture() { capture_ = true; }
     void SaveCapture(const char* path) const;
+    void PrintTiming() const;
     bool CompareReference() const;
 private:
     struct Buffer { VkBuffer handle = VK_NULL_HANDLE; VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -48,6 +49,8 @@ private:
     VkPipelineLayout passPipelineLayout_ = VK_NULL_HANDLE, eyePipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline emitPipeline_ = VK_NULL_HANDLE, mirrorPipeline_ = VK_NULL_HANDLE;
     VkPipeline lightPipeline_ = VK_NULL_HANDLE, eyePipeline_ = VK_NULL_HANDLE;
+    VkQueryPool timingQueries_ = VK_NULL_HANDLE;
+    float timestampPeriod_ = 0.0f;
     Room room_;
     RoomShading shading_;
     RoomEmitterLayout layout_;

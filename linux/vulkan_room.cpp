@@ -184,8 +184,15 @@ VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBu
     mirrorPipeline_=CreatePipeline(VRX_ROOM_MIRROR_SPV_PATH,passPipelineLayout_);
     lightPipeline_=CreatePipeline(VRX_ROOM_LIGHT_SPV_PATH,passPipelineLayout_);
     eyePipeline_=CreatePipeline(VRX_ROOM_EYE_SPV_PATH,eyePipelineLayout_);
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(gpu_,&properties);
+    timestampPeriod_=properties.limits.timestampPeriod;
+    VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    qi.queryType=VK_QUERY_TYPE_TIMESTAMP;qi.queryCount=7;
+    Check(vkCreateQueryPool(device_,&qi,nullptr,&timingQueries_),"vkCreateQueryPool room timing");
 }
 VulkanRoom::~VulkanRoom(){
+    if(timingQueries_)vkDestroyQueryPool(device_,timingQueries_,nullptr);
     for(auto p:{eyePipeline_,lightPipeline_,mirrorPipeline_,emitPipeline_})if(p)vkDestroyPipeline(device_,p,nullptr);
     if(eyePipelineLayout_)vkDestroyPipelineLayout(device_,eyePipelineLayout_,nullptr);
     if(passPipelineLayout_)vkDestroyPipelineLayout(device_,passPipelineLayout_,nullptr);
@@ -276,6 +283,8 @@ void VulkanRoom::Prepare(const std::vector<unsigned char>& rgb,const LiveSetting
         glow[i]=static_cast<unsigned char>(std::lround(glow[i]+(int(reference[i])-int(glow[i]))*kAmbiBlend));
 }
 void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
+    vkCmdResetQueryPool(cmd,timingQueries_,0,7);
+    vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,timingQueries_,0);
     EmitParams ep{};
     ep.srcW=kSyntheticWidth;ep.srcH=kSyntheticHeight;ep.stride=RoomStride(kSyntheticWidth);
     ep.gridX=layout_.gridX;ep.gridY=layout_.gridY;ep.glowW=GlowWidth;ep.glowH=GlowHeight;
@@ -286,6 +295,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,emitPipeline_);
     vkCmdPushConstants(cmd,passPipelineLayout_,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(ep),&ep);
     vkCmdDispatch(cmd,ep.emitterCount,1,1);
+    vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,timingQueries_,1);
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;mb.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -297,6 +307,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
         vkCmdPushConstants(cmd,passPipelineLayout_,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(mirrorParams),mirrorParams);
         vkCmdDispatch(cmd,(mirrorW_+7)/8,(mirrorH_+7)/8,1);
     }
+    vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,timingQueries_,2);
     vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,passPipelineLayout_,0,1,&passSet_,0,nullptr);
     vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,lightPipeline_);
     LightParams lp{};
@@ -308,6 +319,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     std::copy_n(shading_.world,3,lp.worldCount);lp.worldCount[3]=float(layout_.count());
     vkCmdPushConstants(cmd,passPipelineLayout_,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(lp),&lp);
     vkCmdDispatch(cmd,kRoomLightmap/8,kRoomLightmap/8,kRoomFaces);
+    vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,timingQueries_,3);
     mb.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;mb.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_HOST_READ_BIT;
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT|VK_PIPELINE_STAGE_HOST_BIT,
                          0,1,&mb,0,nullptr,0,nullptr);
@@ -334,11 +346,13 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     for(Image* i:{&picture_,&glow_,&mirror_,&light_})
         Transition(cmd,*i,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                    VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+    vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,timingQueries_,4);
     Transition(cmd,eye_,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL,0,VK_ACCESS_SHADER_WRITE_BIT,
                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
     vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,eyePipeline_);
     vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,eyePipelineLayout_,0,1,&eyeSet_,0,nullptr);
     vkCmdDispatch(cmd,(EyeWidth+7)/8,(EyeHeight+7)/8,2);
+    vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,timingQueries_,5);
     Transition(cmd,eye_,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT);
     if(capture_){
@@ -382,6 +396,17 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     target.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;target.dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          0,0,nullptr,0,nullptr,1,&target);
+    vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,timingQueries_,6);
+}
+void VulkanRoom::PrintTiming() const {
+    uint64_t stamps[7]{};
+    Check(vkGetQueryPoolResults(device_,timingQueries_,0,7,sizeof(stamps),stamps,sizeof(uint64_t),
+                                VK_QUERY_RESULT_64_BIT|VK_QUERY_RESULT_WAIT_BIT),"vkGetQueryPoolResults room");
+    const char* names[6]={"emit","mirror","light","upload","eye","copy"};
+    std::printf("Room GPU pass timing:");
+    for(int i=0;i<6;i++)
+        std::printf(" %s %.2f ms",names[i],double(stamps[i+1]-stamps[i])*timestampPeriod_/1e6);
+    std::printf("; total %.2f ms\n",double(stamps[6]-stamps[0])*timestampPeriod_/1e6);
 }
 bool VulkanRoom::CompareReference() const {
     RoomLightmap lm;

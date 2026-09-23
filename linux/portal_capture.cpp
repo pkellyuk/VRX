@@ -1,5 +1,6 @@
 #include "portal_capture.h"
 #include "source_ring.h"
+#include "capture_scale.h"
 #include "synthetic_scene.h"
 #include <libportal/portal.h>
 #include <pipewire/pipewire.h>
@@ -132,31 +133,9 @@ void PortalCapture::Impl::Process(void* data) {
         return;
     }
     auto& output = self.slots[frame->index];
-    output.resize(size_t(kSyntheticWidth) * kSyntheticHeight * 3);
     const auto* pixels = static_cast<const unsigned char*>(plane.data) + offset;
     const bool rgba = self.format.format == SPA_VIDEO_FORMAT_RGBA;
-    for (int y = 0; y < kSyntheticHeight; ++y) {
-        const float py = std::clamp((y + 0.5f) * float(height) / kSyntheticHeight - 0.5f,
-                                    0.0f, float(height - 1));
-        const int y0 = int(py), y1 = std::min(y0 + 1, int(height) - 1);
-        const float fy = py - y0;
-        for (int x = 0; x < kSyntheticWidth; ++x) {
-            const float px = std::clamp((x + 0.5f) * float(width) / kSyntheticWidth - 0.5f,
-                                        0.0f, float(width - 1));
-            const int x0 = int(px), x1 = std::min(x0 + 1, int(width) - 1);
-            const float fx = px - x0;
-            for (int channel = 0; channel < 3; ++channel) {
-                const int src_channel = rgba ? channel : 2 - channel;
-                auto sample = [&](int sx, int sy) {
-                    return float(pixels[size_t(sy) * stride + size_t(sx) * 4 + src_channel]);
-                };
-                const float top = sample(x0, y0) + (sample(x1, y0) - sample(x0, y0)) * fx;
-                const float bottom = sample(x0, y1) + (sample(x1, y1) - sample(x0, y1)) * fx;
-                output[(size_t(y) * kSyntheticWidth + x) * 3 + channel] =
-                    static_cast<unsigned char>(std::lround(top + (bottom - top) * fy));
-            }
-        }
-    }
+    ScaleCapture(pixels, size_t(stride), int(width), int(height), rgba, output);
     frame->layout = self.layout;
     const double arrival = std::chrono::duration<double>(
         std::chrono::steady_clock::now().time_since_epoch()).count();

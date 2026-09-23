@@ -13,6 +13,7 @@ public:
     void Upload(const std::vector<unsigned char>& rgb, const std::vector<float>& nearness);
     void Record(VkCommandBuffer command);
     void SetStrength(float strength) { strength_ = strength; }
+    void SetStereoGeometry(float screenDistance, float ipd, bool depthAvailable);
     VkBuffer SceneBuffer() const { return scene_.buffer; }
     VkBuffer ColorBuffer() const { return color_.buffer; }
     bool CompareReference(const std::vector<unsigned char>& rgb,
@@ -30,6 +31,9 @@ private:
     VkDevice device_;
     VkFormat format_;
     float strength_ = 1.0f;
+    float screenDistance_ = 2.0f;
+    float ipd_ = 0.064f;
+    bool depthAvailable_ = true;
     Buffer scene_, nearness_, color_, depth_;
     VkDescriptorSetLayout descriptorLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
