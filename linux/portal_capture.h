@@ -30,6 +30,7 @@ public:
         uint64_t bufferId = 0, bufferGeneration = 0;
         uint64_t sequence = 0, layout = 0;
         double arrival = 0;
+        bool explicitSync = false;   // acquire already waited for; release signalled on return
     };
     PortalCapture();
     ~PortalCapture();

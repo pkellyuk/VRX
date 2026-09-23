@@ -1,10 +1,12 @@
 #include "portal_capture.h"
 #include "source_ring.h"
 #include "capture_formats.h"
+#include "drm_timeline.h"
 #include "capture_scale.h"
 #include "synthetic_scene.h"
 #include <libportal/portal.h>
 #include <pipewire/pipewire.h>
+#include <spa/buffer/meta.h>
 #include <spa/param/buffers.h>
 #include <spa/param/video/raw-utils.h>
 #include <spa/pod/iter.h>
@@ -56,6 +58,17 @@ struct PortalCapture::Impl {
     std::map<uint64_t, pw_buffer*> inUseGpu;
     std::vector<pw_buffer*> toRelease;
     uint64_t nextBufferId = 0, bufferGeneration = 0;
+    // Explicit sync (SPA_META_SyncTimeline): each buffer's acquire and release
+    // timelines and its current points. Offered only when a DRM render node
+    // can signal the release points; otherwise the source would wait forever.
+    DrmTimelines timelines;
+    struct BufferSync {
+        uint32_t acquire = 0, release = 0;     // syncobj handles
+        uint64_t acquirePoint = 0, releasePoint = 0;
+        bool active = false;                   // the current frame uses explicit sync
+    };
+    std::map<pw_buffer*, BufferSync> sync;
+    bool syncLogged = false;
     // Fixed by the first negotiated size; later sizes are letterboxed into it.
     std::atomic<uint32_t> colorWidth{0}, colorHeight{0};
     std::thread worker;
@@ -145,10 +158,23 @@ struct PortalCapture::Impl {
         self.dmabuf = dmabuf;
         self.modifier = dmabuf ? next.modifier : 0;
         const int types = dmabuf ? (1 << SPA_DATA_DmaBuf) : ((1 << SPA_DATA_MemFd) | (1 << SPA_DATA_MemPtr));
-        const spa_pod* buffers = static_cast<const spa_pod*>(spa_pod_builder_add_object(&builder,
+        std::vector<const spa_pod*> params;
+        if (dmabuf && self.timelines.Available()) {
+            // Preferred: the image plane plus acquire and release syncobjs.
+            params.push_back(static_cast<const spa_pod*>(spa_pod_builder_add_object(&builder,
+                SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+                SPA_PARAM_META_type, SPA_POD_Id(SPA_META_SyncTimeline),
+                SPA_PARAM_META_size, SPA_POD_Int(sizeof(spa_meta_sync_timeline)))));
+            params.push_back(static_cast<const spa_pod*>(spa_pod_builder_add_object(&builder,
+                SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
+                SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(3),
+                SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(types),
+                SPA_PARAM_BUFFERS_metaType, SPA_POD_CHOICE_FLAGS_Int(1 << SPA_META_SyncTimeline))));
+        }
+        params.push_back(static_cast<const spa_pod*>(spa_pod_builder_add_object(&builder,
             SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
-            SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(types)));
-        pw_stream_update_params(self.stream, &buffers, 1);
+            SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(types))));
+        pw_stream_update_params(self.stream, params.data(), uint32_t(params.size()));
         if (!self.colorWidth) {
             int width = 0, height = 0;
             ColorSizeFor(int(next.size.width), int(next.size.height), width, height);
@@ -180,6 +206,30 @@ struct PortalCapture::Impl {
         self.toRelease.erase(std::remove(self.toRelease.begin(), self.toRelease.end(), buffer),
                              self.toRelease.end());
         ++self.bufferGeneration;
+        auto found = self.sync.find(buffer);
+        if (found != self.sync.end()) {
+            self.timelines.Destroy(found->second.acquire);
+            self.timelines.Destroy(found->second.release);
+            self.sync.erase(found);
+        }
+    }
+    // Signal a buffer's release point (explicit sync), then return it to the
+    // source. On the PipeWire thread.
+    void GiveBack(pw_buffer* buffer) {
+        uint32_t release = 0;
+        uint64_t point = 0;
+        {
+            std::lock_guard<std::mutex> lock(gpuMutex);
+            auto found = sync.find(buffer);
+            if (found != sync.end() && found->second.active) {
+                release = found->second.release;
+                point = found->second.releasePoint;
+                found->second.active = false;
+            }
+        }
+        if (release && !timelines.Signal(release, point))
+            std::fputs("Capture: signalling a DMA-BUF release point failed\n", stderr);
+        pw_stream_queue_buffer(stream, buffer);
     }
     // On the PipeWire thread: give released DMA-BUFs back to the source.
     void QueueReleased() {
@@ -188,7 +238,7 @@ struct PortalCapture::Impl {
             std::lock_guard<std::mutex> lock(gpuMutex);
             release.swap(toRelease);
         }
-        for (pw_buffer* buffer : release) pw_stream_queue_buffer(stream, buffer);
+        for (pw_buffer* buffer : release) GiveBack(buffer);
     }
     static int InvokeRelease(spa_loop*, bool, uint32_t, const void*, size_t, void* data) {
         static_cast<Impl*>(data)->QueueReleased();
@@ -223,11 +273,36 @@ void PortalCapture::Impl::Process(void* data) {
         frame.sequence = self.captured.load(std::memory_order_relaxed) + 1;
         frame.arrival = std::chrono::duration<double>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        if (source->n_datas != 1 || frame.fd < 0 || frame.stride < width * 4 || !width || !height) {
+        // Explicit sync: the plane is followed by acquire and release syncobjs.
+        auto* timeline = static_cast<spa_meta_sync_timeline*>(
+            spa_buffer_find_meta_data(source, SPA_META_SyncTimeline, sizeof(spa_meta_sync_timeline)));
+        const bool explicitSync = timeline && source->n_datas == 3 &&
+            source->datas[1].type == SPA_DATA_SyncObj && source->datas[2].type == SPA_DATA_SyncObj;
+        if (!self.syncLogged) {
+            std::printf("Capture DMA-BUF explicit sync: %s\n", explicitSync ? "on" : "off (implicit)");
+            self.syncLogged = true;
+        }
+        bool syncReady = false;
+        if (explicitSync) {
+            std::lock_guard<std::mutex> lock(self.gpuMutex);
+            auto& state = self.sync[buffer];
+            if (!state.acquire) state.acquire = self.timelines.Import(int(source->datas[1].fd));
+            if (!state.release) state.release = self.timelines.Import(int(source->datas[2].fd));
+            state.acquirePoint = timeline->acquire_point;
+            state.releasePoint = timeline->release_point;
+            state.active = state.acquire && state.release;
+            syncReady = state.active;
+            // We promise to signal the release point.
+            if (state.active) timeline->flags &= ~uint32_t(SPA_META_SYNC_TIMELINE_UNSCHEDULED_RELEASE);
+        }
+        if (source->n_datas != (explicitSync ? 3u : 1u) || frame.fd < 0 || frame.stride < width * 4 ||
+            !width || !height || (explicitSync && !syncReady)) {
+            if (explicitSync) std::fputs("Capture: cannot use an explicitly synchronised DMA-BUF\n", stderr);
             ++self.dropped;
-            pw_stream_queue_buffer(self.stream, buffer);
+            self.GiveBack(buffer);
             return;
         }
+        frame.explicitSync = explicitSync;
         pw_buffer* superseded = nullptr;
         {
             std::lock_guard<std::mutex> lock(self.gpuMutex);
@@ -238,7 +313,7 @@ void PortalCapture::Impl::Process(void* data) {
             self.latestInfo = frame;
         }
         // A frame the renderer never took is replaced, not counted as dropped.
-        if (superseded) pw_stream_queue_buffer(self.stream, superseded);
+        if (superseded) self.GiveBack(superseded);
         self.captured.store(frame.sequence, std::memory_order_release);
         return;
     }
@@ -381,11 +456,28 @@ bool PortalCapture::ColorSize(uint32_t& width, uint32_t& height) const {
 }
 bool PortalCapture::DmaBuf() const { return impl_->dmabuf; }
 bool PortalCapture::AcquireGpuFrame(GpuFrame& output) {
-    std::lock_guard<std::mutex> lock(impl_->gpuMutex);
-    if (!impl_->latestGpu) return false;
-    output = impl_->latestInfo;
-    impl_->inUseGpu[output.sequence] = impl_->latestGpu;
-    impl_->latestGpu = nullptr;
+    uint32_t acquire = 0;
+    uint64_t point = 0;
+    {
+        std::lock_guard<std::mutex> lock(impl_->gpuMutex);
+        if (!impl_->latestGpu) return false;
+        output = impl_->latestInfo;
+        impl_->inUseGpu[output.sequence] = impl_->latestGpu;
+        auto found = impl_->sync.find(impl_->latestGpu);
+        if (output.explicitSync && found != impl_->sync.end()) {
+            acquire = found->second.acquire;
+            point = found->second.acquirePoint;
+        }
+        impl_->latestGpu = nullptr;
+    }
+    // Explicit sync: the source's rendering into the buffer must be complete.
+    // It normally is; a frame that is not ready soon is skipped.
+    constexpr int64_t kAcquireTimeoutNs = 20000000;
+    if (acquire && !impl_->timelines.Wait(acquire, point, kAcquireTimeoutNs)) {
+        std::fputs("Capture: DMA-BUF not ready within 20 ms; skipping it\n", stderr);
+        ReleaseGpuFrame(output.sequence);
+        return false;
+    }
     return true;
 }
 void PortalCapture::ReleaseGpuFrame(uint64_t sequence) {

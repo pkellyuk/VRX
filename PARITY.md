@@ -108,7 +108,12 @@ wait on a GPU fence every frame. The Linux work should proceed as follows:
   `vrx-capture-gpu-test` covers 2x2..4x4 box, bilinear and letterboxed cases).
   Shared memory remains the fallback (`--no-dmabuf`). A 60 s PICO 4 session
   captured 3,114 4K frames with no drops. Explicit sync
-  (`SPA_META_SyncTimeline`) is not used; no torn frames have been seen.
+  (`SPA_META_SyncTimeline`) is negotiated when a DRM render node supports
+  syncobjs: the renderer waits (up to 20 ms, on the CPU) for each buffer's
+  acquire point and signals its release point when the frame using it
+  completes. KWin 6.6 accepts it; a 20 s monitor capture delivered a steady
+  60 frames/s with no drops and unchanged 22.7 ms arrival-to-depth.
+  Implicit sync remains the fallback.
 - **2f. Model input and ambilight.** Done for model input: live frames are
   prepared by `model_prep.comp` from the colour buffer (xrapp5's taps,
   `ceil(width / 672)`), and the depth worker receives the tensor. This removed
