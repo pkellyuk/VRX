@@ -3,8 +3,8 @@
 // step with desktop\VRX.Desktop\VRX.Desktop.csproj <Version> and release\VRX.iss.
 #include <winver.h>
 
-#define VRX_VERSION_BINARY 1,7,6,0
-#define VRX_VERSION_TEXT   "1.7.6"
+#define VRX_VERSION_BINARY 1,7,7,0
+#define VRX_VERSION_TEXT   "1.7.7"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION    VRX_VERSION_BINARY

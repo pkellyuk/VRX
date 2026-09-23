@@ -44,9 +44,9 @@ From using VRX day to day:
 
 ## Get started
 
-Download VRX v1.7.6: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.7.6/VRX-Setup-1.7.6.exe)
-or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.6/VRX-1.7.6-win-x64.zip)
-([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.7.6); older versions on
+Download VRX v1.7.7: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.7.7/VRX-Setup-1.7.7.exe)
+or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.7/VRX-1.7.7-win-x64.zip)
+([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.7.7); older versions on
 [GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.
@@ -87,7 +87,7 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 - **Game frame timing** (per game, applies live) chooses which game frame is shown with the depth. **Latest frame** (default) is smooth and immediate, but depth lags slightly behind moving things. **Delayed to depth** holds the game image back by the measured depth delay so the two line up, while motion stays at the capture rate. **Matched to depth** (the earlier frame matching) shows each depth estimate with the exact frame it came from: the best alignment, but the game only updates at the depth rate. Offline on four clips with depth 67 ms behind, against the latest frame: delayed cut depth mismatch from 0.050 to 0.016 and improved edge alignment from 0.59 to 0.72, with 26 game updates per second against matched's 15. Delayed and matched both add delay, so they suit slower games. See [XSYNC.md](XSYNC.md).
 - **Extra foreground depth passes** are experimental and default on; their benefit varies.
 - GPU contention can reduce depth update speed. A steady 60 depth updates per second is not guaranteed.
-- SteamVR dashboard dismissal is best-effort. Releases up to v1.7.6 are unsigned, so on a
+- SteamVR dashboard dismissal is best-effort. Releases up to v1.7.7 are unsigned, so on a
   new Windows 11 install Smart App Control can block the engine; signed releases are being
   set up (see [Code signing and privacy](#code-signing-and-privacy)).
 
@@ -132,7 +132,7 @@ which runs the same script in stages around code signing.
 
 Free code signing provided by [SignPath.io](https://signpath.io), certificate by
 [SignPath Foundation](https://signpath.org). Signed releases are being set up; releases up
-to v1.7.6 are unsigned. See the [code signing policy](https://vrx3d.uk/code-signing.html)
+to v1.7.7 are unsigned. See the [code signing policy](https://vrx3d.uk/code-signing.html)
 for what is signed, how it is built and the team roles.
 
 VRX makes no network connections and collects no data: see the
