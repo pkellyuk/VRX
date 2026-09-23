@@ -16,6 +16,7 @@
 #include "frame_timing.h"
 #include "vulkan_frame_history.h"
 #include "capture_scale.h"
+#include "resource_path.h"
 #ifdef VRX_HAS_CAPTURE
 #include "portal_capture.h"
 #endif
@@ -1199,7 +1200,10 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     double seconds = 10.0;
     const char* stillPath = nullptr;
-    const char* modelPath = "bench/models/zipdepth_faithful_fp16_672x384.onnx";
+    // The packaged model when this engine is packaged, else the repository's.
+    const std::string defaultModel = vrx::ResourcePath("VRX_MODEL", "models", "zipdepth_faithful_fp16_672x384.onnx",
+                                                       "bench/models/zipdepth_faithful_fp16_672x384.onnx");
+    const char* modelPath = defaultModel.c_str();
     bool cuda = false, live = false, room = false, durationSeen = false, untilStop = false;
     const char* settingsPath = nullptr;
     const char* roomDumpPath = nullptr;
@@ -1209,13 +1213,13 @@ int main(int argc, char** argv) {
     int sourceKind = 0;   // 0 any, 1 window, 2 screen
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("vrx-xr-synthetic [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]");
+            std::puts("vrx-engine [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]");
             std::puts("--live selects a portal source; add --cuda for asynchronous ZipDepth");
             std::puts("--color=WxH presents the synthetic scene at that colour size (depth stays 686x392)");
             std::puts("--no-dmabuf receives live frames in shared memory instead of GPU buffers");
             std::puts("--source=window|screen|any limits what the desktop chooser offers (default any)");
             std::puts("--dump-color=frame.ppm writes the first presented colour frame");
-            std::puts("VRX_OPENXR_LOADER, VRX_WARP_SPV and VRX_PREP_SPV override runtime paths");
+            std::puts("VRX_OPENXR_LOADER, VRX_MODEL and the VRX_*_SPV variables override runtime paths");
             return 0;
         }
         if (std::strncmp(argv[i], "--still=", 8) == 0) stillPath = argv[i] + 8;
@@ -1251,7 +1255,7 @@ int main(int argc, char** argv) {
         (stillPath && !*stillPath) || (modelPath && !*modelPath) ||
         (settingsPath && !*settingsPath) || (roomDumpPath && !*roomDumpPath) ||
         (colorWidth && (stillPath || live))) {
-        std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]\n", stderr);
+        std::fputs("usage: vrx-engine [0 < seconds <= 120 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]\n", stderr);
         return 2;
     }
 #ifndef VRX_HAS_CAPTURE

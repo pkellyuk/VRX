@@ -170,10 +170,13 @@ renderer components. Preserve a synthetic mode and run the same parity checks
 through the production renderer. [vulkan_room.cpp](linux/vulkan_room.cpp) should
 be reformatted before its resource and pass logic expands further.
 
-The first usable release still needs an end-to-end controller/session check,
-recenter and runtime geometry decisions, continuous latency/frame timing,
-portable packaging and clean recovery checks as described by the L4 gate in
-[LINUX.md](LINUX.md). The Windows-style room is required for that release and is
+The first usable release still needs an end-to-end controller/session check and
+clean recovery checks as described by the L4 gate in [LINUX.md](LINUX.md).
+Recenter, frame timing and the performance log are done, and
+[linux/package.sh](linux/package.sh) now builds a portable package, small (CUDA
+12/cuDNN 9 from the PC, checked by `vrx --check`) or with `--with-cuda`
+self-contained; the self-contained package ran ZipDepth on CUDA with no CUDA on
+the library path. The Windows-style room is required for that release and is
 already present, but its performance and portability need further work.
 
 Curved screen, fusion/steady processing, a motion
@@ -190,4 +193,4 @@ under [LINUX.md](LINUX.md).
    and add rolling GPU/CPU/source-age timing for the L4 acceptance run.
 4. Improve Vulkan memory, submission and warp parallelism; import DMA-BUF where
    supported; move ambilight and model preparation off the CPU.
-5. Complete L4 packaging and acceptance, then take up L5 features.
+5. ~~Complete L4 packaging~~ (done); complete L4 acceptance, then take up L5 features.

@@ -1,4 +1,5 @@
 #include "vulkan_warp.h"
+#include "resource_path.h"
 #include "stereo_warp.h"
 #include <algorithm>
 #include <cstring>
@@ -171,13 +172,13 @@ VulkanWarp::VulkanWarp(VkPhysicalDevice gpu, VkDevice device, VkFormat format,
     }
     vkUpdateDescriptorSets(device_, kBindings, writes, 0, nullptr);
 
-    const char* env = std::getenv("VRX_WARP_SPV");
 #ifdef VRX_STEREO_SPV_PATH
-    const char* defaultPath = VRX_STEREO_SPV_PATH;
+    const char* builtIn = VRX_STEREO_SPV_PATH;
 #else
-    const char* defaultPath = "stereo_warp.comp.spv";
+    const char* builtIn = nullptr;
 #endif
-    const char* path = env && *env ? env : defaultPath;
+    const std::string shaderPath = ShaderPath("VRX_WARP_SPV", "stereo_warp.comp.spv", builtIn);
+    const char* path = shaderPath.c_str();
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) throw std::runtime_error(std::string("Cannot open stereo shader: ") + path);
     const std::streamsize length = file.tellg();

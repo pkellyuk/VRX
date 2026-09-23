@@ -8,12 +8,18 @@ namespace Vrx.Linux;
 public sealed record EnginePaths(string Root, string Engine, string Model)
 {
     public const string ModelFile = "zipdepth_faithful_fp16_672x384.onnx";
+    public const string EngineFile = "vrx-engine";
 
-    // VRX_LINUX_ENGINE overrides the engine; otherwise the repository is found
-    // above this program or the working directory, and its release build is
-    // preferred over the debug build.
+    // VRX_LINUX_ENGINE overrides the engine. In a portable package (linux/package.sh)
+    // this program is <root>/app/vrx-linux beside <root>/bin/vrx-engine and
+    // <root>/share/vrx/models. Otherwise the repository is found above this program
+    // or the working directory, and its release build is preferred over the debug build.
     public static EnginePaths Find()
     {
+        var package = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
+        if (File.Exists(Path.Combine(package, "bin", EngineFile)))
+            return WithOverride(new EnginePaths(package, Path.Combine(package, "bin", EngineFile),
+                                                Path.Combine(package, "share", "vrx", "models", ModelFile)));
         string? root = null;
         foreach (var start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
         {
@@ -26,13 +32,15 @@ public sealed record EnginePaths(string Root, string Engine, string Model)
             if (root != null) break;
         }
         root ??= Environment.CurrentDirectory;
+        var release = Path.Combine(root, "build", "linux-release", EngineFile);
+        var engine = File.Exists(release) ? release : Path.Combine(root, "build", "linux", EngineFile);
+        return WithOverride(new EnginePaths(root, engine, Path.Combine(root, "bench", "models", ModelFile)));
+    }
+
+    static EnginePaths WithOverride(EnginePaths paths)
+    {
         var engine = Environment.GetEnvironmentVariable("VRX_LINUX_ENGINE");
-        if (string.IsNullOrEmpty(engine))
-        {
-            var release = Path.Combine(root, "build", "linux-release", "vrx-xr-synthetic");
-            engine = File.Exists(release) ? release : Path.Combine(root, "build", "linux", "vrx-xr-synthetic");
-        }
-        return new EnginePaths(root, Path.GetFullPath(engine), Path.Combine(root, "bench", "models", ModelFile));
+        return paths with { Engine = Path.GetFullPath(string.IsNullOrEmpty(engine) ? paths.Engine : engine) };
     }
 }
 

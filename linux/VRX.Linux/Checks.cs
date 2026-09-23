@@ -72,7 +72,7 @@ public static class Checks
         finally { directory.Delete(recursive: true); }
 
         // The engine is started as the PyQt controller started it, with the chosen source.
-        var paths = new EnginePaths("/repo", "/repo/build/linux-release/vrx-xr-synthetic", "/repo/model.onnx");
+        var paths = new EnginePaths("/repo", "/repo/build/linux-release/vrx-engine", "/repo/model.onnx");
         Expect(string.Join(' ', EngineSession.Arguments(paths, "/tmp/s", true, "--source=window")) ==
                "--until-stop --live --room --source=window --settings=/tmp/s --cuda --model=/repo/model.onnx",
                "engine arguments");

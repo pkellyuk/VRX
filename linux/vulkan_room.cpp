@@ -1,4 +1,5 @@
 #include "vulkan_room.h"
+#include "resource_path.h"
 #include "stereo_warp.h"
 #include <algorithm>
 #include <cmath>
@@ -182,10 +183,10 @@ VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBu
     Check(vkCreatePipelineLayout(device_,&pli,nullptr,&passPipelineLayout_),"vkCreatePipelineLayout room pass");
     pli.pSetLayouts=&eyeLayout_;pli.pushConstantRangeCount=0;pli.pPushConstantRanges=nullptr;
     Check(vkCreatePipelineLayout(device_,&pli,nullptr,&eyePipelineLayout_),"vkCreatePipelineLayout room eye");
-    emitPipeline_=CreatePipeline(VRX_ROOM_EMIT_SPV_PATH,passPipelineLayout_);
-    mirrorPipeline_=CreatePipeline(VRX_ROOM_MIRROR_SPV_PATH,passPipelineLayout_);
-    lightPipeline_=CreatePipeline(VRX_ROOM_LIGHT_SPV_PATH,passPipelineLayout_);
-    eyePipeline_=CreatePipeline(VRX_ROOM_EYE_SPV_PATH,eyePipelineLayout_);
+    emitPipeline_=CreatePipeline(ShaderPath("VRX_ROOM_EMIT_SPV","room_emit.comp.spv",VRX_ROOM_EMIT_SPV_PATH).c_str(),passPipelineLayout_);
+    mirrorPipeline_=CreatePipeline(ShaderPath("VRX_ROOM_MIRROR_SPV","room_mirror.comp.spv",VRX_ROOM_MIRROR_SPV_PATH).c_str(),passPipelineLayout_);
+    lightPipeline_=CreatePipeline(ShaderPath("VRX_ROOM_LIGHT_SPV","room_light.comp.spv",VRX_ROOM_LIGHT_SPV_PATH).c_str(),passPipelineLayout_);
+    eyePipeline_=CreatePipeline(ShaderPath("VRX_ROOM_EYE_SPV","room_eye.comp.spv",VRX_ROOM_EYE_SPV_PATH).c_str(),eyePipelineLayout_);
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(gpu_,&properties);
     timestampPeriod_=properties.limits.timestampPeriod;

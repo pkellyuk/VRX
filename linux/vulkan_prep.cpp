@@ -1,4 +1,5 @@
 #include "vulkan_prep.h"
+#include "resource_path.h"
 #include "model_prep_cpu.h"
 #include "synthetic_scene.h"
 #include <algorithm>
@@ -105,13 +106,13 @@ VulkanPrep::VulkanPrep(VkPhysicalDevice gpu, VkDevice device, VkBuffer packedSce
         vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
     }
 
-    const char* env = std::getenv("VRX_PREP_SPV");
 #ifdef VRX_PREP_SPV_PATH
-    const char* defaultPath = VRX_PREP_SPV_PATH;
+    const char* builtIn = VRX_PREP_SPV_PATH;
 #else
-    const char* defaultPath = "model_prep.comp.spv";
+    const char* builtIn = nullptr;
 #endif
-    const char* path = env && *env ? env : defaultPath;
+    const std::string shaderPath = ShaderPath("VRX_PREP_SPV", "model_prep.comp.spv", builtIn);
+    const char* path = shaderPath.c_str();
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) throw std::runtime_error(std::string("Cannot open model prep shader: ") + path);
     const std::streamsize length = file.tellg();

@@ -1,0 +1,115 @@
+#!/bin/sh
+# VRX for Linux, portable package: starts the desktop app, which starts
+# bin/vrx-engine. The bundled ONNX Runtime (and CUDA, in the -cuda package) is
+# in lib/.
+#   ./vrx                    start VRX
+#   ./vrx --check            check this PC for what VRX needs
+#   ./vrx --install-desktop  add VRX to your application menu
+# Optional environment for VRX can be put in ${XDG_CONFIG_HOME:-~/.config}/vrx/environment
+# as shell assignments; they are exported to the app and the engine it starts.
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+environment="${XDG_CONFIG_HOME:-$HOME/.config}/vrx/environment"
+if [ -f "$environment" ]; then
+    set -a
+    . "$environment"
+    set +a
+fi
+export LD_LIBRARY_PATH="$here/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+failures=0
+ok() { printf '  ok       %s\n' "$1"; }
+bad() { printf '  MISSING  %s\n' "$1"; shift; for line in "$@"; do printf '           %s\n' "$line"; done; failures=$((failures + 1)); }
+note() { printf '  note     %s\n' "$1"; shift; for line in "$@"; do printf '           %s\n' "$line"; done; }
+
+# Libraries a program or library needs that the loader cannot find, one per line.
+missing_libraries() { ldd "$1" 2>/dev/null | awk '/not found/ { print $1 }' | sort -u | tr '\n' ' '; }
+
+check() {
+    echo "VRX $(cat "$here/VERSION" 2>/dev/null || echo "(unknown version)") - checking this PC"
+    echo
+    echo "Graphics"
+    probe=$("$here/bin/vrx-probe" 2>&1 || true)
+    if printf '%s\n' "$probe" | grep -q 'vendor 0x10de'; then
+        ok "NVIDIA Vulkan GPU: $(printf '%s\n' "$probe" | sed -n 's/^ *[0-9]*: \(.*\) (vendor 0x10de.*/\1/p' | head -n 1)"
+    elif printf '%s\n' "$probe" | grep -q 'vendor 0x'; then
+        note "no NVIDIA GPU found; the picture works, depth needs an NVIDIA GPU (CUDA)"
+    else
+        bad "Vulkan GPU" "Install your GPU's Vulkan driver (the NVIDIA driver on NVIDIA GPUs)."
+    fi
+    libraries=$(missing_libraries "$here/bin/vrx-engine")
+    if [ -z "$libraries" ]; then ok "engine libraries"
+    else bad "engine libraries: $libraries" "Install PipeWire, libportal, GLib, libpng and the Vulkan loader from your distribution" "(Ubuntu: sudo apt install libportal1 libpipewire-0.3-0 libpng16-16 libvulkan1)."
+    fi
+    libraries=""
+    # libcoreclrtraceptprovider.so is .NET's optional LTTng tracing; .NET runs without it.
+    for library in "$here"/app/*.so; do
+        [ "${library##*/}" = libcoreclrtraceptprovider.so ] && continue
+        libraries="$libraries$(missing_libraries "$library")"
+    done
+    if [ -z "$libraries" ]; then ok "desktop app libraries"
+    else bad "desktop app libraries: $libraries" "Install them from your distribution (Ubuntu: sudo apt install libfontconfig1 libice6 libsm6)."
+    fi
+
+    echo
+    echo "VR"
+    runtime=""
+    for file in "${XDG_CONFIG_HOME:-$HOME/.config}/openxr/1/active_runtime.json" /etc/xdg/openxr/1/active_runtime.json; do
+        [ -f "$file" ] && { runtime=$file; break; }
+    done
+    if [ -n "$runtime" ]; then ok "OpenXR runtime: $(readlink -f "$runtime")"
+    else bad "active OpenXR runtime" "Install SteamVR and set it as the OpenXR runtime (SteamVR settings > OpenXR)."
+    fi
+    if printf '%s\n' "$probe" | grep -q '^OpenXR loader: found' ||
+       [ -f "$HOME/.local/share/Steam/steamapps/common/SteamVR/bin/linux64/libopenxr_loader.so" ]; then
+        ok "OpenXR loader"
+    else bad "OpenXR loader" "Install SteamVR, or your distribution's OpenXR loader (Ubuntu: sudo apt install libopenxr-loader1)."
+    fi
+
+    echo
+    echo "Screen capture"
+    if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pipewire-0" ]; then ok "PipeWire is running"
+    else bad "PipeWire" "VRX captures through PipeWire; start it (systemctl --user start pipewire)."
+    fi
+    if command -v busctl >/dev/null 2>&1 &&
+       busctl --user get-property org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop \
+           org.freedesktop.portal.ScreenCast version >/dev/null 2>&1; then
+        ok "desktop portal with screen casting"
+    elif command -v busctl >/dev/null 2>&1; then
+        bad "desktop portal with screen casting" "Install xdg-desktop-portal and your desktop's backend" "(KDE: xdg-desktop-portal-kde, GNOME: xdg-desktop-portal-gnome)."
+    else note "busctl is not installed, so the screen casting portal was not checked"
+    fi
+
+    echo
+    echo "Depth (CUDA)"
+    if printf '%s\n' "$probe" | grep -q '^CUDA driver library: found'; then ok "NVIDIA CUDA driver"
+    else bad "NVIDIA CUDA driver (libcuda.so.1)" "Install the NVIDIA proprietary driver; depth needs it."
+    fi
+    libraries=$(missing_libraries "$here/lib/libonnxruntime_providers_cuda.so")
+    if [ -z "$libraries" ]; then
+        cudnn=$(ldd "$here/lib/libonnxruntime_providers_cuda.so" 2>/dev/null | awk '$1 == "libcudnn.so.9" { print $3 }')
+        cudnn_directory=$(dirname "${cudnn:-/nonexistent/x}")
+        if [ -f "$cudnn_directory/libcudnn_engines_precompiled.so.9" ] && [ -f "$cudnn_directory/libcudnn_cnn.so.9" ]; then
+            ok "CUDA 12 and cuDNN 9 ($( [ "$cudnn_directory" = "$here/lib" ] && echo bundled || echo "$cudnn_directory"))"
+        else bad "cuDNN 9 engine libraries next to $cudnn" "Install the complete cuDNN 9 for CUDA 12, or use the -cuda package, which bundles it."
+        fi
+    else
+        bad "CUDA 12 / cuDNN 9 libraries: $libraries" "Install the CUDA 12 runtime libraries and cuDNN 9 from NVIDIA's repositories," "or use the vrx-linux-...-cuda package, which bundles them." "Without them, untick \"Depth from ZipDepth on the GPU (CUDA)\" to play in 2D."
+    fi
+    model="$here/share/vrx/models/zipdepth_faithful_fp16_672x384.onnx"
+    if [ -f "$model" ] && (cd "$here/share/vrx/models" && sha256sum --check --status SHA256SUMS); then ok "ZipDepth model"
+    else bad "ZipDepth model ($model)" "The package is incomplete; extract it again."
+    fi
+
+    echo
+    if [ "$failures" -eq 0 ]; then echo "Everything VRX needs is here."; else echo "$failures problem(s) found."; fi
+    [ "$failures" -eq 0 ]
+}
+
+case "${1:-}" in
+    --check) check; exit ;;
+    --install-desktop) exec "$here/install-desktop.sh" ;;
+    --engine) shift; exec "$here/bin/vrx-engine" "$@" ;;
+    --help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+exec "$here/app/vrx-linux" "$@"

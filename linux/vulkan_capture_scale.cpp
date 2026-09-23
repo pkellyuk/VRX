@@ -1,4 +1,5 @@
 #include "vulkan_capture_scale.h"
+#include "resource_path.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -52,12 +53,12 @@ VulkanCaptureScale::VulkanCaptureScale(VkPhysicalDevice gpu, VkDevice device, ui
     Check(vkCreateDescriptorPool(device_, &poolInfo, nullptr, &pool_), "vkCreateDescriptorPool (capture scale)");
 
 #ifdef VRX_CAPTURE_SCALE_SPV_PATH
-    const char* defaultPath = VRX_CAPTURE_SCALE_SPV_PATH;
+    const char* builtIn = VRX_CAPTURE_SCALE_SPV_PATH;
 #else
-    const char* defaultPath = "capture_scale.comp.spv";
+    const char* builtIn = nullptr;
 #endif
-    const char* env = std::getenv("VRX_CAPTURE_SCALE_SPV");
-    const char* path = env && *env ? env : defaultPath;
+    const std::string shaderPath = ShaderPath("VRX_CAPTURE_SCALE_SPV", "capture_scale.comp.spv", builtIn);
+    const char* path = shaderPath.c_str();
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) throw std::runtime_error(std::string("Cannot open capture scale shader: ") + path);
     const std::streamsize length = file.tellg();

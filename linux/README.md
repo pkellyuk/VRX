@@ -3,7 +3,7 @@
 The port design and release gates are in [LINUX.md](../LINUX.md). This directory
 contains a Linux OpenXR/Vulkan renderer, static and live ZipDepth paths,
 a portal/PipeWire capture adapter, the VRX desktop app (Avalonia), and
-prerequisite probes. Packaging is still under development.
+prerequisite probes. `linux/package.sh` builds a portable package.
 
 ## Build
 
@@ -39,7 +39,7 @@ is checked but is not yet submitted to an OpenXR depth swapchain.
 
 ```sh
 VRX_OPENXR_LOADER=/absolute/path/to/libopenxr_loader.so \
-  build/linux/vrx-xr-synthetic 10
+  build/linux/vrx-engine 10
 ```
 
 A loader in the system library path needs no override. SteamVR must be the
@@ -54,7 +54,11 @@ source. The scene is upscaled on the CPU each frame, so its frame rate is not
 representative.
 
 The CMake build compiles stereo_warp.comp and model_prep.comp to SPIR-V.
-VRX_WARP_SPV and VRX_PREP_SPV override the generated shader paths. Without
+The engine program is `vrx-engine`. It finds its shaders at the paths CMake
+compiled in, or, when packaged, in `share/vrx/shaders` beside its `bin`
+directory; VRX_WARP_SPV, VRX_PREP_SPV, VRX_CAPTURE_SCALE_SPV and
+VRX_ROOM_{EMIT,MIRROR,LIGHT,EYE}_SPV override them, and VRX_MODEL overrides the
+default model. Without
 CMake, compile both shaders and link xr_synthetic.cpp, vulkan_warp.cpp and
 vulkan_prep.cpp against Vulkan, dl and pthread.
 
@@ -76,7 +80,7 @@ Vulkan warp renders stereo eyes. This is a static test path, not live capture.
 ```sh
 build/linux/vrx-model-probe --cuda bench/models/zipdepth_faithful_fp16_672x384.onnx
 VRX_OPENXR_LOADER=/absolute/path/to/libopenxr_loader.so \
-  build/linux/vrx-xr-synthetic 15 --still=docs/vrx-headset.png --cuda
+  build/linux/vrx-engine 15 --still=docs/vrx-headset.png --cuda
 ```
 
 The CUDA option requires the CUDA provider and disables CPU fallback. Omit
@@ -120,7 +124,7 @@ SteamVR loader under the user's standard Steam install is found automatically
 when no system OpenXR loader is installed; `VRX_OPENXR_LOADER` overrides it.
 
 ```sh
-build/linux/vrx-xr-synthetic --until-stop --live --cuda
+build/linux/vrx-engine --until-stop --live --cuda
 ```
 
 `--source=window`, `--source=screen` or `--source=any` (the default) limits
@@ -140,7 +144,7 @@ differences: Wayland does not let an app list other windows, so "Game &
 window" chooses between a window, a whole screen or either, and the desktop's
 sharing dialog does the choosing; there is no auto-attach; settings the Linux
 engine cannot apply yet (curve, follow-head, a separate ambilight,
-steadying, timing modes, SteamVR menu options) are shown disabled. The app
+steadying, SteamVR menu options) are shown disabled. The app
 starts the room renderer even when Room is 0, so it can be turned on live.
 
 Build it with the .NET 10 SDK (a user-local install from `dotnet-install.sh`
@@ -161,6 +165,31 @@ arguments without a display (it is in CTest when .NET is found).
 `VRX_LINUX_SCREENSHOT=<directory>` renders the window in both modes to PNG
 files and exits.
 
+## Portable package
+
+`linux/package.sh` builds `build/linux-package/vrx-linux-<version>-x86_64.tar.gz`
+from a configured release build: the engine and `vrx-probe` in `bin` (finding
+their libraries through an `$ORIGIN/../lib` run path), ONNX Runtime GPU in
+`lib`, the shaders, checked model and icons in `share/vrx`, the desktop app
+published self-contained with its own .NET runtime in `app`, and the licences
+and notices. `--with-cuda=DIR` also bundles CUDA 12 and cuDNN 9 from NVIDIA's pip
+wheels in DIR, with their licences, for a package that needs no CUDA on the PC
+(about 1.8 GB compressed, 2.9 GB unpacked, against 285 MB and 490 MB). `--help`
+lists the other options and the `pip download` command for the wheels.
+
+```sh
+CMAKE=/path/to/cmake linux/package.sh
+linux/package.sh --with-cuda=/path/to/nvidia-wheels
+```
+
+In the package, `./vrx` starts the app, `./vrx --check` reports what the PC
+lacks (GPU and driver, engine and app libraries, OpenXR runtime and loader,
+PipeWire, the screen-casting portal, CUDA/cuDNN and the model checksum) with
+how to install it, and `./vrx --install-desktop` adds it to the application
+menu. The app finds `bin/vrx-engine` and the packaged model beside `app/`.
+Everything the PC must provide (driver, Vulkan loader, SteamVR, PipeWire,
+the portal, libportal, GLib and libpng) is listed in the package README.
+
 ## Windows-style room renderer
 
 `--room` adds a tracked per-eye room projection layer behind the stereo screen.
@@ -177,8 +206,8 @@ its reported 2644×2644 recommendation. The stereo screen remains a separate
 quad layer; its dark footprint in the room projection prevents bright gaps.
 
 ```sh
-build/linux/vrx-xr-synthetic 15 --room
-build/linux/vrx-xr-synthetic 15 --room-dump=/tmp/vrx-room-eyes.ppm
+build/linux/vrx-engine 15 --room
+build/linux/vrx-engine 15 --room-dump=/tmp/vrx-room-eyes.ppm
 ```
 
 `--room-dump` also compares a grid of eye pixels with `room.h` and saves the

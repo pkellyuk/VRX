@@ -1,0 +1,27 @@
+VRX for Linux @VERSION@ third-party components
+
+ZipDepth-base (MIT), Fabio Tosi
+https://github.com/fabiotosi92/ZipDepth
+The depth model. The zipdepth_base.pth checkpoint has been exported to a fixed
+672x384 ONNX model with FP16 arithmetic and float input/output, keeping the
+original global-context attention pooling, using bench/zipdepth_export.py.
+See licenses/ZipDepth-LICENSE.txt.
+
+ONNX Runtime GPU (MIT and bundled third-party notices)
+https://github.com/microsoft/onnxruntime
+Release libraries for Linux x64 with the CUDA execution provider, unmodified.
+See licenses/ONNXRuntime-LICENSE.txt and ONNXRuntime-ThirdPartyNotices.txt.
+
+Microsoft .NET runtime (MIT; self-contained dotnet publish in app/)
+https://github.com/dotnet/runtime
+See licenses/Microsoft.NETCore.App-*.
+
+Avalonia UI, SkiaSharp, HarfBuzzSharp and the other NuGet packages in app/ (MIT)
+https://github.com/AvaloniaUI/Avalonia  https://github.com/mono/SkiaSharp
+Listed in licenses/NuGet-packages.txt, with each package's licence in licenses/.
+
+Not bundled: the OpenXR loader and runtime (SteamVR), the Vulkan loader and GPU
+driver, PipeWire, xdg-desktop-portal, libportal, GLib and libpng come from the PC.
+
+Exact packaged file hashes are recorded in FILES.sha256.txt and the build in
+BUILD.txt. This notice does not change the licenses of those components.

@@ -1,15 +1,23 @@
 #!/bin/sh
 # Adds VRX to this user's application menu: the VRX logo in the hicolor icon
-# theme and a desktop entry that starts linux/vrx-linux. Nothing outside
+# theme and a desktop entry that starts VRX - linux/vrx-linux in the
+# repository, or ./vrx in a portable package. Nothing outside
 # ${XDG_DATA_HOME:-~/.local/share} is changed. Run it again after moving the
-# repository; remove the two files it names to uninstall.
+# repository or package; remove the two files it names to uninstall.
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -d "$here/share/vrx/icons" ]; then
+    icons="$here/share/vrx/icons"
+    program="$here/vrx"
+else
+    icons="$here/VRX.Linux/Assets"
+    program="$here/vrx-linux"
+fi
 data="${XDG_DATA_HOME:-$HOME/.local/share}"
 for size in 16 24 32 48 64 128 256; do
     directory="$data/icons/hicolor/${size}x${size}/apps"
     mkdir -p "$directory"
-    cp "$here/VRX.Linux/Assets/vrx-$size.png" "$directory/vrx.png"
+    cp "$icons/vrx-$size.png" "$directory/vrx.png"
 done
 mkdir -p "$data/applications"
 entry="$data/applications/vrx-linux.desktop"
@@ -19,7 +27,7 @@ Type=Application
 Name=VRX
 GenericName=Flat games in VR
 Comment=Play a window or screen in 3D in an OpenXR headset
-Exec="$here/vrx-linux"
+Exec="$program"
 Icon=vrx
 Terminal=false
 Categories=Game;

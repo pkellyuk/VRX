@@ -95,17 +95,17 @@ add_custom_command(
 )
 add_custom_target(vrx-room-eye-shader ALL DEPENDS "${ROOM_EYE_SPV}")
 
-add_executable(vrx-xr-synthetic xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp vulkan_room.cpp model_prep_cpu.cpp
+add_executable(vrx-engine xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp vulkan_room.cpp model_prep_cpu.cpp
     vulkan_capture_scale.cpp vulkan_dmabuf.cpp vulkan_frame_history.cpp)
-add_dependencies(vrx-xr-synthetic vrx-stereo-shader vrx-model-prep-shader vrx-capture-scale-shader
+add_dependencies(vrx-engine vrx-stereo-shader vrx-model-prep-shader vrx-capture-scale-shader
     vrx-room-mirror-shader vrx-room-emit-shader vrx-room-light-shader vrx-room-eye-shader)
-target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}" VRX_PREP_SPV_PATH="${PREP_SPV}"
+target_compile_definitions(vrx-engine PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}" VRX_PREP_SPV_PATH="${PREP_SPV}"
     VRX_CAPTURE_SCALE_SPV_PATH="${CAPTURE_SCALE_SPV}"
     VRX_ROOM_MIRROR_SPV_PATH="${ROOM_MIRROR_SPV}" VRX_ROOM_EMIT_SPV_PATH="${ROOM_EMIT_SPV}"
     VRX_ROOM_LIGHT_SPV_PATH="${ROOM_LIGHT_SPV}" VRX_ROOM_EYE_SPV_PATH="${ROOM_EYE_SPV}")
-target_compile_features(vrx-xr-synthetic PRIVATE cxx_std_17)
-target_include_directories(vrx-xr-synthetic PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
-target_link_libraries(vrx-xr-synthetic PRIVATE Vulkan::Vulkan Threads::Threads ${CMAKE_DL_LIBS})
+target_compile_features(vrx-engine PRIVATE cxx_std_17)
+target_include_directories(vrx-engine PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
+target_link_libraries(vrx-engine PRIVATE Vulkan::Vulkan Threads::Threads ${CMAKE_DL_LIBS})
 
 add_executable(vrx-capture-gpu-test capture_gpu_test.cpp vulkan_capture_scale.cpp vulkan_prep.cpp model_prep_cpu.cpp)
 add_dependencies(vrx-capture-gpu-test vrx-capture-scale-shader vrx-model-prep-shader)
@@ -151,10 +151,10 @@ endif()
 
 find_package(PNG QUIET)
 if(TARGET vrx-model-probe AND PNG_FOUND)
-    target_sources(vrx-xr-synthetic PRIVATE model_depth.cpp still_image.cpp)
-    target_include_directories(vrx-xr-synthetic PRIVATE "${ORT_INCLUDE_DIR}")
-    target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_HAS_MODEL=1)
-    target_link_libraries(vrx-xr-synthetic PRIVATE "${ORT_LIBRARY}" PNG::PNG)
+    target_sources(vrx-engine PRIVATE model_depth.cpp still_image.cpp)
+    target_include_directories(vrx-engine PRIVATE "${ORT_INCLUDE_DIR}")
+    target_compile_definitions(vrx-engine PRIVATE VRX_HAS_MODEL=1)
+    target_link_libraries(vrx-engine PRIVATE "${ORT_LIBRARY}" PNG::PNG)
 else()
     message(STATUS "Still-image model mode requires ONNX Runtime development files and libpng")
 endif()
@@ -176,19 +176,27 @@ if(TARGET PkgConfig::GIO AND PORTAL_INCLUDE_DIR AND PORTAL_LIBRARY AND
         "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr")
     target_link_libraries(vrx-capture-probe PRIVATE
         PkgConfig::GIO "${PORTAL_LIBRARY}" "${PIPEWIRE_LIBRARY}" Vulkan::Vulkan)
-    target_sources(vrx-xr-synthetic PRIVATE portal_capture.cpp drm_timeline.cpp)
-    target_include_directories(vrx-xr-synthetic PRIVATE
+    target_sources(vrx-engine PRIVATE portal_capture.cpp drm_timeline.cpp)
+    target_include_directories(vrx-engine PRIVATE
         "${PORTAL_INCLUDE_DIR}" "${PIPEWIRE_INCLUDE_DIR}" "${SPA_INCLUDE_DIR}")
-    target_link_libraries(vrx-xr-synthetic PRIVATE
+    target_link_libraries(vrx-engine PRIVATE
         PkgConfig::GIO "${PORTAL_LIBRARY}" "${PIPEWIRE_LIBRARY}")
-    target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_HAS_CAPTURE=1)
+    target_compile_definitions(vrx-engine PRIVATE VRX_HAS_CAPTURE=1)
     if(TARGET vrx-model-probe AND PNG_FOUND)
-        target_sources(vrx-xr-synthetic PRIVATE live_depth.cpp)
-        target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_HAS_LIVE_DEPTH=1)
+        target_sources(vrx-engine PRIVATE live_depth.cpp)
+        target_compile_definitions(vrx-engine PRIVATE VRX_HAS_LIVE_DEPTH=1)
     endif()
 else()
     message(STATUS "libportal/PipeWire development files unavailable; vrx-capture-probe is disabled")
 endif()
+
+# The portable package layout (linux/package.sh): programs in bin, which find
+# the bundled ONNX Runtime (and CUDA, if bundled) in lib, and the shaders in
+# share/vrx/shaders, where resource_path.h looks for them.
+set_target_properties(vrx-engine vrx-probe PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
+install(TARGETS vrx-engine vrx-probe RUNTIME DESTINATION bin)
+install(FILES "${STEREO_SPV}" "${PREP_SPV}" "${CAPTURE_SCALE_SPV}" "${ROOM_MIRROR_SPV}" "${ROOM_EMIT_SPV}"
+              "${ROOM_LIGHT_SPV}" "${ROOM_EYE_SPV}" DESTINATION share/vrx/shaders)
 
 # The VRX desktop app (Avalonia, .NET 10) is built with dotnet when it is
 # available, on the PATH or installed for this user by dotnet-install.sh.
@@ -213,7 +221,7 @@ if(BUILD_TESTING)
         set_tests_properties(vrx-linux-app-check PROPERTIES ENVIRONMENT "DOTNET_ROOT=${DOTNET_ROOT_DIRECTORY}")
     endif()
     add_test(NAME vrx-probe-help COMMAND vrx-probe --help)
-    add_test(NAME vrx-xr-synthetic-help COMMAND vrx-xr-synthetic --help)
+    add_test(NAME vrx-engine-help COMMAND vrx-engine --help)
     add_test(NAME vrx-room-reference COMMAND vrx-room-reference)
     add_test(NAME vrx-capture-scale COMMAND vrx-capture-scale-test)
     add_test(NAME vrx-depth-range COMMAND vrx-depth-range-test)
