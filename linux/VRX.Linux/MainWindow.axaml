@@ -191,9 +191,9 @@
       <CheckBox IsEnabled="False" Content="Fuse with a second depth model"/>
       <TextBlock Text="Game frame timing" Classes="Label" Margin="0,8,0,4"/>
       <ComboBox Name="TimingList" SelectedIndex="0" HorizontalAlignment="Stretch"
-                ToolTip.Tip="Which game frame is shown with the depth. Latest frame (default): smooth and immediate; depth lags slightly behind moving things. Delayed to depth: the game image is held back by the depth delay so they line up much better, and motion stays smooth. Matched to depth: each depth estimate with the exact frame it came from; best alignment, but game motion only updates at the depth rate. Delayed and matched add delay. Applies live; saved in the profile.">
-       <ComboBoxItem Content="Latest frame (default)"/>
-       <ComboBoxItem Content="Delayed to depth — smooth, slightly behind"/>
+                ToolTip.Tip="Which game frame is shown with the depth. Latest frame: smooth and immediate; depth lags slightly behind moving things. Delayed to depth (default): the game image is held back by the depth delay so they line up much better, and motion stays smooth. Matched to depth: each depth estimate with the exact frame it came from; best alignment, but game motion only updates at the depth rate. Delayed and matched add delay. Applies live; saved in the profile.">
+       <ComboBoxItem Content="Latest frame — immediate, depth slightly behind"/>
+       <ComboBoxItem Content="Delayed to depth — smooth, slightly behind (default)"/>
        <ComboBoxItem Content="Matched to depth — exact, updates at the depth rate"/>
       </ComboBox>
       <TextBlock Classes="Hint" Text="Delayed and matched line the depth up with the game better, but show the game later."/>

@@ -21,8 +21,9 @@ struct LiveSettings {
     // engine re-places the screen whenever it changes.
     uint32_t recenter = 0;
     // VRXL 4: which game frame is shown with the depth (frame_timing.h):
-    // 0 latest, 1 delayed to depth, 2 matched to depth.
-    int timing = 0;
+    // 0 latest, 1 delayed to depth (the Linux default, also for older
+    // snapshots), 2 matched to depth.
+    int timing = 1;
 };
 
 inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {

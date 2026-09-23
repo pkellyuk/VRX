@@ -20,8 +20,8 @@ public static class Checks
 
         // The snapshot is exactly what live_settings.h parses, in any culture.
         Expect(LiveSettings.Snapshot(LinuxProfile.Default) ==
-               "VRXL 4 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 0 0\n", "default VRXL 4 snapshot");
-        Expect(LiveSettings.Snapshot(LinuxProfile.Default, 7).EndsWith(" 16757867 7 0\n"), "recenter counter in the snapshot");
+               "VRXL 4 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 0 1\n", "default VRXL 4 snapshot (delayed)");
+        Expect(LiveSettings.Snapshot(LinuxProfile.Default, 7).EndsWith(" 16757867 7 1\n"), "recenter counter in the snapshot");
         Expect(LiveSettings.Snapshot(LinuxProfile.Default with { Timing = LinuxProfile.TimingMatched }).EndsWith(" 0 2\n"),
                "frame timing in the snapshot");
         Expect(Throws(() => (LinuxProfile.Default with { Timing = 3 }).Normalized()), "unknown timing rejected");
@@ -60,7 +60,8 @@ public static class Checks
                    "profiles round-trip");
             File.WriteAllText(path, """{"version": 1, "profiles": {"Old": {"cuda": true, "width": 3.0}}}""");
             var old = ProfileStore.Load(path)["Old"];
-            Expect(old.Width == 3.0 && old.Room == LinuxProfile.Default.Room, "version 1 profile defaults");
+            Expect(old.Width == 3.0 && old.Room == LinuxProfile.Default.Room && old.Timing == LinuxProfile.TimingDelayed,
+                   "version 1 profile defaults");
             File.WriteAllText(path, """{"version": 3, "profiles": {}}""");
             Expect(ThrowsData(() => ProfileStore.Load(path)), "unknown profile version rejected");
             File.WriteAllText(path, """{"version": 2, "profiles": {"Bad": {"cuda": true, "room": 30.5}}}""");

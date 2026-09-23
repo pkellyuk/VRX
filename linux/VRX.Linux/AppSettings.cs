@@ -17,7 +17,7 @@ public sealed class AppSettings
     public LinuxProfile? Base { get; set; }
     public List<string> OpenSections { get; set; } = new() { "GameSection", "ScreenSection" };
 
-    public bool IsExpert => Mode == ExpertMode;
+    [JsonIgnore] public bool IsExpert => Mode == ExpertMode;
 
     public static string DefaultPath => Path.Combine(ProfileStore.ConfigDirectory, "linux-app.json");
 

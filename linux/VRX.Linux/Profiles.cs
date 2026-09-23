@@ -8,14 +8,15 @@ namespace Vrx.Linux;
 // profiles are independent of the Windows desktop app's.
 public sealed record LinuxProfile(
     bool Cuda, double Width, double Distance, double Height, double Horizontal, double Strength,
-    int Room, int Glass, int Reflect, int Light, string LightColor, int Timing = 0)
+    int Room, int Glass, int Reflect, int Light, string LightColor, int Timing = LinuxProfile.TimingDelayed)
 {
     // Game frame timing (frame_timing.h): which captured frame is shown with the depth.
+    // Linux defaults to delayed, which looked smoother than latest on the PICO 4.
     public const int TimingLatest = 0, TimingDelayed = 1, TimingMatched = 2;
     public static readonly string[] TimingNames = { "latest", "delayed", "matched" };
 
     public static readonly LinuxProfile Default =
-        new(true, 2.0, 2.0, 0.0, 0.0, 1.0, 30, 60, 25, 30, "#FFB46B");
+        new(true, 2.0, 2.0, 0.0, 0.0, 1.0, 30, 60, 25, 30, "#FFB46B", TimingDelayed);
 
     // The same ranges the engine accepts (live_settings.h).
     public static readonly (double Low, double High) WidthRange = (0.5, 10.0);

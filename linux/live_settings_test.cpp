@@ -32,7 +32,7 @@ int main() {
     // VRXL 4: the frame timing mode.
     assert(Read("VRXL 4 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1\n", s));
     assert(s.timing == 1 && s.recenter == 7);
-    assert(Read("VRXL 3 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7\n", s) && s.timing == 0);
+    assert(Read("VRXL 3 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7\n", s) && s.timing == 1);   // the default
     // Rejected, leaving the previous settings.
     const char* bad[] = {
         "VRXL 5 2 2 0 0 1 30 60 25 30 0 1 0\n",         // unknown version

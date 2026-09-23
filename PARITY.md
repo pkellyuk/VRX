@@ -129,7 +129,8 @@ wait on a GPU fence every frame. The Linux work should proceed as follows:
   after depth is prepared from it; Delayed shows the newest frame at least the
   smoothed depth delay old (never older than the depth's own frame) and
   Matched the depth's own frame. The choice is per profile and applies live
-  (`VRXL 4`). On the PICO 4, Delayed looked smoother than Latest.
+  (`VRXL 4`). On the PICO 4, Delayed looked smoother than Latest, so Linux
+  makes it the default (Windows defaults to Latest).
 
 DMA-BUF import is valuable, but it is not the only route to a higher-resolution
 first image. A staged upload path can establish the visual and performance

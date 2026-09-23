@@ -196,7 +196,7 @@ an RGB light colour. `VRXL 3` adds one more field, a counter the desktop app
 increments for each Recenter; the engine places the screen in front of the
 headset whenever it changes (and on the first tracked frame). The desktop app
 validates it. `VRXL 4` then adds the game frame timing: 0 latest frame, 1
-delayed to depth, 2 matched to depth (`frame_timing.h`, as on Windows). The
+delayed to depth (the Linux default), 2 matched to depth (`frame_timing.h`, as on Windows). The
 engine keeps the last eight live frames on the GPU for the delayed and
 matched modes. The desktop app writes version 4. Room 0 omits the projection layer while
 retaining the existing stereo quads.
