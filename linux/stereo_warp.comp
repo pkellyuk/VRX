@@ -1,16 +1,29 @@
 #version 450
 
-// Vulkan version of the forward stereo warp in stereo_warp.h. One workgroup
-// owns a complete scanline, so scatter, z selection, and hole filling have
-// the same deterministic order as the CPU reference.
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+// Vulkan version of xrapp5's kWarpHlsl: the forward stereo warp of stereo_warp.h
+// at COLOUR resolution (cw x ch), with the depth grid (dw x dh) sampled
+// bilinearly. One invocation owns one whole row of one eye, so scatter, z
+// selection and hole filling keep the CPU reference's deterministic order. With
+// equal colour and depth sizes the lookup is exact and the result is identical
+// to WarpEyeFill.
+layout(local_size_x = 1, local_size_y = 8, local_size_z = 1) in;
 layout(std430, set = 0, binding = 0) readonly buffer Scene { uint scene[]; };
 layout(std430, set = 0, binding = 1) readonly buffer Nearness { float near01[]; };
 layout(std430, set = 0, binding = 2) writeonly buffer Color { uint color[]; };
 layout(std430, set = 0, binding = 3) writeonly buffer ProjectiveDepth { float depth[]; };
+// Per destination pixel of each eye row: the chosen source x (>= 0), a filled
+// pixel's source as -2 - x, or -1 while unset; and where that source landed.
+layout(std430, set = 0, binding = 4) buffer Source { int source[]; };
+layout(std430, set = 0, binding = 5) buffer Landed { float landedAt[]; };
 
 layout(push_constant) uniform Parameters {
-    float focalPx;
+    uint cw;
+    uint ch;
+    uint dw;
+    uint dh;
+    float depthPerColorX;   // dw / cw, computed on the CPU so both sides agree
+    float depthPerColorY;   // dh / ch
+    float focalPx;          // colour pixels
     float scale;
     float invZNear;
     float invZFar;
@@ -20,25 +33,39 @@ layout(push_constant) uniform Parameters {
     int fillMode;
     int subpixel;
     int bgra;
+    int writeDepth;
 } p;
 
-const int W = 686;
-const int H = 392;
 const float mirrorTolerance = 0.08;
-shared int source[W];
-shared float landedAt[W];
 
-float nearness(int y, int x) { return near01[y * W + x]; }
+// xrapp5 NearAt: the depth grid's bilinear value at colour pixel (x, y).
+float nearness(int y, int x) {
+    precise float fx = (float(x) + 0.5) * p.depthPerColorX - 0.5;
+    precise float fy = (float(y) + 0.5) * p.depthPerColorY - 0.5;
+    float x0f = floor(fx), y0f = floor(fy);
+    precise float tx = fx - x0f;
+    precise float ty = fy - y0f;
+    int w = int(p.dw), h = int(p.dh);
+    int x0 = clamp(int(x0f), 0, w - 1), x1 = clamp(int(x0f) + 1, 0, w - 1);
+    int y0 = clamp(int(y0f), 0, h - 1), y1 = clamp(int(y0f) + 1, 0, h - 1);
+    float a = near01[y0 * w + x0], b = near01[y0 * w + x1];
+    float c = near01[y1 * w + x0], d = near01[y1 * w + x1];
+    precise float top = a + tx * (b - a);
+    precise float bottom = c + tx * (d - c);
+    precise float result = top + ty * (bottom - top);
+    return result;
+}
 
-void fillHole(int y, int begin, int end, int left, int right) {
+void fillHole(int y, uint base, int begin, int end, int left, int right) {
+    int W = int(p.cw);
     if (left < 0 && right < 0) {
-        for (int h = begin; h < end; ++h) source[h] = -2 - begin;
+        for (int h = begin; h < end; ++h) source[base + h] = -2 - begin;
         return;
     }
     bool useLeft = left >= 0 && !(right >= 0 && nearness(y, right) < nearness(y, left));
     int anchor = useLeft ? left : right;
     if (p.fillMode != 1) {
-        for (int h = begin; h < end; ++h) source[h] = -2 - anchor;
+        for (int h = begin; h < end; ++h) source[base + h] = -2 - anchor;
         return;
     }
     float anchorNear = nearness(y, anchor);
@@ -47,7 +74,7 @@ void fillHole(int y, int begin, int end, int left, int right) {
         int h = useLeft ? begin - 1 + k : end - k;
         int candidate = clamp(anchor + (useLeft ? -k : k), 0, W - 1);
         if (nearness(y, candidate) <= anchorNear + mirrorTolerance) good = candidate;
-        source[h] = -2 - good;
+        source[base + h] = -2 - good;
     }
 }
 
@@ -57,46 +84,53 @@ vec3 unpackColor(uint pixel) {
 }
 
 void main() {
-    int y = int(gl_WorkGroupID.y);
-    int eye = int(gl_WorkGroupID.z);
-    if (y >= H || eye >= 2) return;
-    for (int x = 0; x < W; ++x) source[x] = -1;
+    int y = int(gl_GlobalInvocationID.y);
+    int eye = int(gl_GlobalInvocationID.z);
+    if (y >= int(p.ch) || eye >= 2) return;
+    int W = int(p.cw);
+    uint base = (uint(eye) * p.ch + uint(y)) * p.cw;
+    uint row = uint(y) * p.cw;
+    for (int x = 0; x < W; ++x) source[base + x] = -1;
     for (int x = 0; x < W; ++x) {
-        float invZ = p.invZFar + nearness(y, x) * (p.invZNear - p.invZFar);
+        float n = nearness(y, x);
+        float invZ = p.invZFar + n * (p.invZNear - p.invZFar);
         float shift = p.scale * p.focalPx * (eye == 0 ? -p.eyeOffset : p.eyeOffset) * invZ;
         float destination = float(x) - shift;
         int dx = x - (shift < 0.0 ? -int(floor(-shift + 0.5)) : int(floor(shift + 0.5)));
         if (dx < 0 || dx >= W) continue;
-        if (source[dx] < 0 || nearness(y, x) > nearness(y, source[dx])) {
-            source[dx] = x;
-            landedAt[dx] = destination;
+        int current = source[base + dx];
+        if (current < 0 || n > nearness(y, current)) {
+            source[base + dx] = x;
+            landedAt[base + dx] = destination;
         }
     }
     int lastValid = -1;
     for (int x = 0; x < W; ++x) {
-        if (source[x] >= 0) { lastValid = source[x]; continue; }
+        int s = source[base + x];
+        if (s >= 0) { lastValid = s; continue; }
         int end = x + 1;
-        while (end < W && source[end] < 0) ++end;
-        int rightValid = end < W ? source[end] : -1;
-        fillHole(y, x, end, lastValid, rightValid);
+        while (end < W && source[base + end] < 0) ++end;
+        int rightValid = end < W ? source[base + end] : -1;
+        fillHole(y, base, x, end, lastValid, rightValid);
         x = end - 1;
     }
     for (int x = 0; x < W; ++x) {
-        bool filled = source[x] < 0;
-        int s = filled ? -2 - source[x] : source[x];
+        int chosen = source[base + x];
+        bool filled = chosen < 0;
+        int s = filled ? -2 - chosen : chosen;
         float pos = p.subpixel != 0 && !filled ?
-            clamp(float(s) + float(x) - landedAt[x], 0.0, float(W - 1)) : float(s);
+            clamp(float(s) + float(x) - landedAt[base + x], 0.0, float(W - 1)) : float(s);
         int i0 = int(pos);
         int i1 = min(i0 + 1, W - 1);
         float fraction = pos - float(i0);
-        vec3 a = unpackColor(scene[y * W + i0]);
-        vec3 b = unpackColor(scene[y * W + i1]);
+        vec3 a = unpackColor(scene[row + uint(i0)]);
+        vec3 b = unpackColor(scene[row + uint(i1)]);
         uvec3 c = uvec3(floor((a + fraction * (b - a)) * 255.0 + 0.5));
         if (p.bgra != 0) c = c.bgr;
-        uint packed = c.r | (c.g << 8) | (c.b << 16) | (255u << 24);
-        int outputIndex = (eye * H + y) * W + x;
-        color[outputIndex] = packed;
-        float sourceInvZ = p.invZFar + nearness(y, s) * (p.invZNear - p.invZFar);
-        depth[outputIndex] = (p.farZ / (p.farZ - p.nearZ)) * (1.0 - p.nearZ * sourceInvZ);
+        color[base + uint(x)] = c.r | (c.g << 8) | (c.b << 16) | (255u << 24);
+        if (p.writeDepth != 0) {
+            float sourceInvZ = p.invZFar + nearness(y, s) * (p.invZNear - p.invZFar);
+            depth[base + uint(x)] = (p.farZ / (p.farZ - p.nearZ)) * (1.0 - p.nearZ * sourceInvZ);
+        }
     }
 }

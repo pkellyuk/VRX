@@ -47,6 +47,12 @@ active OpenXR runtime and the headset must be connected. The process reports
 its Vulkan GPU, comparison results and image-bearing frame count. Visibility
 in the headset remains a separate check.
 
+`--color=WxH` presents the synthetic scene at another colour size, for example
+`--color=1920x1080`, while depth stays on the 686×392 grid. It exercises the
+live path's colour-resolution warp and its CPU reference without a capture
+source. The scene is upscaled on the CPU each frame, so its frame rate is not
+representative.
+
 The CMake build compiles stereo_warp.comp and model_prep.comp to SPIR-V.
 VRX_WARP_SPV and VRX_PREP_SPV override the generated shader paths. Without
 CMake, compile both shaders and link xr_synthetic.cpp, vulkan_warp.cpp and
@@ -107,7 +113,9 @@ build/linux-release/vrx-room-gpu-probe
 `--live` opens the desktop ScreenCast chooser and displays a selected window
 or monitor in the headset. It uses flat depth unless `--cuda` is added;
 `--live --cuda` runs checked ZipDepth on a separate inference worker and uses
-the newest completed depth. `--until-stop` runs until SIGINT or SIGTERM. The
+the newest completed depth. Colour keeps the source's size, shrunk to at most
+1920 pixels wide as on Windows; the warp samples the 686×392 depth map
+bilinearly at that size. `--until-stop` runs until SIGINT or SIGTERM. The
 SteamVR loader under the user's standard Steam install is found automatically
 when no system OpenXR loader is installed; `VRX_OPENXR_LOADER` overrides it.
 

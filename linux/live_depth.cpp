@@ -59,7 +59,7 @@ void LiveDepth::Work() {
                 continue;
             }
             PortalCapture::Frame source;
-            if (!capture_.Latest(source) || source.sequence <= lastSequence) continue;
+            if (!capture_.Latest(source, false, true) || source.sequence <= lastSequence) continue;
             lastSequence = source.sequence;
             const auto prepStart = std::chrono::steady_clock::now();
             auto input = PrepareModelInput(source.rgb);

@@ -109,8 +109,10 @@ void VulkanRoom::Transition(VkCommandBuffer cmd,const Image& image,VkImageLayout
     vkCmdPipelineBarrier(cmd,srcStage,dstStage,0,0,nullptr,0,nullptr,1,&b);
 }
 
-VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBuffer stereo,VkFormat screenFormat)
-    :gpu_(gpu),device_(device),source_(source),stereo_(stereo),screenFormat_(screenFormat) {
+VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBuffer stereo,VkFormat screenFormat,
+                       uint32_t colorWidth,uint32_t colorHeight)
+    :gpu_(gpu),device_(device),source_(source),stereo_(stereo),screenFormat_(screenFormat),
+     colorWidth_(colorWidth),colorHeight_(colorHeight) {
     if(screenFormat!=VK_FORMAT_R8G8B8A8_SRGB&&screenFormat!=VK_FORMAT_R8G8B8A8_UNORM)
         throw std::runtime_error("Room needs an RGBA OpenXR swapchain format");
     CreateBuffer(decode_,256*sizeof(float),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -123,7 +125,7 @@ VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBu
     CreateBuffer(readback_,VkDeviceSize(EyeWidth)*EyeHeight*2*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     RoomDecodeTable(static_cast<float*>(decode_.mapped));
     const auto sampled=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    CreateImage(picture_,kSyntheticWidth,kSyntheticHeight,2,VK_FORMAT_R8G8B8A8_UNORM,sampled,VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    CreateImage(picture_,colorWidth_,colorHeight_,2,VK_FORMAT_R8G8B8A8_UNORM,sampled,VK_IMAGE_VIEW_TYPE_2D_ARRAY);
     CreateImage(glow_,GlowWidth,GlowHeight,1,VK_FORMAT_R8G8B8A8_UNORM,sampled,VK_IMAGE_VIEW_TYPE_2D);
     CreateImage(mirror_,kRoomMirrorW,kRoomMirrorMaxH,1,VK_FORMAT_R32G32B32A32_SFLOAT,sampled,VK_IMAGE_VIEW_TYPE_2D);
     CreateImage(light_,kRoomLightmap,kRoomLightmap,kRoomFaces,VK_FORMAT_R32G32B32A32_SFLOAT,sampled,VK_IMAGE_VIEW_TYPE_2D_ARRAY);
@@ -204,9 +206,9 @@ VulkanRoom::~VulkanRoom(){
     for(Buffer* b:{&readback_,&roomBuffer_,&curveBuffer_,&lightBuffer_,&mirrorBuffer_,&glowBuffer_,&emitter_,&decode_})DestroyBuffer(*b);
 }
 
-void VulkanRoom::Prepare(const std::vector<unsigned char>& rgb,const LiveSettings& settings,const XrView eyes[2],float floorLocalY) {
-    if(rgb.size()!=size_t(kSyntheticWidth)*kSyntheticHeight*3)throw std::runtime_error("Room source dimensions differ");
-    const float W=settings.width,H=W*float(kSyntheticHeight)/kSyntheticWidth;
+void VulkanRoom::Prepare(const std::vector<uint32_t>& color,const LiveSettings& settings,const XrView eyes[2],float floorLocalY) {
+    if(color.size()!=size_t(colorWidth_)*colorHeight_)throw std::runtime_error("Room source dimensions differ");
+    const float W=settings.width,H=W*float(colorHeight_)/colorWidth_;
     if (W != lastWidth_ || H != lastHeight_) glowHistoryValid_ = false;
     lastWidth_ = W; lastHeight_ = H;
     // The fixed screen is positioned relative to LOCAL origin, so its room
@@ -241,7 +243,7 @@ void VulkanRoom::Prepare(const std::vector<unsigned char>& rgb,const LiveSetting
     lastPrepare_=now;
     RoomLook look;look.glass=settings.glass;look.reflect=settings.reflect;look.light=settings.light;look.lightRgb=settings.lightRgb;
     shading_=MakeRoomShading(room_,settings.room,0,W*H,look);
-    roomConstants_=MakeRoomConstants(room_,shading_,layout_,view,kSyntheticWidth,kSyntheticHeight,alpha);
+    roomConstants_=MakeRoomConstants(room_,shading_,layout_,view,int(colorWidth_),int(colorHeight_),alpha);
     mirrorW_=roomConstants_.mirrorW;mirrorH_=roomConstants_.mirrorH;
     std::memcpy(roomBuffer_.mapped,&roomConstants_,sizeof(roomConstants_));
     curveConstants_={};curveConstants_.ew=EyeWidth;curveConstants_.eh=EyeHeight;
@@ -261,19 +263,15 @@ void VulkanRoom::Prepare(const std::vector<unsigned char>& rgb,const LiveSetting
     std::memcpy(curveBuffer_.mapped,&curveConstants_,sizeof(curveConstants_));
     AmbiConstants ambi{};
     ambi.gw=GlowWidth;ambi.gh=GlowHeight;
-    ambi.srcW=kSyntheticWidth;ambi.srcH=kSyntheticHeight;
+    ambi.srcW=colorWidth_;ambi.srcH=colorHeight_;
     ambi.screenW=W;ambi.screenH=H;
     ambi.marginM=kAmbiMargin*W;
     ambi.rectW=W+2.0f*ambi.marginM;ambi.rectH=H+2.0f*ambi.marginM;
     ambi.intensity=kAmbiDefaultStrength/100.0f;
     ambi.soft=kAmbiSoft*W;ambi.bezel=kAmbiBezel;ambi.ringN=kAmbiRing;
     ambi.linearBlend=1;
-    std::vector<unsigned char> rgba(size_t(kSyntheticWidth)*kSyntheticHeight*4);
-    for(size_t i=0;i<rgb.size()/3;i++){
-        rgba[i*4]=rgb[i*3];rgba[i*4+1]=rgb[i*3+1];rgba[i*4+2]=rgb[i*3+2];rgba[i*4+3]=255;
-    }
     std::vector<unsigned char> reference(size_t(GlowWidth)*GlowHeight*4);
-    if(!AmbilightReference(ambi,rgba.data(),kSyntheticWidth*4,reference.data(),GlowWidth*4))
+    if(!AmbilightReference(ambi,reinterpret_cast<const unsigned char*>(color.data()),int(colorWidth_)*4,reference.data(),GlowWidth*4))
         throw std::runtime_error("Ambilight reference failed");
     auto* glow=static_cast<unsigned char*>(glowBuffer_.mapped);
     if(!glowHistoryValid_){
@@ -286,7 +284,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     vkCmdResetQueryPool(cmd,timingQueries_,0,7);
     vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,timingQueries_,0);
     EmitParams ep{};
-    ep.srcW=kSyntheticWidth;ep.srcH=kSyntheticHeight;ep.stride=RoomStride(kSyntheticWidth);
+    ep.srcW=colorWidth_;ep.srcH=colorHeight_;ep.stride=RoomStride(int(colorWidth_));
     ep.gridX=layout_.gridX;ep.gridY=layout_.gridY;ep.glowW=GlowWidth;ep.glowH=GlowHeight;
     ep.blocksX=layout_.blocksX;ep.blocksY=layout_.blocksY;ep.glowBlock=layout_.block;
     ep.emitterCount=layout_.count();ep.glowOn=1;ep.alpha=roomConstants_.alpha;
@@ -303,7 +301,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     if(mirrorW_&&mirrorH_){
         vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,passPipelineLayout_,0,1,&mirrorSet_,0,nullptr);
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,mirrorPipeline_);
-        uint32_t mirrorParams[5]={kSyntheticWidth,kSyntheticHeight,mirrorW_,mirrorH_,uint32_t(RoomStride(kSyntheticWidth))};
+        uint32_t mirrorParams[5]={colorWidth_,colorHeight_,mirrorW_,mirrorH_,uint32_t(RoomStride(int(colorWidth_)))};
         vkCmdPushConstants(cmd,passPipelineLayout_,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(mirrorParams),mirrorParams);
         vkCmdDispatch(cmd,(mirrorW_+7)/8,(mirrorH_+7)/8,1);
     }
@@ -328,10 +326,10 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT);
     VkBufferImageCopy pictureCopies[2]{};
     for(int e=0;e<2;e++){
-        auto& c=pictureCopies[e];c.bufferOffset=VkDeviceSize(e)*kSyntheticWidth*kSyntheticHeight*4;
+        auto& c=pictureCopies[e];c.bufferOffset=VkDeviceSize(e)*colorWidth_*colorHeight_*4;
         c.imageSubresource.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;c.imageSubresource.mipLevel=0;
         c.imageSubresource.baseArrayLayer=e;c.imageSubresource.layerCount=1;
-        c.imageExtent={kSyntheticWidth,kSyntheticHeight,1};
+        c.imageExtent={colorWidth_,colorHeight_,1};
     }
     vkCmdCopyBufferToImage(cmd,stereo_,picture_.handle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,2,pictureCopies);
     VkBufferImageCopy copy{};copy.imageSubresource.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
@@ -417,7 +415,7 @@ bool VulkanRoom::CompareReference() const {
     mirror.w=int(mirrorW_);mirror.h=int(mirrorH_);
     const float* gpuMirror=static_cast<const float*>(mirrorBuffer_.mapped);
     mirror.texels.assign(gpuMirror,gpuMirror+size_t(mirrorW_)*mirrorH_*4);
-    const RgbaImage picture{nullptr,kSyntheticWidth,kSyntheticHeight,kSyntheticWidth*4};
+    const RgbaImage picture{nullptr,int(colorWidth_),int(colorHeight_),int(colorWidth_)*4};
     const RgbaImage glow{static_cast<const unsigned char*>(glowBuffer_.mapped),int(GlowWidth),int(GlowHeight),int(GlowWidth)*4};
     RoomView view;view.flatLayer=true;view.W=roomConstants_.screenW;view.H=roomConstants_.screenH;
     view.glowOn=true;view.glowHalfW=roomConstants_.glowHalfW;view.glowHalfH=roomConstants_.glowHalfH;

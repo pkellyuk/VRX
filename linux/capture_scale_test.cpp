@@ -27,4 +27,31 @@ int main() {
     vrx::ScaleCapture(checker.data(), size_t(width) * 4, width, height, false, output);
     assert(output[center] >= 127 && output[center] <= 128);
     assert(output[center + 1] == output[center] && output[center + 2] == output[center]);
+
+    // Colour keeps the source's shape, shrunk to at most 1920 wide.
+    int colorWidth = 0, colorHeight = 0;
+    vrx::ColorSizeFor(3840, 2160, colorWidth, colorHeight);
+    assert(colorWidth == 1920 && colorHeight == 1080);
+    vrx::ColorSizeFor(1280, 1025, colorWidth, colorHeight);
+    assert(colorWidth == 1280 && colorHeight == 1024);
+
+    // An exact 2x shrink averages each 2x2 block; the checkerboard becomes grey.
+    std::vector<uint32_t> color;
+    vrx::ScaleCaptureColor(checker.data(), size_t(width) * 4, width, height, false,
+                           width / 2, height / 2, color);
+    const uint32_t middle = color[size_t(height / 4) * (width / 2) + width / 4];
+    assert((middle & 255u) >= 127 && (middle & 255u) <= 128 && (middle >> 24) == 255u);
+
+    // A source smaller than the colour texture is letterboxed in opaque black,
+    // and a BGRA source is swizzled to RGBA.
+    std::vector<unsigned char> bgra(size_t(100) * 100 * 4);
+    for (size_t i = 0; i < bgra.size(); i += 4) { bgra[i] = 30; bgra[i + 1] = 20; bgra[i + 2] = 10; }
+    vrx::ScaleCaptureColor(bgra.data(), 100 * 4, 100, 100, false, 200, 100, color);
+    assert(color[0] == 0xff000000u);
+    assert(color[size_t(50) * 200 + 100] == (10u | (20u << 8) | (30u << 16) | 0xff000000u));
+
+    // The depth grid is the whole colour texture, stretched.
+    vrx::DepthGridFromColor(color, 200, 100, output);
+    assert(output.size() == size_t(vrx::kSyntheticWidth) * vrx::kSyntheticHeight * 3);
+    assert(output[0] == 0 && output[center] == 10 && output[center + 1] == 20 && output[center + 2] == 30);
 }

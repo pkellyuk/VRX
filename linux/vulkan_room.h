@@ -12,12 +12,14 @@ public:
     // Half of the PICO 4/SteamVR recommended 2644 square eye target.
     static constexpr uint32_t EyeWidth = 1322, EyeHeight = 1322;
     static constexpr uint32_t GlowWidth = 64, GlowHeight = 45;
+    // source: the colour (colorWidth x colorHeight packed RGBA); stereo: both
+    // eyes' warped colour at the same size.
     VulkanRoom(VkPhysicalDevice gpu, VkDevice device, VkBuffer source, VkBuffer stereo,
-               VkFormat screenFormat);
+               VkFormat screenFormat, uint32_t colorWidth, uint32_t colorHeight);
     ~VulkanRoom();
     VulkanRoom(const VulkanRoom&) = delete;
     VulkanRoom& operator=(const VulkanRoom&) = delete;
-    void Prepare(const std::vector<unsigned char>& rgb, const LiveSettings& settings,
+    void Prepare(const std::vector<uint32_t>& color, const LiveSettings& settings,
                  const XrView eyes[2], float floorLocalY);
     void Record(VkCommandBuffer command, VkImage destination);
     void EnableCapture() { capture_ = true; }
@@ -35,6 +37,7 @@ private:
     VkBuffer source_;
     VkBuffer stereo_;
     VkFormat screenFormat_;
+    uint32_t colorWidth_, colorHeight_;
     Buffer decode_, emitter_, glowBuffer_, mirrorBuffer_, lightBuffer_, curveBuffer_, roomBuffer_, readback_;
     bool capture_ = false;
     bool glowHistoryValid_ = false;

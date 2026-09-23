@@ -16,11 +16,10 @@ reflections. The PICO 4 user confirmed that the room and screen aligned before
 the latest stereo corrections. The corrected stereo run matched the CPU
 reference exactly; its appearance after that change still needs a headset check.
 
-The highest-impact remaining visual gap is **colour resolution**. Linux downsizes
-capture to 686×392 before warping and uses that size for both eyes and the room
-picture. Windows can warp colour at up to 1920 pixels wide while sampling a
-686×392 depth map. The largest frame-time gap is the Linux CPU/host-memory path,
-including a per-frame fence wait.
+Colour resolution now follows Windows: live colour is kept at the source's size
+up to 1920 pixels wide and warped at that size, with the 686×392 depth map
+sampled bilinearly. The largest remaining frame-time gap is the CPU capture
+scaling and the per-frame fence wait.
 
 At `36e3d3c`, a 20-second live PICO 4/Steam Link run rendered 876 OpenXR images
 with no runtime skips. It captured 746 frames with no ring drops and completed
@@ -36,9 +35,10 @@ zero differing colour channels and zero differing depth pixels.
 | 1a | Screen-plane disparity | **Fixed.** `VulkanWarp` subtracts `1/settings.distance` from both inverse-depth bounds, as the Windows quad path does. The CPU reference uses the same values. | Check the perceived depth centre while changing Distance in the controller. |
 | 1b | Depth range | **Fixed.** Near/far inverse-depth bounds are now `1/1.2` and `1/12`, matching Windows. | Include these parameters in the visual check. |
 | 1c | Eye separation | **Fixed.** `xrLocateViews` runs on rendered frames with or without the room; the warp uses half the measured IPD. Implausible readings retain the last valid value, initially 64 mm. | Confirm comfort and eye orientation in the headset. |
-| 1d | Colour resolution | **Open.** The source, warp output, swapchain and room picture still use 686×392 colour. Depth also uses 686×392. | Separate colour dimensions from depth dimensions and keep capture colour at a higher resolution. This is the main picture-quality task. |
+| 1d | Colour resolution | **Fixed; headset check pending.** Capture keeps colour at the source size shrunk to at most 1920 wide (even dimensions, as `MAX_COLOR_W`); later sizes are letterboxed into it. The warp runs at colour size and samples the 686×392 depth bilinearly (`NearAt`); the swapchain, quads and room picture use the colour size. The depth model sees the colour texture stretched to its grid, as on Windows. GPU/CPU warp checks match exactly at 686×392 and 1920×1080 (`--color=WxH` runs the synthetic scene at a chosen colour size). | Confirm sharpness and depth alignment with live 4K capture in the PICO 4. |
+| 1i | Focal length | **Fixed.** The warp uses `cw × distance / width` colour pixels, as xrapp5 does. Linux previously used a fixed 686, which was only correct when width equalled distance. | Include Width changes in the headset depth check. |
 | 1e | Capture downscale filter | **Improved.** `ScaleCapture` uses up to 4×4 averaged source samples when shrinking and bilinear filtering when enlarging. A 4× checkerboard regression now averages to grey. | The shrink filter uses point samples in its box, so it is not pixel-identical to Windows' bilinear-sample box. Full-resolution colour should remove most of this downscale. |
-| 1f | Source aspect ratio | **Partly fixed.** `FitCapture` now letterboxes narrow and wide sources into the fixed texture instead of stretching them. | The OpenXR quad and room opening still use the fixed 686:392 geometry. Propagate source aspect through screen sizing and room inputs when the colour path becomes dynamic. |
+| 1f | Source aspect ratio | **Fixed.** The colour texture takes the first frame's aspect ratio; the quads and the room opening use it. Later frames of a different shape are letterboxed into it, as on Windows. | None beyond the 1d headset check. |
 | 1g | Depth range stability | **Fixed for live ZipDepth.** `RangeSmoother` applies the Windows 0.5/99.5 percentile range, 0.4 s time constant and scene-cut snap before dilation. Still-image inference remains unsmoothed by design. | Check video with changing scenes in the headset. |
 | 1h | Stale or mismatched depth | **Fixed.** The live renderer requires matching layout generations and applies the portable `UsableDepth` 250 ms source-timestamp policy; otherwise it shows flat colour until matching depth arrives. | Exercise a source resize/layout change and capture interruption in an end-to-end run. |
 
@@ -50,20 +50,21 @@ a headset judgement of the new screen-plane correction.
 
 ## 2. Frame path and performance
 
-The current Linux render path still:
+The current Linux render path:
 
-1. receives a shared-memory PipeWire frame and fits/downscales it on the capture
-   thread;
-2. copies RGB into a host-mapped Vulkan buffer and packs it to RGBA on the CPU;
-3. dispatches the stereo warp as `(1, 392, 2)` one-thread workgroups, each
-   serially processing a full scanline;
+1. receives a shared-memory PipeWire frame and scales it on the capture thread
+   to the colour texture, then to the depth grid (about 8 + 2 ms for a 4K
+   source on the reference host);
+2. copies packed RGBA into a host staging buffer, then to device-local memory
+   (1.5 ms GPU copy at 1920×1080);
+3. dispatches the stereo warp over device-local buffers, one invocation per row
+   and eight rows per workgroup (1.2 ms GPU at 1920×1080, 0.4 ms at 686×392);
 4. computes the room ambilight reference on the CPU, then runs EMIT, MIRROR,
    LIGHT and the room eye shader on the GPU;
 5. copies outputs into OpenXR swapchains and waits for the command fence on
    the CPU before `xrEndFrame`.
 
-The host-visible/coherent working buffers remain in system memory on a discrete
-GPU. In the latest live run, CPU model preparation was 16.79/18.58 ms median/p95;
+The warp's working buffers are now device-local; the room's remain host-visible. In the latest live run, CPU model preparation was 16.79/18.58 ms median/p95;
 arrival-to-finished-depth was 26.77/31.20 ms. Arrival is stamped after capture
 copy and scaling, so these figures exclude upstream capture time and headset
 display latency. The standalone 3840×2160 capture-scaling benchmark took about
@@ -73,19 +74,20 @@ Windows uses shared GPU capture textures, GPU model preparation, device-local
 render targets and a ring of command lists/fences. Its render thread does not
 wait on a GPU fence every frame. The Linux work should proceed as follows:
 
-- **2a. Decouple colour and depth resolution.** Make warp inputs and outputs
-  carry independent colour (`cw×ch`) and depth (`dw×dh`) dimensions, then raise
-  colour resolution without increasing the depth model size. Measure the room
-  picture and swapchain costs on the PICO 4.
-- **2b. Reduce host-memory traffic.** Move scene, depth, stereo output and room
-  images into device-local resources where supported, staging only new data.
-  Keep a working copy path while changing the resource lifetime.
+- **2a. Decouple colour and depth resolution.** Done (see 1d). Measure the
+  room picture and swapchain costs on the PICO 4.
+- **2b. Reduce host-memory traffic.** Done for the warp (device-local scene,
+  depth, output and scratch, with staging uploads). Room buffers remain
+  host-visible. Upload depth only when a new map arrives.
 - **2c. Remove the render-thread fence wait.** Use a small command-buffer/fence
   ring and a swapchain-compatible copy or direct write path. Respect OpenXR
   image acquisition and release ordering.
-- **2d. Improve warp occupancy.** The current one-thread scanline preserves the
-  deterministic CPU reference but wastes GPU lanes. Parallelise rows and then
-  the scatter/fill work without losing occlusion or the reference check.
+- **2d. Improve warp occupancy.** Rows now run eight to a workgroup, as on
+  Windows. Each row is still serial; parallelise scatter/fill only if timing
+  shows the warp matters.
+- **2d′. Capture scaling off the CPU.** A 4K source costs about 10 ms per frame
+  on the capture thread. Scale on the GPU (DMA-BUF import, or upload the source
+  and scale in a shader), or at least split rows across threads.
 - **2e. Import PipeWire DMA-BUFs where available.** Negotiate buffer types and
   modifiers, import supported frames into Vulkan, and retain shared-memory
   capture as the fallback. Validate actual compositor/driver support before

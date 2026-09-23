@@ -31,7 +31,10 @@ struct PortalCapture::Impl {
     pw_stream_events stream_events{};
     spa_video_info_raw format{};
     SourceRing<3> ring;
+    std::array<std::vector<uint32_t>, 3> colorSlots;
     std::array<std::vector<unsigned char>, 3> slots;
+    // Fixed by the first negotiated size; later sizes are letterboxed into it.
+    std::atomic<uint32_t> colorWidth{0}, colorHeight{0};
     std::thread worker;
     std::atomic<bool> stop{false}, failed{false};
     std::atomic<uint64_t> captured{0}, dropped{0};
@@ -93,6 +96,14 @@ struct PortalCapture::Impl {
         if (self.format.size.width != next.size.width || self.format.size.height != next.size.height ||
             self.format.format != next.format) ++self.layout;
         self.format = next;
+        if (!self.colorWidth) {
+            int width = 0, height = 0;
+            ColorSizeFor(int(next.size.width), int(next.size.height), width, height);
+            self.colorHeight = uint32_t(height);
+            self.colorWidth = uint32_t(width);
+            std::printf("Capture colour %dx%d; depth %dx%d\n", width, height,
+                        kSyntheticWidth, kSyntheticHeight);
+        }
         std::printf("Capture format %ux%u, SPA %u, layout %llu\n", next.size.width,
                     next.size.height, next.format, static_cast<unsigned long long>(self.layout));
     }
@@ -132,10 +143,13 @@ void PortalCapture::Impl::Process(void* data) {
         pw_stream_queue_buffer(self.stream, buffer);
         return;
     }
-    auto& output = self.slots[frame->index];
     const auto* pixels = static_cast<const unsigned char*>(plane.data) + offset;
     const bool rgba = self.format.format == SPA_VIDEO_FORMAT_RGBA;
-    ScaleCapture(pixels, size_t(stride), int(width), int(height), rgba, output);
+    const int colorWidth = int(self.colorWidth), colorHeight = int(self.colorHeight);
+    auto& color = self.colorSlots[frame->index];
+    ScaleCaptureColor(pixels, size_t(stride), int(width), int(height), rgba,
+                      colorWidth, colorHeight, color);
+    DepthGridFromColor(color, colorWidth, colorHeight, self.slots[frame->index]);
     frame->layout = self.layout;
     const double arrival = std::chrono::duration<double>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -243,10 +257,13 @@ PortalCapture::Impl::~Impl() {
 PortalCapture::PortalCapture() : impl_(std::make_unique<Impl>()) {}
 PortalCapture::~PortalCapture() = default;
 bool PortalCapture::Open() { return impl_->Open(); }
-bool PortalCapture::Latest(Frame& output) const {
+bool PortalCapture::Latest(Frame& output, bool color, bool rgb) const {
     auto frame = impl_->ring.Latest();
     if (!frame) return false;
-    output.rgb = impl_->slots[frame->index];
+    if (color) output.color = impl_->colorSlots[frame->index];
+    if (rgb) output.rgb = impl_->slots[frame->index];
+    output.colorWidth = impl_->colorWidth;
+    output.colorHeight = impl_->colorHeight;
     output.sequence = frame->seq;
     output.layout = frame->layout;
     output.arrival = frame->time;

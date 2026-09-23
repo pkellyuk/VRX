@@ -10,6 +10,7 @@
 #include "vulkan_prep.h"
 #include "vulkan_room.h"
 #include "playback_policy.h"
+#include "capture_scale.h"
 #ifdef VRX_HAS_CAPTURE
 #include "portal_capture.h"
 #endif
@@ -87,12 +88,16 @@ template <typename T> bool Resolve(XrFns& f, XrInstance instance, const char* na
 #define VK_CHECK(expr) do { VkResult r = (expr); if (r != VK_SUCCESS) { \
     std::fprintf(stderr, "%s failed: %d\n", #expr, r); return 1; } } while (0)
 
-int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live, bool roomEnabled, const char* settingsPath, const char* roomDumpPath) {
+int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live, bool roomEnabled, const char* settingsPath, const char* roomDumpPath,
+        uint32_t syntheticColorWidth, uint32_t syntheticColorHeight) {
     vrx::LiveSettings settings;
     if (settingsPath && !vrx::ReadLiveSettings(settingsPath, settings)) {
         std::fprintf(stderr, "Invalid or missing Linux settings: %s\n", settingsPath);
         return 2;
     }
+    // Colour is presented at the source's size (live) or the depth grid's.
+    uint32_t colorWidth = vrx::kSyntheticWidth, colorHeight = vrx::kSyntheticHeight;
+    if (syntheticColorWidth) { colorWidth = syntheticColorWidth; colorHeight = syntheticColorHeight; }
 #ifdef VRX_HAS_CAPTURE
     std::unique_ptr<vrx::PortalCapture> capture;
     if (live) {
@@ -103,10 +108,12 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         while (!capture->Latest(first) && capture->Healthy() &&
                std::chrono::steady_clock::now() < deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        if (first.rgb.empty()) { std::fputs("No live capture frames received\n", stderr); return 1; }
-        std::printf("First live source frame %llu, layout %llu\n",
+        if (first.color.empty()) { std::fputs("No live capture frames received\n", stderr); return 1; }
+        colorWidth = first.colorWidth;
+        colorHeight = first.colorHeight;
+        std::printf("First live source frame %llu, layout %llu, colour %ux%u\n",
                     static_cast<unsigned long long>(first.sequence),
-                    static_cast<unsigned long long>(first.layout));
+                    static_cast<unsigned long long>(first.layout), colorWidth, colorHeight);
     }
 #ifdef VRX_HAS_LIVE_DEPTH
     std::unique_ptr<vrx::LiveDepth> liveDepth;
@@ -299,8 +306,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     swci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
     swci.format = format;
     swci.sampleCount = 1;
-    swci.width = vrx::kSyntheticWidth;
-    swci.height = vrx::kSyntheticHeight;
+    swci.width = colorWidth;
+    swci.height = colorHeight;
     swci.faceCount = 1;
     swci.arraySize = 2;
     swci.mipCount = 1;
@@ -313,8 +320,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     XR_CHECK(xr.images(swapchain, imageCount, &imageCount,
         reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data())));
 
-    constexpr VkDeviceSize eyeBytes = VkDeviceSize(vrx::kSyntheticWidth) * vrx::kSyntheticHeight * 4;
-    auto warp = std::make_unique<vrx::VulkanWarp>(gpu, device, format);
+    const VkDeviceSize eyeBytes = VkDeviceSize(colorWidth) * colorHeight * 4;
+    const float screenAspect = float(colorHeight) / float(colorWidth);
+    auto warp = std::make_unique<vrx::VulkanWarp>(gpu, device, format, colorWidth, colorHeight);
     auto prep = std::make_unique<vrx::VulkanPrep>(gpu, device, warp->SceneBuffer());
     std::unique_ptr<vrx::VulkanRoom> room;
     XrSwapchain roomSwapchain = XR_NULL_HANDLE;
@@ -330,7 +338,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         for (auto& image : roomImages) image.type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR;
         XR_CHECK(xr.images(roomSwapchain, roomImageCount, &roomImageCount,
             reinterpret_cast<XrSwapchainImageBaseHeader*>(roomImages.data())));
-        room = std::make_unique<vrx::VulkanRoom>(gpu, device, warp->SceneBuffer(), warp->ColorBuffer(), format);
+        room = std::make_unique<vrx::VulkanRoom>(gpu, device, warp->SceneBuffer(), warp->ColorBuffer(), format,
+                                                 colorWidth, colorHeight);
         std::puts("Windows room shader enabled: lighting, glass, tiles and reflections");
     }
     VkCommandPoolCreateInfo pci{};
@@ -359,12 +368,14 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         stillRgb = vrx::LoadStillPng(stillPath);
         vrx::ModelDepth model(modelPath, cuda);
         std::vector<float> flat(size_t(vrx::kSyntheticWidth) * vrx::kSyntheticHeight, 0.0f);
-        warp->Upload(stillRgb, flat);
+        warp->UploadColor(vrx::PackRgb(stillRgb));
+        warp->UploadNearness(flat);
         VK_CHECK(vkResetCommandBuffer(command, 0));
         VkCommandBufferBeginInfo cbbi{};
         cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         VK_CHECK(vkBeginCommandBuffer(command, &cbbi));
+        warp->RecordUpload(command);
         prep->Record(command);
         VK_CHECK(vkEndCommandBuffer(command));
         VkSubmitInfo submit{};
@@ -384,7 +395,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
 #endif
 
     warp->SetStrength(settings.strength);
-    warp->SetStereoGeometry(settings.distance, 0.064f, true);
+    warp->SetStereoGeometry(settings.distance, settings.width, 0.064f, true);
     XrCompositionLayerQuad quads[2]{};
     const XrCompositionLayerBaseHeader* layers[3]{};
     XrCompositionLayerProjection projection{};
@@ -405,13 +416,13 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         quads[eye].space = space;
         quads[eye].eyeVisibility = eye == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
         quads[eye].subImage.swapchain = swapchain;
-        quads[eye].subImage.imageRect.extent = {vrx::kSyntheticWidth, vrx::kSyntheticHeight};
+        quads[eye].subImage.imageRect.extent = {int32_t(colorWidth), int32_t(colorHeight)};
         quads[eye].subImage.imageArrayIndex = eye;
         quads[eye].pose.orientation.w = 1.0f;
         quads[eye].pose.position.z = -settings.distance;
         quads[eye].pose.position.x = settings.horizontal;
         quads[eye].pose.position.y = settings.height;
-        quads[eye].size = {settings.width, settings.width * vrx::kSyntheticHeight / vrx::kSyntheticWidth};
+        quads[eye].size = {settings.width, settings.width * screenAspect};
         layers[eye + (roomEnabled ? 1 : 0)] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[eye]);
     }
     if (roomEnabled) layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
@@ -424,6 +435,11 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     bool captureLost = false;
     bool depthFailed = false;
     std::vector<double> roomPrepMs, gpuWaitMs, frameWorkMs, endFrameMs;
+    // colorWidth x colorHeight packed RGBA; kept across frames to reuse memory.
+    std::vector<uint32_t> color;
+#ifdef VRX_HAS_CAPTURE
+    vrx::PortalCapture::Frame liveFrame;
+#endif
     auto nextSettingsCheck = std::chrono::steady_clock::now();
     while (!stopRequested && (seconds == 0 ||
            std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count() < seconds)) {
@@ -483,7 +499,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 warp->SetStrength(settings.strength);
                 for (auto& quad : quads) {
                     quad.pose.position = {settings.horizontal, settings.height, -settings.distance};
-                    quad.size = {settings.width, settings.width * vrx::kSyntheticHeight / vrx::kSyntheticWidth};
+                    quad.size = {settings.width, settings.width * screenAspect};
                 }
             }
         }
@@ -514,7 +530,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 const auto& left = roomViews[0].pose.position;
                 const auto& right = roomViews[1].pose.position;
                 const float dx = right.x - left.x, dy = right.y - left.y, dz = right.z - left.z;
-                warp->SetStereoGeometry(settings.distance, std::sqrt(dx * dx + dy * dy + dz * dz), true);
+                warp->SetStereoGeometry(settings.distance, settings.width, std::sqrt(dx * dx + dy * dy + dz * dz), true);
             }
             roomFrameReady = roomEnabled && settings.room > 0 && validViews;
             if (roomFrameReady) {
@@ -536,14 +552,14 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             swi.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO;
             swi.timeout = XR_INFINITE_DURATION;
             XR_CHECK(xr.waitImage(swapchain, &swi));
-            std::vector<unsigned char> rgb;
+            std::vector<unsigned char> rgb;   // synthetic scene on the depth grid
             std::vector<float> truth;
             bool depthAvailable = true;
             const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count();
 #ifdef VRX_HAS_CAPTURE
             if (live) {
-                vrx::PortalCapture::Frame latest;
-                if (capture->Latest(latest)) rgb = std::move(latest.rgb);
+                vrx::PortalCapture::Frame& latest = liveFrame;
+                if (capture->Latest(latest, true, false)) color.swap(latest.color);
 #ifdef VRX_HAS_LIVE_DEPTH
                 const auto depth = liveDepth ? liveDepth->Latest() : nullptr;
                 depthAvailable = depth && latest.layout == depth->sourceLayout &&
@@ -558,14 +574,22 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             } else
 #endif
             if (stillPath) {
-                rgb = stillRgb;
+                color = vrx::PackRgb(stillRgb);
                 truth = stillDepth;
             } else {
                 vrx::MakeScene(rgb, elapsed);
                 vrx::MakeTruth(truth, elapsed);
+                color = vrx::PackRgb(rgb);
+                if (colorWidth != uint32_t(vrx::kSyntheticWidth) || colorHeight != uint32_t(vrx::kSyntheticHeight)) {
+                    const std::vector<uint32_t> grid = std::move(color);
+                    vrx::ScaleCaptureColor(reinterpret_cast<const unsigned char*>(grid.data()),
+                        size_t(vrx::kSyntheticWidth) * 4, vrx::kSyntheticWidth, vrx::kSyntheticHeight,
+                        true, int(colorWidth), int(colorHeight), color);
+                }
             }
-            warp->SetStereoGeometry(settings.distance, 0.0f, depthAvailable);
-            warp->Upload(rgb, truth);
+            warp->SetStereoGeometry(settings.distance, settings.width, 0.0f, depthAvailable);
+            warp->UploadColor(color);
+            warp->UploadNearness(truth);
             if (roomFrameReady) {
                 float floorLocalY = std::numeric_limits<float>::quiet_NaN();
                 if (stageSpace != XR_NULL_HANDLE) {
@@ -576,7 +600,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                         floorLocalY = floorLocation.pose.position.y;
                 }
                 const auto prepStart = std::chrono::steady_clock::now();
-                room->Prepare(rgb, settings, roomViews, floorLocalY);
+                room->Prepare(color, settings, roomViews, floorLocalY);
                 roomPrepMs.push_back(std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - prepStart).count());
                 if (roomDumpPath && renderedFrames == 0) room->EnableCapture();
@@ -585,8 +609,10 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             VkCommandBufferBeginInfo cbbi{}; cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             VK_CHECK(vkBeginCommandBuffer(command, &cbbi));
-            if (!stillPath && !live) prep->Record(command);
-            warp->Record(command);
+            warp->RecordUpload(command);
+            const bool syntheticGrid = !stillPath && !live && !syntheticColorWidth;
+            if (syntheticGrid) prep->Record(command);
+            warp->Record(command, renderedFrames == 0);
             if (roomFrameReady) room->Record(command, roomImages[roomIndex].image);
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -608,7 +634,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 copies[eye].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
                 copies[eye].imageSubresource.layerCount = 1;
                 copies[eye].imageSubresource.baseArrayLayer = eye;
-                copies[eye].imageExtent = {vrx::kSyntheticWidth, vrx::kSyntheticHeight, 1};
+                copies[eye].imageExtent = {colorWidth, colorHeight, 1};
             }
             vkCmdCopyBufferToImage(command, warp->ColorBuffer(), images[index].image,
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, copies);
@@ -626,12 +652,11 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             const auto gpuStart = std::chrono::steady_clock::now();
             VK_CHECK(vkQueueSubmit(queue, 1, &submit, fence));
             VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX));
-            if (roomFrameReady) {
+            {
                 const double ms = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - gpuStart).count();
-                gpuWaitMs.push_back(ms);
-                if (renderedFrames == 0)
-                    std::printf("First room frame GPU submit/wait: %.2f ms\n", ms);
+                if (renderedFrames > 0) gpuWaitMs.push_back(ms);
+                else if (roomFrameReady) std::printf("First room frame GPU submit/wait: %.2f ms\n", ms);
             }
             VK_CHECK(vkResetFences(device, 1, &fence));
             if (roomFrameReady && renderedFrames == 0) room->PrintTiming();
@@ -641,8 +666,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 std::printf("Room eye capture: %s\n", roomDumpPath);
             }
             if (renderedFrames == 0)
-                referenceMatched = referenceMatched && warp->CompareReference(rgb, truth) &&
-                    (stillPath || live || prep->CompareReference(rgb));
+                referenceMatched = referenceMatched && warp->CompareReference(color, truth) &&
+                    (!syntheticGrid || prep->CompareReference(rgb));
             XrSwapchainImageReleaseInfo ri{}; ri.type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO;
             XR_CHECK(xr.release(swapchain, &ri));
             if (roomFrameReady) XR_CHECK(xr.release(roomSwapchain, &ri));
@@ -666,7 +691,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         fe.layers = state.shouldRender ? frameLayers : nullptr;
         const auto endStart = std::chrono::steady_clock::now();
         XR_CHECK(xr.endFrame(session, &fe));
-        if (roomFrameReady) {
+        if (state.shouldRender && renderedFrames > 1) {
             const auto done = std::chrono::steady_clock::now();
             endFrameMs.push_back(std::chrono::duration<double, std::milli>(done - endStart).count());
             frameWorkMs.push_back(std::chrono::duration<double, std::milli>(done - frameWorkStart).count());
@@ -732,10 +757,12 @@ int main(int argc, char** argv) {
     bool cuda = false, live = false, room = false, durationSeen = false, untilStop = false;
     const char* settingsPath = nullptr;
     const char* roomDumpPath = nullptr;
+    unsigned colorWidth = 0, colorHeight = 0;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
             std::puts("vrx-xr-synthetic [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]");
             std::puts("--live selects a portal source; add --cuda for asynchronous ZipDepth");
+            std::puts("--color=WxH presents the synthetic scene at that colour size (depth stays 686x392)");
             std::puts("VRX_OPENXR_LOADER, VRX_WARP_SPV and VRX_PREP_SPV override runtime paths");
             return 0;
         }
@@ -747,6 +774,13 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--until-stop") == 0) untilStop = true;
         else if (std::strncmp(argv[i], "--settings=", 11) == 0) settingsPath = argv[i] + 11;
         else if (std::strncmp(argv[i], "--room-dump=", 12) == 0) { roomDumpPath = argv[i] + 12; room = true; }
+        else if (std::strncmp(argv[i], "--color=", 8) == 0) {
+            char extra = 0;
+            if (std::sscanf(argv[i] + 8, "%ux%u%c", &colorWidth, &colorHeight, &extra) != 2 ||
+                colorWidth < 2 || colorHeight < 2 || colorWidth > 4096 || colorHeight > 4096) {
+                std::fputs("Invalid --color size\n", stderr); return 2;
+            }
+        }
         else if (!durationSeen) {
             char* end = nullptr;
             seconds = std::strtod(argv[i], &end);
@@ -758,7 +792,8 @@ int main(int argc, char** argv) {
     if ((untilStop && durationSeen) || (!untilStop && (seconds <= 0 || seconds > 120)) ||
         (cuda && !stillPath && !live) || (live && stillPath) ||
         (stillPath && !*stillPath) || (modelPath && !*modelPath) ||
-        (settingsPath && !*settingsPath) || (roomDumpPath && !*roomDumpPath)) {
+        (settingsPath && !*settingsPath) || (roomDumpPath && !*roomDumpPath) ||
+        (colorWidth && (stillPath || live))) {
         std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]\n", stderr);
         return 2;
     }
@@ -775,7 +810,8 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, OnStopSignal);
     const char* path = std::getenv("VRX_OPENXR_LOADER");
     try {
-        return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live, room, settingsPath, roomDumpPath);
+        return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live, room, settingsPath, roomDumpPath,
+                   colorWidth, colorHeight);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "VRX Linux renderer: %s\n", error.what());
         return 1;
