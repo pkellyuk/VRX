@@ -18,6 +18,7 @@ bench/models/
 bench/native/**/out/
 bench/xmmodel/out/
 desktop/out/
+/build/linux*/
 release/out/
 *.obj
 *.exe
