@@ -33,11 +33,12 @@ static_assert(sizeof(Parameters) == 40, "model prep push constant mismatch");
 }
 
 VulkanPrep::VulkanPrep(VkPhysicalDevice gpu, VkDevice device, VkBuffer packedScene,
-                       uint32_t sourceWidth, uint32_t sourceHeight)
-    : device_(device), sourceWidth_(sourceWidth), sourceHeight_(sourceHeight) {
+                       uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight)
+    : device_(device), sourceWidth_(sourceWidth), sourceHeight_(sourceHeight),
+      outputWidth_(outputWidth), outputHeight_(outputHeight) {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = VkDeviceSize(3) * width * height * sizeof(float);
+    bufferInfo.size = VkDeviceSize(3) * outputWidth_ * outputHeight_ * sizeof(float);
     bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkPhysicalDeviceMemoryProperties properties{};
@@ -166,14 +167,16 @@ void VulkanPrep::Record(VkCommandBuffer command) {
     Parameters params{};
     params.sourceWidth = sourceWidth_;
     params.sourceHeight = sourceHeight_;
+    params.outputWidth = outputWidth_;
+    params.outputHeight = outputHeight_;
     params.taps = uint32_t(ModelPrepTaps(int(sourceWidth_)));
-    params.exactLoad = sourceWidth_ == uint32_t(width) && sourceHeight_ == uint32_t(height);
+    params.exactLoad = sourceWidth_ == outputWidth_ && sourceHeight_ == outputHeight_;
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE,
                             pipelineLayout_, 0, 1, &descriptorSet_[slot_], 0, nullptr);
     vkCmdPushConstants(command, pipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT,
                        0, sizeof(params), &params);
-    vkCmdDispatch(command, (width + 7) / 8, (height + 7) / 8, 1);
+    vkCmdDispatch(command, (outputWidth_ + 7) / 8, (outputHeight_ + 7) / 8, 1);
     VkBufferMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
     barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -187,7 +190,8 @@ void VulkanPrep::Record(VkCommandBuffer command) {
 }
 
 bool VulkanPrep::CompareReference(const std::vector<uint32_t>& rgba) const {
-    if (rgba.size() != size_t(sourceWidth_) * sourceHeight_) return false;
+    if (rgba.size() != size_t(sourceWidth_) * sourceHeight_ ||
+        outputWidth_ != uint32_t(width) || outputHeight_ != uint32_t(height)) return false;
     const auto* got = ModelInput();
     size_t bad = 0;
     float worst = 0.0f;

@@ -7,8 +7,12 @@ namespace vrx {
 class VulkanPrep {
 public:
     // packedScene: sourceWidth x sourceHeight packed RGBA (red in the low byte).
+    // The output is 3 planes of outputWidth x outputHeight floats 0..1: by default
+    // ZipDepth's input; at the depth grid's size it is xrapp5's grid (kGridHlsl),
+    // the frame steady depth matches motion on.
     VulkanPrep(VkPhysicalDevice gpu, VkDevice device, VkBuffer packedScene,
-               uint32_t sourceWidth, uint32_t sourceHeight);
+               uint32_t sourceWidth, uint32_t sourceHeight,
+               uint32_t outputWidth = width, uint32_t outputHeight = height);
     ~VulkanPrep();
     VulkanPrep(const VulkanPrep&) = delete;
     VulkanPrep& operator=(const VulkanPrep&) = delete;
@@ -25,7 +29,7 @@ public:
 
 private:
     VkDevice device_;
-    uint32_t sourceWidth_, sourceHeight_;
+    uint32_t sourceWidth_, sourceHeight_, outputWidth_, outputHeight_;
     uint32_t slot_ = 0;
     VkBuffer output_[kFrameSlots]{};
     VkDeviceMemory memory_[kFrameSlots]{};

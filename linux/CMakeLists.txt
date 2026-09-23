@@ -115,7 +115,7 @@ target_compile_definitions(vrx-engine PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}
     VRX_CAPTURE_SCALE_SPV_PATH="${CAPTURE_SCALE_SPV}"
     VRX_ROOM_MIRROR_SPV_PATH="${ROOM_MIRROR_SPV}" VRX_ROOM_EMIT_SPV_PATH="${ROOM_EMIT_SPV}"
     VRX_ROOM_LIGHT_SPV_PATH="${ROOM_LIGHT_SPV}" VRX_ROOM_EYE_SPV_PATH="${ROOM_EYE_SPV}"
-    VRX_CURVE_SPV_PATH="${CURVE_SPV}")
+    VRX_CURVE_SPV_PATH="${CURVE_SPV}" FUSION_STD_THREADS)
 target_compile_features(vrx-engine PRIVATE cxx_std_17)
 target_include_directories(vrx-engine PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
 target_link_libraries(vrx-engine PRIVATE Vulkan::Vulkan Threads::Threads ${CMAKE_DL_LIBS})
@@ -137,6 +137,14 @@ target_link_libraries(vrx-room-gpu-probe PRIVATE Vulkan::Vulkan)
 
 add_executable(vrx-depth-range-test depth_range_test.cpp)
 target_compile_features(vrx-depth-range-test PRIVATE cxx_std_17)
+
+# Block motion for steady depth (depth_fusion.h's rows shared out over std::threads).
+add_executable(vrx-block-motion-test block_motion_test.cpp)
+target_compile_features(vrx-block-motion-test PRIVATE cxx_std_17)
+target_include_directories(vrx-block-motion-test PRIVATE ../bench/native/openxr)
+target_compile_definitions(vrx-block-motion-test PRIVATE FUSION_STD_THREADS)
+target_compile_options(vrx-block-motion-test PRIVATE -UNDEBUG)
+target_link_libraries(vrx-block-motion-test PRIVATE Threads::Threads)
 
 add_executable(vrx-live-settings-test live_settings_test.cpp)
 target_compile_features(vrx-live-settings-test PRIVATE cxx_std_17)
@@ -229,6 +237,7 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     add_test(NAME vrx-live-settings COMMAND vrx-live-settings-test)
+    add_test(NAME vrx-block-motion COMMAND vrx-block-motion-test)
     if(DOTNET_EXECUTABLE)
         add_test(NAME vrx-linux-app-check COMMAND "${VRX_LINUX_APP}" --check)
         set_tests_properties(vrx-linux-app-check PROPERTIES ENVIRONMENT "DOTNET_ROOT=${DOTNET_ROOT_DIRECTORY}")

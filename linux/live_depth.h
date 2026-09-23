@@ -23,6 +23,9 @@ public:
         double captureArrival = 0;
         double modelMs = 0;          // ZipDepth and its postprocessing for this map
         double completedAt = 0;      // steady-clock seconds, as captureArrival
+        bool steadied = false;       // blended with the previous map, moved by the motion
+        double steadyMs = 0;         // motion search and steadying, when steady depth is on
+        float motionTrust = 0;       // mean trust of that motion (0..1)
     };
     struct Timing {
         uint64_t samples = 0;
@@ -35,8 +38,13 @@ public:
     LiveDepth(const LiveDepth&) = delete;
     LiveDepth& operator=(const LiveDepth&) = delete;
     // Hand over a prepared 3 x 384 x 672 input for a source frame. An input
-    // the worker has not started yet is replaced.
-    void Submit(std::vector<float> input, uint64_t sequence, uint64_t layout, double arrival);
+    // the worker has not started yet is replaced. `grid`: the same frame on the
+    // depth grid (3 planes of 686 x 392, 0..1), which steady depth needs.
+    void Submit(std::vector<float> input, uint64_t sequence, uint64_t layout, double arrival,
+                std::vector<float> grid = {});
+    // Steady depth (xrapp5 --steady): each map is blended with the previous one,
+    // moved by the motion between their frames where the moved picture matches.
+    void SetSteady(bool on) { steady_ = on; }
     std::shared_ptr<const Result> Latest() const;
     bool Healthy() const { return !failed_; }
     std::string Error() const;
@@ -45,7 +53,7 @@ public:
 private:
     void Work();
     struct Input {
-        std::vector<float> tensor;
+        std::vector<float> tensor, grid;
         uint64_t sequence = 0, layout = 0;
         double arrival = 0;
         std::chrono::steady_clock::time_point submitted;
@@ -56,7 +64,7 @@ private:
     Input pending_;
     bool has_pending_ = false;
     std::thread worker_;
-    std::atomic<bool> stop_{false}, failed_{false};
+    std::atomic<bool> stop_{false}, failed_{false}, steady_{false};
     std::atomic<uint64_t> completed_{0};
     mutable std::mutex error_mutex_;
     std::string error_;

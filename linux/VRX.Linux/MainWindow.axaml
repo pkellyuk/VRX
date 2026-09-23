@@ -204,7 +204,8 @@
                 ToolTip.Tip="Estimates depth from the picture with the ZipDepth model on an NVIDIA GPU. Off shows the picture flat. Takes effect at the next Attach / Play."/>
       <TextBlock Classes="Hint" Margin="26,0,0,8" Text="Takes effect at the next Attach / Play."/>
       <CheckBox IsEnabled="False" IsChecked="True" Content="Sub-pixel warp"/>
-      <CheckBox IsEnabled="False" Content="Steady depth"/>
+      <CheckBox Name="SteadyCheck" Content="Steady depth"
+                ToolTip.Tip="Calms flicker in the depth: each depth map is blended with the previous one, moved to follow the picture's motion, wherever the moved picture still matches. The motion is found on the CPU (Windows uses the GPU's video encoder). Applies live; saved in the profile."/>
       <CheckBox IsEnabled="False" Content="Fuse with a second depth model"/>
       <TextBlock Text="Game frame timing" Classes="Label" Margin="0,8,0,4"/>
       <ComboBox Name="TimingList" SelectedIndex="0" HorizontalAlignment="Stretch"

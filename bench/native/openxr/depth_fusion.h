@@ -12,6 +12,10 @@
 #include <cmath>
 #include <cstdint>
 #include <execution>
+#ifdef FUSION_STD_THREADS
+#include <atomic>
+#include <thread>
+#endif
 #include <numeric>
 #include <vector>
 
@@ -39,7 +43,25 @@ struct Image
     bool valid() const { return w > 0 && h > 0 && v.size() == (size_t)w * h; }
 };
 
-// Runs fn(row) for every row, in parallel.
+// Runs fn(row) for every row, in parallel. With FUSION_STD_THREADS (the Linux build:
+// libstdc++'s parallel algorithms need TBB, which is not a dependency there) the rows
+// are shared out over std::threads instead; each row is still computed alone, so the
+// results are the same.
+#ifdef FUSION_STD_THREADS
+template <typename F>
+inline void ForRows(int h, F fn)
+{
+    if (h <= 0) return;
+    const int threads = std::clamp((int)std::thread::hardware_concurrency(), 1, 8);
+    if (threads == 1 || h < 32) { for (int y = 0; y < h; y++) fn(y); return; }
+    std::atomic<int> next{ 0 };
+    auto work = [&]() { for (int y; (y = next.fetch_add(1)) < h;) fn(y); };
+    std::vector<std::thread> pool;
+    for (int t = 1; t < threads; t++) pool.emplace_back(work);
+    work();
+    for (auto& thread : pool) thread.join();
+}
+#else
 template <typename F>
 inline void ForRows(int h, F fn)
 {
@@ -48,6 +70,7 @@ inline void ForRows(int h, F fn)
     std::iota(rows.begin(), rows.end(), 0);
     std::for_each(std::execution::par, rows.begin(), rows.end(), fn);
 }
+#endif
 
 // Runs fn(i) for every element index of a w x h image, in parallel by row.
 template <typename F>

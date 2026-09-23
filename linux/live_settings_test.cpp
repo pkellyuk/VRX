@@ -46,10 +46,15 @@ int main() {
     assert(s.worldRgb == 0x1C1C1Cu && s.ambilightStrength == 55 && s.follow == 0);
     // VRXL 8: the screen follows the head.
     assert(Read("VRXL 8 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1 40 0 55 1842204 1\n", s));
-    assert(s.follow == 1 && s.worldRgb == 0x1C1C1Cu);
+    assert(s.follow == 1 && s.worldRgb == 0x1C1C1Cu && s.steady == 0);
+    // VRXL 9: steady depth.
+    assert(Read("VRXL 9 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1 40 0 55 1842204 1 1\n", s));
+    assert(s.steady == 1 && s.follow == 1);
     // Rejected, leaving the previous settings.
     const char* bad[] = {
-        "VRXL 9 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0 0 0\n", // unknown version
+        "VRXL 10 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0 0 0 0\n", // unknown version
+        "VRXL 9 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0 0 2\n",   // steady neither on nor off
+        "VRXL 9 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0 0\n",     // missing steady
         "VRXL 8 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0 2\n",   // follow neither on nor off
         "VRXL 8 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0\n",     // missing follow
         "VRXL 7 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 16777216\n", // world colour above 0xFFFFFF

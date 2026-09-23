@@ -113,6 +113,7 @@ public partial class MainWindow : Window
         CudaCheck.IsCheckedChanged += (_, _) => SettingsChanged();
         AmbilightCheck.IsCheckedChanged += (_, _) => SettingsChanged();
         FollowCheck.IsCheckedChanged += (_, _) => SettingsChanged();
+        SteadyCheck.IsCheckedChanged += (_, _) => SettingsChanged();
         WorldList.SelectionChanged += (_, _) => WorldListChanged();
         WorldHex.TextChanged += (_, _) => WorldHexChanged();
         WorldHex.LostFocus += (_, _) => { if (!LinuxProfile.TryNormalizeColor(WorldHex.Text ?? "", out _)) WorldHex.Text = lastWorldHex; };
@@ -269,6 +270,7 @@ public partial class MainWindow : Window
         AmbiStrengthSlider.Value = p.AmbilightStrength;
         WorldHex.Text = p.WorldColor;
         FollowCheck.IsChecked = p.Follow;
+        SteadyCheck.IsChecked = p.Steady;
         CudaCheck.IsChecked = p.Cuda;
         TimingList.SelectedIndex = p.Timing;
         FillLightColourList(p.LightColor);
@@ -338,7 +340,7 @@ public partial class MainWindow : Window
         (int)Math.Round(CurveSlider.Value),
         AmbilightCheck.IsChecked == true, (int)Math.Round(AmbiStrengthSlider.Value),
         LinuxProfile.TryNormalizeColor(WorldHex.Text ?? "", out var world) ? world : lastWorldHex,
-        FollowCheck.IsChecked == true);
+        FollowCheck.IsChecked == true, SteadyCheck.IsChecked == true);
 
     void SettingsChanged()
     {

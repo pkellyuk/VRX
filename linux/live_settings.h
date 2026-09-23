@@ -36,6 +36,9 @@ struct LiveSettings {
     // VRXL 8: the screen follows the head (re-placed in front of it every
     // frame) instead of staying where it was placed; the room then rests.
     int follow = 0;
+    // VRXL 9: steady depth (each depth map blended with the previous one, moved by
+    // the motion between their frames), as xrapp5's --steady.
+    int steady = 0;
 };
 
 inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
@@ -48,7 +51,7 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
     std::istringstream input(line);
     if (!(input >> tag >> version >> candidate.width >> candidate.distance >>
           candidate.height >> candidate.horizontal >> candidate.strength) ||
-        tag != "VRXL" || version < 1 || version > 8) return false;
+        tag != "VRXL" || version < 1 || version > 9) return false;
     if (version == 1) {
         candidate.room = 0;
     } else if (!(input >> candidate.room >> candidate.glass >> candidate.reflect >>
@@ -59,6 +62,7 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
     if (version >= 6 && !(input >> candidate.ambilight >> candidate.ambilightStrength)) return false;
     if (version >= 7 && !(input >> candidate.worldRgb)) return false;
     if (version >= 8 && !(input >> candidate.follow)) return false;
+    if (version >= 9 && !(input >> candidate.steady)) return false;
     if ((input >> extra) ||
         !std::isfinite(candidate.width) || candidate.width < 0.5f || candidate.width > 10.0f ||
         !std::isfinite(candidate.distance) || candidate.distance < 0.5f || candidate.distance > 8.0f ||
@@ -70,7 +74,7 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
         candidate.lightRgb > 0xFFFFFFu || candidate.timing < 0 || candidate.timing > 2 ||
         candidate.curve < 0 || candidate.curve > 100 || candidate.ambilight < 0 || candidate.ambilight > 1 ||
         candidate.ambilightStrength < 0 || candidate.ambilightStrength > 100 || candidate.worldRgb > 0xFFFFFFu ||
-        candidate.follow < 0 || candidate.follow > 1) return false;
+        candidate.follow < 0 || candidate.follow > 1 || candidate.steady < 0 || candidate.steady > 1) return false;
     out = candidate;
     return true;
 }

@@ -371,6 +371,13 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     auto warp = std::make_unique<vrx::VulkanWarp>(gpu, device, format, colorWidth, colorHeight);
     // ZipDepth input from the colour buffer, as xrapp5 prepares it from the source texture.
     auto prep = std::make_unique<vrx::VulkanPrep>(gpu, device, warp->SceneBuffer(), colorWidth, colorHeight);
+    // Steady depth matches motion on the frame at the depth grid's size (xrapp5's grid).
+    std::unique_ptr<vrx::VulkanPrep> gridPrep;
+#ifdef VRX_HAS_LIVE_DEPTH
+    if (liveDepth)
+        gridPrep = std::make_unique<vrx::VulkanPrep>(gpu, device, warp->SceneBuffer(), colorWidth, colorHeight,
+                                                     uint32_t(vrx::kSyntheticWidth), uint32_t(vrx::kSyntheticHeight));
+#endif
     std::unique_ptr<vrx::VulkanRoom> room;
     XrSwapchain roomSwapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageVulkan2KHR> roomImages;
@@ -510,6 +517,12 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
 
     warp->SetStrength(settings.strength);
     warp->SetStereoGeometry(settings.distance, settings.width, 0.064f, true);
+#ifdef VRX_HAS_LIVE_DEPTH
+    if (liveDepth) {
+        liveDepth->SetSteady(settings.steady != 0);
+        if (settings.steady) std::puts("Steady depth on (CPU block motion)");
+    }
+#endif
     XrCompositionLayerQuad quads[2]{};
     // The world colour: a projection layer of one colour, behind everything.
     XrCompositionLayerProjection worldProjection{};
@@ -612,6 +625,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         double arrival = 0;
         bool heldGpuFrame = false;       // its DMA-BUF goes back to the source
         bool timed = false, roomDrawn = false;
+        bool gridPrepared = false;       // its frame on the depth grid, for steady depth
     };
     // The two-second performance report (as xrapp5's), accumulated per frame.
     struct Report {
@@ -664,9 +678,15 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         if (work.liveNew) {
             const float* input = prep->ModelInput(slot);
 #ifdef VRX_HAS_LIVE_DEPTH
-            if (liveDepth)
+            if (liveDepth) {
+                std::vector<float> grid;
+                if (work.gridPrepared && gridPrep) {
+                    const float* planes = gridPrep->ModelInput(slot);
+                    grid.assign(planes, planes + size_t(3) * vrx::kSyntheticWidth * vrx::kSyntheticHeight);
+                }
                 liveDepth->Submit(std::vector<float>(input, input + 3 * modelPlane),
-                                  work.sequence, work.layout, work.arrival);
+                                  work.sequence, work.layout, work.arrival, std::move(grid));
+            }
 #endif
             if (room)
                 for (uint32_t y = 0; y < ambientHeight; ++y)
@@ -753,6 +773,12 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                     screen.pending = true;
                     std::puts("Recenter requested");
                 }
+#ifdef VRX_HAS_LIVE_DEPTH
+                if (liveDepth && updated.steady != settings.steady) {
+                    liveDepth->SetSteady(updated.steady != 0);
+                    std::puts(updated.steady ? "Steady depth on (CPU block motion)" : "Steady depth off");
+                }
+#endif
                 settings = updated;
                 warp->SetStrength(settings.strength);
             }
@@ -891,6 +917,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             fence = fences[slot];
             warp->SetFrameSlot(slot);
             prep->SetFrameSlot(slot);
+            if (gridPrep) gridPrep->SetFrameSlot(slot);
             bool liveNew = false;                 // a new source frame enters the colour buffer
             bool heldGpuFrame = false;
             int newSlot = -1, showSlot = -1;      // frame history slots (frame timing)
@@ -1090,6 +1117,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             // Live: prepare each new source frame for depth. Synthetic: every frame, for the check.
             const bool prepFrame = live ? liveNew : !stillPath;
             if (prepFrame) prep->Record(command);
+            const bool gridFrame = gridPrep && live && liveNew && settings.steady;
+            if (gridFrame) gridPrep->Record(command);
             // Depth is prepared from the new frame above; the frame shown may be an older one.
             if (history && newSlot >= 0) {
                 history->RecordStore(command, uint32_t(newSlot));
@@ -1173,6 +1202,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             SlotWork& work = slots[slot];
             work.submitted = true;
             work.liveNew = live && liveNew;
+            work.gridPrepared = gridFrame;
             work.sequence = liveSequence;
             work.layout = liveLayout;
             work.arrival = liveArrival;
@@ -1256,7 +1286,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         }
         if (const double elapsedReport = std::chrono::duration<double>(std::chrono::steady_clock::now() - report.start).count();
             elapsedReport >= 2.0) {
-            char capturePart[96] = "", depthPart[224] = "", gpuPart[160] = "";
+            char capturePart[96] = "", depthPart[288] = "", gpuPart[160] = "";
 #ifdef VRX_HAS_CAPTURE
             if (live) {
                 const uint64_t captured = capture->Captured(), dropped = capture->Dropped();
@@ -1273,6 +1303,11 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 std::snprintf(depthPart, sizeof(depthPart), " | depth %.1f updates/s, model %.1f ms, depth age %.1f ms",
                     (completed - report.depthUpdates) / elapsedReport, latest ? latest->modelMs : 0.0,
                     report.depthFrames ? report.depthAgeMs / report.depthFrames : 0.0);
+                if (latest && latest->steadyMs > 0) {
+                    const size_t used = std::strlen(depthPart);
+                    std::snprintf(depthPart + used, sizeof(depthPart) - used, ", steady %.1f ms (motion trust %.2f)",
+                                  latest->steadyMs, latest->motionTrust);
+                }
                 report.depthUpdates = completed;
             }
 #endif

@@ -99,7 +99,9 @@ ModelDepth::ModelDepth(const char* modelPath, bool requireCuda)
     std::printf("ZipDepth model loaded with %s provider\n", requireCuda ? "CUDA" : "CPU");
 }
 
-std::vector<float> ModelDepth::Run(const float* nchw, bool verbose, RangeSmoother* smoother) {
+void ModelDepth::Dilate(std::vector<float>& near) { DilateNear(near); }
+
+std::vector<float> ModelDepth::Run(const float* nchw, bool verbose, RangeSmoother* smoother, bool dilate) {
     if (!nchw) throw std::runtime_error("Null ZipDepth input");
     const int64_t shape[4] = {1, 3, modelH, modelW};
     auto input = Ort::Value::CreateTensor<float>(memory_, const_cast<float*>(nchw), 3 * modelPixels, shape, 4);
@@ -114,7 +116,7 @@ std::vector<float> ModelDepth::Run(const float* nchw, bool verbose, RangeSmoothe
         throw std::runtime_error("ZipDepth returned an invalid tensor");
     std::vector<float> near = ResampleDepth(result[0].GetTensorData<float>());
     NormalizeNear(near, verbose, smoother);
-    DilateNear(near);
+    if (dilate) DilateNear(near);
     if (verbose) std::printf("ZipDepth inference: %.1f ms, normalized depth %dx%d\n",
                              milliseconds, kSyntheticWidth, kSyntheticHeight);
     return near;
