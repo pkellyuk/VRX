@@ -31,8 +31,9 @@ static_assert(sizeof(Parameters) == 40, "model prep push constant mismatch");
 
 }
 
-VulkanPrep::VulkanPrep(VkPhysicalDevice gpu, VkDevice device, VkBuffer packedScene)
-    : device_(device) {
+VulkanPrep::VulkanPrep(VkPhysicalDevice gpu, VkDevice device, VkBuffer packedScene,
+                       uint32_t sourceWidth, uint32_t sourceHeight)
+    : device_(device), sourceWidth_(sourceWidth), sourceHeight_(sourceHeight) {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = VkDeviceSize(3) * width * height * sizeof(float);
@@ -43,15 +44,15 @@ VulkanPrep::VulkanPrep(VkPhysicalDevice gpu, VkDevice device, VkBuffer packedSce
     vkGetBufferMemoryRequirements(device_, output_, &requirements);
     VkPhysicalDeviceMemoryProperties properties{};
     vkGetPhysicalDeviceMemoryProperties(gpu, &properties);
+    // The CPU reads the model input for every live frame; uncached (write-
+    // combined) memory makes those reads very slow, so prefer cached memory.
+    const VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     uint32_t memoryType = UINT32_MAX;
-    for (uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
-        if ((requirements.memoryTypeBits & (1u << i)) &&
-            (properties.memoryTypes[i].propertyFlags &
-             (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
-             (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
-            memoryType = i;
-            break;
-        }
+    for (VkMemoryPropertyFlags wanted : {host | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, host}) {
+        for (uint32_t i = 0; i < properties.memoryTypeCount && memoryType == UINT32_MAX; ++i)
+            if ((requirements.memoryTypeBits & (1u << i)) &&
+                (properties.memoryTypes[i].propertyFlags & wanted) == wanted) memoryType = i;
+        if (memoryType != UINT32_MAX) break;
     }
     if (memoryType == UINT32_MAX) throw std::runtime_error("No coherent model input buffer memory");
     VkMemoryAllocateInfo allocation{};
@@ -156,6 +157,10 @@ VulkanPrep::~VulkanPrep() {
 
 void VulkanPrep::Record(VkCommandBuffer command) {
     Parameters params{};
+    params.sourceWidth = sourceWidth_;
+    params.sourceHeight = sourceHeight_;
+    params.taps = uint32_t(ModelPrepTaps(int(sourceWidth_)));
+    params.exactLoad = sourceWidth_ == uint32_t(width) && sourceHeight_ == uint32_t(height);
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE,
                             pipelineLayout_, 0, 1, &descriptorSet_, 0, nullptr);
@@ -174,14 +179,14 @@ void VulkanPrep::Record(VkCommandBuffer command) {
                          VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 }
 
-bool VulkanPrep::CompareReference(const std::vector<unsigned char>& rgb) const {
-    if (rgb.size() != size_t(kSyntheticWidth) * kSyntheticHeight * 3) return false;
+bool VulkanPrep::CompareReference(const std::vector<uint32_t>& rgba) const {
+    if (rgba.size() != size_t(sourceWidth_) * sourceHeight_) return false;
     const auto* got = ModelInput();
     size_t bad = 0;
     float worst = 0.0f;
     constexpr float tolerance = 0.0028f; // Windows sampled-path threshold.
     const size_t plane = size_t(width) * height;
-    const auto expected = PrepareModelInput(rgb);
+    const auto expected = PrepareModelInput(rgba.data(), int(sourceWidth_), int(sourceHeight_));
     for (size_t i = 0; i < expected.size(); ++i) {
         const float actual = got[i];
         const float delta = std::fabs(actual - expected[i]);

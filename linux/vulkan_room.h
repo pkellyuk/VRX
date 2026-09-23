@@ -9,17 +9,19 @@
 namespace vrx {
 class VulkanRoom {
 public:
-    // Half of the PICO 4/SteamVR recommended 2644 square eye target.
-    static constexpr uint32_t EyeWidth = 1322, EyeHeight = 1322;
     static constexpr uint32_t GlowWidth = 64, GlowHeight = 45;
     // source: the colour (colorWidth x colorHeight packed RGBA); stereo: both
     // eyes' warped colour at the same size.
     VulkanRoom(VkPhysicalDevice gpu, VkDevice device, VkBuffer source, VkBuffer stereo,
-               VkFormat screenFormat, uint32_t colorWidth, uint32_t colorHeight);
+               VkFormat screenFormat, uint32_t colorWidth, uint32_t colorHeight,
+               uint32_t eyeWidth, uint32_t eyeHeight);
+    uint32_t EyeWidth() const { return eyeWidth_; }
+    uint32_t EyeHeight() const { return eyeHeight_; }
     ~VulkanRoom();
     VulkanRoom(const VulkanRoom&) = delete;
     VulkanRoom& operator=(const VulkanRoom&) = delete;
-    void Prepare(const std::vector<uint32_t>& color, const LiveSettings& settings,
+    // glow: packed RGBA picture the screen's glow is taken from (any size).
+    void Prepare(const uint32_t* glow, uint32_t glowWidth, uint32_t glowHeight, const LiveSettings& settings,
                  const XrView eyes[2], float floorLocalY);
     void Record(VkCommandBuffer command, VkImage destination);
     void EnableCapture() { capture_ = true; }
@@ -38,9 +40,11 @@ private:
     VkBuffer stereo_;
     VkFormat screenFormat_;
     uint32_t colorWidth_, colorHeight_;
+    uint32_t eyeWidth_, eyeHeight_;   // the room layer's size per eye
     Buffer decode_, emitter_, glowBuffer_, mirrorBuffer_, lightBuffer_, curveBuffer_, roomBuffer_, readback_;
     bool capture_ = false;
     bool glowHistoryValid_ = false;
+    std::vector<float> glowHistory_;
     float lastWidth_ = 0.0f, lastHeight_ = 0.0f;
     float geometryKey_[6] = {};
     std::chrono::steady_clock::time_point lastPrepare_{};

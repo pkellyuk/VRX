@@ -97,16 +97,21 @@ wait on a GPU fence every frame. The Linux work should proceed as follows:
   the same block-linear set; the probe fixed `0x0300000000606015`, streamed
   3840x2160 BGRA DMA-BUFs, imported all three buffers (about 1 ms each, once
   per buffer) and read back a correct desktop image. `vulkan_dmabuf.h` holds the
-  reusable importer. Remaining: enable the import extensions on the OpenXR
-  Vulkan device, keep each PipeWire buffer until the GPU has read it, scale
-  the imported image into the colour texture and prepare depth on the GPU (2f),
-  and keep shared memory as the fallback. The probe does not yet use explicit
-  sync (`SPA_META_SyncTimeline`); check for torn frames before relying on it.
-- **2f. Move ambilight and model input preparation to the GPU.** Keep glow
-  history in a format that converges under small changes; Linux currently uses
-  an 8-bit 64×45 history while Windows uses a larger floating-point history.
-  The existing Vulkan model-prep shader already has CPU-reference coverage,
-  but live CUDA currently prepares its tensor on the CPU.
+  reusable importer. **The engine now uses it by default for live capture**:
+  it offers the OpenXR GPU's modifiers, holds each PipeWire buffer until the
+  frame using it has completed, imports each buffer once, and scales it into
+  the colour buffer with `capture_scale.comp` (bit-identical to the CPU scaler;
+  `vrx-capture-gpu-test` covers 2x2..4x4 box, bilinear and letterboxed cases).
+  Shared memory remains the fallback (`--no-dmabuf`). A 60 s PICO 4 session
+  captured 3,114 4K frames with no drops. Explicit sync
+  (`SPA_META_SyncTimeline`) is not used; no torn frames have been seen.
+- **2f. Model input and ambilight.** Done for model input: live frames are
+  prepared by `model_prep.comp` from the colour buffer (xrapp5's taps,
+  `ceil(width / 672)`), and the depth worker receives the tensor. This removed
+  about 17 ms of CPU preparation; arrival-to-depth fell to about 18 ms median.
+  The live room glow uses a quarter-size copy of that input, and its float
+  history now lives in CPU memory (the 8-bit history stopped converging).
+  Ambilight is still computed on the CPU (about 1 ms) at 64x45.
 - **2g. Separate queues and latency policy.** Schedule depth preparation away
   from the render queue and add GPU source-image history before adding Windows'
   Delayed/Matched timing modes.
@@ -122,7 +127,7 @@ baseline before zero-copy capture is available.
 | Room EMIT / MIRROR / LIGHT | Runs on the GPU each room frame; reference probes match within 1e-5. | Keep parity checks as shader/resources change. |
 | Room eye pass | Built from the checked-in Windows HLSL; `--room-dump` compares sampled output with `RoomPixel`. Only the "look" variant is built. | Build the plain variant if it materially reduces cost with effects disabled. |
 | Room GPU timing | **Partly done.** Vulkan timestamp queries report first-frame EMIT, MIRROR, LIGHT, upload, eye and copy times. A live sample totalled 2.97 ms for these room passes. | Add warp timing and rolling p50/p95 per-pass logs; first-frame timing alone does not establish steady-state cost. |
-| Room eye size | Fixed at 1322×1322, half this PICO 4 runtime's recommended 2644×2644. | Derive width and height from OpenXR recommendations for other headsets. |
+| Room eye size | **Differs from Windows on purpose.** The runtime's recommended size (2644×2644 on the PICO 4); `VRX_ROOM_EYE_SCALE` lowers it. At Windows' half size, SteamVR/Steam Link on Linux showed the screen quads at the room layer's resolution, so the picture looked as soft as the reflections. The full-size room holds about 87 frames/s at 9.5 ms CPU work per frame. | Recheck if the runtime or streaming path changes. |
 | Turning Room on live | The controller always launches with `--room`, so its Room slider can activate the already-created room resources from zero. | A direct CLI launch without `--room` and with Room initially zero still cannot create room resources later. Add lazy creation if that mode matters. |
 | Recenter / `ScreenAnchor` | Missing; room and screen are fixed to the `LOCAL` origin. | Add a yaw-only recenter control and a versioned live-settings counter. |
 | STAGE floor | Located each room frame when available. | Latch a valid floor estimate and handle reference-space change events. |

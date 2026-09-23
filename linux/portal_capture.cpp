@@ -1,16 +1,20 @@
 #include "portal_capture.h"
 #include "source_ring.h"
+#include "capture_formats.h"
 #include "capture_scale.h"
 #include "synthetic_scene.h"
 #include <libportal/portal.h>
 #include <pipewire/pipewire.h>
+#include <spa/param/buffers.h>
 #include <spa/param/video/raw-utils.h>
+#include <spa/pod/iter.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -37,7 +41,19 @@ struct PortalCapture::Impl {
     spa_video_info_raw format{};
     SourceRing<3> ring;
     std::array<std::vector<uint32_t>, 3> colorSlots;
-    std::array<std::vector<unsigned char>, 3> slots;
+    ResampleTables tables;
+    // DMA-BUF: modifiers the renderer can import; the negotiated one.
+    std::vector<uint64_t> modifiers;
+    std::atomic<bool> dmabuf{false};
+    uint64_t modifier = 0;
+    // DMA-BUF buffers held for the renderer: the newest not yet taken, the one
+    // in use, and those to give back on the PipeWire thread.
+    std::mutex gpuMutex;
+    pw_buffer* latestGpu = nullptr;
+    GpuFrame latestInfo;
+    pw_buffer* inUseGpu = nullptr;
+    std::vector<pw_buffer*> toRelease;
+    uint64_t nextBufferId = 0, bufferGeneration = 0;
     // Fixed by the first negotiated size; later sizes are letterboxed into it.
     std::atomic<uint32_t> colorWidth{0}, colorHeight{0};
     std::thread worker;
@@ -90,6 +106,23 @@ struct PortalCapture::Impl {
     static void Format(void* data, uint32_t id, const spa_pod* param) {
         if (id != SPA_PARAM_Format || !param) return;
         auto& self = *static_cast<Impl*>(data);
+        uint8_t storage[4096];
+        spa_pod_builder builder = SPA_POD_BUILDER_INIT(storage, sizeof(storage));
+        const spa_pod_prop* offeredModifier = spa_pod_find_prop(param, nullptr, SPA_FORMAT_VIDEO_modifier);
+        if (offeredModifier && (offeredModifier->flags & SPA_POD_PROP_FLAG_DONT_FIXATE)) {
+            // The source offers several modifiers: fix the first we can import
+            // and renegotiate, keeping shared memory as the fallback.
+            uint32_t count = 0, choice = 0;
+            const spa_pod* values = spa_pod_get_values(&offeredModifier->value, &count, &choice);
+            const auto* offered = static_cast<const uint64_t*>(SPA_POD_BODY(values));
+            std::vector<uint64_t> fixed;
+            for (uint32_t i = choice == SPA_CHOICE_None ? 0 : 1; i < count && fixed.empty(); ++i)
+                if (std::find(self.modifiers.begin(), self.modifiers.end(), offered[i]) != self.modifiers.end())
+                    fixed.push_back(offered[i]);
+            auto formats = BuildCaptureFormats(&builder, fixed);
+            pw_stream_update_params(self.stream, formats.data(), uint32_t(formats.size()));
+            return;
+        }
         spa_video_info_raw next{};
         if (spa_format_video_raw_parse(param, &next) < 0 ||
             (next.format != SPA_VIDEO_FORMAT_BGRA && next.format != SPA_VIDEO_FORMAT_BGRx &&
@@ -98,9 +131,22 @@ struct PortalCapture::Impl {
             self.failed = true;
             return;
         }
+        const bool dmabuf = (next.flags & SPA_VIDEO_FLAG_MODIFIER) != 0;
+        if (dmabuf && next.format == SPA_VIDEO_FORMAT_RGBA) {
+            std::fputs("Capture negotiated an RGBA DMA-BUF, which is not imported\n", stderr);
+            self.failed = true;
+            return;
+        }
         if (self.format.size.width != next.size.width || self.format.size.height != next.size.height ||
-            self.format.format != next.format) ++self.layout;
+            self.format.format != next.format || dmabuf != self.dmabuf) ++self.layout;
         self.format = next;
+        self.dmabuf = dmabuf;
+        self.modifier = dmabuf ? next.modifier : 0;
+        const int types = dmabuf ? (1 << SPA_DATA_DmaBuf) : ((1 << SPA_DATA_MemFd) | (1 << SPA_DATA_MemPtr));
+        const spa_pod* buffers = static_cast<const spa_pod*>(spa_pod_builder_add_object(&builder,
+            SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
+            SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(types)));
+        pw_stream_update_params(self.stream, &buffers, 1);
         if (!self.colorWidth) {
             int width = 0, height = 0;
             ColorSizeFor(int(next.size.width), int(next.size.height), width, height);
@@ -109,10 +155,45 @@ struct PortalCapture::Impl {
             std::printf("Capture colour %dx%d; depth %dx%d\n", width, height,
                         kSyntheticWidth, kSyntheticHeight);
         }
-        std::printf("Capture format %ux%u, SPA %u, layout %llu\n", next.size.width,
-                    next.size.height, next.format, static_cast<unsigned long long>(self.layout));
+        std::printf("Capture format %ux%u, SPA %u, layout %llu, %s\n", next.size.width,
+                    next.size.height, next.format, static_cast<unsigned long long>(self.layout),
+                    dmabuf ? "DMA-BUF" : "shared memory");
+        if (dmabuf) std::printf("Capture DMA-BUF modifier 0x%016llx\n",
+                                static_cast<unsigned long long>(self.modifier));
     }
     static void Process(void* data);
+    static void AddBuffer(void* data, pw_buffer* buffer) {
+        auto& self = *static_cast<Impl*>(data);
+        std::lock_guard<std::mutex> lock(self.gpuMutex);
+        buffer->user_data = reinterpret_cast<void*>(uintptr_t(++self.nextBufferId));
+    }
+    static void RemoveBuffer(void* data, pw_buffer* buffer) {
+        auto& self = *static_cast<Impl*>(data);
+        std::lock_guard<std::mutex> lock(self.gpuMutex);
+        // The renderer's imported copy keeps its own reference to the memory;
+        // a new generation tells it to import the new buffers.
+        if (self.latestGpu == buffer) self.latestGpu = nullptr;
+        if (self.inUseGpu == buffer) self.inUseGpu = nullptr;
+        self.toRelease.erase(std::remove(self.toRelease.begin(), self.toRelease.end(), buffer),
+                             self.toRelease.end());
+        ++self.bufferGeneration;
+    }
+    // On the PipeWire thread: give released DMA-BUFs back to the source.
+    void QueueReleased() {
+        std::vector<pw_buffer*> release;
+        {
+            std::lock_guard<std::mutex> lock(gpuMutex);
+            release.swap(toRelease);
+        }
+        for (pw_buffer* buffer : release) pw_stream_queue_buffer(stream, buffer);
+    }
+    static int InvokeRelease(spa_loop*, bool, uint32_t, const void*, size_t, void* data) {
+        static_cast<Impl*>(data)->QueueReleased();
+        return 0;
+    }
+    void WakeRelease() {
+        if (loop) pw_loop_invoke(pw_main_loop_get_loop(loop), InvokeRelease, 0, nullptr, 0, false, this);
+    }
     bool Open();
     bool Connect(int fd, uint32_t node_id);
     void RunPipeWire(int fd, uint32_t node_id);
@@ -123,8 +204,41 @@ void PortalCapture::Impl::Process(void* data) {
     auto& self = *static_cast<Impl*>(data);
     pw_buffer* buffer = pw_stream_dequeue_buffer(self.stream);
     if (!buffer) return;
+    self.QueueReleased();
     const spa_buffer* source = buffer->buffer;
     const auto width = self.format.size.width, height = self.format.size.height;
+    if (self.dmabuf && source->n_datas >= 1 && source->datas[0].type == SPA_DATA_DmaBuf) {
+        const spa_data& plane = source->datas[0];
+        GpuFrame frame;
+        frame.fd = int(plane.fd);
+        frame.offset = plane.chunk ? plane.chunk->offset : 0;
+        frame.stride = plane.chunk ? uint32_t(plane.chunk->stride) : 0;
+        frame.modifier = self.modifier;
+        frame.width = width;
+        frame.height = height;
+        frame.layout = self.layout;
+        frame.sequence = self.captured.load(std::memory_order_relaxed) + 1;
+        frame.arrival = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (source->n_datas != 1 || frame.fd < 0 || frame.stride < width * 4 || !width || !height) {
+            ++self.dropped;
+            pw_stream_queue_buffer(self.stream, buffer);
+            return;
+        }
+        pw_buffer* superseded = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(self.gpuMutex);
+            frame.bufferId = uint64_t(reinterpret_cast<uintptr_t>(buffer->user_data));
+            frame.bufferGeneration = self.bufferGeneration;
+            superseded = self.latestGpu;
+            self.latestGpu = buffer;
+            self.latestInfo = frame;
+        }
+        // A frame the renderer never took is replaced, not counted as dropped.
+        if (superseded) pw_stream_queue_buffer(self.stream, superseded);
+        self.captured.store(frame.sequence, std::memory_order_release);
+        return;
+    }
     if (source->n_datas != 1 || !width || !height) {
         ++self.dropped;
         pw_stream_queue_buffer(self.stream, buffer);
@@ -151,10 +265,10 @@ void PortalCapture::Impl::Process(void* data) {
     const auto* pixels = static_cast<const unsigned char*>(plane.data) + offset;
     const bool rgba = self.format.format == SPA_VIDEO_FORMAT_RGBA;
     const int colorWidth = int(self.colorWidth), colorHeight = int(self.colorHeight);
-    auto& color = self.colorSlots[frame->index];
-    ScaleCaptureColor(pixels, size_t(stride), int(width), int(height), rgba,
-                      colorWidth, colorHeight, color, kScaleThreads);
-    DepthGridFromColor(color, colorWidth, colorHeight, self.slots[frame->index], kScaleThreads);
+    if (self.tables.sourceWidth != int(width) || self.tables.sourceHeight != int(height))
+        self.tables = BuildResampleTables(int(width), int(height), colorWidth, colorHeight,
+                                          FitCapture(int(width), int(height), colorWidth, colorHeight));
+    ScaleCaptureColor(pixels, size_t(stride), rgba, self.tables, self.colorSlots[frame->index], kScaleThreads);
     frame->layout = self.layout;
     const double arrival = std::chrono::duration<double>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -217,23 +331,15 @@ bool PortalCapture::Impl::Connect(int fd, uint32_t node_id) {
     stream_events.state_changed = State;
     stream_events.param_changed = Format;
     stream_events.process = Process;
+    stream_events.add_buffer = AddBuffer;
+    stream_events.remove_buffer = RemoveBuffer;
     pw_stream_add_listener(stream, &stream_listener, &stream_events, this);
-    uint8_t pod_storage[1024];
+    uint8_t pod_storage[4096];
     spa_pod_builder builder = SPA_POD_BUILDER_INIT(pod_storage, sizeof(pod_storage));
-    const spa_rectangle default_size = {1920, 1080}, min_size = {1, 1}, max_size = {8192, 8192};
-    const spa_fraction default_rate = {60, 1}, min_rate = {0, 1}, max_rate = {240, 1};
-    const spa_pod* offer = static_cast<const spa_pod*>(spa_pod_builder_add_object(&builder,
-        SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
-        SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
-        SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-        SPA_FORMAT_VIDEO_format, SPA_POD_CHOICE_ENUM_Id(4,
-            SPA_VIDEO_FORMAT_BGRA, SPA_VIDEO_FORMAT_BGRA,
-            SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_RGBA),
-        SPA_FORMAT_VIDEO_size, SPA_POD_CHOICE_RANGE_Rectangle(&default_size, &min_size, &max_size),
-        SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_RANGE_Fraction(&default_rate, &min_rate, &max_rate)));
+    auto offers = BuildCaptureFormats(&builder, modifiers);
     if (pw_stream_connect(stream, PW_DIRECTION_INPUT, PW_ID_ANY,
             static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS),
-            &offer, 1) < 0) return false;
+            offers.data(), uint32_t(offers.size())) < 0) return false;
     return true;
 }
 void PortalCapture::Impl::RunPipeWire(int fd, uint32_t node_id) {
@@ -261,12 +367,40 @@ PortalCapture::Impl::~Impl() {
 }
 PortalCapture::PortalCapture() : impl_(std::make_unique<Impl>()) {}
 PortalCapture::~PortalCapture() = default;
-bool PortalCapture::Open() { return impl_->Open(); }
-bool PortalCapture::Latest(Frame& output, bool color, bool rgb) const {
+bool PortalCapture::Open(const std::vector<uint64_t>& modifiers) {
+    impl_->modifiers = modifiers;
+    return impl_->Open();
+}
+bool PortalCapture::ColorSize(uint32_t& width, uint32_t& height) const {
+    width = impl_->colorWidth;
+    height = impl_->colorHeight;
+    return width && height;
+}
+bool PortalCapture::DmaBuf() const { return impl_->dmabuf; }
+bool PortalCapture::AcquireGpuFrame(GpuFrame& output) {
+    {
+        std::lock_guard<std::mutex> lock(impl_->gpuMutex);
+        if (!impl_->latestGpu) return false;
+        if (impl_->inUseGpu) impl_->toRelease.push_back(impl_->inUseGpu);
+        impl_->inUseGpu = impl_->latestGpu;
+        impl_->latestGpu = nullptr;
+        output = impl_->latestInfo;
+    }
+    impl_->WakeRelease();
+    return true;
+}
+void PortalCapture::ReleaseGpuFrame() {
+    {
+        std::lock_guard<std::mutex> lock(impl_->gpuMutex);
+        if (impl_->inUseGpu) impl_->toRelease.push_back(impl_->inUseGpu);
+        impl_->inUseGpu = nullptr;
+    }
+    impl_->WakeRelease();
+}
+bool PortalCapture::Latest(Frame& output) const {
     auto frame = impl_->ring.Latest();
     if (!frame) return false;
-    if (color) output.color = impl_->colorSlots[frame->index];
-    if (rgb) output.rgb = impl_->slots[frame->index];
+    output.color = impl_->colorSlots[frame->index];
     output.colorWidth = impl_->colorWidth;
     output.colorHeight = impl_->colorHeight;
     output.sequence = frame->seq;

@@ -110,9 +110,9 @@ void VulkanRoom::Transition(VkCommandBuffer cmd,const Image& image,VkImageLayout
 }
 
 VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBuffer stereo,VkFormat screenFormat,
-                       uint32_t colorWidth,uint32_t colorHeight)
+                       uint32_t colorWidth,uint32_t colorHeight,uint32_t eyeWidth,uint32_t eyeHeight)
     :gpu_(gpu),device_(device),source_(source),stereo_(stereo),screenFormat_(screenFormat),
-     colorWidth_(colorWidth),colorHeight_(colorHeight) {
+     colorWidth_(colorWidth),colorHeight_(colorHeight),eyeWidth_(eyeWidth),eyeHeight_(eyeHeight) {
     if(screenFormat!=VK_FORMAT_R8G8B8A8_SRGB&&screenFormat!=VK_FORMAT_R8G8B8A8_UNORM)
         throw std::runtime_error("Room needs an RGBA OpenXR swapchain format");
     CreateBuffer(decode_,256*sizeof(float),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -122,14 +122,14 @@ VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBu
     CreateBuffer(lightBuffer_,kRoomFaces*kRoomLightmap*kRoomLightmap*4*sizeof(float),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     CreateBuffer(curveBuffer_,sizeof(CurveConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     CreateBuffer(roomBuffer_,sizeof(RoomConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-    CreateBuffer(readback_,VkDeviceSize(EyeWidth)*EyeHeight*2*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    CreateBuffer(readback_,VkDeviceSize(eyeWidth_)*eyeHeight_*2*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     RoomDecodeTable(static_cast<float*>(decode_.mapped));
     const auto sampled=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     CreateImage(picture_,colorWidth_,colorHeight_,2,VK_FORMAT_R8G8B8A8_UNORM,sampled,VK_IMAGE_VIEW_TYPE_2D_ARRAY);
     CreateImage(glow_,GlowWidth,GlowHeight,1,VK_FORMAT_R8G8B8A8_UNORM,sampled,VK_IMAGE_VIEW_TYPE_2D);
     CreateImage(mirror_,kRoomMirrorW,kRoomMirrorMaxH,1,VK_FORMAT_R32G32B32A32_SFLOAT,sampled,VK_IMAGE_VIEW_TYPE_2D);
     CreateImage(light_,kRoomLightmap,kRoomLightmap,kRoomFaces,VK_FORMAT_R32G32B32A32_SFLOAT,sampled,VK_IMAGE_VIEW_TYPE_2D_ARRAY);
-    CreateImage(eye_,EyeWidth,EyeHeight,2,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    CreateImage(eye_,eyeWidth_,eyeHeight_,2,VK_FORMAT_R8G8B8A8_UNORM,VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_VIEW_TYPE_2D_ARRAY);
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     si.magFilter=VK_FILTER_LINEAR;si.minFilter=VK_FILTER_LINEAR;
     si.mipmapMode=VK_SAMPLER_MIPMAP_MODE_NEAREST;si.addressModeU=si.addressModeV=si.addressModeW=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -206,8 +206,9 @@ VulkanRoom::~VulkanRoom(){
     for(Buffer* b:{&readback_,&roomBuffer_,&curveBuffer_,&lightBuffer_,&mirrorBuffer_,&glowBuffer_,&emitter_,&decode_})DestroyBuffer(*b);
 }
 
-void VulkanRoom::Prepare(const std::vector<uint32_t>& color,const LiveSettings& settings,const XrView eyes[2],float floorLocalY) {
-    if(color.size()!=size_t(colorWidth_)*colorHeight_)throw std::runtime_error("Room source dimensions differ");
+void VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t glowHeight,const LiveSettings& settings,
+                         const XrView eyes[2],float floorLocalY) {
+    if(!glowSource||!glowWidth||!glowHeight)throw std::runtime_error("Room glow source is empty");
     const float W=settings.width,H=W*float(colorHeight_)/colorWidth_;
     if (W != lastWidth_ || H != lastHeight_) glowHistoryValid_ = false;
     lastWidth_ = W; lastHeight_ = H;
@@ -246,7 +247,7 @@ void VulkanRoom::Prepare(const std::vector<uint32_t>& color,const LiveSettings& 
     roomConstants_=MakeRoomConstants(room_,shading_,layout_,view,int(colorWidth_),int(colorHeight_),alpha);
     mirrorW_=roomConstants_.mirrorW;mirrorH_=roomConstants_.mirrorH;
     std::memcpy(roomBuffer_.mapped,&roomConstants_,sizeof(roomConstants_));
-    curveConstants_={};curveConstants_.ew=EyeWidth;curveConstants_.eh=EyeHeight;
+    curveConstants_={};curveConstants_.ew=eyeWidth_;curveConstants_.eh=eyeHeight_;
     curveConstants_.glowOn=1;curveConstants_.linearBlend=1;
     curveConstants_.glowHalfW=view.glowHalfW;curveConstants_.glowHalfH=view.glowHalfH;
     curveConstants_.world[3]=1.0f;
@@ -263,7 +264,7 @@ void VulkanRoom::Prepare(const std::vector<uint32_t>& color,const LiveSettings& 
     std::memcpy(curveBuffer_.mapped,&curveConstants_,sizeof(curveConstants_));
     AmbiConstants ambi{};
     ambi.gw=GlowWidth;ambi.gh=GlowHeight;
-    ambi.srcW=colorWidth_;ambi.srcH=colorHeight_;
+    ambi.srcW=glowWidth;ambi.srcH=glowHeight;
     ambi.screenW=W;ambi.screenH=H;
     ambi.marginM=kAmbiMargin*W;
     ambi.rectW=W+2.0f*ambi.marginM;ambi.rectH=H+2.0f*ambi.marginM;
@@ -271,14 +272,20 @@ void VulkanRoom::Prepare(const std::vector<uint32_t>& color,const LiveSettings& 
     ambi.soft=kAmbiSoft*W;ambi.bezel=kAmbiBezel;ambi.ringN=kAmbiRing;
     ambi.linearBlend=1;
     std::vector<unsigned char> reference(size_t(GlowWidth)*GlowHeight*4);
-    if(!AmbilightReference(ambi,reinterpret_cast<const unsigned char*>(color.data()),int(colorWidth_)*4,reference.data(),GlowWidth*4))
+    if(!AmbilightReference(ambi,reinterpret_cast<const unsigned char*>(glowSource),int(glowWidth)*4,reference.data(),GlowWidth*4))
         throw std::runtime_error("Ambilight reference failed");
-    auto* glow=static_cast<unsigned char*>(glowBuffer_.mapped);
-    if(!glowHistoryValid_){
-        std::memcpy(glow,reference.data(),reference.size());
-        glowHistoryValid_=true;
-    }else for(size_t i=0;i<reference.size();i++)
-        glow[i]=static_cast<unsigned char>(std::lround(glow[i]+(int(reference[i])-int(glow[i]))*kAmbiBlend));
+    // The glow's temporal blend keeps float history in CPU memory: reading it
+    // back from the (uncached) GPU buffer each frame was slow, and 8-bit
+    // history stopped converging within a few levels of the target.
+    glowHistory_.resize(reference.size());
+    std::vector<unsigned char> glow(reference.size());
+    for(size_t i=0;i<reference.size();i++){
+        const float target=float(reference[i]);
+        glowHistory_[i]=glowHistoryValid_?glowHistory_[i]+(target-glowHistory_[i])*kAmbiBlend:target;
+        glow[i]=static_cast<unsigned char>(glowHistory_[i]+0.5f);
+    }
+    glowHistoryValid_=true;
+    std::memcpy(glowBuffer_.mapped,glow.data(),glow.size());
 }
 void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     vkCmdResetQueryPool(cmd,timingQueries_,0,7);
@@ -349,18 +356,18 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
     vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,eyePipeline_);
     vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,eyePipelineLayout_,0,1,&eyeSet_,0,nullptr);
-    vkCmdDispatch(cmd,(EyeWidth+7)/8,(EyeHeight+7)/8,2);
+    vkCmdDispatch(cmd,(eyeWidth_+7)/8,(eyeHeight_+7)/8,2);
     vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,timingQueries_,5);
     Transition(cmd,eye_,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT);
     if(capture_){
         VkBufferImageCopy copies[2]{};
         for(int e=0;e<2;e++){
-            copies[e].bufferOffset=VkDeviceSize(e)*EyeWidth*EyeHeight*4;
+            copies[e].bufferOffset=VkDeviceSize(e)*eyeWidth_*eyeHeight_*4;
             copies[e].imageSubresource.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
             copies[e].imageSubresource.baseArrayLayer=e;
             copies[e].imageSubresource.layerCount=1;
-            copies[e].imageExtent={EyeWidth,EyeHeight,1};
+            copies[e].imageExtent={eyeWidth_,eyeHeight_,1};
         }
         vkCmdCopyImageToBuffer(cmd,eye_.handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                readback_.handle,2,copies);
@@ -385,7 +392,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
         copies[e].srcSubresource.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
         copies[e].srcSubresource.baseArrayLayer=e;copies[e].srcSubresource.layerCount=1;
         copies[e].dstSubresource=copies[e].srcSubresource;
-        copies[e].extent={EyeWidth,EyeHeight,1};
+        copies[e].extent={eyeWidth_,eyeHeight_,1};
     }
     vkCmdCopyImage(cmd,eye_.handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,destination,
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,2,copies);
@@ -423,11 +430,11 @@ bool VulkanRoom::CompareReference() const {
     inputs.light=&lm;inputs.mirror=&mirror;inputs.room=&room_;
     const auto* actual=static_cast<const unsigned char*>(readback_.mapped);
     size_t checked=0,bad=0;int worst=0;
-    for(int e=0;e<2;e++)for(uint32_t y=12;y<EyeHeight;y+=24)for(uint32_t x=12;x<EyeWidth;x+=24){
+    for(int e=0;e<2;e++)for(uint32_t y=12;y<eyeHeight_;y+=24)for(uint32_t x=12;x<eyeWidth_;x+=24){
         float ref[3];
         if(!RoomPixel(curveConstants_,Cylinder(),room_,view,e,x,y,inputs,ref))
             throw std::runtime_error("CPU room eye reference failed");
-        const auto* p=actual+(size_t(e)*EyeWidth*EyeHeight+y*EyeWidth+x)*4;
+        const auto* p=actual+(size_t(e)*eyeWidth_*eyeHeight_+y*eyeWidth_+x)*4;
         int error=0;
         for(int c=0;c<3;c++)error=std::max(error,std::abs(int(p[c])-int(std::lround(std::clamp(ref[c],0.0f,1.0f)*255.0f))));
         worst=std::max(worst,error);if(error>2)bad++;checked++;
@@ -438,11 +445,11 @@ bool VulkanRoom::CompareReference() const {
 void VulkanRoom::SaveCapture(const char* path) const {
     std::ofstream out(path,std::ios::binary);
     if(!out)throw std::runtime_error("Cannot write room capture");
-    out << "P6\n" << EyeWidth*2 << " " << EyeHeight << "\n255\n";
+    out << "P6\n" << eyeWidth_*2 << " " << eyeHeight_ << "\n255\n";
     const auto* bytes=static_cast<const unsigned char*>(readback_.mapped);
-    for(uint32_t y=0;y<EyeHeight;y++)for(int e=0;e<2;e++)
-        for(uint32_t x=0;x<EyeWidth;x++){
-            const unsigned char* p=bytes+(size_t(e)*EyeWidth*EyeHeight+y*EyeWidth+x)*4;
+    for(uint32_t y=0;y<eyeHeight_;y++)for(int e=0;e<2;e++)
+        for(uint32_t x=0;x<eyeWidth_;x++){
+            const unsigned char* p=bytes+(size_t(e)*eyeWidth_*eyeHeight_+y*eyeWidth_+x)*4;
             out.write(reinterpret_cast<const char*>(p),3);
         }
     if(!out)throw std::runtime_error("Cannot finish room capture");

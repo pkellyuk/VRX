@@ -1,7 +1,5 @@
 #include "live_depth.h"
 #include "model_depth.h"
-#include "model_prep_cpu.h"
-#include "portal_capture.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -10,13 +8,29 @@
 #include <utility>
 
 namespace vrx {
-LiveDepth::LiveDepth(PortalCapture& capture, const char* modelPath, bool cuda)
-    : capture_(capture), model_(std::make_unique<ModelDepth>(modelPath, cuda)) {
+LiveDepth::LiveDepth(const char* modelPath, bool cuda)
+    : model_(std::make_unique<ModelDepth>(modelPath, cuda)) {
     worker_ = std::thread([this] { Work(); });
 }
 LiveDepth::~LiveDepth() {
-    stop_ = true;
+    {
+        std::lock_guard<std::mutex> lock(input_mutex_);
+        stop_ = true;
+    }
+    input_ready_.notify_all();
     if (worker_.joinable()) worker_.join();
+}
+void LiveDepth::Submit(std::vector<float> input, uint64_t sequence, uint64_t layout, double arrival) {
+    {
+        std::lock_guard<std::mutex> lock(input_mutex_);
+        pending_.tensor = std::move(input);
+        pending_.sequence = sequence;
+        pending_.layout = layout;
+        pending_.arrival = arrival;
+        pending_.submitted = std::chrono::steady_clock::now();
+        has_pending_ = true;
+    }
+    input_ready_.notify_one();
 }
 std::shared_ptr<const LiveDepth::Result> LiveDepth::Latest() const {
     return std::atomic_load_explicit(&latest_, std::memory_order_acquire);
@@ -41,8 +55,8 @@ LiveDepth::Timing LiveDepth::Timings() const {
         std::sort(values.begin(), values.end());
         return values[size_t((values.size() - 1) * fraction)];
     };
-    result.prepMedianMs = percentile(0, 0.5);
-    result.prepP95Ms = percentile(0, 0.95);
+    result.waitMedianMs = percentile(0, 0.5);
+    result.waitP95Ms = percentile(0, 0.95);
     result.modelMedianMs = percentile(1, 0.5);
     result.modelP95Ms = percentile(1, 0.95);
     result.arrivalToDepthMedianMs = percentile(2, 0.5);
@@ -50,36 +64,34 @@ LiveDepth::Timing LiveDepth::Timings() const {
     return result;
 }
 void LiveDepth::Work() {
-    uint64_t lastSequence = 0;
     RangeSmoother smoother;
+    Input input;
     try {
-        while (!stop_) {
-            if (capture_.Captured() <= lastSequence) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(3));
-                continue;
+        while (true) {
+            {
+                std::unique_lock<std::mutex> lock(input_mutex_);
+                input_ready_.wait(lock, [this] { return stop_ || has_pending_; });
+                if (stop_) break;
+                std::swap(input, pending_);
+                has_pending_ = false;
             }
-            PortalCapture::Frame source;
-            if (!capture_.Latest(source, false, true) || source.sequence <= lastSequence) continue;
-            lastSequence = source.sequence;
-            const auto prepStart = std::chrono::steady_clock::now();
-            auto input = PrepareModelInput(source.rgb);
             const auto modelStart = std::chrono::steady_clock::now();
             auto result = std::make_shared<Result>();
-            result->near = model_->Run(input.data(), false, &smoother);
+            result->near = model_->Run(input.tensor.data(), false, &smoother);
             const auto modelEnd = std::chrono::steady_clock::now();
-            result->sourceSequence = source.sequence;
-            result->sourceLayout = source.layout;
-            result->captureArrival = source.arrival;
+            result->sourceSequence = input.sequence;
+            result->sourceLayout = input.layout;
+            result->captureArrival = input.arrival;
             std::atomic_store_explicit(&latest_, std::shared_ptr<const Result>(result),
                                        std::memory_order_release);
-            const double prepMs = std::chrono::duration<double, std::milli>(modelStart - prepStart).count();
+            const double waitMs = std::chrono::duration<double, std::milli>(modelStart - input.submitted).count();
             const double modelMs = std::chrono::duration<double, std::milli>(modelEnd - modelStart).count();
             const double arrivalToDepthMs =
                 std::chrono::duration<double, std::milli>(modelEnd.time_since_epoch()).count() -
-                source.arrival * 1000.0;
+                input.arrival * 1000.0;
             {
                 std::lock_guard<std::mutex> lock(timing_mutex_);
-                timing_samples_.push_back({prepMs, modelMs, arrivalToDepthMs});
+                timing_samples_.push_back({waitMs, modelMs, arrivalToDepthMs});
             }
             ++completed_;
         }

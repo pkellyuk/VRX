@@ -33,6 +33,16 @@ add_custom_command(
 )
 add_custom_target(vrx-model-prep-shader DEPENDS "${PREP_SPV}")
 
+set(CAPTURE_SCALE_SPV "${CMAKE_CURRENT_BINARY_DIR}/capture_scale.comp.spv")
+add_custom_command(
+    OUTPUT "${CAPTURE_SCALE_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.1 -S comp
+            "${CMAKE_CURRENT_SOURCE_DIR}/capture_scale.comp" -o "${CAPTURE_SCALE_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/capture_scale.comp"
+    VERBATIM
+)
+add_custom_target(vrx-capture-scale-shader DEPENDS "${CAPTURE_SCALE_SPV}")
+
 set(ROOM_MIRROR_SPV "${CMAKE_CURRENT_BINARY_DIR}/room_mirror.comp.spv")
 add_custom_command(
     OUTPUT "${ROOM_MIRROR_SPV}"
@@ -85,14 +95,25 @@ add_custom_command(
 )
 add_custom_target(vrx-room-eye-shader ALL DEPENDS "${ROOM_EYE_SPV}")
 
-add_executable(vrx-xr-synthetic xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp vulkan_room.cpp model_prep_cpu.cpp)
-add_dependencies(vrx-xr-synthetic vrx-stereo-shader vrx-model-prep-shader vrx-room-mirror-shader vrx-room-emit-shader vrx-room-light-shader vrx-room-eye-shader)
+add_executable(vrx-xr-synthetic xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp vulkan_room.cpp model_prep_cpu.cpp
+    vulkan_capture_scale.cpp vulkan_dmabuf.cpp)
+add_dependencies(vrx-xr-synthetic vrx-stereo-shader vrx-model-prep-shader vrx-capture-scale-shader
+    vrx-room-mirror-shader vrx-room-emit-shader vrx-room-light-shader vrx-room-eye-shader)
 target_compile_definitions(vrx-xr-synthetic PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}" VRX_PREP_SPV_PATH="${PREP_SPV}"
+    VRX_CAPTURE_SCALE_SPV_PATH="${CAPTURE_SCALE_SPV}"
     VRX_ROOM_MIRROR_SPV_PATH="${ROOM_MIRROR_SPV}" VRX_ROOM_EMIT_SPV_PATH="${ROOM_EMIT_SPV}"
     VRX_ROOM_LIGHT_SPV_PATH="${ROOM_LIGHT_SPV}" VRX_ROOM_EYE_SPV_PATH="${ROOM_EYE_SPV}")
 target_compile_features(vrx-xr-synthetic PRIVATE cxx_std_17)
 target_include_directories(vrx-xr-synthetic PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
 target_link_libraries(vrx-xr-synthetic PRIVATE Vulkan::Vulkan Threads::Threads ${CMAKE_DL_LIBS})
+
+add_executable(vrx-capture-gpu-test capture_gpu_test.cpp vulkan_capture_scale.cpp vulkan_prep.cpp model_prep_cpu.cpp)
+add_dependencies(vrx-capture-gpu-test vrx-capture-scale-shader vrx-model-prep-shader)
+target_compile_definitions(vrx-capture-gpu-test PRIVATE VRX_CAPTURE_SCALE_SPV_PATH="${CAPTURE_SCALE_SPV}"
+    VRX_PREP_SPV_PATH="${PREP_SPV}")
+target_compile_features(vrx-capture-gpu-test PRIVATE cxx_std_17)
+target_include_directories(vrx-capture-gpu-test PRIVATE ../bench/native/openxr)
+target_link_libraries(vrx-capture-gpu-test PRIVATE Vulkan::Vulkan Threads::Threads)
 
 add_executable(vrx-room-gpu-probe room_gpu_probe.cpp)
 add_dependencies(vrx-room-gpu-probe vrx-room-mirror-shader vrx-room-emit-shader vrx-room-light-shader)
@@ -174,6 +195,7 @@ if(BUILD_TESTING)
     option(VRX_TEST_VULKAN_GPU "Run hardware Vulkan probes in CTest" OFF)
     if(VRX_TEST_VULKAN_GPU)
         add_test(NAME vrx-room-gpu-probe COMMAND vrx-room-gpu-probe)
+        add_test(NAME vrx-capture-gpu-test COMMAND vrx-capture-gpu-test)
     endif()
     if(TARGET vrx-capture-probe)
         add_test(NAME vrx-capture-probe-help COMMAND vrx-capture-probe --help)

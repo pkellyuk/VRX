@@ -1,4 +1,5 @@
 #include "source_ring.h"
+#include "capture_formats.h"
 #include "vulkan_dmabuf.h"
 #include <libportal/portal.h>
 #include <pipewire/pipewire.h>
@@ -83,50 +84,6 @@ struct Capture {
     bool readback_done = false;
     std::string dump_path;                // --dump: the read-back frame, quarter size
 };
-
-// One EnumFormat: a BGRA-family format with (modifiers) or without (shared
-// memory) DMA-BUF modifiers. More than one modifier is offered for the
-// producer to choose from (DONT_FIXATE); one is a fixed choice.
-const spa_pod* BuildFormat(spa_pod_builder* builder, uint32_t format, const std::vector<uint64_t>* modifiers) {
-    const spa_rectangle default_size = {1920, 1080}, min_size = {1, 1}, max_size = {8192, 8192};
-    const spa_fraction default_rate = {60, 1}, min_rate = {0, 1}, max_rate = {240, 1};
-    spa_pod_frame object{}, choice{};
-    spa_pod_builder_push_object(builder, &object, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat);
-    spa_pod_builder_add(builder, SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video), 0);
-    spa_pod_builder_add(builder, SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw), 0);
-    if (modifiers) {
-        spa_pod_builder_add(builder, SPA_FORMAT_VIDEO_format, SPA_POD_Id(format), 0);
-        if (modifiers->size() == 1) {
-            spa_pod_builder_prop(builder, SPA_FORMAT_VIDEO_modifier, SPA_POD_PROP_FLAG_MANDATORY);
-            spa_pod_builder_long(builder, int64_t(modifiers->front()));
-        } else {
-            spa_pod_builder_prop(builder, SPA_FORMAT_VIDEO_modifier,
-                                 SPA_POD_PROP_FLAG_MANDATORY | SPA_POD_PROP_FLAG_DONT_FIXATE);
-            spa_pod_builder_push_choice(builder, &choice, SPA_CHOICE_Enum, 0);
-            spa_pod_builder_long(builder, int64_t(modifiers->front()));
-            for (uint64_t modifier : *modifiers) spa_pod_builder_long(builder, int64_t(modifier));
-            spa_pod_builder_pop(builder, &choice);
-        }
-    } else {
-        spa_pod_builder_add(builder, SPA_FORMAT_VIDEO_format, SPA_POD_CHOICE_ENUM_Id(4,
-            SPA_VIDEO_FORMAT_BGRA, SPA_VIDEO_FORMAT_BGRA, SPA_VIDEO_FORMAT_BGRx, SPA_VIDEO_FORMAT_RGBA), 0);
-    }
-    spa_pod_builder_add(builder,
-        SPA_FORMAT_VIDEO_size, SPA_POD_CHOICE_RANGE_Rectangle(&default_size, &min_size, &max_size),
-        SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_RANGE_Fraction(&default_rate, &min_rate, &max_rate), 0);
-    return static_cast<const spa_pod*>(spa_pod_builder_pop(builder, &object));
-}
-
-// DMA-BUF BGRA and BGRx with `modifiers`, then shared memory as the fallback.
-std::vector<const spa_pod*> BuildFormats(spa_pod_builder* builder, const std::vector<uint64_t>& modifiers) {
-    std::vector<const spa_pod*> formats;
-    if (!modifiers.empty()) {
-        formats.push_back(BuildFormat(builder, SPA_VIDEO_FORMAT_BGRA, &modifiers));
-        formats.push_back(BuildFormat(builder, SPA_VIDEO_FORMAT_BGRx, &modifiers));
-    }
-    formats.push_back(BuildFormat(builder, 0, nullptr));
-    return formats;
-}
 
 void ReadBack(Capture& capture, const vrx::DmabufImage& image) {
     Gpu& gpu = *capture.gpu;
@@ -361,7 +318,7 @@ void on_format(void* data, uint32_t id, const spa_pod* param) {
             if (found) fixed.push_back(chosen);
             std::cout << (found ? "Fixing modifier " + Hex(chosen) : std::string("No common modifier; shared memory only"))
                       << std::endl;
-            auto formats = BuildFormats(&builder, fixed);
+            auto formats = vrx::BuildCaptureFormats(&builder, fixed);
             pw_stream_update_params(capture.stream, formats.data(), uint32_t(formats.size()));
             return;
         }
@@ -591,7 +548,7 @@ int main(int argc, char** argv) {
     pw_stream_add_listener(capture.stream, &capture.stream_listener, &events, &capture);
     uint8_t pod_storage[4096];
     spa_pod_builder builder = SPA_POD_BUILDER_INIT(pod_storage, sizeof(pod_storage));
-    auto formats = BuildFormats(&builder, capture.modifiers);
+    auto formats = vrx::BuildCaptureFormats(&builder, capture.modifiers);
     if (pw_stream_connect(capture.stream, PW_DIRECTION_INPUT, PW_ID_ANY,
                           static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS), formats.data(), uint32_t(formats.size())) < 0) {
         std::cerr << "Could not connect selected PipeWire stream" << std::endl;

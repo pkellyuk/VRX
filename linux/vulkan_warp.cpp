@@ -238,12 +238,15 @@ void VulkanWarp::CreateBuffer(Buffer& out, VkDeviceSize size, VkBufferUsageFlags
     const VkMemoryPropertyFlags wanted = hostVisible ?
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT :
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    // The CPU reads buffers the GPU writes (TRANSFER_DST); uncached memory makes
+    // those reads very slow, so they prefer cached memory.
+    const bool readBack = hostVisible && (usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     uint32_t memoryType = UINT32_MAX;
-    for (uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
-        if ((requirements.memoryTypeBits & (1u << i)) &&
-            (properties.memoryTypes[i].propertyFlags & wanted) == wanted) {
-            memoryType = i; break;
-        }
+    for (VkMemoryPropertyFlags flags : {readBack ? wanted | VK_MEMORY_PROPERTY_HOST_CACHED_BIT : wanted, wanted}) {
+        for (uint32_t i = 0; i < properties.memoryTypeCount && memoryType == UINT32_MAX; ++i)
+            if ((requirements.memoryTypeBits & (1u << i)) &&
+                (properties.memoryTypes[i].propertyFlags & flags) == flags) memoryType = i;
+        if (memoryType != UINT32_MAX) break;
     }
     if (memoryType == UINT32_MAX) throw std::runtime_error(hostVisible ?
         "No coherent host-visible buffer memory" : "No device-local buffer memory");

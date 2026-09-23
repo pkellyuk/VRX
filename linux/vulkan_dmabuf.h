@@ -23,6 +23,7 @@ public:
     DmabufImage(const DmabufImage&) = delete;
     DmabufImage& operator=(const DmabufImage&) = delete;
     VkImage Image() const { return image_; }
+    VkImageView View() const { return view_; }
     uint32_t Width() const { return width_; }
     uint32_t Height() const { return height_; }
 
@@ -30,6 +31,7 @@ private:
     VkDevice device_;
     VkImage image_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
+    VkImageView view_ = VK_NULL_HANDLE;
     uint32_t width_, height_;
 };
 } // namespace vrx

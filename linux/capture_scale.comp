@@ -1,0 +1,55 @@
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+
+// GPU version of capture_scale.h's ScaleCaptureColor, for captured frames that
+// are already on the GPU (imported DMA-BUFs). It reads the same ResampleTables
+// and does the same integer box averaging and float bilinear arithmetic, so the
+// packed RGBA colour is identical to the CPU scaler's.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(set = 0, binding = 0) uniform texture2D source;   // any RGBA-family UNORM view
+layout(std430, set = 0, binding = 1) readonly buffer XTaps { int xTaps[]; };   // outW x 4, -1 outside
+layout(std430, set = 0, binding = 2) readonly buffer YTaps { int yTaps[]; };   // outH x 4, -1 outside
+layout(std430, set = 0, binding = 3) readonly buffer XFraction { float xFraction[]; };
+layout(std430, set = 0, binding = 4) readonly buffer YFraction { float yFraction[]; };
+layout(std430, set = 0, binding = 5) writeonly buffer Color { uint color[]; };
+
+layout(push_constant) uniform Parameters {
+    uint outW;
+    uint outH;
+    uint taps;
+} p;
+
+uvec3 load(int x, int y) {
+    return uvec3(round(texelFetch(source, ivec2(x, y), 0).rgb * 255.0));
+}
+
+void main() {
+    uvec2 id = gl_GlobalInvocationID.xy;
+    if (id.x >= p.outW || id.y >= p.outH) return;
+    uint index = id.y * p.outW + id.x;
+    uint xBase = id.x * 4u, yBase = id.y * 4u;
+    if (xTaps[xBase] < 0 || yTaps[yBase] < 0) {
+        color[index] = 0xff000000u;
+        return;
+    }
+    uvec3 rgb;
+    if (p.taps == 1u) {
+        vec3 a = vec3(load(xTaps[xBase], yTaps[yBase]));
+        vec3 b = vec3(load(xTaps[xBase + 1u], yTaps[yBase]));
+        vec3 c = vec3(load(xTaps[xBase], yTaps[yBase + 1u]));
+        vec3 d = vec3(load(xTaps[xBase + 1u], yTaps[yBase + 1u]));
+        float fx = xFraction[id.x], fy = yFraction[id.y];
+        precise vec3 upper = a + (b - a) * fx;
+        precise vec3 lower = c + (d - c) * fx;
+        precise vec3 value = upper + (lower - upper) * fy;
+        rgb = uvec3(floor(value + 0.5));   // lround for non-negative values
+    } else {
+        uvec3 sum = uvec3(0);
+        for (uint j = 0u; j < p.taps; ++j)
+            for (uint i = 0u; i < p.taps; ++i)
+                sum += load(xTaps[xBase + i], yTaps[yBase + j]);
+        uint count = p.taps * p.taps;
+        rgb = (sum + count / 2u) / count;
+    }
+    color[index] = rgb.r | (rgb.g << 8) | (rgb.b << 16) | 0xff000000u;
+}

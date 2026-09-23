@@ -127,6 +127,12 @@ DmabufImage::DmabufImage(VkPhysicalDevice gpu, VkDevice device, int fd, uint32_t
         if (result != VK_SUCCESS) close(owned);  // Vulkan owns it only on success.
         Check(result, "vkAllocateMemory (DMA-BUF import)");
         Check(vkBindImageMemory(device_, image_, memory_, 0), "vkBindImageMemory (DMA-BUF)");
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image = image_;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = format;
+        viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        Check(vkCreateImageView(device_, &viewInfo, nullptr, &view_), "vkCreateImageView (DMA-BUF)");
     } catch (...) {
         if (memory_) vkFreeMemory(device_, memory_, nullptr);
         vkDestroyImage(device_, image_, nullptr);
@@ -135,6 +141,7 @@ DmabufImage::DmabufImage(VkPhysicalDevice gpu, VkDevice device, int fd, uint32_t
 }
 
 DmabufImage::~DmabufImage() {
+    if (view_) vkDestroyImageView(device_, view_, nullptr);
     if (image_) vkDestroyImage(device_, image_, nullptr);
     if (memory_) vkFreeMemory(device_, memory_, nullptr);
 }

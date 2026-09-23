@@ -9,6 +9,8 @@
 #include "live_settings.h"
 #include "vulkan_prep.h"
 #include "vulkan_room.h"
+#include "vulkan_capture_scale.h"
+#include "vulkan_dmabuf.h"
 #include "playback_policy.h"
 #include "capture_scale.h"
 #ifdef VRX_HAS_CAPTURE
@@ -30,6 +32,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <map>
 #include <memory>
 #include <limits>
 #include <exception>
@@ -89,7 +92,7 @@ template <typename T> bool Resolve(XrFns& f, XrInstance instance, const char* na
     std::fprintf(stderr, "%s failed: %d\n", #expr, r); return 1; } } while (0)
 
 int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live, bool roomEnabled, const char* settingsPath, const char* roomDumpPath,
-        uint32_t syntheticColorWidth, uint32_t syntheticColorHeight) {
+        uint32_t syntheticColorWidth, uint32_t syntheticColorHeight, bool useDmabuf, const char* colorDumpPath) {
     vrx::LiveSettings settings;
     if (settingsPath && !vrx::ReadLiveSettings(settingsPath, settings)) {
         std::fprintf(stderr, "Invalid or missing Linux settings: %s\n", settingsPath);
@@ -100,27 +103,13 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     if (syntheticColorWidth) { colorWidth = syntheticColorWidth; colorHeight = syntheticColorHeight; }
 #ifdef VRX_HAS_CAPTURE
     std::unique_ptr<vrx::PortalCapture> capture;
-    if (live) {
-        capture = std::make_unique<vrx::PortalCapture>();
-        if (!capture->Open()) { std::fputs("Live capture source selection failed\n", stderr); return 1; }
-        vrx::PortalCapture::Frame first;
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (!capture->Latest(first) && capture->Healthy() &&
-               std::chrono::steady_clock::now() < deadline)
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        if (first.color.empty()) { std::fputs("No live capture frames received\n", stderr); return 1; }
-        colorWidth = first.colorWidth;
-        colorHeight = first.colorHeight;
-        std::printf("First live source frame %llu, layout %llu, colour %ux%u\n",
-                    static_cast<unsigned long long>(first.sequence),
-                    static_cast<unsigned long long>(first.layout), colorWidth, colorHeight);
-    }
+#endif
 #ifdef VRX_HAS_LIVE_DEPTH
     std::unique_ptr<vrx::LiveDepth> liveDepth;
-    if (live && cuda) liveDepth = std::make_unique<vrx::LiveDepth>(*capture, modelPath, true);
 #endif
-#else
+#ifndef VRX_HAS_CAPTURE
     (void)live;
+    (void)useDmabuf;
 #endif
     roomEnabled = roomEnabled || (settingsPath && settings.room > 0);
     void* library = dlopen(loaderPath, RTLD_NOW | RTLD_LOCAL);
@@ -184,6 +173,11 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     XrSystemId system = XR_NULL_SYSTEM_ID;
     XR_CHECK(xr.getSystem(instance, &systemInfo, &system));
+    // The room layer's size per eye: the runtime's recommendation, unless
+    // VRX_ROOM_EYE_SCALE (0.25..1) asks for less. Windows draws it at half size,
+    // but with SteamVR/Steam Link on Linux the screen quads were then shown at
+    // the room layer's resolution too, visibly blurring the picture.
+    uint32_t roomEyeWidth = 1322, roomEyeHeight = 1322;
     if (roomEnabled) {
         uint32_t viewCount = 0;
         XR_CHECK(xr.enumerateViewConfig(instance, system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
@@ -192,9 +186,20 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         for (auto& view : configViews) view.type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
         XR_CHECK(xr.enumerateViewConfig(instance, system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
                                          viewCount, &viewCount, configViews.data()));
-        if (viewCount >= 2) std::printf("OpenXR recommended room eye size: %ux%u (room uses %ux%u)\n",
-            configViews[0].recommendedImageRectWidth, configViews[0].recommendedImageRectHeight,
-            vrx::VulkanRoom::EyeWidth, vrx::VulkanRoom::EyeHeight);
+        float scale = 1.0f;
+        if (const char* text = std::getenv("VRX_ROOM_EYE_SCALE")) {
+            const float requested = std::strtof(text, nullptr);
+            if (requested >= 0.25f && requested <= 1.0f) scale = requested;
+        }
+        if (viewCount >= 2) {
+            const auto& view = configViews[0];
+            roomEyeWidth = std::max(64u, std::min(uint32_t(view.recommendedImageRectWidth * scale + 0.5f),
+                                                  view.maxImageRectWidth)) & ~1u;
+            roomEyeHeight = std::max(64u, std::min(uint32_t(view.recommendedImageRectHeight * scale + 0.5f),
+                                                   view.maxImageRectHeight)) & ~1u;
+            std::printf("OpenXR recommended eye size: %ux%u (room layer %ux%u)\n",
+                view.recommendedImageRectWidth, view.recommendedImageRectHeight, roomEyeWidth, roomEyeHeight);
+        }
     }
     XrGraphicsRequirementsVulkan2KHR req{};
     req.type = XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN2_KHR;
@@ -236,6 +241,30 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     for (uint32_t i = 0; i < familyCount; ++i)
         if (families[i].queueCount && (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) { family = i; break; }
     if (family == UINT32_MAX) { std::fputs("No graphics queue\n", stderr); return 1; }
+    // The source may hand over DMA-BUFs in any layout this GPU can import.
+    std::vector<uint64_t> dmabufModifiers;
+#ifdef VRX_HAS_CAPTURE
+    if (live) {
+        if (useDmabuf && vrx::DmabufSupported(gpu))
+            dmabufModifiers = vrx::DmabufModifiers(gpu, VK_FORMAT_B8G8R8A8_UNORM);
+        std::printf("Capture DMA-BUF: %s (%zu importable modifiers)\n",
+            !useDmabuf ? "disabled" : dmabufModifiers.empty() ? "unavailable" : "offered", dmabufModifiers.size());
+        capture = std::make_unique<vrx::PortalCapture>();
+        if (!capture->Open(dmabufModifiers)) { std::fputs("Live capture source selection failed\n", stderr); return 1; }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!capture->Captured() && capture->Healthy() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        if (!capture->Captured() || !capture->ColorSize(colorWidth, colorHeight)) {
+            std::fputs("No live capture frames received\n", stderr);
+            return 1;
+        }
+        std::printf("First live source frame: colour %ux%u, %s\n", colorWidth, colorHeight,
+                    capture->DmaBuf() ? "DMA-BUF" : "shared memory");
+#ifdef VRX_HAS_LIVE_DEPTH
+        if (cuda) liveDepth = std::make_unique<vrx::LiveDepth>(modelPath, true);
+#endif
+    }
+#endif
     float priority = 1.0f;
     VkDeviceQueueCreateInfo qci{};
     qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -246,6 +275,11 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     vdci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     vdci.queueCreateInfoCount = 1;
     vdci.pQueueCreateInfos = &qci;
+    const auto dmabufExtensions = vrx::DmabufDeviceExtensions();
+    if (!dmabufModifiers.empty()) {
+        vdci.enabledExtensionCount = uint32_t(dmabufExtensions.size());
+        vdci.ppEnabledExtensionNames = dmabufExtensions.data();
+    }
     XrVulkanDeviceCreateInfoKHR xvdci{};
     xvdci.type = XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR;
     xvdci.systemId = system;
@@ -323,14 +357,15 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     const VkDeviceSize eyeBytes = VkDeviceSize(colorWidth) * colorHeight * 4;
     const float screenAspect = float(colorHeight) / float(colorWidth);
     auto warp = std::make_unique<vrx::VulkanWarp>(gpu, device, format, colorWidth, colorHeight);
-    auto prep = std::make_unique<vrx::VulkanPrep>(gpu, device, warp->SceneBuffer());
+    // ZipDepth input from the colour buffer, as xrapp5 prepares it from the source texture.
+    auto prep = std::make_unique<vrx::VulkanPrep>(gpu, device, warp->SceneBuffer(), colorWidth, colorHeight);
     std::unique_ptr<vrx::VulkanRoom> room;
     XrSwapchain roomSwapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageVulkan2KHR> roomImages;
     if (roomEnabled) {
         XrSwapchainCreateInfo roomInfo = swci;
-        roomInfo.width = vrx::VulkanRoom::EyeWidth;
-        roomInfo.height = vrx::VulkanRoom::EyeHeight;
+        roomInfo.width = roomEyeWidth;
+        roomInfo.height = roomEyeHeight;
         XR_CHECK(xr.createSwapchain(session, &roomInfo, &roomSwapchain));
         uint32_t roomImageCount = 0;
         XR_CHECK(xr.images(roomSwapchain, 0, &roomImageCount, nullptr));
@@ -339,9 +374,17 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         XR_CHECK(xr.images(roomSwapchain, roomImageCount, &roomImageCount,
             reinterpret_cast<XrSwapchainImageBaseHeader*>(roomImages.data())));
         room = std::make_unique<vrx::VulkanRoom>(gpu, device, warp->SceneBuffer(), warp->ColorBuffer(), format,
-                                                 colorWidth, colorHeight);
+                                                 colorWidth, colorHeight, roomEyeWidth, roomEyeHeight);
         std::puts("Windows room shader enabled: lighting, glass, tiles and reflections");
     }
+    // DMA-BUF capture: source buffers imported once each (by buffer id, until
+    // the source renegotiates) and scaled into the colour buffer on the GPU.
+    std::unique_ptr<vrx::VulkanCaptureScale> captureScale;
+    std::map<uint64_t, std::unique_ptr<vrx::DmabufImage>> imports;
+    uint64_t importGeneration = UINT64_MAX;
+    if (!dmabufModifiers.empty())
+        captureScale = std::make_unique<vrx::VulkanCaptureScale>(gpu, device, family, warp->SceneBuffer(),
+                                                                 colorWidth, colorHeight);
     VkCommandPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pci.queueFamilyIndex = family;
@@ -385,7 +428,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         VK_CHECK(vkQueueSubmit(queue, 1, &submit, fence));
         VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX));
         VK_CHECK(vkResetFences(device, 1, &fence));
-        prepMatched = prep->CompareReference(stillRgb);
+        prepMatched = prep->CompareReference(vrx::PackRgb(stillRgb));
         if (!prepMatched) std::fputs("Still-image GPU preprocessing differs from CPU reference\n", stderr);
         stillDepth = model.Run(prep->ModelInput());
     }
@@ -408,7 +451,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         projectionViews[eye].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
         projectionViews[eye].subImage.swapchain = roomSwapchain;
         projectionViews[eye].subImage.imageRect.extent = {
-            int32_t(vrx::VulkanRoom::EyeWidth), int32_t(vrx::VulkanRoom::EyeHeight)};
+            int32_t(roomEyeWidth), int32_t(roomEyeHeight)};
         projectionViews[eye].subImage.imageArrayIndex = eye;
     }
     for (int eye = 0; eye < 2; ++eye) {
@@ -440,6 +483,15 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
 #ifdef VRX_HAS_CAPTURE
     vrx::PortalCapture::Frame liveFrame;
 #endif
+    // The live frame now in the colour buffer. Live room glow is computed from a
+    // quarter-size picture of the latest frame's model input: the glow only
+    // averages the picture's edges, and converting it must stay cheap.
+    uint64_t liveSequence = 0, liveLayout = 0;
+    double liveArrival = 0;
+    constexpr size_t modelPlane = size_t(vrx::VulkanPrep::width) * vrx::VulkanPrep::height;
+    constexpr uint32_t ambientWidth = vrx::VulkanPrep::width / 4, ambientHeight = vrx::VulkanPrep::height / 4;
+    std::vector<uint32_t> ambient(size_t(ambientWidth) * ambientHeight, 0xff000000u);
+    bool laterDumped = false;
     auto nextSettingsCheck = std::chrono::steady_clock::now();
     while (!stopRequested && (seconds == 0 ||
            std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count() < seconds)) {
@@ -556,14 +608,43 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             std::vector<float> truth;
             bool depthAvailable = true;
             const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count();
+            bool liveNew = false;                 // a new source frame enters the colour buffer
+            vrx::DmabufImage* scaleSource = nullptr;
 #ifdef VRX_HAS_CAPTURE
             if (live) {
-                vrx::PortalCapture::Frame& latest = liveFrame;
-                if (capture->Latest(latest, true, false)) color.swap(latest.color);
+                if (capture->DmaBuf() && captureScale) {
+                    vrx::PortalCapture::GpuFrame frame;
+                    if (capture->AcquireGpuFrame(frame)) {
+                        // The previous frame's GPU work has completed (its fence was waited).
+                        if (frame.bufferGeneration != importGeneration) {
+                            captureScale->ForgetViews();
+                            imports.clear();
+                            importGeneration = frame.bufferGeneration;
+                        }
+                        auto& image = imports[frame.bufferId];
+                        if (!image || image->Width() != frame.width || image->Height() != frame.height) {
+                            captureScale->ForgetViews();
+                            image = std::make_unique<vrx::DmabufImage>(gpu, device, frame.fd, frame.width,
+                                frame.height, VK_FORMAT_B8G8R8A8_UNORM, frame.modifier, frame.offset, frame.stride);
+                        }
+                        scaleSource = image.get();
+                        liveNew = true;
+                        liveSequence = frame.sequence;
+                        liveLayout = frame.layout;
+                        liveArrival = frame.arrival;
+                    }
+                } else if (capture->Latest(liveFrame) && liveFrame.sequence != liveSequence) {
+                    color.swap(liveFrame.color);
+                    warp->UploadColor(color);
+                    liveNew = true;
+                    liveSequence = liveFrame.sequence;
+                    liveLayout = liveFrame.layout;
+                    liveArrival = liveFrame.arrival;
+                }
 #ifdef VRX_HAS_LIVE_DEPTH
                 const auto depth = liveDepth ? liveDepth->Latest() : nullptr;
-                depthAvailable = depth && latest.layout == depth->sourceLayout &&
-                    UsableDepth(liveDepth->Healthy(), latest.sequence, latest.arrival,
+                depthAvailable = depth && liveLayout == depth->sourceLayout &&
+                    UsableDepth(liveDepth->Healthy(), liveSequence, liveArrival,
                                 depth->sourceSequence, depth->captureArrival);
                 if (depthAvailable) truth = depth->near;
 #else
@@ -576,6 +657,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             if (stillPath) {
                 color = vrx::PackRgb(stillRgb);
                 truth = stillDepth;
+                warp->UploadColor(color);
             } else {
                 vrx::MakeScene(rgb, elapsed);
                 vrx::MakeTruth(truth, elapsed);
@@ -586,9 +668,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                         size_t(vrx::kSyntheticWidth) * 4, vrx::kSyntheticWidth, vrx::kSyntheticHeight,
                         true, int(colorWidth), int(colorHeight), color);
                 }
+                warp->UploadColor(color);
             }
             warp->SetStereoGeometry(settings.distance, settings.width, 0.0f, depthAvailable);
-            warp->UploadColor(color);
             warp->UploadNearness(truth);
             if (roomFrameReady) {
                 float floorLocalY = std::numeric_limits<float>::quiet_NaN();
@@ -600,7 +682,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                         floorLocalY = floorLocation.pose.position.y;
                 }
                 const auto prepStart = std::chrono::steady_clock::now();
-                room->Prepare(color, settings, roomViews, floorLocalY);
+                if (live) room->Prepare(ambient.data(), ambientWidth, ambientHeight,
+                                        settings, roomViews, floorLocalY);
+                else room->Prepare(color.data(), colorWidth, colorHeight, settings, roomViews, floorLocalY);
                 roomPrepMs.push_back(std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - prepStart).count());
                 if (roomDumpPath && renderedFrames == 0) room->EnableCapture();
@@ -610,9 +694,17 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             VK_CHECK(vkBeginCommandBuffer(command, &cbbi));
             warp->RecordUpload(command);
-            const bool syntheticGrid = !stillPath && !live && !syntheticColorWidth;
-            if (syntheticGrid) prep->Record(command);
-            warp->Record(command, renderedFrames == 0);
+            // The first frame is always checked; with --dump-color, one about six seconds in too.
+            const bool laterDump = colorDumpPath && !laterDumped && renderedFrames >= 400 && (!live || liveNew);
+            if (laterDump) laterDumped = true;
+            const bool checkFrame = renderedFrames == 0 || laterDump;
+            if (scaleSource)
+                captureScale->Record(command, scaleSource->Image(), scaleSource->View(), scaleSource->Width(),
+                                     scaleSource->Height(), true, checkFrame);
+            // Live: prepare each new source frame for depth. Synthetic: every frame, for the check.
+            const bool prepFrame = live ? liveNew : !stillPath;
+            if (prepFrame) prep->Record(command);
+            warp->Record(command, checkFrame);
             if (roomFrameReady) room->Record(command, roomImages[roomIndex].image);
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -665,9 +757,49 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 referenceMatched = referenceMatched && room->CompareReference();
                 std::printf("Room eye capture: %s\n", roomDumpPath);
             }
-            if (renderedFrames == 0)
-                referenceMatched = referenceMatched && warp->CompareReference(color, truth) &&
-                    (!syntheticGrid || prep->CompareReference(rgb));
+            if (live && liveNew) {
+                const float* input = prep->ModelInput();
+#ifdef VRX_HAS_LIVE_DEPTH
+                if (liveDepth)
+                    liveDepth->Submit(std::vector<float>(input, input + 3 * modelPlane),
+                                      liveSequence, liveLayout, liveArrival);
+#endif
+                if (room)
+                    for (uint32_t y = 0; y < ambientHeight; ++y)
+                        for (uint32_t x = 0; x < ambientWidth; ++x) {
+                            const size_t i = size_t(y * 4 + 2) * vrx::VulkanPrep::width + x * 4 + 2;
+                            auto byte = [&](size_t plane) {
+                                return uint32_t(std::clamp(input[plane * modelPlane + i], 0.0f, 1.0f) * 255.0f + 0.5f);
+                            };
+                            ambient[size_t(y) * ambientWidth + x] = byte(0) | (byte(1) << 8) | (byte(2) << 16) | 0xff000000u;
+                        }
+            }
+            if (checkFrame) {
+                bool matched = true;
+                if (scaleSource) {
+                    matched = captureScale->CompareReference();
+                    color = captureScale->CheckedColor();
+                }
+                if (!color.empty() && colorDumpPath) {
+                    const std::string dumpPath = std::string(colorDumpPath) + (laterDump ? ".later.ppm" : "");
+                    std::FILE* dump = std::fopen(dumpPath.c_str(), "wb");
+                    if (dump) {
+                        std::fprintf(dump, "P6\n%u %u\n255\n", colorWidth, colorHeight);
+                        for (uint32_t pixel : color) {
+                            const unsigned char rgbBytes[3] = {static_cast<unsigned char>(pixel),
+                                static_cast<unsigned char>(pixel >> 8), static_cast<unsigned char>(pixel >> 16)};
+                            std::fwrite(rgbBytes, 1, 3, dump);
+                        }
+                        std::fclose(dump);
+                        std::printf("Colour frame %d written to %s\n", renderedFrames, dumpPath.c_str());
+                    }
+                }
+                if (!color.empty()) {
+                    matched = warp->CompareReference(color, truth) && matched;
+                    if (prepFrame) matched = prep->CompareReference(color) && matched;
+                }
+                referenceMatched = referenceMatched && matched;
+            }
             XrSwapchainImageReleaseInfo ri{}; ri.type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO;
             XR_CHECK(xr.release(swapchain, &ri));
             if (roomFrameReady) XR_CHECK(xr.release(roomSwapchain, &ri));
@@ -723,14 +855,19 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             static_cast<unsigned long long>(liveDepth->Completed()),
             static_cast<unsigned long long>(depth ? depth->sourceSequence : 0));
         const auto timings = liveDepth->Timings();
-        std::printf("Live ZipDepth timing (%llu samples): prep %.2f/%.2f ms, model %.2f/%.2f ms, arrival-to-depth %.2f/%.2f ms (median/p95)\n",
+        std::printf("Live ZipDepth timing (%llu samples): wait %.2f/%.2f ms, model %.2f/%.2f ms, arrival-to-depth %.2f/%.2f ms (median/p95)\n",
             static_cast<unsigned long long>(timings.samples),
-            timings.prepMedianMs, timings.prepP95Ms,
+            timings.waitMedianMs, timings.waitP95Ms,
             timings.modelMedianMs, timings.modelP95Ms,
             timings.arrivalToDepthMedianMs, timings.arrivalToDepthP95Ms);
     }
 #endif
     vkDeviceWaitIdle(device);
+    imports.clear();
+    captureScale.reset();
+#ifdef VRX_HAS_CAPTURE
+    if (capture) capture->ReleaseGpuFrame();
+#endif
     vkDestroyFence(device, fence, nullptr);
     vkDestroyCommandPool(device, pool, nullptr);
     room.reset();
@@ -758,11 +895,15 @@ int main(int argc, char** argv) {
     const char* settingsPath = nullptr;
     const char* roomDumpPath = nullptr;
     unsigned colorWidth = 0, colorHeight = 0;
+    bool useDmabuf = true;
+    const char* colorDumpPath = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
             std::puts("vrx-xr-synthetic [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]");
             std::puts("--live selects a portal source; add --cuda for asynchronous ZipDepth");
             std::puts("--color=WxH presents the synthetic scene at that colour size (depth stays 686x392)");
+            std::puts("--no-dmabuf receives live frames in shared memory instead of GPU buffers");
+            std::puts("--dump-color=frame.ppm writes the first presented colour frame");
             std::puts("VRX_OPENXR_LOADER, VRX_WARP_SPV and VRX_PREP_SPV override runtime paths");
             return 0;
         }
@@ -774,6 +915,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--until-stop") == 0) untilStop = true;
         else if (std::strncmp(argv[i], "--settings=", 11) == 0) settingsPath = argv[i] + 11;
         else if (std::strncmp(argv[i], "--room-dump=", 12) == 0) { roomDumpPath = argv[i] + 12; room = true; }
+        else if (std::strcmp(argv[i], "--no-dmabuf") == 0) useDmabuf = false;
+        else if (std::strncmp(argv[i], "--dump-color=", 13) == 0 && argv[i][13]) colorDumpPath = argv[i] + 13;
         else if (std::strncmp(argv[i], "--color=", 8) == 0) {
             char extra = 0;
             if (std::sscanf(argv[i] + 8, "%ux%u%c", &colorWidth, &colorHeight, &extra) != 2 ||
@@ -811,7 +954,7 @@ int main(int argc, char** argv) {
     const char* path = std::getenv("VRX_OPENXR_LOADER");
     try {
         return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live, room, settingsPath, roomDumpPath,
-                   colorWidth, colorHeight);
+                   colorWidth, colorHeight, useDmabuf, colorDumpPath);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "VRX Linux renderer: %s\n", error.what());
         return 1;
