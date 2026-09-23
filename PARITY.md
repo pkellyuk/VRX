@@ -146,6 +146,7 @@ baseline before zero-copy capture is available.
 | Room eye size | **Differs from Windows on purpose.** The runtime's recommended size (2644×2644 on the PICO 4); `VRX_ROOM_EYE_SCALE` lowers it. At Windows' half size, SteamVR/Steam Link on Linux showed the screen quads at the room layer's resolution, so the picture looked as soft as the reflections. The full-size room holds about 87 frames/s at 9.5 ms CPU work per frame. | Recheck if the runtime or streaming path changes. |
 | Turning Room on live | The controller always launches with `--room`, so its Room slider can activate the already-created room resources from zero. | A direct CLI launch without `--room` and with Room initially zero still cannot create room resources later. Add lazy creation if that mode matters. |
 | Recenter / `ScreenAnchor` | **Done.** The shared `screen_anchor.h` places the screen in front of the headset on the first tracked frame and on each Recenter (a `VRXL 3` counter from the desktop app), keeps only the heading while the room is on, and applies the placement sliders relative to that point. The room is built in the screen's frame, as in xrapp5. | Keyboard shortcuts remain undecided (LINUX.md). |
+| Curved screen | **Done.** `screen_curve.h`'s cylinder, rebuilt when size, distance or curve change and drawn into the projection layer: by the room eye pass with the room on (front wall curved too), by the plain `kCurveHlsl` pass with Room 0. Both match the CPU references (0 of 24,200 sampled pixels over 2 levels). The desktop app's Screen curve slider (`VRXL 5`) applies live and draws the arc in the top view. | Headset check of sharpness and comfort; the standalone ambilight glow behind a curved screen with Room 0. |
 | STAGE floor | **Done.** Read once per placement and latched; re-read after a reference-space change. | None. |
 | Tracking loss | Room projection is skipped but screen quads continue. | Decide whether to keep this documented behaviour or match Windows' empty-frame policy. |
 | Standalone ambilight | Glow is only part of the room. | Add the separate glow/world-colour layers after GPU ambilight is implemented. |
@@ -179,7 +180,7 @@ self-contained; the self-contained package ran ZipDepth on CUDA with no CUDA on
 the library path. The Windows-style room is required for that release and is
 already present, but its performance and portability need further work.
 
-Curved screen, fusion/steady processing, a motion
+Fusion/steady processing, a motion
 estimator, a second GPU, Depth Anything and foreground crop remain L5 work
 under [LINUX.md](LINUX.md).
 

@@ -23,10 +23,16 @@ public:
     VulkanRoom& operator=(const VulkanRoom&) = delete;
     // glow: packed RGBA picture the screen's glow is taken from (any size).
     // screen: the placed screen (pose, size and the recentre point it was
-    // placed from); floorLocalY: the STAGE floor in LOCAL space, or NaN.
-    // Returns false when no room can be built round this viewer position.
+    // placed from); floorLocalY: the STAGE floor in LOCAL space, or NaN;
+    // cylinder: the curved screen (screen_curve.h), or not curved.
+    // With the room on, the eye layer is the room, and a curved screen is drawn
+    // in it; with the room off (or no room round this viewer) a curved screen
+    // is drawn alone. Returns false when there is nothing to draw: a flat
+    // screen with no room.
     bool Prepare(const uint32_t* glow, uint32_t glowWidth, uint32_t glowHeight, const LiveSettings& settings,
-                 const XrView eyes[2], const ScreenAnchor& screen, float floorLocalY);
+                 const XrView eyes[2], const ScreenAnchor& screen, float floorLocalY, const Cylinder& cylinder);
+    // The last Prepare drew the screen itself (curved), so the quads are not shown.
+    bool DrawsScreen() const { return cylinder_.curved; }
     void Record(VkCommandBuffer command, VkImage destination);
     void EnableCapture() { capture_ = true; }
     void SaveCapture(const char* path) const;
@@ -54,7 +60,11 @@ private:
     std::vector<RoomEmitter> pendingEmitters_;
     std::vector<unsigned char> glowBytes_;
     float lastWidth_ = 0.0f, lastHeight_ = 0.0f;
-    float geometryKey_[6] = {};
+    float geometryKey_[7] = {};
+    Cylinder cylinder_;
+    bool curveOnly_ = false;          // the curved screen alone: no room passes
+    RoomView view_;
+    Buffer pictureReadback_;          // the warped pictures of a captured frame, for CompareReference
     std::chrono::steady_clock::time_point lastPrepare_{};
     Image picture_, glow_, mirror_, light_, eye_;
     VkSampler sampler_ = VK_NULL_HANDLE;
@@ -63,7 +73,7 @@ private:
     VkDescriptorSet passSet_ = VK_NULL_HANDLE, mirrorSet_ = VK_NULL_HANDLE, eyeSet_ = VK_NULL_HANDLE;
     VkPipelineLayout passPipelineLayout_ = VK_NULL_HANDLE, eyePipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline emitPipeline_ = VK_NULL_HANDLE, mirrorPipeline_ = VK_NULL_HANDLE;
-    VkPipeline lightPipeline_ = VK_NULL_HANDLE, eyePipeline_ = VK_NULL_HANDLE;
+    VkPipeline lightPipeline_ = VK_NULL_HANDLE, eyePipeline_ = VK_NULL_HANDLE, curvePipeline_ = VK_NULL_HANDLE;
     VkQueryPool timingQueries_ = VK_NULL_HANDLE;
     float timestampPeriod_ = 0.0f;
     Room room_;

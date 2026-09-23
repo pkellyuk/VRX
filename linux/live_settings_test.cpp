@@ -33,9 +33,15 @@ int main() {
     assert(Read("VRXL 4 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1\n", s));
     assert(s.timing == 1 && s.recenter == 7);
     assert(Read("VRXL 3 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7\n", s) && s.timing == 1);   // the default
+    // VRXL 5: the screen curve.
+    assert(Read("VRXL 5 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1 40\n", s));
+    assert(s.curve == 40 && s.timing == 1);
+    assert(Read("VRXL 4 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1\n", s) && s.curve == 0);   // flat
     // Rejected, leaving the previous settings.
     const char* bad[] = {
-        "VRXL 5 2 2 0 0 1 30 60 25 30 0 1 0\n",         // unknown version
+        "VRXL 6 2 2 0 0 1 30 60 25 30 0 1 0 0\n",       // unknown version
+        "VRXL 5 2 2 0 0 1 30 60 25 30 0 1 0 101\n",     // curve above range
+        "VRXL 5 2 2 0 0 1 30 60 25 30 0 1 0\n",         // missing curve
         "VRXL 4 2 2 0 0 1 30 60 25 30 0 1 3\n",         // unknown timing mode
         "VRXL 4 2 2 0 0 1 30 60 25 30 0 1\n",           // missing timing mode
         "VRXL 3 2 2 0 0 1 30 60 25 30 0\n",             // missing counter

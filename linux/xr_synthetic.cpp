@@ -97,7 +97,7 @@ template <typename T> bool Resolve(XrFns& f, XrInstance instance, const char* na
 
 int Run(double seconds, const char* loaderPath, const char* stillPath, const char* modelPath, bool cuda, bool live, bool roomEnabled, const char* settingsPath, const char* roomDumpPath,
         uint32_t syntheticColorWidth, uint32_t syntheticColorHeight, bool useDmabuf, const char* colorDumpPath,
-        int sourceKind) {
+        int sourceKind, int curvePercent) {
     vrx::LiveSettings settings;
     if (settingsPath && !vrx::ReadLiveSettings(settingsPath, settings)) {
         std::fprintf(stderr, "Invalid or missing Linux settings: %s\n", settingsPath);
@@ -117,6 +117,11 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     (void)useDmabuf;
 #endif
     roomEnabled = roomEnabled || (settingsPath && settings.room > 0);
+    if (curvePercent >= 0 && !settingsPath) settings.curve = curvePercent;
+    // The eye layer: a projection layer drawn on the GPU (VulkanRoom) that
+    // carries the room and a curved screen. With live settings it is always
+    // made, so the curve can be turned on during play.
+    const bool eyeLayer = roomEnabled || settingsPath || settings.curve > 0;
     void* library = dlopen(loaderPath, RTLD_NOW | RTLD_LOCAL);
     std::string steamLoader;
     if (!library && std::strcmp(loaderPath, "libopenxr_loader.so.1") == 0) {
@@ -152,7 +157,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     XR_RESOLVE("xrCreateSession", createSession);
     XR_RESOLVE("xrDestroySession", destroySession);
     XR_RESOLVE("xrCreateReferenceSpace", createSpace);
-    if (roomEnabled) {
+    if (eyeLayer) {
         XR_RESOLVE("xrEnumerateReferenceSpaces", enumerateSpaces);
         XR_RESOLVE("xrLocateSpace", locateSpace);
     }
@@ -166,7 +171,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     XR_RESOLVE("xrEndSession", endSession);
     XR_RESOLVE("xrWaitFrame", waitFrame);
     XR_RESOLVE("xrLocateViews", locateViews);
-    if (roomEnabled) XR_RESOLVE("xrEnumerateViewConfigurationViews", enumerateViewConfig);
+    if (eyeLayer) XR_RESOLVE("xrEnumerateViewConfigurationViews", enumerateViewConfig);
     XR_RESOLVE("xrBeginFrame", beginFrame);
     XR_RESOLVE("xrEndFrame", endFrame);
     XR_RESOLVE("xrAcquireSwapchainImage", acquire);
@@ -183,7 +188,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     // but with SteamVR/Steam Link on Linux the screen quads were then shown at
     // the room layer's resolution too, visibly blurring the picture.
     uint32_t roomEyeWidth = 1322, roomEyeHeight = 1322;
-    if (roomEnabled) {
+    if (eyeLayer) {
         uint32_t viewCount = 0;
         XR_CHECK(xr.enumerateViewConfig(instance, system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
                                          0, &viewCount, nullptr));
@@ -317,7 +322,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     XrSpace space = XR_NULL_HANDLE;
     XR_CHECK(xr.createSpace(session, &rsci, &space));
     XrSpace stageSpace = XR_NULL_HANDLE;
-    if (roomEnabled) {
+    if (eyeLayer) {
         uint32_t referenceCount = 0;
         XR_CHECK(xr.enumerateSpaces(session, 0, &referenceCount, nullptr));
         std::vector<XrReferenceSpaceType> referenceTypes(referenceCount);
@@ -369,7 +374,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     std::unique_ptr<vrx::VulkanRoom> room;
     XrSwapchain roomSwapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageVulkan2KHR> roomImages;
-    if (roomEnabled) {
+    if (eyeLayer) {
         XrSwapchainCreateInfo roomInfo = swci;
         roomInfo.width = roomEyeWidth;
         roomInfo.height = roomEyeHeight;
@@ -382,7 +387,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             reinterpret_cast<XrSwapchainImageBaseHeader*>(roomImages.data())));
         room = std::make_unique<vrx::VulkanRoom>(gpu, device, warp->SceneBuffer(), warp->ColorBuffer(), format,
                                                  colorWidth, colorHeight, roomEyeWidth, roomEyeHeight);
-        std::puts("Windows room shader enabled: lighting, glass, tiles and reflections");
+        std::puts(roomEnabled ? "Windows room shader enabled: lighting, glass, tiles and reflections"
+                              : "Eye layer enabled for a curved screen (the room is off)");
     }
     // DMA-BUF capture: source buffers imported once each (by buffer id, until
     // the source renegotiates) and scaled into the colour buffer on the GPU.
@@ -469,7 +475,6 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     warp->SetStrength(settings.strength);
     warp->SetStereoGeometry(settings.distance, settings.width, 0.064f, true);
     XrCompositionLayerQuad quads[2]{};
-    const XrCompositionLayerBaseHeader* layers[3]{};
     XrCompositionLayerProjection projection{};
     XrCompositionLayerProjectionView projectionViews[2]{};
     projection.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
@@ -491,9 +496,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         quads[eye].subImage.imageRect.extent = {int32_t(colorWidth), int32_t(colorHeight)};
         quads[eye].subImage.imageArrayIndex = eye;
         quads[eye].pose.orientation.w = 1.0f;
-        layers[eye + (roomEnabled ? 1 : 0)] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[eye]);
     }
-    if (roomEnabled) layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
     const auto beginTime = std::chrono::steady_clock::now();
     bool running = false;
     // The runtime ended the session: EXITING is a normal end (SteamVR or the
@@ -537,6 +540,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     DepthDelayEstimate depthDelay;
     uint64_t lastDepthSequence = 0;
     int loggedTiming = -1;
+    // The curved screen and what it was built from (negative: not yet built).
+    Cylinder cylinder;
+    float curveWidth = -1.0f, curveHeight = -1.0f, curveDistance = -1.0f, curveFraction = -1.0f;
     // The room's floor, read from STAGE once per placement (or reference-space change).
     float stageFloorY = std::numeric_limits<float>::quiet_NaN();
     bool floorLatched = false;
@@ -750,7 +756,27 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                     quad.size = screen.size;
                 }
             }
-            roomFrameReady = roomEnabled && settings.room > 0 && validViews && !screen.pending;
+            // The curved screen (screen_curve.h) for the placed screen, rebuilt when
+            // its size, distance or curve changes; it needs the eye layer.
+            if (validViews && !screen.pending) {
+                const float wantCurve = eyeLayer ? settings.curve / 100.0f : 0.0f;
+                if (screen.size.width != curveWidth || screen.size.height != curveHeight ||
+                    settings.distance != curveDistance || wantCurve != curveFraction) {
+                    if (!BuildCylinder(screen.size.width, screen.size.height, settings.distance, wantCurve, cylinder))
+                        cylinder = Cylinder();
+                    if (cylinder.curved)
+                        std::printf("Screen curve %d%%: wrap %.1f deg, radius %.2f m, edges %.2f m nearer (%.2f x %.2f m at %.2f m)\n",
+                                    settings.curve, cylinder.halfWrap * 2.0f * 57.2958f, cylinder.radius,
+                                    CurveSag(screen.size.width, cylinder.halfWrap * 2.0f), screen.size.width,
+                                    screen.size.height, settings.distance);
+                    else if (curveFraction > 0.0f)
+                        std::puts("Screen curve off (flat screen)");
+                    curveWidth = screen.size.width; curveHeight = screen.size.height;
+                    curveDistance = settings.distance; curveFraction = wantCurve;
+                }
+            }
+            roomFrameReady = eyeLayer && ((roomEnabled && settings.room > 0) || cylinder.curved) &&
+                             validViews && !screen.pending;
             if (roomFrameReady) {
                 for (int eye = 0; eye < 2; ++eye) {
                     projectionViews[eye].pose = roomViews[eye].pose;
@@ -929,10 +955,13 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                         std::printf("Room floor: %s\n", std::isfinite(stageFloorY) ? "from STAGE" : "not tracked, seated estimate");
                 }
                 const auto prepStart = std::chrono::steady_clock::now();
+                // Without --room (or live settings asking for it) only the curve is drawn.
+                vrx::LiveSettings drawn = settings;
+                if (!roomEnabled) drawn.room = 0;
                 roomDrawn = live ? room->Prepare(ambient.data(), ambientWidth, ambientHeight,
-                                                 settings, roomViews, screen, stageFloorY)
+                                                 drawn, roomViews, screen, stageFloorY, cylinder)
                                  : room->Prepare(color.data(), colorWidth, colorHeight,
-                                                 settings, roomViews, screen, stageFloorY);
+                                                 drawn, roomViews, screen, stageFloorY, cylinder);
                 roomPrepMs.push_back(std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - prepStart).count());
                 if (roomDrawn && roomDumpPath && renderedFrames == 0) room->EnableCapture();
@@ -1078,9 +1107,12 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         const XrCompositionLayerBaseHeader* frameLayers[3]{};
         uint32_t layerCount = 0;
         if (state.shouldRender && !screen.pending) {
-            if (roomDrawn) frameLayers[layerCount++] = layers[0];
-            frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[0]);
-            frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[1]);
+            if (roomDrawn) frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
+            // A curved screen is drawn in the eye layer; a flat one is the quads.
+            if (!(roomDrawn && room->DrawsScreen())) {
+                frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[0]);
+                frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[1]);
+            }
         }
         fe.layerCount = layerCount;
         fe.layers = layerCount ? frameLayers : nullptr;
@@ -1211,6 +1243,7 @@ int main(int argc, char** argv) {
     bool useDmabuf = true;
     const char* colorDumpPath = nullptr;
     int sourceKind = 0;   // 0 any, 1 window, 2 screen
+    int curvePercent = -1;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
             std::puts("vrx-engine [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live] [--room] [--room-dump=path] [--settings=path]");
@@ -1219,6 +1252,7 @@ int main(int argc, char** argv) {
             std::puts("--no-dmabuf receives live frames in shared memory instead of GPU buffers");
             std::puts("--source=window|screen|any limits what the desktop chooser offers (default any)");
             std::puts("--dump-color=frame.ppm writes the first presented colour frame");
+            std::puts("--curve=0..100 curves the screen (live settings take precedence)");
             std::puts("VRX_OPENXR_LOADER, VRX_MODEL and the VRX_*_SPV variables override runtime paths");
             return 0;
         }
@@ -1235,6 +1269,14 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--source=window") == 0) sourceKind = 1;
         else if (std::strcmp(argv[i], "--source=screen") == 0) sourceKind = 2;
         else if (std::strncmp(argv[i], "--dump-color=", 13) == 0 && argv[i][13]) colorDumpPath = argv[i] + 13;
+        else if (std::strncmp(argv[i], "--curve=", 8) == 0) {
+            char* end = nullptr;
+            const long percent = std::strtol(argv[i] + 8, &end, 10);
+            if (!end || *end || end == argv[i] + 8 || percent < 0 || percent > 100) {
+                std::fputs("Invalid --curve (0..100)\n", stderr); return 2;
+            }
+            curvePercent = int(percent);
+        }
         else if (std::strncmp(argv[i], "--color=", 8) == 0) {
             char extra = 0;
             if (std::sscanf(argv[i] + 8, "%ux%u%c", &colorWidth, &colorHeight, &extra) != 2 ||
@@ -1272,7 +1314,7 @@ int main(int argc, char** argv) {
     const char* path = std::getenv("VRX_OPENXR_LOADER");
     try {
         return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live, room, settingsPath, roomDumpPath,
-                   colorWidth, colorHeight, useDmabuf, colorDumpPath, sourceKind);
+                   colorWidth, colorHeight, useDmabuf, colorDumpPath, sourceKind, curvePercent);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "VRX Linux renderer: %s\n", error.what());
         return 1;

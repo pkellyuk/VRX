@@ -78,9 +78,12 @@ target_compile_features(vrx-room-eye-source PRIVATE cxx_std_17)
 target_include_directories(vrx-room-eye-source PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
 set(ROOM_EYE_HLSL "${CMAKE_CURRENT_BINARY_DIR}/room_eye.comp.hlsl")
 set(ROOM_EYE_SPV "${CMAKE_CURRENT_BINARY_DIR}/room_eye.comp.spv")
+set(CURVE_HLSL "${CMAKE_CURRENT_BINARY_DIR}/curve.comp.hlsl")
+set(CURVE_SPV "${CMAKE_CURRENT_BINARY_DIR}/curve.comp.spv")
 add_custom_command(
-    OUTPUT "${ROOM_EYE_HLSL}"
+    OUTPUT "${ROOM_EYE_HLSL}" "${CURVE_HLSL}"
     COMMAND vrx-room-eye-source "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr/xrapp5.cpp" "${ROOM_EYE_HLSL}"
+            "${CURVE_HLSL}"
     DEPENDS vrx-room-eye-source "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr/xrapp5.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr/room.h"
     VERBATIM
@@ -93,7 +96,16 @@ add_custom_command(
     DEPENDS "${ROOM_EYE_HLSL}"
     VERBATIM
 )
-add_custom_target(vrx-room-eye-shader ALL DEPENDS "${ROOM_EYE_SPV}")
+# The curved screen without the room (kCurveHlsl), with the room eye pass's bindings.
+add_custom_command(
+    OUTPUT "${CURVE_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR}" -D -S comp -V --target-env vulkan1.1
+            --shift-sampler-binding comp 4 --shift-image-binding comp 5
+            --shift-ubo-binding comp 6 -e main -o "${CURVE_SPV}" "${CURVE_HLSL}"
+    DEPENDS "${CURVE_HLSL}"
+    VERBATIM
+)
+add_custom_target(vrx-room-eye-shader ALL DEPENDS "${ROOM_EYE_SPV}" "${CURVE_SPV}")
 
 add_executable(vrx-engine xr_synthetic.cpp vulkan_warp.cpp vulkan_prep.cpp vulkan_room.cpp model_prep_cpu.cpp
     vulkan_capture_scale.cpp vulkan_dmabuf.cpp vulkan_frame_history.cpp)
@@ -102,7 +114,8 @@ add_dependencies(vrx-engine vrx-stereo-shader vrx-model-prep-shader vrx-capture-
 target_compile_definitions(vrx-engine PRIVATE VRX_STEREO_SPV_PATH="${STEREO_SPV}" VRX_PREP_SPV_PATH="${PREP_SPV}"
     VRX_CAPTURE_SCALE_SPV_PATH="${CAPTURE_SCALE_SPV}"
     VRX_ROOM_MIRROR_SPV_PATH="${ROOM_MIRROR_SPV}" VRX_ROOM_EMIT_SPV_PATH="${ROOM_EMIT_SPV}"
-    VRX_ROOM_LIGHT_SPV_PATH="${ROOM_LIGHT_SPV}" VRX_ROOM_EYE_SPV_PATH="${ROOM_EYE_SPV}")
+    VRX_ROOM_LIGHT_SPV_PATH="${ROOM_LIGHT_SPV}" VRX_ROOM_EYE_SPV_PATH="${ROOM_EYE_SPV}"
+    VRX_CURVE_SPV_PATH="${CURVE_SPV}")
 target_compile_features(vrx-engine PRIVATE cxx_std_17)
 target_include_directories(vrx-engine PRIVATE ../bench/native/openxr/include ../bench/native/openxr)
 target_link_libraries(vrx-engine PRIVATE Vulkan::Vulkan Threads::Threads ${CMAKE_DL_LIBS})
@@ -196,7 +209,7 @@ endif()
 set_target_properties(vrx-engine vrx-probe PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
 install(TARGETS vrx-engine vrx-probe RUNTIME DESTINATION bin)
 install(FILES "${STEREO_SPV}" "${PREP_SPV}" "${CAPTURE_SCALE_SPV}" "${ROOM_MIRROR_SPV}" "${ROOM_EMIT_SPV}"
-              "${ROOM_LIGHT_SPV}" "${ROOM_EYE_SPV}" DESTINATION share/vrx/shaders)
+              "${ROOM_LIGHT_SPV}" "${ROOM_EYE_SPV}" "${CURVE_SPV}" DESTINATION share/vrx/shaders)
 
 # The VRX desktop app (Avalonia, .NET 10) is built with dotnet when it is
 # available, on the PATH or installed for this user by dotnet-install.sh.

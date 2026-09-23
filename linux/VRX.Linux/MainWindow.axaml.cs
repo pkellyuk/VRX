@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Threading;
 
 namespace Vrx.Linux;
@@ -69,7 +70,7 @@ public partial class MainWindow : Window
             slider.TickFrequency = 0.05;
             slider.IsSnapToTickEnabled = true;
         }
-        foreach (var slider in new[] { RoomSlider, GlassSlider, ReflectSlider, LightSlider })
+        foreach (var slider in new[] { RoomSlider, GlassSlider, ReflectSlider, LightSlider, CurveSlider })
         {
             slider.TickFrequency = 1;
             slider.IsSnapToTickEnabled = true;
@@ -95,7 +96,7 @@ public partial class MainWindow : Window
         foreach (var source in new[] { SourceWindow, SourceScreen, SourceAny })
             source.IsCheckedChanged += (_, _) => SourceChanged();
         foreach (var slider in new[] { WidthSlider, DistanceSlider, HeightSlider, HorizontalSlider, StrengthSlider,
-                                       RoomSlider, GlassSlider, ReflectSlider, LightSlider })
+                                       RoomSlider, GlassSlider, ReflectSlider, LightSlider, CurveSlider })
             slider.ValueChanged += (_, _) => SettingsChanged();
         CudaCheck.IsCheckedChanged += (_, _) => SettingsChanged();
         TimingList.SelectionChanged += (_, _) => SettingsChanged();
@@ -246,6 +247,7 @@ public partial class MainWindow : Window
         GlassSlider.Value = p.Glass;
         ReflectSlider.Value = p.Reflect;
         LightSlider.Value = p.Light;
+        CurveSlider.Value = p.Curve;
         CudaCheck.IsChecked = p.Cuda;
         TimingList.SelectedIndex = p.Timing;
         FillLightColourList(p.LightColor);
@@ -282,7 +284,8 @@ public partial class MainWindow : Window
         (int)Math.Round(RoomSlider.Value), (int)Math.Round(GlassSlider.Value), (int)Math.Round(ReflectSlider.Value),
         (int)Math.Round(LightSlider.Value),
         LightColourList.SelectedIndex >= 0 ? lightHexes[LightColourList.SelectedIndex] : LinuxProfile.Default.LightColor,
-        Math.Clamp(TimingList.SelectedIndex, LinuxProfile.TimingLatest, LinuxProfile.TimingMatched));
+        Math.Clamp(TimingList.SelectedIndex, LinuxProfile.TimingLatest, LinuxProfile.TimingMatched),
+        (int)Math.Round(CurveSlider.Value));
 
     void SettingsChanged()
     {
@@ -448,6 +451,7 @@ public partial class MainWindow : Window
         GlassValue.Text = Percent(GlassSlider.Value);
         ReflectValue.Text = Percent(ReflectSlider.Value);
         LightValue.Text = LightSlider.Value < 0.5 ? "Off" : Percent(LightSlider.Value);
+        CurveValue.Text = CurveSlider.Value < 0.5 ? "Flat" : Percent(CurveSlider.Value);
         GlassSlider.IsEnabled = ReflectSlider.IsEnabled = LightSlider.IsEnabled = LightColourList.IsEnabled = RoomSlider.Value >= 0.5;
         DrawPreview();
     }
@@ -458,6 +462,29 @@ public partial class MainWindow : Window
         double centre = 270 + HorizontalSlider.Value * 20, y = 150 - DistanceSlider.Value * 17;
         ScreenLine.StartPoint = new Point(centre - WidthSlider.Value * 10, y);
         ScreenLine.EndPoint = new Point(centre + WidthSlider.Value * 10, y);
+        DrawCurve(centre, y);
+    }
+
+    // The top view shows the curve, as the WPF app does: the edges come towards the
+    // viewer (down the canvas) by the sag of the arc, with the renderer's geometry
+    // (screen_curve.h: kCurveMaxWrap 70 degrees, edges never nearer than 55 % of the
+    // distance). A quadratic Bezier whose control point is one sag above the ends
+    // passes exactly through the middle of the screen.
+    void DrawCurve(double centre, double y)
+    {
+        double fraction = CurveSlider.Value / 100.0;
+        bool curved = fraction > 0;
+        ScreenArc.IsVisible = curved;
+        ScreenLine.IsVisible = !curved;
+        if (!curved) return;
+        double wrap = fraction * 70 * Math.PI / 180;
+        double sag = WidthSlider.Value / wrap * (1 - Math.Cos(wrap / 2));
+        sag = Math.Min(sag, DistanceSlider.Value * 0.45) * 17;
+        var figure = new PathFigure { StartPoint = new Point(ScreenLine.StartPoint.X, y + sag), IsClosed = false, IsFilled = false };
+        figure.Segments!.Add(new QuadraticBezierSegment { Point1 = new Point(centre, y - sag), Point2 = new Point(ScreenLine.EndPoint.X, y + sag) });
+        var geometry = new PathGeometry();
+        geometry.Figures!.Add(figure);
+        ScreenArc.Data = geometry;
     }
 
     void PreviewDown(object? sender, PointerPressedEventArgs e)

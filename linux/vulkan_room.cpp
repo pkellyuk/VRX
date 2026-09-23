@@ -124,6 +124,7 @@ VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBu
     CreateBuffer(curveBuffer_,sizeof(CurveConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     CreateBuffer(roomBuffer_,sizeof(RoomConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     CreateBuffer(readback_,VkDeviceSize(eyeWidth_)*eyeHeight_*2*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    CreateBuffer(pictureReadback_,VkDeviceSize(colorWidth_)*colorHeight_*2*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     RoomDecodeTable(static_cast<float*>(decode_.mapped));
     const auto sampled=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     CreateImage(picture_,colorWidth_,colorHeight_,2,VK_FORMAT_R8G8B8A8_UNORM,sampled,VK_IMAGE_VIEW_TYPE_2D_ARRAY);
@@ -187,6 +188,8 @@ VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBu
     mirrorPipeline_=CreatePipeline(ShaderPath("VRX_ROOM_MIRROR_SPV","room_mirror.comp.spv",VRX_ROOM_MIRROR_SPV_PATH).c_str(),passPipelineLayout_);
     lightPipeline_=CreatePipeline(ShaderPath("VRX_ROOM_LIGHT_SPV","room_light.comp.spv",VRX_ROOM_LIGHT_SPV_PATH).c_str(),passPipelineLayout_);
     eyePipeline_=CreatePipeline(ShaderPath("VRX_ROOM_EYE_SPV","room_eye.comp.spv",VRX_ROOM_EYE_SPV_PATH).c_str(),eyePipelineLayout_);
+    // The plain curve pass uses the eye pass's bindings (the picture, glow, sampler, eyes and curve constants).
+    curvePipeline_=CreatePipeline(ShaderPath("VRX_CURVE_SPV","curve.comp.spv",VRX_CURVE_SPV_PATH).c_str(),eyePipelineLayout_);
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(gpu_,&properties);
     timestampPeriod_=properties.limits.timestampPeriod;
@@ -196,7 +199,7 @@ VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBu
 }
 VulkanRoom::~VulkanRoom(){
     if(timingQueries_)vkDestroyQueryPool(device_,timingQueries_,nullptr);
-    for(auto p:{eyePipeline_,lightPipeline_,mirrorPipeline_,emitPipeline_})if(p)vkDestroyPipeline(device_,p,nullptr);
+    for(auto p:{curvePipeline_,eyePipeline_,lightPipeline_,mirrorPipeline_,emitPipeline_})if(p)vkDestroyPipeline(device_,p,nullptr);
     if(eyePipelineLayout_)vkDestroyPipelineLayout(device_,eyePipelineLayout_,nullptr);
     if(passPipelineLayout_)vkDestroyPipelineLayout(device_,passPipelineLayout_,nullptr);
     if(descriptorPool_)vkDestroyDescriptorPool(device_,descriptorPool_,nullptr);
@@ -204,15 +207,16 @@ VulkanRoom::~VulkanRoom(){
     if(passLayout_)vkDestroyDescriptorSetLayout(device_,passLayout_,nullptr);
     if(sampler_)vkDestroySampler(device_,sampler_,nullptr);
     for(Image* i:{&eye_,&light_,&mirror_,&glow_,&picture_})DestroyImage(*i);
-    for(Buffer* b:{&readback_,&roomBuffer_,&curveBuffer_,&lightBuffer_,&mirrorBuffer_,&glowBuffer_,&emitter_,&decode_})DestroyBuffer(*b);
+    for(Buffer* b:{&pictureReadback_,&readback_,&roomBuffer_,&curveBuffer_,&lightBuffer_,&mirrorBuffer_,&glowBuffer_,&emitter_,&decode_})DestroyBuffer(*b);
 }
 
 bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t glowHeight,const LiveSettings& settings,
-                         const XrView eyes[2],const ScreenAnchor& screen,float floorLocalY) {
+                         const XrView eyes[2],const ScreenAnchor& screen,float floorLocalY,const Cylinder& cylinder) {
     if(!glowSource||!glowWidth||!glowHeight)throw std::runtime_error("Room glow source is empty");
     const float W=screen.size.width,H=screen.size.height;
     if (W != lastWidth_ || H != lastHeight_) glowHistoryValid_ = false;
     lastWidth_ = W; lastHeight_ = H;
+    cylinder_=cylinder.curved?cylinder:Cylinder();
     // As xrapp5: the room is built in the screen's own (level) frame round the
     // recentre point, so S^T rotates LOCAL offsets into that frame.
     float S[3][3];QuatRows(screen.pose.orientation,S);
@@ -220,34 +224,66 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
         const float rel[3]={p.x-screen.pose.position.x,p.y-screen.pose.position.y,p.z-screen.pose.position.z};
         for(int r=0;r<3;r++)out[r]=S[0][r]*rel[0]+S[1][r]*rel[1]+S[2][r]*rel[2];
     };
+    // The curve pass's constants: each eye's position and view rotation in the
+    // screen's frame, and its field of view (xrapp5 MakeCurveConstants).
+    auto curveConstants=[&](bool glowOn,float glowHalfW,float glowHalfH){
+        curveConstants_={};curveConstants_.ew=eyeWidth_;curveConstants_.eh=eyeHeight_;
+        curveConstants_.glowOn=glowOn?1:0;curveConstants_.linearBlend=1;
+        curveConstants_.radius=cylinder_.radius;curveConstants_.halfWrap=cylinder_.halfWrap;
+        curveConstants_.halfWidth=cylinder_.halfWidth;curveConstants_.halfHeight=cylinder_.halfHeight;
+        curveConstants_.glowHalfW=glowHalfW;curveConstants_.glowHalfH=glowHalfH;
+        curveConstants_.glowRadius=cylinder_.radius+kAmbiBehind;
+        curveConstants_.world[3]=1.0f;
+        for(int e=0;e<2;e++){
+            auto& v=curveConstants_.eye[e];
+            inScreen(eyes[e].pose.position,v.origin);
+            float E[3][3];QuatRows(eyes[e].pose.orientation,E);
+            float* rows[3]={v.row0,v.row1,v.row2};
+            for(int r=0;r<3;r++)for(int k=0;k<3;k++)rows[r][k]=S[0][r]*E[0][k]+S[1][r]*E[1][k]+S[2][r]*E[2][k];   // S^T E
+            v.tanL=std::tan(eyes[e].fov.angleLeft);v.tanR=std::tan(eyes[e].fov.angleRight);
+            v.tanU=std::tan(eyes[e].fov.angleUp);v.tanD=std::tan(eyes[e].fov.angleDown);
+        }
+    };
+    // Room at 0 %, or no room fits round the viewer: a curved screen is drawn
+    // alone (xrapp5's plain curve pass), over black; a flat one needs no layer.
+    auto curveAlone=[&](){
+        curveOnly_=cylinder_.curved;
+        if(curveOnly_)curveConstants(false,0.0f,0.0f);
+        return curveOnly_;
+    };
+    curveOnly_=false;
+    if(settings.room<=0)return curveAlone();
     RoomInputs input;
-    input.W=W;input.H=H;
+    input.W=W;input.H=H;input.cyl=cylinder_;
     inScreen(screen.origin.position,input.eye);
     input.floorY=std::isfinite(floorLocalY)?floorLocalY-screen.pose.position.y:floorLocalY;
-    const float key[6]={W,H,input.eye[0],input.eye[1],input.eye[2],
-                        std::isfinite(input.floorY)?input.floorY:-999.0f};
+    const float key[7]={W,H,input.eye[0],input.eye[1],input.eye[2],
+                        std::isfinite(input.floorY)?input.floorY:-999.0f,cylinder_.curved?cylinder_.radius:0.0f};
     bool geometryChanged=!room_.valid&&!roomRejected_;
-    for(int i=0;i<6;i++)if(std::fabs(key[i]-geometryKey_[i])>1e-4f)geometryChanged=true;
-    if(!geometryChanged&&!room_.valid)return false;   // rejected; retried when the inputs change
+    for(int i=0;i<7;i++)if(std::fabs(key[i]-geometryKey_[i])>1e-4f)geometryChanged=true;
+    if(!geometryChanged&&!room_.valid)return curveAlone();   // rejected; retried when the inputs change
     if(geometryChanged){
-        std::copy_n(key,6,geometryKey_);
+        std::copy_n(key,7,geometryKey_);
         roomRejected_=!BuildRoom(input,room_);
         if(roomRejected_){
             room_=Room();
             std::printf("No room round the viewer at %.2f, %.2f, %.2f m from the screen\n",
                         input.eye[0],input.eye[1],input.eye[2]);
-            return false;
+            return curveAlone();
         }
         layout_=RoomLayout(W,H,GlowWidth,GlowHeight);
         std::vector<RoomEmitter> emitters;
         const float glowHalfW=0.5f*W+kAmbiMargin*W;
         const float glowHalfH=0.5f*H+kAmbiMargin*W;
-        if(!BuildRoomEmitters(room_,Cylinder(),W,H,glowHalfW,glowHalfH,layout_,emitters))
+        if(!BuildRoomEmitters(room_,cylinder_,W,H,glowHalfW,glowHalfH,layout_,emitters))
             throw std::runtime_error("Room emitter geometry failed");
         pendingEmitters_=std::move(emitters);
     }
-    RoomView view;view.flatLayer=true;view.W=W;view.H=H;view.glowOn=true;
-    view.glowHalfW=0.5f*W+kAmbiMargin*W;view.glowHalfH=0.5f*H+kAmbiMargin*W;
+    // A flat screen is the compositor's quad layers, over the room's footprint
+    // of it; a curved one is drawn by the room's eye pass itself.
+    RoomView view;view.flatLayer=!cylinder_.curved;view.W=W;view.H=H;view.glowOn=true;
+    view.glowHalfW=0.5f*W+kAmbiMargin*W;view.glowHalfH=0.5f*H+kAmbiMargin*W;view.cyl=cylinder_;
+    view_=view;
     const auto now=std::chrono::steady_clock::now();
     const float dt=lastPrepare_==std::chrono::steady_clock::time_point{}?0.0f:
         std::clamp(std::chrono::duration<float>(now-lastPrepare_).count(),0.0f,0.25f);
@@ -257,20 +293,7 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     shading_=MakeRoomShading(room_,settings.room,0,W*H,look);
     roomConstants_=MakeRoomConstants(room_,shading_,layout_,view,int(colorWidth_),int(colorHeight_),alpha);
     mirrorW_=roomConstants_.mirrorW;mirrorH_=roomConstants_.mirrorH;
-
-    curveConstants_={};curveConstants_.ew=eyeWidth_;curveConstants_.eh=eyeHeight_;
-    curveConstants_.glowOn=1;curveConstants_.linearBlend=1;
-    curveConstants_.glowHalfW=view.glowHalfW;curveConstants_.glowHalfH=view.glowHalfH;
-    curveConstants_.world[3]=1.0f;
-    for(int e=0;e<2;e++){
-        auto& v=curveConstants_.eye[e];
-        inScreen(eyes[e].pose.position,v.origin);
-        float E[3][3];QuatRows(eyes[e].pose.orientation,E);
-        float* rows[3]={v.row0,v.row1,v.row2};
-        for(int r=0;r<3;r++)for(int k=0;k<3;k++)rows[r][k]=S[0][r]*E[0][k]+S[1][r]*E[1][k]+S[2][r]*E[2][k];   // S^T E
-        v.tanL=std::tan(eyes[e].fov.angleLeft);v.tanR=std::tan(eyes[e].fov.angleRight);
-        v.tanU=std::tan(eyes[e].fov.angleUp);v.tanD=std::tan(eyes[e].fov.angleDown);
-    }
+    curveConstants(true,view.glowHalfW,view.glowHalfH);
 
     AmbiConstants ambi{};
     ambi.gw=GlowWidth;ambi.gh=GlowHeight;
@@ -306,7 +329,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
         for(size_t offset=0;offset<bytes;offset+=kMaxUpdate)
             vkCmdUpdateBuffer(cmd,buffer,offset,std::min(kMaxUpdate,bytes-offset),static_cast<const char*>(data)+offset);
     };
-    if(!pendingEmitters_.empty()){
+    if(!pendingEmitters_.empty()&&!curveOnly_){
         update(emitter_.handle,pendingEmitters_.data(),pendingEmitters_.size()*sizeof(RoomEmitter));
         pendingEmitters_.clear();
     }
@@ -320,6 +343,10 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
                          0,1,&updated,0,nullptr,0,nullptr);
     vkCmdResetQueryPool(cmd,timingQueries_,0,7);
     vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,timingQueries_,0);
+    if(curveOnly_){
+        // No room: its passes are skipped (their times read as zero).
+        for(uint32_t q=1;q<4;q++)vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,timingQueries_,q);
+    }else{
     EmitParams ep{};
     ep.srcW=colorWidth_;ep.srcH=colorHeight_;ep.stride=RoomStride(int(colorWidth_));
     ep.gridX=layout_.gridX;ep.gridY=layout_.gridY;ep.glowW=GlowWidth;ep.glowH=GlowHeight;
@@ -358,6 +385,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     mb.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;mb.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_HOST_READ_BIT;
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT|VK_PIPELINE_STAGE_HOST_BIT,
                          0,1,&mb,0,nullptr,0,nullptr);
+    }
     for(Image* i:{&picture_,&glow_,&mirror_,&light_})
         Transition(cmd,*i,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,0,VK_ACCESS_TRANSFER_WRITE_BIT,
                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -369,6 +397,10 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
         c.imageExtent={colorWidth_,colorHeight_,1};
     }
     vkCmdCopyBufferToImage(cmd,stereo_,picture_.handle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,2,pictureCopies);
+    if(capture_){
+        VkBufferCopy whole{0,0,pictureReadback_.size};
+        vkCmdCopyBuffer(cmd,stereo_,pictureReadback_.handle,1,&whole);
+    }
     VkBufferImageCopy copy{};copy.imageSubresource.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
     copy.imageSubresource.layerCount=1;copy.imageExtent={GlowWidth,GlowHeight,1};
     vkCmdCopyBufferToImage(cmd,glowBuffer_.handle,glow_.handle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
@@ -384,7 +416,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,timingQueries_,4);
     Transition(cmd,eye_,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL,0,VK_ACCESS_SHADER_WRITE_BIT,
                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
-    vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,eyePipeline_);
+    vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,curveOnly_?curvePipeline_:eyePipeline_);
     vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,eyePipelineLayout_,0,1,&eyeSet_,0,nullptr);
     vkCmdDispatch(cmd,(eyeWidth_+7)/8,(eyeHeight_+7)/8,2);
     vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,timingQueries_,5);
@@ -401,13 +433,12 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
         }
         vkCmdCopyImageToBuffer(cmd,eye_.handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                readback_.handle,2,copies);
-        VkBufferMemoryBarrier readbackBarrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+        // The eyes and the pictures they were drawn from, for the CPU.
+        VkMemoryBarrier readbackBarrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         readbackBarrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
         readbackBarrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
-        readbackBarrier.srcQueueFamilyIndex=readbackBarrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
-        readbackBarrier.buffer=readback_.handle;readbackBarrier.size=VK_WHOLE_SIZE;
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,
-                             0,0,nullptr,1,&readbackBarrier,0,nullptr);
+                             0,1,&readbackBarrier,0,nullptr,0,nullptr);
         capture_=false;
     }
     VkImageMemoryBarrier target{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -452,24 +483,28 @@ bool VulkanRoom::CompareReference() const {
     mirror.w=int(mirrorW_);mirror.h=int(mirrorH_);
     const float* gpuMirror=static_cast<const float*>(mirrorBuffer_.mapped);
     mirror.texels.assign(gpuMirror,gpuMirror+size_t(mirrorW_)*mirrorH_*4);
-    const RgbaImage picture{nullptr,int(colorWidth_),int(colorHeight_),int(colorWidth_)*4};
     const RgbaImage glow{static_cast<const unsigned char*>(glowBuffer_.mapped),int(GlowWidth),int(GlowHeight),int(GlowWidth)*4};
-    RoomView view;view.flatLayer=true;view.W=roomConstants_.screenW;view.H=roomConstants_.screenH;
-    view.glowOn=true;view.glowHalfW=roomConstants_.glowHalfW;view.glowHalfH=roomConstants_.glowHalfH;
-    RoomEyeInputs inputs;inputs.rc=&roomConstants_;inputs.picture=&picture;inputs.glow=&glow;
-    inputs.light=&lm;inputs.mirror=&mirror;inputs.room=&room_;
+    // Each eye's picture as the eye pass sampled it (read back with the eyes).
+    const auto* pictures=static_cast<const unsigned char*>(pictureReadback_.mapped);
     const auto* actual=static_cast<const unsigned char*>(readback_.mapped);
     size_t checked=0,bad=0;int worst=0;
-    for(int e=0;e<2;e++)for(uint32_t y=12;y<eyeHeight_;y+=24)for(uint32_t x=12;x<eyeWidth_;x+=24){
-        float ref[3];
-        if(!RoomPixel(curveConstants_,Cylinder(),room_,view,e,x,y,inputs,ref))
-            throw std::runtime_error("CPU room eye reference failed");
-        const auto* p=actual+(size_t(e)*eyeWidth_*eyeHeight_+y*eyeWidth_+x)*4;
-        int error=0;
-        for(int c=0;c<3;c++)error=std::max(error,std::abs(int(p[c])-int(std::lround(std::clamp(ref[c],0.0f,1.0f)*255.0f))));
-        worst=std::max(worst,error);if(error>2)bad++;checked++;
+    for(int e=0;e<2;e++){
+        const RgbaImage picture{pictures+size_t(e)*colorWidth_*colorHeight_*4,int(colorWidth_),int(colorHeight_),int(colorWidth_)*4};
+        RoomEyeInputs inputs;inputs.rc=&roomConstants_;inputs.picture=&picture;inputs.glow=&glow;
+        inputs.light=&lm;inputs.mirror=&mirror;inputs.room=&room_;
+        for(uint32_t y=12;y<eyeHeight_;y+=24)for(uint32_t x=12;x<eyeWidth_;x+=24){
+            float ref[3];
+            const bool ok=curveOnly_?CurvedPixel(curveConstants_,e,int(x),int(y),cylinder_,picture,nullptr,ref)
+                                    :RoomPixel(curveConstants_,cylinder_,room_,view_,e,x,y,inputs,ref);
+            if(!ok)throw std::runtime_error("CPU eye reference failed");
+            const auto* p=actual+(size_t(e)*eyeWidth_*eyeHeight_+y*eyeWidth_+x)*4;
+            int error=0;
+            for(int c=0;c<3;c++)error=std::max(error,std::abs(int(p[c])-int(std::lround(std::clamp(ref[c],0.0f,1.0f)*255.0f))));
+            worst=std::max(worst,error);if(error>2)bad++;checked++;
+        }
     }
-    std::printf("Vulkan/CPU room eye: %zu of %zu sampled pixels over 2 levels (worst %d)\n",bad,checked,worst);
+    std::printf("Vulkan/CPU %s eye: %zu of %zu sampled pixels over 2 levels (worst %d)\n",
+                curveOnly_?"curved screen":cylinder_.curved?"room and curved screen":"room",bad,checked,worst);
     return bad<=checked/200;
 }
 void VulkanRoom::SaveCapture(const char* path) const {

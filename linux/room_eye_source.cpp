@@ -1,5 +1,7 @@
-// Assemble the Vulkan room eye shader from the Windows shader's shared HLSL.
-// Keeping the source in one place prevents the ray/finish equations drifting.
+// Assemble the Vulkan room eye shader, and optionally the plain curved-screen
+// shader, from the Windows shader's shared HLSL. Keeping the source in one
+// place prevents the ray/finish equations drifting.
+//   vrx-room-eye-source xrapp5.cpp room_eye.comp.hlsl [curve.comp.hlsl]
 #include "room.h"
 #include <fstream>
 #include <iostream>
@@ -17,7 +19,7 @@ static std::string Extract(const std::string& source, const char* name) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 3) return 2;
+    if (argc != 3 && argc != 4) return 2;
     try {
         std::ifstream input(argv[1], std::ios::binary);
         if (!input) throw std::runtime_error("Cannot read Windows shader source");
@@ -31,6 +33,10 @@ int main(int argc, char** argv) {
                << curve.substr(0, mainStart) << Extract(source, "kRoomCbufferHlsl")
                << Extract(source, "kRoomGeomHlsl") << Extract(source, "kCurveRoomHlsl");
         if (!output) throw std::runtime_error("Cannot finish room eye shader");
+        if (argc == 4) {
+            std::ofstream plain(argv[3], std::ios::binary | std::ios::trunc);
+            if (!(plain << curve)) throw std::runtime_error("Cannot write curve shader");
+        }
     } catch (const std::exception& error) {
         std::cerr << "Room shader generation: " << error.what() << '\n';
         return 1;

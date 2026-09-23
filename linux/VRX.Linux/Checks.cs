@@ -20,16 +20,18 @@ public static class Checks
 
         // The snapshot is exactly what live_settings.h parses, in any culture.
         Expect(LiveSettings.Snapshot(LinuxProfile.Default) ==
-               "VRXL 4 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 0 1\n", "default VRXL 4 snapshot (delayed)");
-        Expect(LiveSettings.Snapshot(LinuxProfile.Default, 7).EndsWith(" 16757867 7 1\n"), "recenter counter in the snapshot");
-        Expect(LiveSettings.Snapshot(LinuxProfile.Default with { Timing = LinuxProfile.TimingMatched }).EndsWith(" 0 2\n"),
+               "VRXL 5 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 0 1 0\n", "default VRXL 5 snapshot (delayed, flat)");
+        Expect(LiveSettings.Snapshot(LinuxProfile.Default, 7).EndsWith(" 16757867 7 1 0\n"), "recenter counter in the snapshot");
+        Expect(LiveSettings.Snapshot(LinuxProfile.Default with { Timing = LinuxProfile.TimingMatched }).EndsWith(" 0 2 0\n"),
                "frame timing in the snapshot");
+        Expect(LiveSettings.Snapshot(LinuxProfile.Default with { Curve = 65 }).EndsWith(" 1 65\n"), "screen curve in the snapshot");
         Expect(Throws(() => (LinuxProfile.Default with { Timing = 3 }).Normalized()), "unknown timing rejected");
+        Expect(Throws(() => (LinuxProfile.Default with { Curve = 101 }).Normalized()), "curve above range");
         var previous = Thread.CurrentThread.CurrentCulture;
         try
         {
             Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
-            Expect(LiveSettings.Snapshot(LinuxProfile.Default with { Width = 2.5 }).StartsWith("VRXL 4 2.500 "),
+            Expect(LiveSettings.Snapshot(LinuxProfile.Default with { Width = 2.5 }).StartsWith("VRXL 5 2.500 "),
                    "snapshot ignores the current culture");
         }
         catch (System.Globalization.CultureNotFoundException) { }   // invariant-globalization builds
@@ -52,7 +54,7 @@ public static class Checks
             {
                 ["Default"] = LinuxProfile.Default,
                 ["Game"] = LinuxProfile.Default with { Cuda = false, Width = 3.25, Room = 0, LightColor = "#102030",
-                                                       Timing = LinuxProfile.TimingDelayed },
+                                                       Timing = LinuxProfile.TimingDelayed, Curve = 40 },
             };
             ProfileStore.Save(path, saved);
             var loaded = ProfileStore.Load(path);
@@ -60,7 +62,7 @@ public static class Checks
                    "profiles round-trip");
             File.WriteAllText(path, """{"version": 1, "profiles": {"Old": {"cuda": true, "width": 3.0}}}""");
             var old = ProfileStore.Load(path)["Old"];
-            Expect(old.Width == 3.0 && old.Room == LinuxProfile.Default.Room && old.Timing == LinuxProfile.TimingDelayed,
+            Expect(old.Width == 3.0 && old.Room == LinuxProfile.Default.Room && old.Timing == LinuxProfile.TimingDelayed && old.Curve == 0,
                    "version 1 profile defaults");
             File.WriteAllText(path, """{"version": 3, "profiles": {}}""");
             Expect(ThrowsData(() => ProfileStore.Load(path)), "unknown profile version rejected");

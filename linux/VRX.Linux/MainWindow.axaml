@@ -107,6 +107,7 @@
         <Line StartPoint="270,12" EndPoint="270,145" Stroke="#324761" StrokeDashArray="3,3"/>
         <Ellipse Canvas.Left="261" Canvas.Top="142" Width="18" Height="18" Fill="{StaticResource Accent}"/>
         <Line Name="ScreenLine" StartPoint="210,86" EndPoint="330,86" Stroke="#A5BEFF" StrokeThickness="6" StrokeLineCap="Round"/>
+        <Path Name="ScreenArc" Stroke="#A5BEFF" StrokeThickness="6" StrokeLineCap="Round" IsVisible="False"/>
         <TextBlock Text="TOP VIEW · drag the screen" Canvas.Left="12" Canvas.Top="10" FontSize="10" Foreground="#8297B7"/>
        </Canvas>
       </Border>
@@ -128,14 +129,15 @@
         <Slider Name="HorizontalSlider" Minimum="-3" Maximum="3" SmallChange="0.05" LargeChange="0.5"/>
        </StackPanel>
       </Grid>
-      <DockPanel IsEnabled="False"><TextBlock DockPanel.Dock="Right" Classes="Value" Text="0 %"/><TextBlock Classes="Label" Text="Screen curve"/></DockPanel>
-      <Slider IsEnabled="False" Minimum="0" Maximum="100" ToolTip.Tip="Not available on Linux yet."/>
+      <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="CurveValue"/><TextBlock Classes="Label" Text="Screen curve"/></DockPanel>
+      <Slider Name="CurveSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10"
+              ToolTip.Tip="Wraps the screen around you like a curved television. A curved screen is drawn as a real cylinder for each eye, so its outline, perspective and head-movement parallax are right; the top view above shows the shape. 0 % is flat. Applies live; saved in the profile."/>
       <CheckBox IsEnabled="False" Content="Screen follows my head" ToolTip.Tip="Not available on Linux yet."/>
       <WrapPanel Margin="0,10,0,0">
        <Button Name="RecenterButton" Content="Recenter now" IsEnabled="False"
                ToolTip.Tip="Puts the screen straight in front of where the headset is looking now."/>
       </WrapPanel>
-      <TextBlock Classes="Hint" Text="Screen curve and following the head are not available on Linux yet."/>
+      <TextBlock Classes="Hint" Text="Following the head is not available on Linux yet."/>
      </StackPanel>
     </l:Section>
 

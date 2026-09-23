@@ -138,12 +138,12 @@ seconds), and keeps named profiles under the XDG config directory
 (`linux-profiles.json`, the format the earlier PyQt controller used) plus its
 own choices in `linux-app.json`. Settings are saved in the selected profile as
 they change, and screen, stereo and room controls apply live through an atomic
-`VRXL 4` snapshot, which adds a Recenter counter and the game frame timing;
-older snapshots still load. Linux
+`VRXL 5` snapshot, which adds a Recenter counter, the game frame timing and
+the screen curve; older snapshots still load. Linux
 differences: Wayland does not let an app list other windows, so "Game &
 window" chooses between a window, a whole screen or either, and the desktop's
 sharing dialog does the choosing; there is no auto-attach; settings the Linux
-engine cannot apply yet (curve, follow-head, a separate ambilight,
+engine cannot apply yet (follow-head, a separate ambilight,
 steadying, SteamVR menu options) are shown disabled. The app
 starts the room renderer even when Room is 0, so it can be turned on live.
 
@@ -227,8 +227,16 @@ headset whenever it changes (and on the first tracked frame). The desktop app
 validates it. `VRXL 4` then adds the game frame timing: 0 latest frame, 1
 delayed to depth (the Linux default), 2 matched to depth (`frame_timing.h`, as on Windows). The
 engine keeps the last eight live frames on the GPU for the delayed and
-matched modes. The desktop app writes version 4. Room 0 omits the projection layer while
-retaining the existing stereo quads.
+matched modes. `VRXL 5` adds the screen curve, 0 (flat) to 100 percent. The
+desktop app writes version 5. Room 0 omits the projection layer while
+retaining the existing stereo quads, unless the screen is curved.
+
+A curved screen (`--curve=N` or the Screen curve slider) is a cylinder
+ray-cast for each eye into the projection layer, as on Windows
+(`screen_curve.h`): with the room on, by the room's eye pass, which curves the
+front wall with it; with Room 0, by the plain curve shader generated from
+xrapp5's `kCurveHlsl`. The quads are then not submitted. `--room-dump` checks
+either pass against `RoomPixel` or `CurvedPixel` on the warped pictures.
 
 ## Build and run the probe
 
