@@ -1,15 +1,17 @@
 # Linux development
 
 The port design and release gates are in [LINUX.md](../LINUX.md). This directory
-contains a Linux OpenXR/Vulkan synthetic renderer, a PNG still-image path with
-ZipDepth, and prerequisite probes. Live capture and the desktop controller are
-still under development.
+contains a Linux OpenXR/Vulkan renderer, static and live ZipDepth paths,
+a portal/PipeWire capture adapter, a basic controller, and prerequisite probes.
+The controller and packaging are still under development.
 
 ## Build
 
 Install a C++17 compiler, CMake, Vulkan development headers, and
-glslangValidator. The model probe is built when ONNX Runtime development headers
-and library are found. The PNG and model headset mode also requires libpng.
+glslangValidator. The capture path also needs libportal, PipeWire and GLib
+GIO development headers. The model probe is built when ONNX Runtime development
+headers and library are found. The PNG and model headset mode also requires
+libpng.
 
 ```sh
 cmake -S linux -B build/linux -DCMAKE_BUILD_TYPE=Release
@@ -78,6 +80,36 @@ still-image run passed prep and warp comparison. With the headset active,
 the 15-second test reached XR_SESSION_STATE_FOCUSED and submitted 1,311
 image-bearing frames with no runtime skips. The user confirmed the stereo
 still image looked correct in the PICO 4. The model probe also reports the CPU/GPU depth difference.
+
+## Live source and early Linux controller
+
+`--live` opens the desktop ScreenCast chooser and displays a selected window
+or monitor in the headset. It uses flat depth unless `--cuda` is added;
+`--live --cuda` runs checked ZipDepth on a separate inference worker and uses
+the newest completed depth. `--until-stop` runs until SIGINT or SIGTERM. The
+SteamVR loader under the user's standard Steam install is found automatically
+when no system OpenXR loader is installed; `VRX_OPENXR_LOADER` overrides it.
+
+```sh
+build/linux/vrx-xr-synthetic --until-stop --live --cuda
+```
+
+The early controller requires Python 3 and PyQt6. It starts the engine,
+opens the portal chooser, stops the process, displays logs, and saves named
+launch profiles under the XDG config directory. Profiles currently store only
+the flat/CUDA depth choice. It has no screen placement or live settings
+controls yet. Set `VRX_LINUX_ENGINE` if the executable is outside the normal
+`build/linux-release` or `build/linux` locations. When using the isolated CUDA
+runtime bundle, start the controller with the same `LD_LIBRARY_PATH` used for
+the command-line renderer.
+
+```sh
+python3 linux/controller.py
+```
+
+Stopping during an active OpenXR session requests clean SIGTERM shutdown.
+If the portal chooser has not yet returned, the controller forces shutdown
+after five seconds.
 
 ## Build and run the probe
 

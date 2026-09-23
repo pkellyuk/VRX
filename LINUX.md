@@ -306,6 +306,16 @@ a three-second synthetic regression had zero of 774,144 tensor values
 outside the established 0.0028 tolerance, with worst error 0.0000124.
 
 
+L4 has begun with `linux/controller.py`, an early PyQt6 session window.
+It starts the engine in `--until-stop --live` mode, offers flat or strict
+CUDA ZipDepth, shows process output, stops an active session by SIGTERM,
+and saves named launch profiles atomically under the XDG config directory.
+The engine's `--until-stop` mode was checked with a synthetic headset run:
+SIGTERM ended it cleanly after 1,180 image-bearing OpenXR frames and zero
+runtime skips. An offscreen Qt/profile smoke check passed. The controller
+still needs live screen/depth controls, profile migration, packaging and an
+end-to-end UI-driven headset run before L4 acceptance.
+
 ## Milestones and acceptance gates
 
 | Gate | Deliverable | Required evidence |

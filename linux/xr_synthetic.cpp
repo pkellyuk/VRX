@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,8 @@
 #include <vector>
 
 namespace {
+volatile std::sig_atomic_t stopRequested = 0;
+void OnStopSignal(int) { stopRequested = 1; }
 struct XrFns {
     PFN_xrGetInstanceProcAddr get = nullptr;
     PFN_xrCreateInstance createInstance = nullptr;
@@ -338,7 +341,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     bool referenceMatched = prepMatched;
     bool captureLost = false;
     bool depthFailed = false;
-    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count() < seconds) {
+    while (!stopRequested && (seconds == 0 ||
+           std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count() < seconds)) {
         XrEventDataBuffer event{};
         event.type = XR_TYPE_EVENT_DATA_BUFFER;
         XrResult eventResult = xr.pollEvent(instance, &event);
@@ -516,13 +520,14 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
 } // namespace
 
 int main(int argc, char** argv) {
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     double seconds = 10.0;
     const char* stillPath = nullptr;
     const char* modelPath = "bench/models/zipdepth_faithful_fp16_672x384.onnx";
-    bool cuda = false, live = false, durationSeen = false;
+    bool cuda = false, live = false, durationSeen = false, untilStop = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("vrx-xr-synthetic [seconds=10] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]");
+            std::puts("vrx-xr-synthetic [seconds=10 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]");
             std::puts("--live selects a portal source; add --cuda for asynchronous ZipDepth");
             std::puts("VRX_OPENXR_LOADER, VRX_WARP_SPV and VRX_PREP_SPV override runtime paths");
             return 0;
@@ -531,6 +536,7 @@ int main(int argc, char** argv) {
         else if (std::strncmp(argv[i], "--model=", 8) == 0) modelPath = argv[i] + 8;
         else if (std::strcmp(argv[i], "--cuda") == 0) cuda = true;
         else if (std::strcmp(argv[i], "--live") == 0) live = true;
+        else if (std::strcmp(argv[i], "--until-stop") == 0) untilStop = true;
         else if (!durationSeen) {
             char* end = nullptr;
             seconds = std::strtod(argv[i], &end);
@@ -538,9 +544,11 @@ int main(int argc, char** argv) {
             durationSeen = true;
         } else { std::fputs("Unexpected argument\n", stderr); return 2; }
     }
-    if (seconds <= 0 || seconds > 120 || (cuda && !stillPath && !live) || (live && stillPath) ||
+    if (untilStop) seconds = 0;
+    if ((untilStop && durationSeen) || (!untilStop && (seconds <= 0 || seconds > 120)) ||
+        (cuda && !stillPath && !live) || (live && stillPath) ||
         (stillPath && !*stillPath) || (modelPath && !*modelPath)) {
-        std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]\n", stderr);
+        std::fputs("usage: vrx-xr-synthetic [0 < seconds <= 120 | --until-stop] [--still=picture.png] [--model=model.onnx] [--cuda] [--live]\n", stderr);
         return 2;
     }
 #ifndef VRX_HAS_CAPTURE
@@ -552,6 +560,8 @@ int main(int argc, char** argv) {
 #ifndef VRX_HAS_LIVE_DEPTH
     if (live && cuda) { std::fputs("Live ZipDepth support was not built\n", stderr); return 2; }
 #endif
+    std::signal(SIGINT, OnStopSignal);
+    std::signal(SIGTERM, OnStopSignal);
     const char* path = std::getenv("VRX_OPENXR_LOADER");
     try {
         return Run(seconds, path && *path ? path : "libopenxr_loader.so.1", stillPath, modelPath, cuda, live);
