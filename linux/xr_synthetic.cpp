@@ -471,6 +471,9 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     if (roomEnabled) layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
     const auto beginTime = std::chrono::steady_clock::now();
     bool running = false;
+    // The runtime ended the session: EXITING is a normal end (SteamVR or the
+    // user closed the app), LOSS_PENDING an error (the session was lost).
+    bool sessionExiting = false, sessionLost = false;
     int frames = 0;
     int renderedFrames = 0;
     int skippedFrames = 0;
@@ -514,6 +517,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                     running = false;
                 } else if (state->state == XR_SESSION_STATE_EXITING || state->state == XR_SESSION_STATE_LOSS_PENDING) {
                     running = false;
+                    sessionExiting = state->state == XR_SESSION_STATE_EXITING;
+                    sessionLost = !sessionExiting;
                     break;
                 }
             }
@@ -522,6 +527,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             eventResult = xr.pollEvent(instance, &event);
         }
         if (XR_FAILED(eventResult)) { std::fprintf(stderr, "xrPollEvent: %d\n", eventResult); break; }
+        if (sessionExiting) { std::puts("OpenXR session ended by the runtime"); break; }
+        if (sessionLost) { std::fputs("OpenXR session lost\n", stderr); break; }
 #ifdef VRX_HAS_CAPTURE
         if (live && !capture->Healthy()) {
             std::fputs("Live capture stopped; select a source again\n", stderr);
@@ -882,7 +889,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     vkDestroyInstance(vkInstance, nullptr);
     xr.destroyInstance(instance);
     dlclose(library);
-    return renderedFrames > 0 && referenceMatched && !captureLost && !depthFailed ? 0 : 1;
+    return renderedFrames > 0 && referenceMatched && !captureLost && !depthFailed && !sessionLost ? 0 : 1;
 }
 } // namespace
 
