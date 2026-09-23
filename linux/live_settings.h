@@ -31,6 +31,8 @@ struct LiveSettings {
     // had the glow before the option existed.
     int ambilight = 1;
     int ambilightStrength = 85;
+    // VRXL 7: the world colour round the screen, 0xRRGGBB (black by default).
+    uint32_t worldRgb = 0;
 };
 
 inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
@@ -43,7 +45,7 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
     std::istringstream input(line);
     if (!(input >> tag >> version >> candidate.width >> candidate.distance >>
           candidate.height >> candidate.horizontal >> candidate.strength) ||
-        tag != "VRXL" || version < 1 || version > 6) return false;
+        tag != "VRXL" || version < 1 || version > 7) return false;
     if (version == 1) {
         candidate.room = 0;
     } else if (!(input >> candidate.room >> candidate.glass >> candidate.reflect >>
@@ -52,6 +54,7 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
     if (version >= 4 && !(input >> candidate.timing)) return false;
     if (version >= 5 && !(input >> candidate.curve)) return false;
     if (version >= 6 && !(input >> candidate.ambilight >> candidate.ambilightStrength)) return false;
+    if (version >= 7 && !(input >> candidate.worldRgb)) return false;
     if ((input >> extra) ||
         !std::isfinite(candidate.width) || candidate.width < 0.5f || candidate.width > 10.0f ||
         !std::isfinite(candidate.distance) || candidate.distance < 0.5f || candidate.distance > 8.0f ||
@@ -62,7 +65,7 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
         candidate.reflect < 0 || candidate.reflect > 100 || candidate.light < 0 || candidate.light > 100 ||
         candidate.lightRgb > 0xFFFFFFu || candidate.timing < 0 || candidate.timing > 2 ||
         candidate.curve < 0 || candidate.curve > 100 || candidate.ambilight < 0 || candidate.ambilight > 1 ||
-        candidate.ambilightStrength < 0 || candidate.ambilightStrength > 100) return false;
+        candidate.ambilightStrength < 0 || candidate.ambilightStrength > 100 || candidate.worldRgb > 0xFFFFFFu) return false;
     out = candidate;
     return true;
 }

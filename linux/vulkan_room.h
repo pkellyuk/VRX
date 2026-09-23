@@ -37,6 +37,10 @@ public:
     // (no room): RecordGlow copies it into a GlowWidth x GlowHeight image.
     bool GlowLayer() const { return glowLayer_; }
     void RecordGlow(VkCommandBuffer command, VkImage destination);
+    // The last Prepare wants the world colour as its own layer behind a flat
+    // screen (no room; a black world needs none). WorldRgb is 0xRRGGBB.
+    bool WorldLayer() const { return worldLayer_; }
+    uint32_t WorldRgb() const { return worldRgb_; }
     void Record(VkCommandBuffer command, VkImage destination);
     void EnableCapture() { capture_ = true; }
     void SaveCapture(const char* path) const;
@@ -69,6 +73,8 @@ private:
     bool curveOnly_ = false;          // the curved screen alone: no room passes
     bool glowOn_ = true;              // the ambilight is on
     bool glowLayer_ = false;          // ... and shown as its own layer behind a flat screen
+    uint32_t worldRgb_ = 0;           // the world colour round the screen
+    bool worldLayer_ = false;         // ... shown as its own layer behind a flat screen
     RoomView view_;
     Buffer pictureReadback_;          // the warped pictures of a captured frame, for CompareReference
     std::chrono::steady_clock::time_point lastPrepare_{};

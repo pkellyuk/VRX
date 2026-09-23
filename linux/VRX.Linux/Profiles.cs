@@ -9,7 +9,7 @@ namespace Vrx.Linux;
 public sealed record LinuxProfile(
     bool Cuda, double Width, double Distance, double Height, double Horizontal, double Strength,
     int Room, int Glass, int Reflect, int Light, string LightColor, int Timing = LinuxProfile.TimingDelayed,
-    int Curve = 0, bool Ambilight = true, int AmbilightStrength = 85)
+    int Curve = 0, bool Ambilight = true, int AmbilightStrength = 85, string WorldColor = "#000000")
 {
     // Game frame timing (frame_timing.h): which captured frame is shown with the depth.
     // Linux defaults to delayed, which looked smoother than latest on the PICO 4.
@@ -20,7 +20,7 @@ public sealed record LinuxProfile(
     // Ambilight: the glow round the screen and its strength (ambilight.h). On by default on
     // Linux (Windows starts with it off), where the room always had the glow before.
     public static readonly LinuxProfile Default =
-        new(true, 2.0, 2.0, 0.0, 0.0, 1.0, 30, 60, 25, 30, "#FFB46B", TimingDelayed, 0, true, 85);
+        new(true, 2.0, 2.0, 0.0, 0.0, 1.0, 30, 60, 25, 30, "#FFB46B", TimingDelayed, 0, true, 85, "#000000");
 
     // The same ranges the engine accepts (live_settings.h).
     public static readonly (double Low, double High) WidthRange = (0.5, 10.0);
@@ -45,17 +45,26 @@ public sealed record LinuxProfile(
                 throw new ArgumentException($"{name} must be between {PercentLow} and {PercentHigh}");
         if (Timing < TimingLatest || Timing > TimingMatched)
             throw new ArgumentException("Timing must be latest, delayed or matched");
-        return this with { LightColor = NormalizeColor(LightColor) };
+        return this with { LightColor = NormalizeColor(LightColor), WorldColor = NormalizeColor(WorldColor, "World") };
     }
 
-    public int LightRgb => int.Parse(NormalizeColor(LightColor).AsSpan(1), NumberStyles.HexNumber,
-                                     CultureInfo.InvariantCulture);
+    public int LightRgb => Rgb(LightColor);
+    public int WorldRgb => Rgb(WorldColor);
 
-    public static string NormalizeColor(string color)
+    public static int Rgb(string color) =>
+        int.Parse(NormalizeColor(color).AsSpan(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+
+    public static bool TryNormalizeColor(string color, out string normalized)
+    {
+        try { normalized = NormalizeColor(color); return true; }
+        catch (ArgumentException) { normalized = ""; return false; }
+    }
+
+    public static string NormalizeColor(string color, string what = "Light")
     {
         var text = color.Trim();
         if (text.Length != 7 || text[0] != '#' || !text.Skip(1).All(Uri.IsHexDigit))
-            throw new ArgumentException("Light colour must be #RRGGBB");
+            throw new ArgumentException($"{what} colour must be #RRGGBB");
         return text.ToUpperInvariant();
     }
 
@@ -140,7 +149,8 @@ public static class ProfileStore
             Number("horizontal", d.Horizontal), Number("strength", d.Strength),
             Percent("room", d.Room), Percent("glass", d.Glass), Percent("reflect", d.Reflect),
             Percent("light", d.Light), Color("light_color", d.LightColor), Timing(), Percent("curve", d.Curve),
-            Flag("ambilight", d.Ambilight), Percent("ambilight_strength", d.AmbilightStrength)).Normalized();
+            Flag("ambilight", d.Ambilight), Percent("ambilight_strength", d.AmbilightStrength),
+            Color("world_color", d.WorldColor)).Normalized();
     }
 
     // Written to a temporary file and renamed, so a crash never leaves half a file.
@@ -172,6 +182,7 @@ public static class ProfileStore
                 writer.WriteNumber("curve", p.Curve);
                 writer.WriteBoolean("ambilight", p.Ambilight);
                 writer.WriteNumber("ambilight_strength", p.AmbilightStrength);
+                writer.WriteString("world_color", p.WorldColor);
                 writer.WriteEndObject();
             }
             writer.WriteEndObject();

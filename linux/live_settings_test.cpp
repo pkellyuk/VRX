@@ -40,10 +40,15 @@ int main() {
     assert(s.ambilight == 1 && s.ambilightStrength == 85);   // the glow's defaults
     // VRXL 6: the ambilight.
     assert(Read("VRXL 6 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1 40 0 55\n", s));
-    assert(s.ambilight == 0 && s.ambilightStrength == 55 && s.curve == 40);
+    assert(s.ambilight == 0 && s.ambilightStrength == 55 && s.curve == 40 && s.worldRgb == 0);
+    // VRXL 7: the world colour.
+    assert(Read("VRXL 7 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1 40 0 55 1842204\n", s));
+    assert(s.worldRgb == 0x1C1C1Cu && s.ambilightStrength == 55);
     // Rejected, leaving the previous settings.
     const char* bad[] = {
-        "VRXL 7 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0\n", // unknown version
+        "VRXL 8 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0 0\n", // unknown version
+        "VRXL 7 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 16777216\n", // world colour above 0xFFFFFF
+        "VRXL 7 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85\n",   // missing world colour
         "VRXL 6 2 2 0 0 1 30 60 25 30 0 1 0 0 2 85\n",   // ambilight neither on nor off
         "VRXL 6 2 2 0 0 1 30 60 25 30 0 1 0 0 1 101\n",  // strength above range
         "VRXL 6 2 2 0 0 1 30 60 25 30 0 1 0 0 1\n",      // missing strength

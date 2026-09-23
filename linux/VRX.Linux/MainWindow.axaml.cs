@@ -20,6 +20,17 @@ public partial class MainWindow : Window
         ("Neutral (4000 K)", "#FFD1A3"), ("Daylight (6500 K)", "#FFF9FD"),
     };
 
+    // World colours: the WPF app's presets. Anything else shows as "Custom".
+    static readonly (string Name, string Hex)[] WorldPresets =
+    {
+        ("Black (default)", "#000000"), ("Charcoal", "#1C1C1E"), ("Slate", "#2A3441"), ("Midnight blue", "#0B1530"),
+        ("Deep purple", "#1E0F2E"), ("Forest", "#0F2418"), ("Warm dark", "#2A1E14"), ("Cinema red", "#2B0A0A"),
+        ("Grey", "#4A4A4A"), ("Dusk", "#33415C"), ("Overcast", "#5A6270"),
+    };
+    static int CustomWorldIndex => WorldPresets.Length;
+    bool worldSyncing;
+    string lastWorldHex = "#000000";   // the last whole colour in the box
+
     const double ExpertWidth = 1080, ExpertHeight = 900, ExpertMinWidth = 800, ExpertMinHeight = 640, EasyWidth = 760;
     const int MaxLogLines = 500;
 
@@ -76,6 +87,7 @@ public partial class MainWindow : Window
             slider.IsSnapToTickEnabled = true;
         }
 
+        WorldList.ItemsSource = WorldPresets.Select(preset => preset.Name).Append("Custom").ToList();
         FillProfileLists();
         LoadProfile(current);
         (appSettings.Source == AppSettings.SourceWindow ? SourceWindow :
@@ -100,6 +112,9 @@ public partial class MainWindow : Window
             slider.ValueChanged += (_, _) => SettingsChanged();
         CudaCheck.IsCheckedChanged += (_, _) => SettingsChanged();
         AmbilightCheck.IsCheckedChanged += (_, _) => SettingsChanged();
+        WorldList.SelectionChanged += (_, _) => WorldListChanged();
+        WorldHex.TextChanged += (_, _) => WorldHexChanged();
+        WorldHex.LostFocus += (_, _) => { if (!LinuxProfile.TryNormalizeColor(WorldHex.Text ?? "", out _)) WorldHex.Text = lastWorldHex; };
         TimingList.SelectionChanged += (_, _) => SettingsChanged();
         LightColourList.SelectionChanged += (_, _) => SettingsChanged();
         CardProfile.SelectionChanged += (_, _) => ProfileChosen(CardProfile.SelectedItem as string);
@@ -251,12 +266,42 @@ public partial class MainWindow : Window
         CurveSlider.Value = p.Curve;
         AmbilightCheck.IsChecked = p.Ambilight;
         AmbiStrengthSlider.Value = p.AmbilightStrength;
+        WorldHex.Text = p.WorldColor;
         CudaCheck.IsChecked = p.Cuda;
         TimingList.SelectedIndex = p.Timing;
         FillLightColourList(p.LightColor);
         ProfileName.Text = name;
         loading = wasLoading;
         UpdateValues();
+    }
+
+    // A world preset picked: its colour goes into the box (Custom keeps whatever is there).
+    void WorldListChanged()
+    {
+        int index = WorldList.SelectedIndex;
+        if (worldSyncing || index < 0 || index >= CustomWorldIndex) return;
+        WorldHex.Text = WorldPresets[index].Hex;
+    }
+
+    // The box changed: show the colour, point the list at its preset (or Custom), and
+    // apply it - only once it is a whole colour, so typing does not apply half of one.
+    void WorldHexChanged()
+    {
+        worldSyncing = true;
+        if (!LinuxProfile.TryNormalizeColor(WorldHex.Text ?? "", out var hex))
+        {
+            WorldSwatch.Background = Brushes.Transparent;
+            WorldList.SelectedIndex = CustomWorldIndex;
+            worldSyncing = false;
+            return;
+        }
+        int rgb = LinuxProfile.Rgb(hex);
+        WorldSwatch.Background = new SolidColorBrush(Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb));
+        lastWorldHex = hex;
+        int match = Array.FindIndex(WorldPresets, preset => preset.Hex == hex);
+        WorldList.SelectedIndex = match >= 0 ? match : CustomWorldIndex;
+        worldSyncing = false;
+        SettingsChanged();
     }
 
     // Lists the presets (plus the custom colour, if `hex` is none of them) and selects `hex`.
@@ -289,7 +334,8 @@ public partial class MainWindow : Window
         LightColourList.SelectedIndex >= 0 ? lightHexes[LightColourList.SelectedIndex] : LinuxProfile.Default.LightColor,
         Math.Clamp(TimingList.SelectedIndex, LinuxProfile.TimingLatest, LinuxProfile.TimingMatched),
         (int)Math.Round(CurveSlider.Value),
-        AmbilightCheck.IsChecked == true, (int)Math.Round(AmbiStrengthSlider.Value));
+        AmbilightCheck.IsChecked == true, (int)Math.Round(AmbiStrengthSlider.Value),
+        LinuxProfile.TryNormalizeColor(WorldHex.Text ?? "", out var world) ? world : lastWorldHex);
 
     void SettingsChanged()
     {

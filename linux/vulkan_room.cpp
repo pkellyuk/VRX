@@ -221,6 +221,8 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     // flat one (glowLayer_). It restarts from the picture when turned back on.
     glowOn_=settings.ambilight!=0;
     glowLayer_=false;
+    worldRgb_=settings.worldRgb&0xFFFFFFu;
+    worldLayer_=false;
     if(!glowOn_)glowHistoryValid_=false;
     const float glowHalfW=0.5f*W+kAmbiMargin*W,glowHalfH=0.5f*H+kAmbiMargin*W;
     auto glow=[&](){if(glowOn_)ComputeGlow(glowSource,glowWidth,glowHeight,W,H,settings.ambilightStrength);};
@@ -240,6 +242,10 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
         curveConstants_.halfWidth=cylinder_.halfWidth;curveConstants_.halfHeight=cylinder_.halfHeight;
         curveConstants_.glowHalfW=glowHalfW;curveConstants_.glowHalfH=glowHalfH;
         curveConstants_.glowRadius=cylinder_.radius+kAmbiBehind;
+        // The world colour as stored bytes 0..1 (sRGB-encoded, like the picture).
+        curveConstants_.world[0]=float((worldRgb_>>16)&255)/255.0f;
+        curveConstants_.world[1]=float((worldRgb_>>8)&255)/255.0f;
+        curveConstants_.world[2]=float(worldRgb_&255)/255.0f;
         curveConstants_.world[3]=1.0f;
         for(int e=0;e<2;e++){
             auto& v=curveConstants_.eye[e];
@@ -257,7 +263,7 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     auto curveAlone=[&](){
         curveOnly_=cylinder_.curved;
         if(curveOnly_)curveConstants(glowOn_,glowHalfW,glowHalfH);
-        else glowLayer_=glowOn_;
+        else{glowLayer_=glowOn_;worldLayer_=worldRgb_!=0;}
         glow();
         return curveOnly_;
     };
@@ -298,7 +304,7 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     const float alpha=geometryChanged?1.0f:1.0f-std::exp(-dt/kRoomLightTau);
     lastPrepare_=now;
     RoomLook look;look.glass=settings.glass;look.reflect=settings.reflect;look.light=settings.light;look.lightRgb=settings.lightRgb;
-    shading_=MakeRoomShading(room_,settings.room,0,W*H,look);
+    shading_=MakeRoomShading(room_,settings.room,worldRgb_,W*H,look);
     roomConstants_=MakeRoomConstants(room_,shading_,layout_,view,int(colorWidth_),int(colorHeight_),alpha);
     mirrorW_=roomConstants_.mirrorW;mirrorH_=roomConstants_.mirrorH;
     curveConstants(glowOn_,glowHalfW,glowHalfH);

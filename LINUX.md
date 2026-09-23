@@ -164,8 +164,8 @@ Store Linux settings under XDG config/data locations. Use a versioned Linux
 profile schema and a separate versioned live-settings snapshot; write both
 atomically and validate ranges before applying them. `VRXL 1` snapshots carry width, distance, height, horizontal offset and stereo
 strength and load with the room off. `VRXL 3` adds a recenter counter after the
-`VRXL 2` fields, `VRXL 4` the game frame timing (latest, delayed, matched) and `VRXL 5` the screen curve (0–100) and `VRXL 6` the ambilight (on/off and strength). `VRXL 2` appends Room, Glass, Reflections,
-ceiling light and RGB light colour. The desktop app writes version 6 and can
+`VRXL 2` fields, `VRXL 4` the game frame timing (latest, delayed, matched) and `VRXL 5` the screen curve (0–100) and `VRXL 6` the ambilight (on/off and strength) and `VRXL 7` the world colour. `VRXL 2` appends Room, Glass, Reflections,
+ceiling light and RGB light colour. The desktop app writes version 7 and can
 load older Linux profiles with defaults for those controls. Numeric serialization
 must be culture-independent. Windows JSON profiles and the `VRX 11` desktop
 snapshot require no direct compatibility or import path. Never use a Windows

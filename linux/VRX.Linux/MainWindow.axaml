@@ -151,7 +151,16 @@
        <Slider Name="AmbiStrengthSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10"
                ToolTip.Tip="How bright the glow is next to the screen; it always fades out towards its edge. Applies live; saved in the profile."/>
       </StackPanel>
-      <TextBlock Classes="Hint" Text="A world colour is not available on Linux yet."/>
+      <TextBlock Text="World colour" Classes="Label" Margin="0,4,0,6"/>
+      <DockPanel Margin="0,0,0,4">
+       <Border DockPanel.Dock="Right" Width="32" Height="28" CornerRadius="4" BorderBrush="#324761" BorderThickness="1" Margin="8,0,0,0">
+        <Border Name="WorldSwatch" CornerRadius="3" Background="Black"/>
+       </Border>
+       <TextBox Name="WorldHex" DockPanel.Dock="Right" Width="96" MaxLength="7" Margin="8,0,0,0" VerticalContentAlignment="Center"
+                ToolTip.Tip="Any colour as #RRGGBB. Leaving the box with half a colour in it puts the last whole one back."/>
+       <ComboBox Name="WorldList" HorizontalAlignment="Stretch"
+                 ToolTip.Tip="The colour of the space around the screen, instead of black. Dark colours keep the picture's contrast; the ambilight glows over it, and it tints the room. Applies live; saved in the profile."/>
+      </DockPanel>
      </StackPanel>
     </l:Section>
 
