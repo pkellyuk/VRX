@@ -53,6 +53,10 @@ if (!(Test-Path -LiteralPath $venvPython))
 & $venvPython -m pip install --quiet --disable-pip-version-check -r (Join-Path $PSScriptRoot 'models-requirements.txt')
 if ($LASTEXITCODE) { throw 'pip install of the pinned export tools failed' }
 $env:PYTHONUTF8 = '1'
+# PyTorch picks its CPU kernels by instruction set, and the export folds weights with them:
+# the released models were made on an AVX2 CPU, so use the AVX2 kernels everywhere.
+$env:ATEN_CPU_CAPABILITY = 'avx2'
+Write-Output "build-models: CPU $((Get-CimInstance Win32_Processor | Select-Object -First 1).Name), PyTorch kernels $env:ATEN_CPU_CAPABILITY"
 
 if ($missing -contains 'model_fixed_686x392.onnx')
 {
