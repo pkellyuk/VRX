@@ -125,8 +125,10 @@ VulkanWarp::VulkanWarp(VkPhysicalDevice gpu, VkDevice device, VkFormat format,
     CreateBuffer(depth_, 2 * colorPixels * 4, storage | transferSrc, false);
     CreateBuffer(source_, 2 * colorPixels * 4, storage, false);
     CreateBuffer(landed_, 2 * colorPixels * 4, storage, false);
-    CreateBuffer(sceneStaging_, colorPixels * 4, transferSrc, true);
-    CreateBuffer(nearnessStaging_, depthPixels * 4, transferSrc, true);
+    for (uint32_t slot = 0; slot < kFrameSlots; ++slot) {
+        CreateBuffer(sceneStaging_[slot], colorPixels * 4, transferSrc, true);
+        CreateBuffer(nearnessStaging_[slot], depthPixels * 4, transferSrc, true);
+    }
     CreateBuffer(readback_, 2 * 2 * colorPixels * 4, transferDst, true);
 
     VkDescriptorSetLayoutBinding bindings[kBindings]{};
@@ -219,8 +221,8 @@ VulkanWarp::~VulkanWarp() {
     if (pipelineLayout_) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
     if (descriptorPool_) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
     if (descriptorLayout_) vkDestroyDescriptorSetLayout(device_, descriptorLayout_, nullptr);
-    for (Buffer* buffer : {&readback_, &nearnessStaging_, &sceneStaging_, &landed_, &source_,
-                           &depth_, &color_, &nearness_, &scene_})
+    for (Buffer* buffer : {&readback_, &nearnessStaging_[0], &nearnessStaging_[1], &sceneStaging_[0],
+                           &sceneStaging_[1], &landed_, &source_, &depth_, &color_, &nearness_, &scene_})
         DestroyBuffer(*buffer);
 }
 
@@ -269,14 +271,14 @@ void VulkanWarp::DestroyBuffer(Buffer& buffer) {
 void VulkanWarp::UploadColor(const std::vector<uint32_t>& rgba) {
     if (rgba.size() != size_t(colorWidth_) * colorHeight_)
         throw std::runtime_error("Stereo colour dimensions differ from the warp");
-    std::memcpy(sceneStaging_.mapped, rgba.data(), rgba.size() * sizeof(uint32_t));
+    std::memcpy(sceneStaging_[slot_].mapped, rgba.data(), rgba.size() * sizeof(uint32_t));
     colorPending_ = true;
 }
 
 void VulkanWarp::UploadNearness(const std::vector<float>& nearness) {
     if (nearness.size() != size_t(depthPixels))
         throw std::runtime_error("Depth dimensions differ from the warp");
-    std::memcpy(nearnessStaging_.mapped, nearness.data(), nearness.size() * sizeof(float));
+    std::memcpy(nearnessStaging_[slot_].mapped, nearness.data(), nearness.size() * sizeof(float));
     nearnessPending_ = true;
 }
 
@@ -296,8 +298,8 @@ void VulkanWarp::RecordUpload(VkCommandBuffer command) {
         barrier.buffer = to.buffer;
         barrier.size = VK_WHOLE_SIZE;
     };
-    if (colorPending_) copy(sceneStaging_, scene_, VkDeviceSize(colorWidth_) * colorHeight_ * 4);
-    if (nearnessPending_) copy(nearnessStaging_, nearness_, depthPixels * 4);
+    if (colorPending_) copy(sceneStaging_[slot_], scene_, VkDeviceSize(colorWidth_) * colorHeight_ * 4);
+    if (nearnessPending_) copy(nearnessStaging_[slot_], nearness_, depthPixels * 4);
     vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          0, 0, nullptr, count, barriers, 0, nullptr);
     colorPending_ = nearnessPending_ = false;

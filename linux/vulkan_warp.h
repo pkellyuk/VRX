@@ -15,6 +15,9 @@ public:
     ~VulkanWarp();
     VulkanWarp(const VulkanWarp&) = delete;
     VulkanWarp& operator=(const VulkanWarp&) = delete;
+    static constexpr uint32_t kFrameSlots = 2;   // frames the CPU may record ahead of the GPU
+    // Staging for Upload*/RecordUpload: each frame in flight has its own.
+    void SetFrameSlot(uint32_t slot) { slot_ = slot % kFrameSlots; }
     void UploadColor(const std::vector<uint32_t>& rgba);   // colorWidth x colorHeight packed RGBA
     void UploadNearness(const std::vector<float>& nearness); // depth grid, 0 far .. 1 near
     void RecordUpload(VkCommandBuffer command);
@@ -52,7 +55,8 @@ private:
     bool depthAvailable_ = true;
     bool colorPending_ = false, nearnessPending_ = false;
     Buffer scene_, nearness_, color_, depth_, source_, landed_;
-    Buffer sceneStaging_, nearnessStaging_, readback_;
+    Buffer sceneStaging_[kFrameSlots], nearnessStaging_[kFrameSlots], readback_;
+    uint32_t slot_ = 0;
     VkDescriptorSetLayout descriptorLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSet descriptorSet_ = VK_NULL_HANDLE;

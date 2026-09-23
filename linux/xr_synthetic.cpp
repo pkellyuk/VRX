@@ -395,13 +395,17 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cbi.commandPool = pool;
     cbi.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cbi.commandBufferCount = 1;
-    VkCommandBuffer command = VK_NULL_HANDLE;
-    VK_CHECK(vkAllocateCommandBuffers(device, &cbi, &command));
+    // Two frames in flight: the CPU records frame N+1 while the GPU runs frame N.
+    constexpr uint32_t kFrameSlots = vrx::VulkanWarp::kFrameSlots;
+    cbi.commandBufferCount = kFrameSlots;
+    VkCommandBuffer commands[kFrameSlots]{};
+    VK_CHECK(vkAllocateCommandBuffers(device, &cbi, commands));
     VkFenceCreateInfo fci{};
     fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    VkFence fence = VK_NULL_HANDLE;
-    VK_CHECK(vkCreateFence(device, &fci, nullptr, &fence));
+    VkFence fences[kFrameSlots]{};
+    for (VkFence& slotFence : fences) VK_CHECK(vkCreateFence(device, &fci, nullptr, &slotFence));
+    VkCommandBuffer command = commands[0];
+    VkFence fence = fences[0];
 
     std::vector<unsigned char> stillRgb;
     std::vector<float> stillDepth;
@@ -495,6 +499,55 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     constexpr uint32_t ambientWidth = vrx::VulkanPrep::width / 4, ambientHeight = vrx::VulkanPrep::height / 4;
     std::vector<uint32_t> ambient(size_t(ambientWidth) * ambientHeight, 0xff000000u);
     bool laterDumped = false;
+    // What each in-flight frame hands on once its GPU work has completed.
+    struct SlotWork {
+        bool submitted = false;
+        bool liveNew = false;            // its model input goes to depth and room glow
+        uint64_t sequence = 0, layout = 0;
+        double arrival = 0;
+        bool heldGpuFrame = false;       // its DMA-BUF goes back to the source
+    };
+    SlotWork slots[kFrameSlots];
+    uint64_t frameIndex = 0;
+    // Finish a slot's frame: wait for it (or only if already done), then pass on its results.
+    auto completeSlot = [&](uint32_t slot, bool wait) -> bool {
+        SlotWork& work = slots[slot];
+        if (!work.submitted) return true;
+        if (wait) {
+            if (vkWaitForFences(device, 1, &fences[slot], VK_TRUE, UINT64_MAX) != VK_SUCCESS) return false;
+        } else if (vkGetFenceStatus(device, fences[slot]) != VK_SUCCESS) {
+            return true;
+        }
+        if (vkResetFences(device, 1, &fences[slot]) != VK_SUCCESS) return false;
+        work.submitted = false;
+        if (work.liveNew) {
+            const float* input = prep->ModelInput(slot);
+#ifdef VRX_HAS_LIVE_DEPTH
+            if (liveDepth)
+                liveDepth->Submit(std::vector<float>(input, input + 3 * modelPlane),
+                                  work.sequence, work.layout, work.arrival);
+#endif
+            if (room)
+                for (uint32_t y = 0; y < ambientHeight; ++y)
+                    for (uint32_t x = 0; x < ambientWidth; ++x) {
+                        const size_t i = size_t(y * 4 + 2) * vrx::VulkanPrep::width + x * 4 + 2;
+                        auto byte = [&](size_t plane) {
+                            return uint32_t(std::clamp(input[plane * modelPlane + i], 0.0f, 1.0f) * 255.0f + 0.5f);
+                        };
+                        ambient[size_t(y) * ambientWidth + x] = byte(0) | (byte(1) << 8) | (byte(2) << 16) | 0xff000000u;
+                    }
+        }
+#ifdef VRX_HAS_CAPTURE
+        if (work.heldGpuFrame) capture->ReleaseGpuFrame(work.sequence);
+#endif
+        work = {};
+        return true;
+    };
+    auto completeAll = [&]() -> bool {
+        for (uint32_t slot = 0; slot < kFrameSlots; ++slot)
+            if (!completeSlot(slot, true)) return false;
+        return true;
+    };
     auto nextSettingsCheck = std::chrono::steady_clock::now();
     while (!stopRequested && (seconds == 0 ||
            std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count() < seconds)) {
@@ -562,10 +615,16 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 }
             }
         }
+        // Pass on finished frames promptly (depth input, glow, DMA-BUF release).
+        for (uint32_t slot = 0; slot < kFrameSlots; ++slot)
+            if (!completeSlot(slot, false)) { std::fputs("Vulkan frame completion failed\n", stderr); return 1; }
         if (!running) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); continue; }
         XrFrameWaitInfo wi{}; wi.type = XR_TYPE_FRAME_WAIT_INFO;
         XrFrameState state{}; state.type = XR_TYPE_FRAME_STATE;
         XR_CHECK(xr.waitFrame(session, &wi, &state));
+        // The previous frame has usually finished while xrWaitFrame blocked.
+        for (uint32_t slot = 0; slot < kFrameSlots; ++slot)
+            if (!completeSlot(slot, false)) { std::fputs("Vulkan frame completion failed\n", stderr); return 1; }
         XrFrameBeginInfo fbi{}; fbi.type = XR_TYPE_FRAME_BEGIN_INFO;
         XR_CHECK(xr.beginFrame(session, &fbi));
         const auto frameWorkStart = std::chrono::steady_clock::now();
@@ -615,21 +674,36 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             std::vector<float> truth;
             bool depthAvailable = true;
             const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - beginTime).count();
+            // Reuse the slot of the frame two back: it has normally completed already.
+            const uint32_t slot = uint32_t(frameIndex++ % kFrameSlots);
+            const auto slotWaitStart = std::chrono::steady_clock::now();
+            if (!completeSlot(slot, true)) { std::fputs("Vulkan frame wait failed\n", stderr); return 1; }
+            const double slotWaitMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - slotWaitStart).count();
+            command = commands[slot];
+            fence = fences[slot];
+            warp->SetFrameSlot(slot);
+            prep->SetFrameSlot(slot);
             bool liveNew = false;                 // a new source frame enters the colour buffer
+            bool heldGpuFrame = false;
             vrx::DmabufImage* scaleSource = nullptr;
 #ifdef VRX_HAS_CAPTURE
             if (live) {
                 if (capture->DmaBuf() && captureScale) {
                     vrx::PortalCapture::GpuFrame frame;
                     if (capture->AcquireGpuFrame(frame)) {
-                        // The previous frame's GPU work has completed (its fence was waited).
+                        heldGpuFrame = true;
+                        // Imported images and their descriptor sets may be in use by
+                        // frames in flight: finish those before replacing any.
                         if (frame.bufferGeneration != importGeneration) {
+                            if (!completeAll()) return 1;
                             captureScale->ForgetViews();
                             imports.clear();
                             importGeneration = frame.bufferGeneration;
                         }
                         auto& image = imports[frame.bufferId];
                         if (!image || image->Width() != frame.width || image->Height() != frame.height) {
+                            if (!completeAll()) return 1;
                             captureScale->ForgetViews();
                             image = std::make_unique<vrx::DmabufImage>(gpu, device, frame.fd, frame.width,
                                 frame.height, VK_FORMAT_B8G8R8A8_UNORM, frame.modifier, frame.offset, frame.stride);
@@ -700,6 +774,13 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             VkCommandBufferBeginInfo cbbi{}; cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             VK_CHECK(vkBeginCommandBuffer(command, &cbbi));
+            // Keep GPU frames in order: this frame's writes to shared device-local
+            // buffers and images wait for the previous frame's reads and writes.
+            VkMemoryBarrier previousFrame{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            previousFrame.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+            previousFrame.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+            vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                 0, 1, &previousFrame, 0, nullptr, 0, nullptr);
             warp->RecordUpload(command);
             // The first frame is always checked; with --dump-color, one about six seconds in too.
             const bool laterDump = colorDumpPath && !laterDumped && renderedFrames >= 400 && (!live || liveNew);
@@ -750,36 +831,27 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             submit.pCommandBuffers = &command;
             const auto gpuStart = std::chrono::steady_clock::now();
             VK_CHECK(vkQueueSubmit(queue, 1, &submit, fence));
-            VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX));
+            SlotWork& work = slots[slot];
+            work.submitted = true;
+            work.liveNew = live && liveNew;
+            work.sequence = liveSequence;
+            work.layout = liveLayout;
+            work.arrival = liveArrival;
+            work.heldGpuFrame = heldGpuFrame;
+            // Checked frames read results back now; other frames finish while
+            // the next is recorded.
+            if (checkFrame && !completeSlot(slot, true)) { std::fputs("Vulkan frame wait failed\n", stderr); return 1; }
             {
-                const double ms = std::chrono::duration<double, std::milli>(
+                const double ms = slotWaitMs + std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - gpuStart).count();
-                if (renderedFrames > 0) gpuWaitMs.push_back(ms);
-                else if (roomFrameReady) std::printf("First room frame GPU submit/wait: %.2f ms\n", ms);
+                if (!checkFrame) gpuWaitMs.push_back(ms);
+                else if (roomFrameReady && renderedFrames == 0) std::printf("First room frame GPU submit/wait: %.2f ms\n", ms);
             }
-            VK_CHECK(vkResetFences(device, 1, &fence));
             if (roomFrameReady && renderedFrames == 0) room->PrintTiming();
             if (roomFrameReady && roomDumpPath && renderedFrames == 0) {
                 room->SaveCapture(roomDumpPath);
                 referenceMatched = referenceMatched && room->CompareReference();
                 std::printf("Room eye capture: %s\n", roomDumpPath);
-            }
-            if (live && liveNew) {
-                const float* input = prep->ModelInput();
-#ifdef VRX_HAS_LIVE_DEPTH
-                if (liveDepth)
-                    liveDepth->Submit(std::vector<float>(input, input + 3 * modelPlane),
-                                      liveSequence, liveLayout, liveArrival);
-#endif
-                if (room)
-                    for (uint32_t y = 0; y < ambientHeight; ++y)
-                        for (uint32_t x = 0; x < ambientWidth; ++x) {
-                            const size_t i = size_t(y * 4 + 2) * vrx::VulkanPrep::width + x * 4 + 2;
-                            auto byte = [&](size_t plane) {
-                                return uint32_t(std::clamp(input[plane * modelPlane + i], 0.0f, 1.0f) * 255.0f + 0.5f);
-                            };
-                            ambient[size_t(y) * ambientWidth + x] = byte(0) | (byte(1) << 8) | (byte(2) << 16) | 0xff000000u;
-                        }
             }
             if (checkFrame) {
                 bool matched = true;
@@ -847,7 +919,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                     name, values[values.size() / 2], values[p95], values.size());
     };
     printTiming("Room CPU prepare", roomPrepMs);
-    printTiming("Vulkan submit/wait", gpuWaitMs);
+    printTiming("Vulkan submit and slot wait", gpuWaitMs);
     printTiming("OpenXR endFrame", endFrameMs);
     printTiming("Frame work after beginFrame", frameWorkMs);
 #ifdef VRX_HAS_CAPTURE
@@ -869,13 +941,14 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             timings.arrivalToDepthMedianMs, timings.arrivalToDepthP95Ms);
     }
 #endif
+    completeAll();
     vkDeviceWaitIdle(device);
     imports.clear();
     captureScale.reset();
 #ifdef VRX_HAS_CAPTURE
-    if (capture) capture->ReleaseGpuFrame();
+    if (capture) capture->ReleaseGpuFrames();
 #endif
-    vkDestroyFence(device, fence, nullptr);
+    for (VkFence slotFence : fences) vkDestroyFence(device, slotFence, nullptr);
     vkDestroyCommandPool(device, pool, nullptr);
     room.reset();
     if (roomSwapchain != XR_NULL_HANDLE) xr.destroySwapchain(roomSwapchain);

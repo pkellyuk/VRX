@@ -61,8 +61,9 @@ The current Linux render path:
    and eight rows per workgroup (1.2 ms GPU at 1920×1080, 0.4 ms at 686×392);
 4. computes the room ambilight reference on the CPU, then runs EMIT, MIRROR,
    LIGHT and the room eye shader on the GPU;
-5. copies outputs into OpenXR swapchains and waits for the command fence on
-   the CPU before `xrEndFrame`.
+5. copies outputs into OpenXR swapchains and submits without waiting: two
+   frames are in flight, and each frame's results (model input, room glow,
+   DMA-BUF release) are handled when its fence signals.
 
 The warp's working buffers are now device-local; the room's remain host-visible. In the latest live run, CPU model preparation was 16.79/18.58 ms median/p95;
 arrival-to-finished-depth was 26.77/31.20 ms. Arrival is stamped after capture
@@ -79,9 +80,12 @@ wait on a GPU fence every frame. The Linux work should proceed as follows:
 - **2b. Reduce host-memory traffic.** Done for the warp (device-local scene,
   depth, output and scratch, with staging uploads). Room buffers remain
   host-visible. Upload depth only when a new map arrives.
-- **2c. Remove the render-thread fence wait.** Use a small command-buffer/fence
-  ring and a swapchain-compatible copy or direct write path. Respect OpenXR
-  image acquisition and release ordering.
+- **2c. Remove the render-thread fence wait.** Done: two command buffers and
+  fences; per-frame staging and model-input buffers; room constants, glow and
+  emitters written with `vkCmdUpdateBuffer`; a barrier orders GPU frames. The
+  CPU wait fell from 4–6 ms to 0.01 ms. With depth and the full-size room,
+  shared memory rose from 52 to 89 frames/s and DMA-BUF holds 89 frames/s with
+  22.8 ms arrival-to-depth. Checked frames still wait for their results.
 - **2d. Improve warp occupancy.** Rows now run eight to a workgroup, as on
   Windows. Each row is still serial; parallelise scatter/fill only if timing
   shows the warp matters.

@@ -39,29 +39,31 @@ VulkanPrep::VulkanPrep(VkPhysicalDevice gpu, VkDevice device, VkBuffer packedSce
     bufferInfo.size = VkDeviceSize(3) * width * height * sizeof(float);
     bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    Check(vkCreateBuffer(device_, &bufferInfo, nullptr, &output_), "vkCreateBuffer(model input)");
-    VkMemoryRequirements requirements{};
-    vkGetBufferMemoryRequirements(device_, output_, &requirements);
     VkPhysicalDeviceMemoryProperties properties{};
     vkGetPhysicalDeviceMemoryProperties(gpu, &properties);
-    // The CPU reads the model input for every live frame; uncached (write-
-    // combined) memory makes those reads very slow, so prefer cached memory.
-    const VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    uint32_t memoryType = UINT32_MAX;
-    for (VkMemoryPropertyFlags wanted : {host | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, host}) {
-        for (uint32_t i = 0; i < properties.memoryTypeCount && memoryType == UINT32_MAX; ++i)
-            if ((requirements.memoryTypeBits & (1u << i)) &&
-                (properties.memoryTypes[i].propertyFlags & wanted) == wanted) memoryType = i;
-        if (memoryType != UINT32_MAX) break;
+    for (uint32_t slot = 0; slot < kFrameSlots; ++slot) {
+        Check(vkCreateBuffer(device_, &bufferInfo, nullptr, &output_[slot]), "vkCreateBuffer(model input)");
+        VkMemoryRequirements requirements{};
+        vkGetBufferMemoryRequirements(device_, output_[slot], &requirements);
+        // The CPU reads the model input for every live frame; uncached (write-
+        // combined) memory makes those reads very slow, so prefer cached memory.
+        const VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        uint32_t memoryType = UINT32_MAX;
+        for (VkMemoryPropertyFlags wanted : {host | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, host}) {
+            for (uint32_t i = 0; i < properties.memoryTypeCount && memoryType == UINT32_MAX; ++i)
+                if ((requirements.memoryTypeBits & (1u << i)) &&
+                    (properties.memoryTypes[i].propertyFlags & wanted) == wanted) memoryType = i;
+            if (memoryType != UINT32_MAX) break;
+        }
+        if (memoryType == UINT32_MAX) throw std::runtime_error("No coherent model input buffer memory");
+        VkMemoryAllocateInfo allocation{};
+        allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = memoryType;
+        Check(vkAllocateMemory(device_, &allocation, nullptr, &memory_[slot]), "vkAllocateMemory(model input)");
+        Check(vkBindBufferMemory(device_, output_[slot], memory_[slot], 0), "vkBindBufferMemory(model input)");
+        Check(vkMapMemory(device_, memory_[slot], 0, bufferInfo.size, 0, &mapped_[slot]), "vkMapMemory(model input)");
     }
-    if (memoryType == UINT32_MAX) throw std::runtime_error("No coherent model input buffer memory");
-    VkMemoryAllocateInfo allocation{};
-    allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocation.allocationSize = requirements.size;
-    allocation.memoryTypeIndex = memoryType;
-    Check(vkAllocateMemory(device_, &allocation, nullptr, &memory_), "vkAllocateMemory(model input)");
-    Check(vkBindBufferMemory(device_, output_, memory_, 0), "vkBindBufferMemory(model input)");
-    Check(vkMapMemory(device_, memory_, 0, bufferInfo.size, 0, &mapped_), "vkMapMemory(model input)");
 
     VkDescriptorSetLayoutBinding bindings[2]{};
     for (uint32_t i = 0; i < 2; ++i) {
@@ -75,31 +77,33 @@ VulkanPrep::VulkanPrep(VkPhysicalDevice gpu, VkDevice device, VkBuffer packedSce
     layoutInfo.bindingCount = 2;
     layoutInfo.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(device_, &layoutInfo, nullptr, &descriptorLayout_), "vkCreateDescriptorSetLayout(model prep)");
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2};
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * kFrameSlots};
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = 1;
+    poolInfo.maxSets = kFrameSlots;
     poolInfo.poolSizeCount = 1;
     poolInfo.pPoolSizes = &poolSize;
     Check(vkCreateDescriptorPool(device_, &poolInfo, nullptr, &descriptorPool_), "vkCreateDescriptorPool(model prep)");
-    VkDescriptorSetAllocateInfo setInfo{};
-    setInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    setInfo.descriptorPool = descriptorPool_;
-    setInfo.descriptorSetCount = 1;
-    setInfo.pSetLayouts = &descriptorLayout_;
-    Check(vkAllocateDescriptorSets(device_, &setInfo, &descriptorSet_), "vkAllocateDescriptorSets(model prep)");
-    VkDescriptorBufferInfo inputInfo{packedScene, 0, VK_WHOLE_SIZE};
-    VkDescriptorBufferInfo outputInfo{output_, 0, VK_WHOLE_SIZE};
-    VkWriteDescriptorSet writes[2]{};
-    for (uint32_t i = 0; i < 2; ++i) {
-        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[i].dstSet = descriptorSet_;
-        writes[i].dstBinding = i;
-        writes[i].descriptorCount = 1;
-        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[i].pBufferInfo = i == 0 ? &inputInfo : &outputInfo;
+    for (uint32_t slot = 0; slot < kFrameSlots; ++slot) {
+        VkDescriptorSetAllocateInfo setInfo{};
+        setInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        setInfo.descriptorPool = descriptorPool_;
+        setInfo.descriptorSetCount = 1;
+        setInfo.pSetLayouts = &descriptorLayout_;
+        Check(vkAllocateDescriptorSets(device_, &setInfo, &descriptorSet_[slot]), "vkAllocateDescriptorSets(model prep)");
+        VkDescriptorBufferInfo inputInfo{packedScene, 0, VK_WHOLE_SIZE};
+        VkDescriptorBufferInfo outputInfo{output_[slot], 0, VK_WHOLE_SIZE};
+        VkWriteDescriptorSet writes[2]{};
+        for (uint32_t i = 0; i < 2; ++i) {
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = descriptorSet_[slot];
+            writes[i].dstBinding = i;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[i].pBufferInfo = i == 0 ? &inputInfo : &outputInfo;
+        }
+        vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
     }
-    vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
 
     const char* env = std::getenv("VRX_PREP_SPV");
 #ifdef VRX_PREP_SPV_PATH
@@ -150,9 +154,11 @@ VulkanPrep::~VulkanPrep() {
     if (pipelineLayout_) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
     if (descriptorPool_) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
     if (descriptorLayout_) vkDestroyDescriptorSetLayout(device_, descriptorLayout_, nullptr);
-    if (mapped_) vkUnmapMemory(device_, memory_);
-    if (output_) vkDestroyBuffer(device_, output_, nullptr);
-    if (memory_) vkFreeMemory(device_, memory_, nullptr);
+    for (uint32_t slot = 0; slot < kFrameSlots; ++slot) {
+        if (mapped_[slot]) vkUnmapMemory(device_, memory_[slot]);
+        if (output_[slot]) vkDestroyBuffer(device_, output_[slot], nullptr);
+        if (memory_[slot]) vkFreeMemory(device_, memory_[slot], nullptr);
+    }
 }
 
 void VulkanPrep::Record(VkCommandBuffer command) {
@@ -163,7 +169,7 @@ void VulkanPrep::Record(VkCommandBuffer command) {
     params.exactLoad = sourceWidth_ == uint32_t(width) && sourceHeight_ == uint32_t(height);
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            pipelineLayout_, 0, 1, &descriptorSet_, 0, nullptr);
+                            pipelineLayout_, 0, 1, &descriptorSet_[slot_], 0, nullptr);
     vkCmdPushConstants(command, pipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT,
                        0, sizeof(params), &params);
     vkCmdDispatch(command, (width + 7) / 8, (height + 7) / 8, 1);
@@ -173,7 +179,7 @@ void VulkanPrep::Record(VkCommandBuffer command) {
     barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.buffer = output_;
+    barrier.buffer = output_[slot_];
     barrier.size = VK_WHOLE_SIZE;
     vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);

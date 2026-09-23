@@ -44,12 +44,11 @@ public:
     bool DmaBuf() const;             // frames arrive as DMA-BUFs
     // Shared memory: copy of the newest scaled colour frame.
     bool Latest(Frame& output) const;
-    // DMA-BUF: take the newest frame newer than the one in use. The frame in
-    // use until now goes back to the source, so call this only when the GPU
-    // has finished reading it.
+    // DMA-BUF: take the newest frame not yet taken. The renderer holds it
+    // until the GPU has finished reading it, then gives it back by sequence.
     bool AcquireGpuFrame(GpuFrame& output);
-    // Give back the frame in use (before shutting the renderer down).
-    void ReleaseGpuFrame();
+    void ReleaseGpuFrame(uint64_t sequence);
+    void ReleaseGpuFrames();   // all held frames (before shutting the renderer down)
     bool Healthy() const;
     uint64_t Captured() const;
     uint64_t Dropped() const;

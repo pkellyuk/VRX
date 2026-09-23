@@ -45,6 +45,9 @@ private:
     bool capture_ = false;
     bool glowHistoryValid_ = false;
     std::vector<float> glowHistory_;
+    // Written by Record's command buffer, not directly into GPU-visible memory.
+    std::vector<RoomEmitter> pendingEmitters_;
+    std::vector<unsigned char> glowBytes_;
     float lastWidth_ = 0.0f, lastHeight_ = 0.0f;
     float geometryKey_[6] = {};
     std::chrono::steady_clock::time_point lastPrepare_{};

@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -46,12 +47,13 @@ struct PortalCapture::Impl {
     std::vector<uint64_t> modifiers;
     std::atomic<bool> dmabuf{false};
     uint64_t modifier = 0;
-    // DMA-BUF buffers held for the renderer: the newest not yet taken, the one
-    // in use, and those to give back on the PipeWire thread.
+    // DMA-BUF buffers held for the renderer: the newest not yet taken, those
+    // in use by frames in flight (by sequence), and those to give back on the
+    // PipeWire thread.
     std::mutex gpuMutex;
     pw_buffer* latestGpu = nullptr;
     GpuFrame latestInfo;
-    pw_buffer* inUseGpu = nullptr;
+    std::map<uint64_t, pw_buffer*> inUseGpu;
     std::vector<pw_buffer*> toRelease;
     uint64_t nextBufferId = 0, bufferGeneration = 0;
     // Fixed by the first negotiated size; later sizes are letterboxed into it.
@@ -173,7 +175,8 @@ struct PortalCapture::Impl {
         // The renderer's imported copy keeps its own reference to the memory;
         // a new generation tells it to import the new buffers.
         if (self.latestGpu == buffer) self.latestGpu = nullptr;
-        if (self.inUseGpu == buffer) self.inUseGpu = nullptr;
+        for (auto it = self.inUseGpu.begin(); it != self.inUseGpu.end();)
+            it = it->second == buffer ? self.inUseGpu.erase(it) : std::next(it);
         self.toRelease.erase(std::remove(self.toRelease.begin(), self.toRelease.end(), buffer),
                              self.toRelease.end());
         ++self.bufferGeneration;
@@ -378,22 +381,28 @@ bool PortalCapture::ColorSize(uint32_t& width, uint32_t& height) const {
 }
 bool PortalCapture::DmaBuf() const { return impl_->dmabuf; }
 bool PortalCapture::AcquireGpuFrame(GpuFrame& output) {
-    {
-        std::lock_guard<std::mutex> lock(impl_->gpuMutex);
-        if (!impl_->latestGpu) return false;
-        if (impl_->inUseGpu) impl_->toRelease.push_back(impl_->inUseGpu);
-        impl_->inUseGpu = impl_->latestGpu;
-        impl_->latestGpu = nullptr;
-        output = impl_->latestInfo;
-    }
-    impl_->WakeRelease();
+    std::lock_guard<std::mutex> lock(impl_->gpuMutex);
+    if (!impl_->latestGpu) return false;
+    output = impl_->latestInfo;
+    impl_->inUseGpu[output.sequence] = impl_->latestGpu;
+    impl_->latestGpu = nullptr;
     return true;
 }
-void PortalCapture::ReleaseGpuFrame() {
+void PortalCapture::ReleaseGpuFrame(uint64_t sequence) {
     {
         std::lock_guard<std::mutex> lock(impl_->gpuMutex);
-        if (impl_->inUseGpu) impl_->toRelease.push_back(impl_->inUseGpu);
-        impl_->inUseGpu = nullptr;
+        auto found = impl_->inUseGpu.find(sequence);
+        if (found == impl_->inUseGpu.end()) return;   // its buffer was removed meanwhile
+        impl_->toRelease.push_back(found->second);
+        impl_->inUseGpu.erase(found);
+    }
+    impl_->WakeRelease();
+}
+void PortalCapture::ReleaseGpuFrames() {
+    {
+        std::lock_guard<std::mutex> lock(impl_->gpuMutex);
+        for (const auto& held : impl_->inUseGpu) impl_->toRelease.push_back(held.second);
+        impl_->inUseGpu.clear();
     }
     impl_->WakeRelease();
 }

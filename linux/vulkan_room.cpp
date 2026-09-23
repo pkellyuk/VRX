@@ -116,12 +116,12 @@ VulkanRoom::VulkanRoom(VkPhysicalDevice gpu,VkDevice device,VkBuffer source,VkBu
     if(screenFormat!=VK_FORMAT_R8G8B8A8_SRGB&&screenFormat!=VK_FORMAT_R8G8B8A8_UNORM)
         throw std::runtime_error("Room needs an RGBA OpenXR swapchain format");
     CreateBuffer(decode_,256*sizeof(float),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    CreateBuffer(emitter_,kRoomMaxEmitters*sizeof(RoomEmitter),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    CreateBuffer(glowBuffer_,GlowWidth*GlowHeight*4,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    CreateBuffer(emitter_,kRoomMaxEmitters*sizeof(RoomEmitter),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    CreateBuffer(glowBuffer_,GlowWidth*GlowHeight*4,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     CreateBuffer(mirrorBuffer_,kRoomMirrorW*kRoomMirrorMaxH*4*sizeof(float),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     CreateBuffer(lightBuffer_,kRoomFaces*kRoomLightmap*kRoomLightmap*4*sizeof(float),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    CreateBuffer(curveBuffer_,sizeof(CurveConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-    CreateBuffer(roomBuffer_,sizeof(RoomConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    CreateBuffer(curveBuffer_,sizeof(CurveConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    CreateBuffer(roomBuffer_,sizeof(RoomConstants),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     CreateBuffer(readback_,VkDeviceSize(eyeWidth_)*eyeHeight_*2*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     RoomDecodeTable(static_cast<float*>(decode_.mapped));
     const auto sampled=VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -232,7 +232,7 @@ void VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
         const float glowHalfH=0.5f*H+kAmbiMargin*W;
         if(!BuildRoomEmitters(room_,Cylinder(),W,H,glowHalfW,glowHalfH,layout_,emitters))
             throw std::runtime_error("Room emitter geometry failed");
-        std::memcpy(emitter_.mapped,emitters.data(),emitters.size()*sizeof(RoomEmitter));
+        pendingEmitters_=std::move(emitters);
         std::copy_n(key,6,geometryKey_);
     }
     RoomView view;view.flatLayer=true;view.W=W;view.H=H;view.glowOn=true;
@@ -246,7 +246,7 @@ void VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     shading_=MakeRoomShading(room_,settings.room,0,W*H,look);
     roomConstants_=MakeRoomConstants(room_,shading_,layout_,view,int(colorWidth_),int(colorHeight_),alpha);
     mirrorW_=roomConstants_.mirrorW;mirrorH_=roomConstants_.mirrorH;
-    std::memcpy(roomBuffer_.mapped,&roomConstants_,sizeof(roomConstants_));
+
     curveConstants_={};curveConstants_.ew=eyeWidth_;curveConstants_.eh=eyeHeight_;
     curveConstants_.glowOn=1;curveConstants_.linearBlend=1;
     curveConstants_.glowHalfW=view.glowHalfW;curveConstants_.glowHalfH=view.glowHalfH;
@@ -261,7 +261,7 @@ void VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
         v.tanL=std::tan(eyes[e].fov.angleLeft);v.tanR=std::tan(eyes[e].fov.angleRight);
         v.tanU=std::tan(eyes[e].fov.angleUp);v.tanD=std::tan(eyes[e].fov.angleDown);
     }
-    std::memcpy(curveBuffer_.mapped,&curveConstants_,sizeof(curveConstants_));
+
     AmbiConstants ambi{};
     ambi.gw=GlowWidth;ambi.gh=GlowHeight;
     ambi.srcW=glowWidth;ambi.srcH=glowHeight;
@@ -285,9 +285,28 @@ void VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
         glow[i]=static_cast<unsigned char>(glowHistory_[i]+0.5f);
     }
     glowHistoryValid_=true;
-    std::memcpy(glowBuffer_.mapped,glow.data(),glow.size());
+    glowBytes_=std::move(glow);
 }
 void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
+    // Per-frame data is written by the command buffer itself, so a frame the
+    // GPU is still running keeps its own values while the next is recorded.
+    auto update=[&](VkBuffer buffer,const void* data,size_t bytes){
+        constexpr size_t kMaxUpdate=65536;   // vkCmdUpdateBuffer's limit per call
+        for(size_t offset=0;offset<bytes;offset+=kMaxUpdate)
+            vkCmdUpdateBuffer(cmd,buffer,offset,std::min(kMaxUpdate,bytes-offset),static_cast<const char*>(data)+offset);
+    };
+    if(!pendingEmitters_.empty()){
+        update(emitter_.handle,pendingEmitters_.data(),pendingEmitters_.size()*sizeof(RoomEmitter));
+        pendingEmitters_.clear();
+    }
+    update(roomBuffer_.handle,&roomConstants_,sizeof(roomConstants_));
+    update(curveBuffer_.handle,&curveConstants_,sizeof(curveConstants_));
+    update(glowBuffer_.handle,glowBytes_.data(),glowBytes_.size());
+    VkMemoryBarrier updated{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    updated.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    updated.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_UNIFORM_READ_BIT|VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0,1,&updated,0,nullptr,0,nullptr);
     vkCmdResetQueryPool(cmd,timingQueries_,0,7);
     vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,timingQueries_,0);
     EmitParams ep{};
