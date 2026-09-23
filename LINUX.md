@@ -13,9 +13,9 @@ users select a source and start a session themselves.
 The first playable release (MVP) supports Linux x86-64, one GPU for capture,
 inference and rendering, a Vulkan-capable OpenXR runtime, and an NVIDIA GPU with
 ONNX Runtime's CUDA execution provider. It includes ZipDepth, a flat stereo
-screen, recentering, basic placement and stereo controls, saved profiles, and
-session logs. Other GPUs, the second model, and visual extras are follow-up work,
-not prerequisites for a usable first release.
+screen, recentering, basic placement and stereo controls, saved profiles, a
+room with picture lighting, glass and reflections, and session logs. Other GPUs,
+the second model, and optional visual extras are follow-up work.
 
 This is a native port, not an attempt to run the Windows executable through Wine.
 The Linux engine must not load Direct3D, DirectML, WinRT or Windows DLLs.
@@ -47,8 +47,8 @@ must implement.
 | Synthetic reference scene | `synthetic_scene.h` | Shared by Windows and Linux for repeatable render and depth checks. |
 | CPU stereo reference, geometry and effects | `xr_common.h`, `screen_anchor.h`, `screen_curve.h`, `room.h`, `depth_fusion.h` | Reuse portable math and reference output; isolate Windows-only includes and helpers. |
 | Hardware motion estimation | `motion_estimator.h` | Defer; this is D3D12 video-specific. Disable steadying and fusion until a tested Linux replacement exists. |
-| Versioned live settings | `desktop_control.h`, `Profile.Control()` in `Profile.cs` | Preserve v11 field order and meaning initially. Replace Windows file I/O and key codes at the boundary. |
-| Desktop app | `desktop/VRX.Desktop` | Reuse profile and session rules in a platform-neutral .NET library; build a Linux UI separately. WPF/XAML and Win32 window enumeration are not portable. |
+| Versioned live settings | `desktop_control.h`, `Profile.Control()` in `Profile.cs` | Use Windows behavior as a reference. The Linux `VRXL` snapshots have their own versioned fields and do not use Windows file I/O or key codes. |
+| Desktop app | `desktop/VRX.Desktop` | Use its behavior as a reference, but keep Linux profiles and the PyQt controller native to Linux. WPF/XAML, Win32 window enumeration and Windows profile files are not dependencies. |
 | Models and release | `release/build-models.ps1`, `release/build-release.ps1` | Retain model hashes; provide Linux acquisition/build and packaging scripts with Linux dependency notices. |
 
 `xrapp.cpp`, `xrapp3.cpp`, `xrapp4.cpp` and the native probes document earlier
@@ -91,7 +91,8 @@ ordering and cleanly recover from session loss or headset disconnect.
 Port the current HLSL compute stages deliberately to Vulkan-compatible shader
 source and SPIR-V. Record source, compiler version and options in the build so
 shader output can be reproduced. Begin with source preparation, a flat stereo
-warp and swapchain copy; add curve, ambilight and room passes after MVP. Match
+warp and swapchain copy, then add the room passes before the first release.
+Screen curvature and other optional effects may follow later. Match
 image origin, color space, alpha, depth convention, row pitch and per-eye pose
 against the existing CPU references and Windows outputs. A shader compiling is
 not proof of equivalent images.
@@ -152,27 +153,57 @@ pass visual and timing tests.
 
 ## Controller, settings and input
 
-Separate `Profile`, `ProfileStore`, validation, localization data and engine
-session state from WPF and Win32 calls. A Linux controller can use Avalonia to
-reuse .NET code; this is an implementation choice, not a dependency of the
-headset engine. The first UI needs source selection, Attach/Play, Stop VR,
+Keep Linux controller profiles independent of Windows save files and keyed by a
+user-editable name. The PyQt controller needs source selection, Start/Stop VR,
 Recenter, basic screen/depth controls, a status line, and accessible logs. Add
-Expert controls as their engine features become available. Hide or clearly
+room controls when the Vulkan room renderer is validated. Hide or clearly
 disable settings that Linux cannot apply yet.
 
-Store Linux settings under the XDG user data/config locations, with an explicit
-documented migration/import path for Windows JSON profiles. Do not edit or
-reinterpret existing Windows files in place. Keep numeric serialization
-culture-independent. The existing `VRX 11` text snapshot can remain the initial
-wire format; write complete snapshots atomically and keep old versions readable
-where the engine already supports them. Linux-only settings should go in a
-versioned extension or a new protocol version with tests, not repurpose an
-existing field. Never use a Windows virtual-key number as a Linux key symbol.
+Store Linux settings under XDG config/data locations. Use a versioned Linux
+profile schema and a separate versioned live-settings snapshot; write both
+atomically and validate ranges before applying them. The current `VRXL 1`
+snapshot carries width, distance, height, horizontal offset and stereo strength.
+Extend it with a new version when room controls arrive. Numeric serialization
+must be culture-independent. Windows JSON profiles and the `VRX 11` desktop
+snapshot require no direct compatibility or import path. Never use a Windows
+virtual-key number as a Linux key symbol.
 
 For MVP, the Recenter button is sufficient. Add keyboard shortcuts only after
 deciding how they work while a game has focus on the selected desktop; shortcut
 registration failure must not prevent a session. Do not implement auto-attach,
 foreground monitoring, or a countdown overlay on Linux.
+
+## First-release room and reflections
+
+The Linux release must include the room described in `XROOM.md` and the CPU
+reference in `bench/native/openxr/room.h`: a screen-lit room with walls, floor
+and ceiling; the glow on its front wall; a ceiling light; glass walls; framed
+panes and floor tiles; and per-eye reflections of the screen and room. The room
+must remain aligned with the fixed screen and the tracked STAGE floor where
+available. Linux-native profiles need live Room, Glass, Reflections, Room light
+and Light colour controls, with the room off at level 0.
+
+Port the Windows renderer's EMIT, MIRROR, LIGHT and eye passes from the HLSL
+source in `xrapp5.cpp` to separately built Vulkan-compatible shaders and SPIR-V.
+EMIT reduces source and glow patches to radiance; MIRROR builds the reduced
+screen image when reflections are enabled; LIGHT fills the six-face, 64x64
+lightmap; the eye pass traces each eye against the screen and room and samples
+its lightmap, glass, frames, tiles, ceiling panel and reflected picture. Keep
+the room-off path separate so its existing stereo warp is unaffected. Preserve
+linear-light colour, image orientation, eye-specific reflected rays, and GPU
+synchronization between these passes and OpenXR image submission. Port the
+flat-screen room composition first; curved-front geometry may follow after
+first release if the room remains correct for the supported flat screen.
+
+Extend the Linux live-settings format with a new version for these controls;
+do not overload `VRXL 1` fields. Use `room.h` and `XROOM.md` as the reference
+for geometry, emitter reduction, form factors, bounce, Fresnel coating and
+reflection edge filtering. Compare Vulkan lightmap and eye images against CPU
+reference outputs across room-off, diffuse, glass, reflections and room-light
+cases. Measure room pass GPU time, capture-to-display latency and memory on
+the PICO 4 setup, and visually check floor alignment, per-eye reflections,
+scene changes and live control updates. Include shader sources, compiled SPIR-V
+and versioned Linux profile defaults in the package.
 
 ## Build, dependencies and distribution
 
@@ -321,8 +352,15 @@ arrival-to-depth was 27.83/31.40 ms across those updates. The controller
 now has live width, distance, height, horizontal and stereo
 strength controls stored in named profiles. Its flat/CUDA choice still requires
 a new session. The live snapshot parser and controller profile reload have
-smoke coverage; headset validation of changes during a session remains.
-Windows profile migration and packaging also remain before L4 acceptance.
+smoke coverage. A controller-driven live CUDA check changed width from 2.0 to
+3.0 m, shifted the screen +0.5 m horizontally and +0.3 m vertically, reduced
+stereo strength from 1.0x to 0.4x, then restored the initial values. The engine
+logged all four snapshots and stopped cleanly after 2,336 image-bearing OpenXR
+frames with zero runtime skips, 1,296 capture frames with zero drops, and 1,234
+ZipDepth updates. The user confirmed that the width, position and stereo
+changes all looked correct in the PICO 4. The Linux profile format remains
+independent of Windows. The required room renderer, room controls, reference
+comparisons and portable packaging remain before L4 acceptance.
 
 ## Milestones and acceptance gates
 
@@ -332,8 +370,8 @@ Windows profile migration and packaging also remain before L4 acceptance.
 | L1: synthetic headset frame | Linux engine builds and shows the moving synthetic scene and a still image in OpenXR. | Correct left/right orientation, head tracking and recentering; repeated startup/shutdown and session-loss tests; no capture or model required. |
 | L2: depth and warp | ZipDepth, preprocessing and flat stereo warp work with synthetic/still input. | Compare GPU preprocessing and eye images against CPU references; document tolerances and representative worst cases; record capture-to-depth and render times. |
 | L3: live source | Portal/PipeWire window and monitor capture feed the frame ring. | Sustained play, resize, source close, permission loss and reselect tests; no frame-ring reuse or GPU synchronization validation errors. |
-| L4: usable desktop | Linux UI launches/stops engine, writes live settings and saves named profiles. | End-to-end session from source selection to headset, clean stop, logs, profile reload and clear recovery messages. This is the MVP release gate. |
-| L5: parity increments | Delayed/Matched timing, curve, ambilight, room, Depth Anything, motion steadying, fusion and multi-GPU support as separate changes. | Each feature has a Windows/reference image comparison, latency budget and hardware coverage before enabling its control. |
+| L4: first playable release | Linux UI launches/stops engine, writes live settings and saves named profiles; the Vulkan room includes picture lighting, glass, frames, tiles, ceiling light and reflections with live controls. | End-to-end source-to-headset session, clean stop, logs, profile reload, clear recovery messages, CPU/reference room image comparisons, PICO 4 visual checks, room GPU timing and a portable package. This is the release gate. |
+| L5: further parity | Delayed/Matched timing, curved screen, advanced ambilight, Depth Anything, motion steadying, fusion and multi-GPU support as separate changes. | Each feature has a Windows/reference image comparison, latency budget and hardware coverage before enabling its control. |
 
 For the MVP, measure and report median and 95th-percentile capture-to-display
 latency, capture rate, depth update rate, dropped frames, GPU memory and frame
@@ -357,8 +395,9 @@ headset and a real captured game or video window.
 - **Inference dependencies:** CUDA and ONNX Runtime versions must be validated
   together with the exact ONNX export. Linux AMD/Intel support is a later,
   separately tested backend decision.
-- **Feature scope:** do not delay the flat-screen MVP for motion estimation,
-  model fusion, room effects, multi-GPU selection, or auto-attach.
+- **Feature scope:** the room, glass, reflections and room light are required
+  for the first release. Motion estimation, model fusion, multi-GPU selection,
+  curved-screen geometry and auto-attach can follow later.
 
 ## Implementation order for the first changes
 
@@ -370,8 +409,10 @@ headset and a real captured game or video window.
    CPU reference before adding inference.
 4. Integrate the verified ZipDepth ONNX model through CUDA, then add portal
    capture and its copy fallback.
-5. Extract the .NET profile/session core and build the small Linux controller;
-   package and test the complete L4 path.
+5. Build the Linux-native controller and profile store, then port the room's
+   CPU-backed geometry and EMIT/MIRROR/LIGHT/eye Vulkan passes. Add live room
+   controls and test diffuse lighting, glass, reflections and ceiling light in
+   the PICO 4. Package and test the complete L4 path.
 
 ## API references to verify during implementation
 
