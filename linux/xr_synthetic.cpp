@@ -374,6 +374,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     std::unique_ptr<vrx::VulkanRoom> room;
     XrSwapchain roomSwapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageVulkan2KHR> roomImages;
+    XrSwapchain glowSwapchain = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageVulkan2KHR> glowImages;
     if (eyeLayer) {
         XrSwapchainCreateInfo roomInfo = swci;
         roomInfo.width = roomEyeWidth;
@@ -387,6 +389,22 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             reinterpret_cast<XrSwapchainImageBaseHeader*>(roomImages.data())));
         room = std::make_unique<vrx::VulkanRoom>(gpu, device, warp->SceneBuffer(), warp->ColorBuffer(), format,
                                                  colorWidth, colorHeight, roomEyeWidth, roomEyeHeight);
+        // The ambilight behind a flat screen without the room: a small quad layer.
+        XrSwapchainCreateInfo glowInfo = swci;
+        glowInfo.width = vrx::VulkanRoom::GlowWidth;
+        glowInfo.height = vrx::VulkanRoom::GlowHeight;
+        glowInfo.arraySize = 1;
+        if (XR_SUCCEEDED(xr.createSwapchain(session, &glowInfo, &glowSwapchain))) {
+            uint32_t glowImageCount = 0;
+            XR_CHECK(xr.images(glowSwapchain, 0, &glowImageCount, nullptr));
+            glowImages.resize(glowImageCount);
+            for (auto& image : glowImages) image.type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR;
+            XR_CHECK(xr.images(glowSwapchain, glowImageCount, &glowImageCount,
+                reinterpret_cast<XrSwapchainImageBaseHeader*>(glowImages.data())));
+        } else {
+            glowSwapchain = XR_NULL_HANDLE;
+            std::puts("Ambilight layer unavailable; the glow shows only with the room or a curved screen");
+        }
         std::puts(roomEnabled ? "Windows room shader enabled: lighting, glass, tiles and reflections"
                               : "Eye layer enabled for a curved screen (the room is off)");
     }
@@ -475,6 +493,14 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     warp->SetStrength(settings.strength);
     warp->SetStereoGeometry(settings.distance, settings.width, 0.064f, true);
     XrCompositionLayerQuad quads[2]{};
+    // The glow, a little behind the screen, blended by its premultiplied alpha.
+    XrCompositionLayerQuad glowQuad{};
+    glowQuad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+    glowQuad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    glowQuad.space = space;
+    glowQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    glowQuad.subImage.swapchain = glowSwapchain;
+    glowQuad.subImage.imageRect.extent = {int32_t(vrx::VulkanRoom::GlowWidth), int32_t(vrx::VulkanRoom::GlowHeight)};
     XrCompositionLayerProjection projection{};
     XrCompositionLayerProjectionView projectionViews[2]{};
     projection.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
@@ -715,7 +741,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         uint32_t index = 0;
         bool roomFrameReady = false;
         bool roomDrawn = false;          // the room layer is drawn and submitted this frame
-        uint32_t roomIndex = 0;
+        bool glowDrawn = false;          // the glow layer (flat screen, no room) likewise
+        uint32_t roomIndex = 0, glowIndex = 0;
         XrView roomViews[2]{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
         if (state.shouldRender) {
             XrViewLocateInfo locate{};
@@ -775,18 +802,27 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                     curveDistance = settings.distance; curveFraction = wantCurve;
                 }
             }
-            roomFrameReady = eyeLayer && ((roomEnabled && settings.room > 0) || cylinder.curved) &&
+            // VulkanRoom decides each frame whether there is a room, a curved
+            // screen or a glow to draw; the images are acquired once it has.
+            roomFrameReady = eyeLayer && ((roomEnabled && settings.room > 0) || cylinder.curved ||
+                                          (settings.ambilight && glowSwapchain != XR_NULL_HANDLE)) &&
                              validViews && !screen.pending;
             if (roomFrameReady) {
                 for (int eye = 0; eye < 2; ++eye) {
                     projectionViews[eye].pose = roomViews[eye].pose;
                     projectionViews[eye].fov = roomViews[eye].fov;
                 }
-                XrSwapchainImageAcquireInfo ai{}; ai.type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO;
-                XR_CHECK(xr.acquire(roomSwapchain, &ai, &roomIndex));
-                XrSwapchainImageWaitInfo wi{}; wi.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO;
-                wi.timeout = XR_INFINITE_DURATION;
-                XR_CHECK(xr.waitImage(roomSwapchain, &wi));
+                glowQuad.pose = screen.pose;
+                float S[3][3];
+                const XrQuaternionf& q = screen.pose.orientation;
+                S[0][2] = 2 * (q.x * q.z + q.y * q.w);
+                S[1][2] = 2 * (q.y * q.z - q.x * q.w);
+                S[2][2] = 1 - 2 * (q.x * q.x + q.y * q.y);
+                glowQuad.pose.position.x -= kAmbiBehind * S[0][2];
+                glowQuad.pose.position.y -= kAmbiBehind * S[1][2];
+                glowQuad.pose.position.z -= kAmbiBehind * S[2][2];
+                const float margin = kAmbiMargin * screen.size.width;
+                glowQuad.size = {screen.size.width + 2.0f * margin, screen.size.height + 2.0f * margin};
             }
         }
         if (state.shouldRender) {
@@ -964,6 +1000,18 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                                                  drawn, roomViews, screen, stageFloorY, cylinder);
                 roomPrepMs.push_back(std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - prepStart).count());
+                glowDrawn = room->GlowLayer() && glowSwapchain != XR_NULL_HANDLE;
+                XrSwapchainImageAcquireInfo acquireInfo{}; acquireInfo.type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO;
+                XrSwapchainImageWaitInfo waitInfo{}; waitInfo.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO;
+                waitInfo.timeout = XR_INFINITE_DURATION;
+                if (roomDrawn) {
+                    XR_CHECK(xr.acquire(roomSwapchain, &acquireInfo, &roomIndex));
+                    XR_CHECK(xr.waitImage(roomSwapchain, &waitInfo));
+                }
+                if (glowDrawn) {
+                    XR_CHECK(xr.acquire(glowSwapchain, &acquireInfo, &glowIndex));
+                    XR_CHECK(xr.waitImage(glowSwapchain, &waitInfo));
+                }
                 if (roomDrawn && roomDumpPath && renderedFrames == 0) room->EnableCapture();
             }
             VK_CHECK(vkResetCommandBuffer(command, 0));
@@ -1004,6 +1052,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             warp->Record(command, checkFrame);
             if (timestamps) vkCmdWriteTimestamp(command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, slot * kTimestamps + 1);
             if (roomDrawn) room->Record(command, roomImages[roomIndex].image);
+            if (glowDrawn) room->RecordGlow(command, glowImages[glowIndex].image);
             if (timestamps) vkCmdWriteTimestamp(command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, slot * kTimestamps + 2);
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1095,7 +1144,8 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             }
             XrSwapchainImageReleaseInfo ri{}; ri.type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO;
             XR_CHECK(xr.release(swapchain, &ri));
-            if (roomFrameReady) XR_CHECK(xr.release(roomSwapchain, &ri));
+            if (roomDrawn) XR_CHECK(xr.release(roomSwapchain, &ri));
+            if (glowDrawn) XR_CHECK(xr.release(glowSwapchain, &ri));
             ++renderedFrames;
         }
         if (!state.shouldRender) ++skippedFrames;
@@ -1104,10 +1154,11 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         fe.displayTime = state.predictedDisplayTime;
         fe.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         // Nothing is shown until the screen has been placed from a tracked pose.
-        const XrCompositionLayerBaseHeader* frameLayers[3]{};
+        const XrCompositionLayerBaseHeader* frameLayers[4]{};
         uint32_t layerCount = 0;
         if (state.shouldRender && !screen.pending) {
             if (roomDrawn) frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
+            if (glowDrawn) frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&glowQuad);
             // A curved screen is drawn in the eye layer; a flat one is the quads.
             if (!(roomDrawn && room->DrawsScreen())) {
                 frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[0]);
@@ -1214,6 +1265,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     vkDestroyCommandPool(device, pool, nullptr);
     room.reset();
     if (roomSwapchain != XR_NULL_HANDLE) xr.destroySwapchain(roomSwapchain);
+    if (glowSwapchain != XR_NULL_HANDLE) xr.destroySwapchain(glowSwapchain);
     xr.destroySwapchain(swapchain);
     if (stageSpace != XR_NULL_HANDLE) xr.destroySpace(stageSpace);
     xr.destroySpace(space);

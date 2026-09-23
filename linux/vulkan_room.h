@@ -33,6 +33,10 @@ public:
                  const XrView eyes[2], const ScreenAnchor& screen, float floorLocalY, const Cylinder& cylinder);
     // The last Prepare drew the screen itself (curved), so the quads are not shown.
     bool DrawsScreen() const { return cylinder_.curved; }
+    // The last Prepare wants the glow as its own layer behind a flat screen
+    // (no room): RecordGlow copies it into a GlowWidth x GlowHeight image.
+    bool GlowLayer() const { return glowLayer_; }
+    void RecordGlow(VkCommandBuffer command, VkImage destination);
     void Record(VkCommandBuffer command, VkImage destination);
     void EnableCapture() { capture_ = true; }
     void SaveCapture(const char* path) const;
@@ -63,6 +67,8 @@ private:
     float geometryKey_[7] = {};
     Cylinder cylinder_;
     bool curveOnly_ = false;          // the curved screen alone: no room passes
+    bool glowOn_ = true;              // the ambilight is on
+    bool glowLayer_ = false;          // ... and shown as its own layer behind a flat screen
     RoomView view_;
     Buffer pictureReadback_;          // the warped pictures of a captured frame, for CompareReference
     std::chrono::steady_clock::time_point lastPrepare_{};
@@ -88,6 +94,7 @@ private:
     void DestroyBuffer(Buffer& buffer);
     void DestroyImage(Image& image);
     VkPipeline CreatePipeline(const char* path, VkPipelineLayout layout);
+    void ComputeGlow(const uint32_t* source, uint32_t width, uint32_t height, float W, float H, int strength);
     void Transition(VkCommandBuffer cmd, const Image& image, VkImageLayout oldLayout,
                     VkImageLayout newLayout, VkAccessFlags srcAccess, VkAccessFlags dstAccess,
                     VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage);

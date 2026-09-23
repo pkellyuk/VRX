@@ -45,17 +45,19 @@ public sealed record EnginePaths(string Root, string Engine, string Model)
 }
 
 // Live settings as the engine reads them (live_settings.h): one atomic
-// "VRXL 5" line, culture-independent. `recenter` counts Recenter requests in
+// "VRXL 6" line, culture-independent. `recenter` counts Recenter requests in
 // this session; the engine re-places the screen whenever it changes. Then the
-// frame timing (0 latest, 1 delayed, 2 matched) and the screen curve (0..100).
+// frame timing (0 latest, 1 delayed, 2 matched), the screen curve (0..100), and
+// the ambilight (0 or 1) and its strength (0..100).
 public static class LiveSettings
 {
     public static string Snapshot(LinuxProfile profile, uint recenter = 0)
     {
         var p = profile.Normalized();
         return string.Create(CultureInfo.InvariantCulture,
-            $"VRXL 5 {p.Width:F3} {p.Distance:F3} {p.Height:F3} {p.Horizontal:F3} {p.Strength:F3} " +
-            $"{p.Room} {p.Glass} {p.Reflect} {p.Light} {p.LightRgb} {recenter} {p.Timing} {p.Curve}\n");
+            $"VRXL 6 {p.Width:F3} {p.Distance:F3} {p.Height:F3} {p.Horizontal:F3} {p.Strength:F3} " +
+            $"{p.Room} {p.Glass} {p.Reflect} {p.Light} {p.LightRgb} {recenter} {p.Timing} {p.Curve} " +
+            $"{(p.Ambilight ? 1 : 0)} {p.AmbilightStrength}\n");
     }
 
     public static void Write(string path, LinuxProfile profile, uint recenter = 0)

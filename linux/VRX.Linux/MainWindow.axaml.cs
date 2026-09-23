@@ -70,7 +70,7 @@ public partial class MainWindow : Window
             slider.TickFrequency = 0.05;
             slider.IsSnapToTickEnabled = true;
         }
-        foreach (var slider in new[] { RoomSlider, GlassSlider, ReflectSlider, LightSlider, CurveSlider })
+        foreach (var slider in new[] { RoomSlider, GlassSlider, ReflectSlider, LightSlider, CurveSlider, AmbiStrengthSlider })
         {
             slider.TickFrequency = 1;
             slider.IsSnapToTickEnabled = true;
@@ -96,9 +96,10 @@ public partial class MainWindow : Window
         foreach (var source in new[] { SourceWindow, SourceScreen, SourceAny })
             source.IsCheckedChanged += (_, _) => SourceChanged();
         foreach (var slider in new[] { WidthSlider, DistanceSlider, HeightSlider, HorizontalSlider, StrengthSlider,
-                                       RoomSlider, GlassSlider, ReflectSlider, LightSlider, CurveSlider })
+                                       RoomSlider, GlassSlider, ReflectSlider, LightSlider, CurveSlider, AmbiStrengthSlider })
             slider.ValueChanged += (_, _) => SettingsChanged();
         CudaCheck.IsCheckedChanged += (_, _) => SettingsChanged();
+        AmbilightCheck.IsCheckedChanged += (_, _) => SettingsChanged();
         TimingList.SelectionChanged += (_, _) => SettingsChanged();
         LightColourList.SelectionChanged += (_, _) => SettingsChanged();
         CardProfile.SelectionChanged += (_, _) => ProfileChosen(CardProfile.SelectedItem as string);
@@ -248,6 +249,8 @@ public partial class MainWindow : Window
         ReflectSlider.Value = p.Reflect;
         LightSlider.Value = p.Light;
         CurveSlider.Value = p.Curve;
+        AmbilightCheck.IsChecked = p.Ambilight;
+        AmbiStrengthSlider.Value = p.AmbilightStrength;
         CudaCheck.IsChecked = p.Cuda;
         TimingList.SelectedIndex = p.Timing;
         FillLightColourList(p.LightColor);
@@ -285,7 +288,8 @@ public partial class MainWindow : Window
         (int)Math.Round(LightSlider.Value),
         LightColourList.SelectedIndex >= 0 ? lightHexes[LightColourList.SelectedIndex] : LinuxProfile.Default.LightColor,
         Math.Clamp(TimingList.SelectedIndex, LinuxProfile.TimingLatest, LinuxProfile.TimingMatched),
-        (int)Math.Round(CurveSlider.Value));
+        (int)Math.Round(CurveSlider.Value),
+        AmbilightCheck.IsChecked == true, (int)Math.Round(AmbiStrengthSlider.Value));
 
     void SettingsChanged()
     {
@@ -452,6 +456,8 @@ public partial class MainWindow : Window
         ReflectValue.Text = Percent(ReflectSlider.Value);
         LightValue.Text = LightSlider.Value < 0.5 ? "Off" : Percent(LightSlider.Value);
         CurveValue.Text = CurveSlider.Value < 0.5 ? "Flat" : Percent(CurveSlider.Value);
+        AmbiStrengthValue.Text = Percent(AmbiStrengthSlider.Value);
+        AmbilightOptions.IsEnabled = AmbilightCheck.IsChecked == true;
         GlassSlider.IsEnabled = ReflectSlider.IsEnabled = LightSlider.IsEnabled = LightColourList.IsEnabled = RoomSlider.Value >= 0.5;
         DrawPreview();
     }

@@ -9,7 +9,7 @@ namespace Vrx.Linux;
 public sealed record LinuxProfile(
     bool Cuda, double Width, double Distance, double Height, double Horizontal, double Strength,
     int Room, int Glass, int Reflect, int Light, string LightColor, int Timing = LinuxProfile.TimingDelayed,
-    int Curve = 0)
+    int Curve = 0, bool Ambilight = true, int AmbilightStrength = 85)
 {
     // Game frame timing (frame_timing.h): which captured frame is shown with the depth.
     // Linux defaults to delayed, which looked smoother than latest on the PICO 4.
@@ -17,8 +17,10 @@ public sealed record LinuxProfile(
     public static readonly string[] TimingNames = { "latest", "delayed", "matched" };
 
     // Curve: the screen's curve, 0 (flat, the default) to 100 % (screen_curve.h), as on Windows.
+    // Ambilight: the glow round the screen and its strength (ambilight.h). On by default on
+    // Linux (Windows starts with it off), where the room always had the glow before.
     public static readonly LinuxProfile Default =
-        new(true, 2.0, 2.0, 0.0, 0.0, 1.0, 30, 60, 25, 30, "#FFB46B", TimingDelayed, 0);
+        new(true, 2.0, 2.0, 0.0, 0.0, 1.0, 30, 60, 25, 30, "#FFB46B", TimingDelayed, 0, true, 85);
 
     // The same ranges the engine accepts (live_settings.h).
     public static readonly (double Low, double High) WidthRange = (0.5, 10.0);
@@ -37,7 +39,8 @@ public sealed record LinuxProfile(
         CheckRange(nameof(Horizontal), Horizontal, HorizontalRange);
         CheckRange(nameof(Strength), Strength, StrengthRange);
         foreach (var (name, value) in new[] { (nameof(Room), Room), (nameof(Glass), Glass),
-                                              (nameof(Reflect), Reflect), (nameof(Light), Light), (nameof(Curve), Curve) })
+                                              (nameof(Reflect), Reflect), (nameof(Light), Light), (nameof(Curve), Curve),
+                                              (nameof(AmbilightStrength), AmbilightStrength) })
             if (value < PercentLow || value > PercentHigh)
                 throw new ArgumentException($"{name} must be between {PercentLow} and {PercentHigh}");
         if (Timing < TimingLatest || Timing > TimingMatched)
@@ -125,6 +128,10 @@ public static class ProfileStore
             var index = v.ValueKind == JsonValueKind.String ? Array.IndexOf(LinuxProfile.TimingNames, v.GetString()) : -1;
             return index >= 0 ? index : throw new FormatException("timing must be latest, delayed or matched");
         }
+        bool Flag(string key, bool fallback) =>
+            !value.TryGetProperty(key, out var v) ? fallback :
+            v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() :
+            throw new FormatException($"{key} must be true or false");
         string Color(string key, string fallback) =>
             !value.TryGetProperty(key, out var v) ? fallback :
             v.ValueKind == JsonValueKind.String ? v.GetString()! : throw new FormatException($"{key} must be text");
@@ -132,7 +139,8 @@ public static class ProfileStore
             Number("width", d.Width), Number("distance", d.Distance), Number("height", d.Height),
             Number("horizontal", d.Horizontal), Number("strength", d.Strength),
             Percent("room", d.Room), Percent("glass", d.Glass), Percent("reflect", d.Reflect),
-            Percent("light", d.Light), Color("light_color", d.LightColor), Timing(), Percent("curve", d.Curve)).Normalized();
+            Percent("light", d.Light), Color("light_color", d.LightColor), Timing(), Percent("curve", d.Curve),
+            Flag("ambilight", d.Ambilight), Percent("ambilight_strength", d.AmbilightStrength)).Normalized();
     }
 
     // Written to a temporary file and renamed, so a crash never leaves half a file.
@@ -162,6 +170,8 @@ public static class ProfileStore
                 writer.WriteString("light_color", p.LightColor);
                 writer.WriteString("timing", LinuxProfile.TimingNames[p.Timing]);
                 writer.WriteNumber("curve", p.Curve);
+                writer.WriteBoolean("ambilight", p.Ambilight);
+                writer.WriteNumber("ambilight_strength", p.AmbilightStrength);
                 writer.WriteEndObject();
             }
             writer.WriteEndObject();

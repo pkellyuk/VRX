@@ -37,9 +37,16 @@ int main() {
     assert(Read("VRXL 5 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1 40\n", s));
     assert(s.curve == 40 && s.timing == 1);
     assert(Read("VRXL 4 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1\n", s) && s.curve == 0);   // flat
+    assert(s.ambilight == 1 && s.ambilightStrength == 85);   // the glow's defaults
+    // VRXL 6: the ambilight.
+    assert(Read("VRXL 6 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 7 1 40 0 55\n", s));
+    assert(s.ambilight == 0 && s.ambilightStrength == 55 && s.curve == 40);
     // Rejected, leaving the previous settings.
     const char* bad[] = {
-        "VRXL 6 2 2 0 0 1 30 60 25 30 0 1 0 0\n",       // unknown version
+        "VRXL 7 2 2 0 0 1 30 60 25 30 0 1 0 0 1 85 0\n", // unknown version
+        "VRXL 6 2 2 0 0 1 30 60 25 30 0 1 0 0 2 85\n",   // ambilight neither on nor off
+        "VRXL 6 2 2 0 0 1 30 60 25 30 0 1 0 0 1 101\n",  // strength above range
+        "VRXL 6 2 2 0 0 1 30 60 25 30 0 1 0 0 1\n",      // missing strength
         "VRXL 5 2 2 0 0 1 30 60 25 30 0 1 0 101\n",     // curve above range
         "VRXL 5 2 2 0 0 1 30 60 25 30 0 1 0\n",         // missing curve
         "VRXL 4 2 2 0 0 1 30 60 25 30 0 1 3\n",         // unknown timing mode

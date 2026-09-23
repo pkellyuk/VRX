@@ -144,8 +144,14 @@
     <!-- 3 Around the screen -->
     <l:Section Name="AroundSection" Header="Around the screen">
      <StackPanel>
-      <CheckBox IsEnabled="False" Content="Ambilight — glow around the screen"/>
-      <TextBlock Classes="Hint" Text="On Linux the glow and world colour are part of the room (below). A separate ambilight and world colour are not available yet."/>
+      <CheckBox Name="AmbilightCheck" Content="Ambilight — glow around the screen"
+                ToolTip.Tip="Spreads the colours at the edge of the picture softly into the darkness around the screen, like the bias lighting behind a television. It wraps round a curved screen, lights the room when the room is on, and follows the scene smoothly rather than flickering. Applies live; saved in the profile."/>
+      <StackPanel Name="AmbilightOptions" Margin="26,2,0,4">
+       <DockPanel><TextBlock DockPanel.Dock="Right" Classes="Value" Name="AmbiStrengthValue"/><TextBlock Classes="Label" Text="Ambilight strength"/></DockPanel>
+       <Slider Name="AmbiStrengthSlider" Minimum="0" Maximum="100" SmallChange="1" LargeChange="10"
+               ToolTip.Tip="How bright the glow is next to the screen; it always fades out towards its edge. Applies live; saved in the profile."/>
+      </StackPanel>
+      <TextBlock Classes="Hint" Text="A world colour is not available on Linux yet."/>
      </StackPanel>
     </l:Section>
 

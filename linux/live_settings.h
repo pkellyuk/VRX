@@ -26,6 +26,11 @@ struct LiveSettings {
     int timing = 1;
     // VRXL 5: the screen's curve, 0 (flat) to 100 percent (screen_curve.h).
     int curve = 0;
+    // VRXL 6: the ambilight glow round the screen (ambilight.h), on or off, and
+    // its strength in percent. On by default on Linux, where the room always
+    // had the glow before the option existed.
+    int ambilight = 1;
+    int ambilightStrength = 85;
 };
 
 inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
@@ -38,7 +43,7 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
     std::istringstream input(line);
     if (!(input >> tag >> version >> candidate.width >> candidate.distance >>
           candidate.height >> candidate.horizontal >> candidate.strength) ||
-        tag != "VRXL" || version < 1 || version > 5) return false;
+        tag != "VRXL" || version < 1 || version > 6) return false;
     if (version == 1) {
         candidate.room = 0;
     } else if (!(input >> candidate.room >> candidate.glass >> candidate.reflect >>
@@ -46,6 +51,7 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
     if (version >= 3 && !(input >> candidate.recenter)) return false;
     if (version >= 4 && !(input >> candidate.timing)) return false;
     if (version >= 5 && !(input >> candidate.curve)) return false;
+    if (version >= 6 && !(input >> candidate.ambilight >> candidate.ambilightStrength)) return false;
     if ((input >> extra) ||
         !std::isfinite(candidate.width) || candidate.width < 0.5f || candidate.width > 10.0f ||
         !std::isfinite(candidate.distance) || candidate.distance < 0.5f || candidate.distance > 8.0f ||
@@ -55,7 +61,8 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
         candidate.room < 0 || candidate.room > 100 || candidate.glass < 0 || candidate.glass > 100 ||
         candidate.reflect < 0 || candidate.reflect > 100 || candidate.light < 0 || candidate.light > 100 ||
         candidate.lightRgb > 0xFFFFFFu || candidate.timing < 0 || candidate.timing > 2 ||
-        candidate.curve < 0 || candidate.curve > 100) return false;
+        candidate.curve < 0 || candidate.curve > 100 || candidate.ambilight < 0 || candidate.ambilight > 1 ||
+        candidate.ambilightStrength < 0 || candidate.ambilightStrength > 100) return false;
     out = candidate;
     return true;
 }

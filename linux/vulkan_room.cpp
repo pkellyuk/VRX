@@ -217,6 +217,13 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     if (W != lastWidth_ || H != lastHeight_) glowHistoryValid_ = false;
     lastWidth_ = W; lastHeight_ = H;
     cylinder_=cylinder.curved?cylinder:Cylinder();
+    // The glow: in the room, on a curved screen, or as its own layer behind a
+    // flat one (glowLayer_). It restarts from the picture when turned back on.
+    glowOn_=settings.ambilight!=0;
+    glowLayer_=false;
+    if(!glowOn_)glowHistoryValid_=false;
+    const float glowHalfW=0.5f*W+kAmbiMargin*W,glowHalfH=0.5f*H+kAmbiMargin*W;
+    auto glow=[&](){if(glowOn_)ComputeGlow(glowSource,glowWidth,glowHeight,W,H,settings.ambilightStrength);};
     // As xrapp5: the room is built in the screen's own (level) frame round the
     // recentre point, so S^T rotates LOCAL offsets into that frame.
     float S[3][3];QuatRows(screen.pose.orientation,S);
@@ -228,7 +235,7 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     // screen's frame, and its field of view (xrapp5 MakeCurveConstants).
     auto curveConstants=[&](bool glowOn,float glowHalfW,float glowHalfH){
         curveConstants_={};curveConstants_.ew=eyeWidth_;curveConstants_.eh=eyeHeight_;
-        curveConstants_.glowOn=glowOn?1:0;curveConstants_.linearBlend=1;
+        curveConstants_.glowOn=glowOn?1:0;curveConstants_.linearBlend=screenFormat_==VK_FORMAT_R8G8B8A8_SRGB?1:0;
         curveConstants_.radius=cylinder_.radius;curveConstants_.halfWrap=cylinder_.halfWrap;
         curveConstants_.halfWidth=cylinder_.halfWidth;curveConstants_.halfHeight=cylinder_.halfHeight;
         curveConstants_.glowHalfW=glowHalfW;curveConstants_.glowHalfH=glowHalfH;
@@ -245,10 +252,13 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
         }
     };
     // Room at 0 %, or no room fits round the viewer: a curved screen is drawn
-    // alone (xrapp5's plain curve pass), over black; a flat one needs no layer.
+    // alone (xrapp5's plain curve pass), over black with the glow behind it; a
+    // flat one needs no eye layer, only the glow's own layer.
     auto curveAlone=[&](){
         curveOnly_=cylinder_.curved;
-        if(curveOnly_)curveConstants(false,0.0f,0.0f);
+        if(curveOnly_)curveConstants(glowOn_,glowHalfW,glowHalfH);
+        else glowLayer_=glowOn_;
+        glow();
         return curveOnly_;
     };
     curveOnly_=false;
@@ -273,16 +283,14 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
         }
         layout_=RoomLayout(W,H,GlowWidth,GlowHeight);
         std::vector<RoomEmitter> emitters;
-        const float glowHalfW=0.5f*W+kAmbiMargin*W;
-        const float glowHalfH=0.5f*H+kAmbiMargin*W;
         if(!BuildRoomEmitters(room_,cylinder_,W,H,glowHalfW,glowHalfH,layout_,emitters))
             throw std::runtime_error("Room emitter geometry failed");
         pendingEmitters_=std::move(emitters);
     }
     // A flat screen is the compositor's quad layers, over the room's footprint
     // of it; a curved one is drawn by the room's eye pass itself.
-    RoomView view;view.flatLayer=!cylinder_.curved;view.W=W;view.H=H;view.glowOn=true;
-    view.glowHalfW=0.5f*W+kAmbiMargin*W;view.glowHalfH=0.5f*H+kAmbiMargin*W;view.cyl=cylinder_;
+    RoomView view;view.flatLayer=!cylinder_.curved;view.W=W;view.H=H;view.glowOn=glowOn_;
+    view.glowHalfW=glowHalfW;view.glowHalfH=glowHalfH;view.cyl=cylinder_;
     view_=view;
     const auto now=std::chrono::steady_clock::now();
     const float dt=lastPrepare_==std::chrono::steady_clock::time_point{}?0.0f:
@@ -293,17 +301,23 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     shading_=MakeRoomShading(room_,settings.room,0,W*H,look);
     roomConstants_=MakeRoomConstants(room_,shading_,layout_,view,int(colorWidth_),int(colorHeight_),alpha);
     mirrorW_=roomConstants_.mirrorW;mirrorH_=roomConstants_.mirrorH;
-    curveConstants(true,view.glowHalfW,view.glowHalfH);
+    curveConstants(glowOn_,glowHalfW,glowHalfH);
 
+    glow();
+    return true;
+}
+// The ambilight glow (ambilight.h) round a W x H m screen from `source`, blended
+// into the previous frames' glow, as packed RGBA premultiplied bytes in glowBytes_.
+void VulkanRoom::ComputeGlow(const uint32_t* glowSource,uint32_t glowWidth,uint32_t glowHeight,float W,float H,int strength) {
     AmbiConstants ambi{};
     ambi.gw=GlowWidth;ambi.gh=GlowHeight;
     ambi.srcW=glowWidth;ambi.srcH=glowHeight;
     ambi.screenW=W;ambi.screenH=H;
     ambi.marginM=kAmbiMargin*W;
     ambi.rectW=W+2.0f*ambi.marginM;ambi.rectH=H+2.0f*ambi.marginM;
-    ambi.intensity=kAmbiDefaultStrength/100.0f;
+    ambi.intensity=float(strength)/100.0f;
     ambi.soft=kAmbiSoft*W;ambi.bezel=kAmbiBezel;ambi.ringN=kAmbiRing;
-    ambi.linearBlend=1;
+    ambi.linearBlend=screenFormat_==VK_FORMAT_R8G8B8A8_SRGB?1:0;
     std::vector<unsigned char> reference(size_t(GlowWidth)*GlowHeight*4);
     if(!AmbilightReference(ambi,reinterpret_cast<const unsigned char*>(glowSource),int(glowWidth)*4,reference.data(),GlowWidth*4))
         throw std::runtime_error("Ambilight reference failed");
@@ -319,7 +333,6 @@ bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     }
     glowHistoryValid_=true;
     glowBytes_=std::move(glow);
-    return true;
 }
 void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     // Per-frame data is written by the command buffer itself, so a frame the
@@ -335,7 +348,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     }
     update(roomBuffer_.handle,&roomConstants_,sizeof(roomConstants_));
     update(curveBuffer_.handle,&curveConstants_,sizeof(curveConstants_));
-    update(glowBuffer_.handle,glowBytes_.data(),glowBytes_.size());
+    if(glowOn_)update(glowBuffer_.handle,glowBytes_.data(),glowBytes_.size());
     VkMemoryBarrier updated{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     updated.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
     updated.dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_UNIFORM_READ_BIT|VK_ACCESS_TRANSFER_READ_BIT;
@@ -351,7 +364,7 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     ep.srcW=colorWidth_;ep.srcH=colorHeight_;ep.stride=RoomStride(int(colorWidth_));
     ep.gridX=layout_.gridX;ep.gridY=layout_.gridY;ep.glowW=GlowWidth;ep.glowH=GlowHeight;
     ep.blocksX=layout_.blocksX;ep.blocksY=layout_.blocksY;ep.glowBlock=layout_.block;
-    ep.emitterCount=layout_.count();ep.glowOn=1;ep.alpha=roomConstants_.alpha;
+    ep.emitterCount=layout_.count();ep.glowOn=glowOn_?1:0;ep.alpha=roomConstants_.alpha;
     std::copy_n(shading_.lightL,3,ep.lightL);
     vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,passPipelineLayout_,0,1,&passSet_,0,nullptr);
     vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,emitPipeline_);
@@ -464,6 +477,27 @@ void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
                          0,0,nullptr,0,nullptr,1,&target);
     vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,timingQueries_,6);
 }
+void VulkanRoom::RecordGlow(VkCommandBuffer cmd,VkImage destination) {
+    constexpr size_t kMaxUpdate=65536;
+    for(size_t offset=0;offset<glowBytes_.size();offset+=kMaxUpdate)
+        vkCmdUpdateBuffer(cmd,glowBuffer_.handle,offset,std::min(kMaxUpdate,glowBytes_.size()-offset),glowBytes_.data()+offset);
+    VkMemoryBarrier updated{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    updated.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;updated.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+    VkImageMemoryBarrier target{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    target.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;target.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    target.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    target.srcQueueFamilyIndex=target.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    target.image=destination;target.subresourceRange.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
+    target.subresourceRange.levelCount=1;target.subresourceRange.layerCount=1;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&updated,0,nullptr,1,&target);
+    VkBufferImageCopy copy{};copy.imageSubresource.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.imageSubresource.layerCount=1;copy.imageExtent={GlowWidth,GlowHeight,1};
+    vkCmdCopyBufferToImage(cmd,glowBuffer_.handle,destination,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
+    target.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;target.newLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    target.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;target.dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         0,0,nullptr,0,nullptr,1,&target);
+}
 void VulkanRoom::PrintTiming() const {
     uint64_t stamps[7]{};
     Check(vkGetQueryPoolResults(device_,timingQueries_,0,7,sizeof(stamps),stamps,sizeof(uint64_t),
@@ -494,7 +528,7 @@ bool VulkanRoom::CompareReference() const {
         inputs.light=&lm;inputs.mirror=&mirror;inputs.room=&room_;
         for(uint32_t y=12;y<eyeHeight_;y+=24)for(uint32_t x=12;x<eyeWidth_;x+=24){
             float ref[3];
-            const bool ok=curveOnly_?CurvedPixel(curveConstants_,e,int(x),int(y),cylinder_,picture,nullptr,ref)
+            const bool ok=curveOnly_?CurvedPixel(curveConstants_,e,int(x),int(y),cylinder_,picture,glowOn_?&glow:nullptr,ref)
                                     :RoomPixel(curveConstants_,cylinder_,room_,view_,e,x,y,inputs,ref);
             if(!ok)throw std::runtime_error("CPU eye reference failed");
             const auto* p=actual+(size_t(e)*eyeWidth_*eyeHeight_+y*eyeWidth_+x)*4;
