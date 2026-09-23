@@ -143,13 +143,13 @@ find_path(SPA_INCLUDE_DIR spa/param/video/raw-utils.h PATH_SUFFIXES spa-0.2)
 find_library(PIPEWIRE_LIBRARY NAMES pipewire-0.3)
 if(TARGET PkgConfig::GIO AND PORTAL_INCLUDE_DIR AND PORTAL_LIBRARY AND
    PIPEWIRE_INCLUDE_DIR AND SPA_INCLUDE_DIR AND PIPEWIRE_LIBRARY)
-    add_executable(vrx-capture-probe capture_probe.cpp)
+    add_executable(vrx-capture-probe capture_probe.cpp vulkan_dmabuf.cpp)
     target_compile_features(vrx-capture-probe PRIVATE cxx_std_17)
     target_include_directories(vrx-capture-probe PRIVATE
         "${PORTAL_INCLUDE_DIR}" "${PIPEWIRE_INCLUDE_DIR}" "${SPA_INCLUDE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../bench/native/openxr")
     target_link_libraries(vrx-capture-probe PRIVATE
-        PkgConfig::GIO "${PORTAL_LIBRARY}" "${PIPEWIRE_LIBRARY}")
+        PkgConfig::GIO "${PORTAL_LIBRARY}" "${PIPEWIRE_LIBRARY}" Vulkan::Vulkan)
     target_sources(vrx-xr-synthetic PRIVATE portal_capture.cpp)
     target_include_directories(vrx-xr-synthetic PRIVATE
         "${PORTAL_INCLUDE_DIR}" "${PIPEWIRE_INCLUDE_DIR}" "${SPA_INCLUDE_DIR}")

@@ -54,4 +54,12 @@ int main() {
     vrx::DepthGridFromColor(color, 200, 100, output);
     assert(output.size() == size_t(vrx::kSyntheticWidth) * vrx::kSyntheticHeight * 3);
     assert(output[0] == 0 && output[center] == 10 && output[center + 1] == 20 && output[center + 2] == 30);
+
+    // Splitting rows between threads does not change the result.
+    std::vector<uint32_t> single, split;
+    vrx::ScaleCaptureColor(checker.data(), size_t(width) * 4, width, height, false,
+                           1000, 571, single, 1);
+    vrx::ScaleCaptureColor(checker.data(), size_t(width) * 4, width, height, false,
+                           1000, 571, split, 4);
+    assert(single == split);
 }

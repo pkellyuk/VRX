@@ -53,8 +53,8 @@ a headset judgement of the new screen-plane correction.
 The current Linux render path:
 
 1. receives a shared-memory PipeWire frame and scales it on the capture thread
-   to the colour texture, then to the depth grid (about 8 + 2 ms for a 4K
-   source on the reference host);
+   to the colour texture, then to the depth grid (about 2.1 + 0.7 ms for a 4K
+   source on four threads of the reference Ryzen 7 5700X);
 2. copies packed RGBA into a host staging buffer, then to device-local memory
    (1.5 ms GPU copy at 1920×1080);
 3. dispatches the stereo warp over device-local buffers, one invocation per row
@@ -85,13 +85,23 @@ wait on a GPU fence every frame. The Linux work should proceed as follows:
 - **2d. Improve warp occupancy.** Rows now run eight to a workgroup, as on
   Windows. Each row is still serial; parallelise scatter/fill only if timing
   shows the warp matters.
-- **2d′. Capture scaling off the CPU.** A 4K source costs about 10 ms per frame
-  on the capture thread. Scale on the GPU (DMA-BUF import, or upload the source
-  and scale in a shader), or at least split rows across threads.
-- **2e. Import PipeWire DMA-BUFs where available.** Negotiate buffer types and
-  modifiers, import supported frames into Vulkan, and retain shared-memory
-  capture as the fallback. Validate actual compositor/driver support before
-  relying on this path for the first release.
+- **2d′. Capture scaling.** The CPU resampler now splits rows across four
+  threads with bit-identical output: 4K scaling fell from about 10 ms to 2.7 ms.
+  Uploading shared-memory 4K frames for GPU scaling is not worthwhile on the
+  reference host: its PCIe 3.0 x8 link takes 8.5 ms of GPU time per 33 MB
+  frame, against 1.5 ms for the scaled 1920x1080 colour. GPU scaling should
+  wait for DMA-BUF import (2e).
+- **2e. Import PipeWire DMA-BUFs where available.** `vrx-capture-probe --dmabuf`
+  proves it on the reference host (KDE Wayland, NVIDIA 595.71): Vulkan can
+  import six NVIDIA block-linear modifiers and LINEAR for B8G8R8A8; KWin offered
+  the same block-linear set; the probe fixed `0x0300000000606015`, streamed
+  3840x2160 BGRA DMA-BUFs, imported all three buffers (about 1 ms each, once
+  per buffer) and read back a correct desktop image. `vulkan_dmabuf.h` holds the
+  reusable importer. Remaining: enable the import extensions on the OpenXR
+  Vulkan device, keep each PipeWire buffer until the GPU has read it, scale
+  the imported image into the colour texture and prepare depth on the GPU (2f),
+  and keep shared memory as the fallback. The probe does not yet use explicit
+  sync (`SPA_META_SyncTimeline`); check for torn frames before relying on it.
 - **2f. Move ambilight and model input preparation to the GPU.** Keep glow
   history in a format that converges under small changes; Linux currently uses
   an 8-bit 64×45 history while Windows uses a larger floating-point history.
