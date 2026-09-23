@@ -3,6 +3,7 @@
 #include <openxr/openxr.h>
 #include "room.h"
 #include "live_settings.h"
+#include "screen_anchor.h"
 #include <vector>
 #include <chrono>
 
@@ -21,8 +22,11 @@ public:
     VulkanRoom(const VulkanRoom&) = delete;
     VulkanRoom& operator=(const VulkanRoom&) = delete;
     // glow: packed RGBA picture the screen's glow is taken from (any size).
-    void Prepare(const uint32_t* glow, uint32_t glowWidth, uint32_t glowHeight, const LiveSettings& settings,
-                 const XrView eyes[2], float floorLocalY);
+    // screen: the placed screen (pose, size and the recentre point it was
+    // placed from); floorLocalY: the STAGE floor in LOCAL space, or NaN.
+    // Returns false when no room can be built round this viewer position.
+    bool Prepare(const uint32_t* glow, uint32_t glowWidth, uint32_t glowHeight, const LiveSettings& settings,
+                 const XrView eyes[2], const ScreenAnchor& screen, float floorLocalY);
     void Record(VkCommandBuffer command, VkImage destination);
     void EnableCapture() { capture_ = true; }
     void SaveCapture(const char* path) const;
@@ -44,6 +48,7 @@ private:
     Buffer decode_, emitter_, glowBuffer_, mirrorBuffer_, lightBuffer_, curveBuffer_, roomBuffer_, readback_;
     bool capture_ = false;
     bool glowHistoryValid_ = false;
+    bool roomRejected_ = false;       // BuildRoom failed for the current geometry key
     std::vector<float> glowHistory_;
     // Written by Record's command buffer, not directly into GPU-visible memory.
     std::vector<RoomEmitter> pendingEmitters_;

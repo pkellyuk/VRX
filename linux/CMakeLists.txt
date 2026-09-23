@@ -125,9 +125,14 @@ target_link_libraries(vrx-room-gpu-probe PRIVATE Vulkan::Vulkan)
 add_executable(vrx-depth-range-test depth_range_test.cpp)
 target_compile_features(vrx-depth-range-test PRIVATE cxx_std_17)
 
+add_executable(vrx-live-settings-test live_settings_test.cpp)
+target_compile_features(vrx-live-settings-test PRIVATE cxx_std_17)
+target_compile_options(vrx-live-settings-test PRIVATE -UNDEBUG)
+
 add_executable(vrx-capture-scale-test capture_scale_test.cpp)
 target_compile_features(vrx-capture-scale-test PRIVATE cxx_std_17)
 target_include_directories(vrx-capture-scale-test PRIVATE ../bench/native/openxr)
+target_compile_options(vrx-capture-scale-test PRIVATE -UNDEBUG)
 
 add_executable(vrx-room-reference room_reference.cpp)
 target_compile_features(vrx-room-reference PRIVATE cxx_std_17)
@@ -202,6 +207,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_test(NAME vrx-live-settings COMMAND vrx-live-settings-test)
     if(DOTNET_EXECUTABLE)
         add_test(NAME vrx-linux-app-check COMMAND "${VRX_LINUX_APP}" --check)
         set_tests_properties(vrx-linux-app-check PROPERTIES ENVIRONMENT "DOTNET_ROOT=${DOTNET_ROOT_DIRECTORY}")

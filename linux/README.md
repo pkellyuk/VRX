@@ -134,11 +134,12 @@ seconds), and keeps named profiles under the XDG config directory
 (`linux-profiles.json`, the format the earlier PyQt controller used) plus its
 own choices in `linux-app.json`. Settings are saved in the selected profile as
 they change, and screen, stereo and room controls apply live through an atomic
-`VRXL 2` snapshot; `VRXL 1` snapshots still load with the room off. Linux
+`VRXL 3` snapshot, whose last field counts Recenter requests; `VRXL 1` and
+`VRXL 2` snapshots still load. Linux
 differences: Wayland does not let an app list other windows, so "Game &
 window" chooses between a window, a whole screen or either, and the desktop's
 sharing dialog does the choosing; there is no auto-attach; settings the Linux
-engine cannot apply yet (recenter, curve, follow-head, a separate ambilight,
+engine cannot apply yet (curve, follow-head, a separate ambilight,
 steadying, timing modes, SteamVR menu options) are shown disabled. The app
 starts the room renderer even when Room is 0, so it can be turned on live.
 
@@ -191,8 +192,11 @@ feature or the runtime offers no RGBA swapchain format.
 
 `VRXL 2` is a single line: the five `VRXL 1` floats, then Room, Glass,
 Reflections and ceiling light percentages (0–100), then the decimal value of
-an RGB light colour. The Linux controller writes and validates it. Room 0
-omits the projection layer while retaining the existing stereo quads.
+an RGB light colour. `VRXL 3` adds one more field, a counter the desktop app
+increments for each Recenter; the engine places the screen in front of the
+headset whenever it changes (and on the first tracked frame). The desktop app
+writes version 3 and validates it. Room 0 omits the projection layer while
+retaining the existing stereo quads.
 
 ## Build and run the probe
 

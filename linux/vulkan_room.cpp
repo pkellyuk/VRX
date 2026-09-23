@@ -206,26 +206,37 @@ VulkanRoom::~VulkanRoom(){
     for(Buffer* b:{&readback_,&roomBuffer_,&curveBuffer_,&lightBuffer_,&mirrorBuffer_,&glowBuffer_,&emitter_,&decode_})DestroyBuffer(*b);
 }
 
-void VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t glowHeight,const LiveSettings& settings,
-                         const XrView eyes[2],float floorLocalY) {
+bool VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t glowHeight,const LiveSettings& settings,
+                         const XrView eyes[2],const ScreenAnchor& screen,float floorLocalY) {
     if(!glowSource||!glowWidth||!glowHeight)throw std::runtime_error("Room glow source is empty");
-    const float W=settings.width,H=W*float(colorHeight_)/colorWidth_;
+    const float W=screen.size.width,H=screen.size.height;
     if (W != lastWidth_ || H != lastHeight_) glowHistoryValid_ = false;
     lastWidth_ = W; lastHeight_ = H;
-    // The fixed screen is positioned relative to LOCAL origin, so its room
-    // geometry uses that same origin. Eye poses vary only the traced rays.
+    // As xrapp5: the room is built in the screen's own (level) frame round the
+    // recentre point, so S^T rotates LOCAL offsets into that frame.
+    float S[3][3];QuatRows(screen.pose.orientation,S);
+    auto inScreen=[&](const XrVector3f& p,float out[3]){
+        const float rel[3]={p.x-screen.pose.position.x,p.y-screen.pose.position.y,p.z-screen.pose.position.z};
+        for(int r=0;r<3;r++)out[r]=S[0][r]*rel[0]+S[1][r]*rel[1]+S[2][r]*rel[2];
+    };
     RoomInputs input;
     input.W=W;input.H=H;
-    input.eye[0]=-settings.horizontal;
-    input.eye[1]=-settings.height;
-    input.eye[2]=settings.distance;
-    input.floorY=std::isfinite(floorLocalY)?floorLocalY-settings.height:floorLocalY;
+    inScreen(screen.origin.position,input.eye);
+    input.floorY=std::isfinite(floorLocalY)?floorLocalY-screen.pose.position.y:floorLocalY;
     const float key[6]={W,H,input.eye[0],input.eye[1],input.eye[2],
                         std::isfinite(input.floorY)?input.floorY:-999.0f};
-    bool geometryChanged=!room_.valid;
+    bool geometryChanged=!room_.valid&&!roomRejected_;
     for(int i=0;i<6;i++)if(std::fabs(key[i]-geometryKey_[i])>1e-4f)geometryChanged=true;
+    if(!geometryChanged&&!room_.valid)return false;   // rejected; retried when the inputs change
     if(geometryChanged){
-        if(!BuildRoom(input,room_))throw std::runtime_error("Room geometry invalid for anchored eye position");
+        std::copy_n(key,6,geometryKey_);
+        roomRejected_=!BuildRoom(input,room_);
+        if(roomRejected_){
+            room_=Room();
+            std::printf("No room round the viewer at %.2f, %.2f, %.2f m from the screen\n",
+                        input.eye[0],input.eye[1],input.eye[2]);
+            return false;
+        }
         layout_=RoomLayout(W,H,GlowWidth,GlowHeight);
         std::vector<RoomEmitter> emitters;
         const float glowHalfW=0.5f*W+kAmbiMargin*W;
@@ -233,7 +244,6 @@ void VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
         if(!BuildRoomEmitters(room_,Cylinder(),W,H,glowHalfW,glowHalfH,layout_,emitters))
             throw std::runtime_error("Room emitter geometry failed");
         pendingEmitters_=std::move(emitters);
-        std::copy_n(key,6,geometryKey_);
     }
     RoomView view;view.flatLayer=true;view.W=W;view.H=H;view.glowOn=true;
     view.glowHalfW=0.5f*W+kAmbiMargin*W;view.glowHalfH=0.5f*H+kAmbiMargin*W;
@@ -253,11 +263,10 @@ void VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     curveConstants_.world[3]=1.0f;
     for(int e=0;e<2;e++){
         auto& v=curveConstants_.eye[e];
-        v.origin[0]=eyes[e].pose.position.x-settings.horizontal;
-        v.origin[1]=eyes[e].pose.position.y-settings.height;
-        v.origin[2]=eyes[e].pose.position.z+settings.distance;
-        float m[3][3];QuatRows(eyes[e].pose.orientation,m);
-        for(int k=0;k<3;k++){v.row0[k]=m[0][k];v.row1[k]=m[1][k];v.row2[k]=m[2][k];}
+        inScreen(eyes[e].pose.position,v.origin);
+        float E[3][3];QuatRows(eyes[e].pose.orientation,E);
+        float* rows[3]={v.row0,v.row1,v.row2};
+        for(int r=0;r<3;r++)for(int k=0;k<3;k++)rows[r][k]=S[0][r]*E[0][k]+S[1][r]*E[1][k]+S[2][r]*E[2][k];   // S^T E
         v.tanL=std::tan(eyes[e].fov.angleLeft);v.tanR=std::tan(eyes[e].fov.angleRight);
         v.tanU=std::tan(eyes[e].fov.angleUp);v.tanD=std::tan(eyes[e].fov.angleDown);
     }
@@ -286,6 +295,7 @@ void VulkanRoom::Prepare(const uint32_t* glowSource,uint32_t glowWidth,uint32_t 
     }
     glowHistoryValid_=true;
     glowBytes_=std::move(glow);
+    return true;
 }
 void VulkanRoom::Record(VkCommandBuffer cmd,VkImage destination) {
     // Per-frame data is written by the command buffer itself, so a frame the

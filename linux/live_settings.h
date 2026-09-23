@@ -17,6 +17,9 @@ struct LiveSettings {
     int reflect = 25;
     int light = 30;
     uint32_t lightRgb = 0xFFB46B;
+    // VRXL 3: incremented by the desktop app for each Recenter request; the
+    // engine re-places the screen whenever it changes.
+    uint32_t recenter = 0;
 };
 
 inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
@@ -29,11 +32,12 @@ inline bool ReadLiveSettings(const std::string& path, LiveSettings& out) {
     std::istringstream input(line);
     if (!(input >> tag >> version >> candidate.width >> candidate.distance >>
           candidate.height >> candidate.horizontal >> candidate.strength) ||
-        tag != "VRXL" || (version != 1 && version != 2)) return false;
+        tag != "VRXL" || version < 1 || version > 3) return false;
     if (version == 1) {
         candidate.room = 0;
     } else if (!(input >> candidate.room >> candidate.glass >> candidate.reflect >>
                  candidate.light >> candidate.lightRgb)) return false;
+    if (version == 3 && !(input >> candidate.recenter)) return false;
     if ((input >> extra) ||
         !std::isfinite(candidate.width) || candidate.width < 0.5f || candidate.width > 10.0f ||
         !std::isfinite(candidate.distance) || candidate.distance < 0.5f || candidate.distance > 8.0f ||

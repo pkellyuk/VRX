@@ -20,12 +20,13 @@ public static class Checks
 
         // The snapshot is exactly what live_settings.h parses, in any culture.
         Expect(LiveSettings.Snapshot(LinuxProfile.Default) ==
-               "VRXL 2 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867\n", "default VRXL 2 snapshot");
+               "VRXL 3 2.000 2.000 0.000 0.000 1.000 30 60 25 30 16757867 0\n", "default VRXL 3 snapshot");
+        Expect(LiveSettings.Snapshot(LinuxProfile.Default, 7).EndsWith(" 16757867 7\n"), "recenter counter in the snapshot");
         var previous = Thread.CurrentThread.CurrentCulture;
         try
         {
             Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
-            Expect(LiveSettings.Snapshot(LinuxProfile.Default with { Width = 2.5 }).StartsWith("VRXL 2 2.500 "),
+            Expect(LiveSettings.Snapshot(LinuxProfile.Default with { Width = 2.5 }).StartsWith("VRXL 3 2.500 "),
                    "snapshot ignores the current culture");
         }
         catch (System.Globalization.CultureNotFoundException) { }   // invariant-globalization builds

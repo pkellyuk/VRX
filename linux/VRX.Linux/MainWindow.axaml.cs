@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     bool loading = true;
     EngineSession? engine;
     bool stopping, playing;
+    uint recenterCount;                       // Recenter requests in this session
     string lastError = "";
     readonly Queue<string> logLines = new();
     readonly DispatcherTimer liveTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
@@ -101,6 +102,8 @@ public partial class MainWindow : Window
         ProfileList.SelectionChanged += (_, _) => ProfileChosen(ProfileList.SelectedItem as string);
         StartButton.Click += (_, _) => Start();
         StopButton.Click += (_, _) => Stop();
+        EasyRecenterButton.Click += (_, _) => Recenter();
+        RecenterButton.Click += (_, _) => Recenter();
         NewProfileButton.Click += (_, _) => NewProfile();
         RenameButton.Click += (_, _) => RenameProfile();
         DeleteButton.Click += (_, _) => Confirm($"Delete the profile \"{current}\"?", DeleteProfile);
@@ -480,7 +483,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            LiveSettings.Write(settingsPath, ReadProfile());
+            LiveSettings.Write(settingsPath, ReadProfile(), recenterCount);
             return true;
         }
         catch (Exception error) when (error is IOException or ArgumentException or UnauthorizedAccessException)
@@ -530,6 +533,16 @@ public partial class MainWindow : Window
         UpdateButtons();
     }
 
+    // Puts the screen straight in front of where the headset is looking now: the
+    // next snapshot carries a new counter, which the engine acts on once.
+    void Recenter()
+    {
+        if (engine == null || stopping) return;
+        liveTimer.Stop();
+        ++recenterCount;
+        if (WriteLiveSettings()) Status.Text = "Recenter requested · uses the current headset direction";
+    }
+
     void Stop()
     {
         if (engine == null || stopping) return;
@@ -577,6 +590,7 @@ public partial class MainWindow : Window
         var running = engine != null;
         StartButton.IsEnabled = !running;
         StopButton.IsEnabled = running && !stopping;
+        RecenterButton.IsEnabled = EasyRecenterButton.IsEnabled = running && !stopping;
         CudaCheck.IsEnabled = !running;
         foreach (var source in new[] { SourceWindow, SourceScreen, SourceAny }) source.IsEnabled = !running;
         CardState.Text = running

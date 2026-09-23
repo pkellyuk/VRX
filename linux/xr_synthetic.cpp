@@ -9,6 +9,7 @@
 #include "live_settings.h"
 #include "vulkan_prep.h"
 #include "vulkan_room.h"
+#include "screen_anchor.h"
 #include "vulkan_capture_scale.h"
 #include "vulkan_dmabuf.h"
 #include "playback_policy.h"
@@ -469,10 +470,6 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         quads[eye].subImage.imageRect.extent = {int32_t(colorWidth), int32_t(colorHeight)};
         quads[eye].subImage.imageArrayIndex = eye;
         quads[eye].pose.orientation.w = 1.0f;
-        quads[eye].pose.position.z = -settings.distance;
-        quads[eye].pose.position.x = settings.horizontal;
-        quads[eye].pose.position.y = settings.height;
-        quads[eye].size = {settings.width, settings.width * screenAspect};
         layers[eye + (roomEnabled ? 1 : 0)] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[eye]);
     }
     if (roomEnabled) layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
@@ -502,6 +499,13 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
     constexpr uint32_t ambientWidth = vrx::VulkanPrep::width / 4, ambientHeight = vrx::VulkanPrep::height / 4;
     std::vector<uint32_t> ambient(size_t(ambientWidth) * ambientHeight, 0xff000000u);
     bool laterDumped = false;
+    // The screen, as xrapp5 places it: straight ahead of the headset on the
+    // first tracked frame and on each Recenter, then moved by the settings
+    // relative to that point. With the room on it keeps only the heading.
+    ScreenAnchor screen;
+    // The room's floor, read from STAGE once per placement (or reference-space change).
+    float stageFloorY = std::numeric_limits<float>::quiet_NaN();
+    bool floorLatched = false;
     // What each in-flight frame hands on once its GPU work has completed.
     struct SlotWork {
         bool submitted = false;
@@ -559,6 +563,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         XrResult eventResult = xr.pollEvent(instance, &event);
         while (eventResult == XR_SUCCESS) {
             auto* header = reinterpret_cast<XrEventDataBaseHeader*>(&event);
+            if (header->type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) floorLatched = false;
             if (header->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
                 auto* state = reinterpret_cast<XrEventDataSessionStateChanged*>(&event);
                 std::printf("OpenXR session state: %d\n", state->state);
@@ -610,12 +615,12 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                     updated.light != settings.light || updated.lightRgb != settings.lightRgb)
                     std::printf("Live settings: width %.2f m, distance %.2f m, height %.2f m, horizontal %.2f m, stereo %.2fx\n",
                         updated.width, updated.distance, updated.height, updated.horizontal, updated.strength);
+                if (updated.recenter != settings.recenter) {
+                    screen.pending = true;
+                    std::puts("Recenter requested");
+                }
                 settings = updated;
                 warp->SetStrength(settings.strength);
-                for (auto& quad : quads) {
-                    quad.pose.position = {settings.horizontal, settings.height, -settings.distance};
-                    quad.size = {settings.width, settings.width * screenAspect};
-                }
             }
         }
         // Pass on finished frames promptly (depth input, glow, DMA-BUF release).
@@ -633,6 +638,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         const auto frameWorkStart = std::chrono::steady_clock::now();
         uint32_t index = 0;
         bool roomFrameReady = false;
+        bool roomDrawn = false;          // the room layer is drawn and submitted this frame
         uint32_t roomIndex = 0;
         XrView roomViews[2]{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
         if (state.shouldRender) {
@@ -652,8 +658,29 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 const auto& right = roomViews[1].pose.position;
                 const float dx = right.x - left.x, dy = right.y - left.y, dz = right.z - left.z;
                 warp->SetStereoGeometry(settings.distance, settings.width, std::sqrt(dx * dx + dy * dy + dz * dz), true);
+                // The heading both eyes share, and the narrower half field of view.
+                const XrQuaternionf q0 = roomViews[0].pose.orientation, q1 = roomViews[1].pose.orientation;
+                const float sign = q0.x * q1.x + q0.y * q1.y + q0.z * q1.z + q0.w * q1.w < 0 ? -1.0f : 1.0f;
+                XrQuaternionf shared{q0.x + sign * q1.x, q0.y + sign * q1.y, q0.z + sign * q1.z, q0.w + sign * q1.w};
+                const float length = std::sqrt(shared.x * shared.x + shared.y * shared.y + shared.z * shared.z + shared.w * shared.w);
+                if (length > 1e-6f) shared = {shared.x / length, shared.y / length, shared.z / length, shared.w / length};
+                else shared = q0;
+                float tanHalfX = 100.0f;
+                for (const auto& view : roomViews)
+                    tanHalfX = std::min({tanHalfX, std::tan(std::fabs(view.fov.angleLeft)), std::tan(std::fabs(view.fov.angleRight))});
+                if (!(tanHalfX > 0.01f && tanHalfX < 100.0f)) tanHalfX = 1.0f;
+                screen.level = roomEnabled && settings.room > 0;
+                if (screen.Place(roomViews[0].pose, roomViews[1].pose, shared, tanHalfX, screenAspect)) {
+                    std::puts("Screen placed in front of the current headset direction");
+                    floorLatched = false;
+                }
+                screen.Adjust(settings.width, settings.distance, settings.height, settings.horizontal, screenAspect);
+                for (auto& quad : quads) {
+                    quad.pose = screen.pose;
+                    quad.size = screen.size;
+                }
             }
-            roomFrameReady = roomEnabled && settings.room > 0 && validViews;
+            roomFrameReady = roomEnabled && settings.room > 0 && validViews && !screen.pending;
             if (roomFrameReady) {
                 for (int eye = 0; eye < 2; ++eye) {
                     projectionViews[eye].pose = roomViews[eye].pose;
@@ -757,21 +784,30 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             warp->SetStereoGeometry(settings.distance, settings.width, 0.0f, depthAvailable);
             warp->UploadNearness(truth);
             if (roomFrameReady) {
-                float floorLocalY = std::numeric_limits<float>::quiet_NaN();
-                if (stageSpace != XR_NULL_HANDLE) {
-                    XrSpaceLocation floorLocation{}; floorLocation.type = XR_TYPE_SPACE_LOCATION;
-                    if (XR_SUCCEEDED(xr.locateSpace(stageSpace, space, state.predictedDisplayTime, &floorLocation)) &&
-                        (floorLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
-                        (floorLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
-                        floorLocalY = floorLocation.pose.position.y;
+                // Latched, so tracking noise in STAGE does not move the room.
+                if (!floorLatched) {
+                    stageFloorY = std::numeric_limits<float>::quiet_NaN();
+                    floorLatched = stageSpace == XR_NULL_HANDLE;
+                    if (stageSpace != XR_NULL_HANDLE) {
+                        XrSpaceLocation floorLocation{}; floorLocation.type = XR_TYPE_SPACE_LOCATION;
+                        if (XR_SUCCEEDED(xr.locateSpace(stageSpace, space, state.predictedDisplayTime, &floorLocation)) &&
+                            (floorLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+                            (floorLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+                            stageFloorY = floorLocation.pose.position.y;
+                            floorLatched = true;
+                        }
+                    }
+                    if (floorLatched)
+                        std::printf("Room floor: %s\n", std::isfinite(stageFloorY) ? "from STAGE" : "not tracked, seated estimate");
                 }
                 const auto prepStart = std::chrono::steady_clock::now();
-                if (live) room->Prepare(ambient.data(), ambientWidth, ambientHeight,
-                                        settings, roomViews, floorLocalY);
-                else room->Prepare(color.data(), colorWidth, colorHeight, settings, roomViews, floorLocalY);
+                roomDrawn = live ? room->Prepare(ambient.data(), ambientWidth, ambientHeight,
+                                                 settings, roomViews, screen, stageFloorY)
+                                 : room->Prepare(color.data(), colorWidth, colorHeight,
+                                                 settings, roomViews, screen, stageFloorY);
                 roomPrepMs.push_back(std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - prepStart).count());
-                if (roomDumpPath && renderedFrames == 0) room->EnableCapture();
+                if (roomDrawn && roomDumpPath && renderedFrames == 0) room->EnableCapture();
             }
             VK_CHECK(vkResetCommandBuffer(command, 0));
             VkCommandBufferBeginInfo cbbi{}; cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -796,7 +832,7 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
             const bool prepFrame = live ? liveNew : !stillPath;
             if (prepFrame) prep->Record(command);
             warp->Record(command, checkFrame);
-            if (roomFrameReady) room->Record(command, roomImages[roomIndex].image);
+            if (roomDrawn) room->Record(command, roomImages[roomIndex].image);
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.srcAccessMask = 0;
@@ -848,10 +884,10 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
                 const double ms = slotWaitMs + std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - gpuStart).count();
                 if (!checkFrame) gpuWaitMs.push_back(ms);
-                else if (roomFrameReady && renderedFrames == 0) std::printf("First room frame GPU submit/wait: %.2f ms\n", ms);
+                else if (roomDrawn && renderedFrames == 0) std::printf("First room frame GPU submit/wait: %.2f ms\n", ms);
             }
-            if (roomFrameReady && renderedFrames == 0) room->PrintTiming();
-            if (roomFrameReady && roomDumpPath && renderedFrames == 0) {
+            if (roomDrawn && renderedFrames == 0) room->PrintTiming();
+            if (roomDrawn && roomDumpPath && renderedFrames == 0) {
                 room->SaveCapture(roomDumpPath);
                 referenceMatched = referenceMatched && room->CompareReference();
                 std::printf("Room eye capture: %s\n", roomDumpPath);
@@ -892,17 +928,16 @@ int Run(double seconds, const char* loaderPath, const char* stillPath, const cha
         fe.type = XR_TYPE_FRAME_END_INFO;
         fe.displayTime = state.predictedDisplayTime;
         fe.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        // Nothing is shown until the screen has been placed from a tracked pose.
         const XrCompositionLayerBaseHeader* frameLayers[3]{};
-        if (state.shouldRender) {
-            if (roomFrameReady) {
-                frameLayers[0] = layers[0]; frameLayers[1] = layers[1]; frameLayers[2] = layers[2];
-            } else {
-                frameLayers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[0]);
-                frameLayers[1] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[1]);
-            }
+        uint32_t layerCount = 0;
+        if (state.shouldRender && !screen.pending) {
+            if (roomDrawn) frameLayers[layerCount++] = layers[0];
+            frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[0]);
+            frameLayers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quads[1]);
         }
-        fe.layerCount = state.shouldRender ? (roomFrameReady ? 3u : 2u) : 0u;
-        fe.layers = state.shouldRender ? frameLayers : nullptr;
+        fe.layerCount = layerCount;
+        fe.layers = layerCount ? frameLayers : nullptr;
         const auto endStart = std::chrono::steady_clock::now();
         XR_CHECK(xr.endFrame(session, &fe));
         if (state.shouldRender && renderedFrames > 1) {

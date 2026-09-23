@@ -62,7 +62,7 @@
       <Button Name="StartButton" Classes="Primary" Content="Attach / Play"/>
       <Button Name="StopButton" Content="Stop VR" IsEnabled="False"/>
       <Button Name="EasyRecenterButton" Content="Recenter" IsEnabled="False"
-              ToolTip.Tip="Puts the screen straight in front of where the headset is looking now. Not available on Linux yet."/>
+              ToolTip.Tip="Puts the screen straight in front of where the headset is looking now."/>
      </WrapPanel>
     </Grid>
    </Border>
@@ -100,7 +100,7 @@
     <!-- 2 Screen -->
     <l:Section Name="ScreenSection" Header="Screen">
      <StackPanel>
-      <TextBlock Classes="Hint" Margin="0,0,0,10" Text="Changes apply live. Position is relative to where the headset started."/>
+      <TextBlock Classes="Hint" Margin="0,0,0,10" Text="Changes apply live. Position is relative to your last recenter."/>
       <Border Background="#101B2C" CornerRadius="8" Margin="0,0,0,12">
        <Canvas Name="Preview" Width="540" Height="168" HorizontalAlignment="Center" ClipToBounds="True" Background="Transparent"
                ToolTip.Tip="Drag the screen to change horizontal position and distance">
@@ -133,9 +133,9 @@
       <CheckBox IsEnabled="False" Content="Screen follows my head" ToolTip.Tip="Not available on Linux yet."/>
       <WrapPanel Margin="0,10,0,0">
        <Button Name="RecenterButton" Content="Recenter now" IsEnabled="False"
-               ToolTip.Tip="Puts the screen straight in front of where the headset is looking now. Not available on Linux yet."/>
+               ToolTip.Tip="Puts the screen straight in front of where the headset is looking now."/>
       </WrapPanel>
-      <TextBlock Classes="Hint" Text="Screen curve, following the head and recentering are not available on Linux yet."/>
+      <TextBlock Classes="Hint" Text="Screen curve and following the head are not available on Linux yet."/>
      </StackPanel>
     </l:Section>
 

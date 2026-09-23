@@ -37,21 +37,22 @@ public sealed record EnginePaths(string Root, string Engine, string Model)
 }
 
 // Live settings as the engine reads them (live_settings.h): one atomic
-// "VRXL 2" line, culture-independent.
+// "VRXL 3" line, culture-independent. `recenter` counts Recenter requests in
+// this session; the engine re-places the screen whenever it changes.
 public static class LiveSettings
 {
-    public static string Snapshot(LinuxProfile profile)
+    public static string Snapshot(LinuxProfile profile, uint recenter = 0)
     {
         var p = profile.Normalized();
         return string.Create(CultureInfo.InvariantCulture,
-            $"VRXL 2 {p.Width:F3} {p.Distance:F3} {p.Height:F3} {p.Horizontal:F3} {p.Strength:F3} " +
-            $"{p.Room} {p.Glass} {p.Reflect} {p.Light} {p.LightRgb}\n");
+            $"VRXL 3 {p.Width:F3} {p.Distance:F3} {p.Height:F3} {p.Horizontal:F3} {p.Strength:F3} " +
+            $"{p.Room} {p.Glass} {p.Reflect} {p.Light} {p.LightRgb} {recenter}\n");
     }
 
-    public static void Write(string path, LinuxProfile profile)
+    public static void Write(string path, LinuxProfile profile, uint recenter = 0)
     {
         var temporary = path + ".tmp";
-        File.WriteAllText(temporary, Snapshot(profile));
+        File.WriteAllText(temporary, Snapshot(profile, recenter));
         File.Move(temporary, path, overwrite: true);
     }
 }
