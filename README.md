@@ -20,8 +20,11 @@ itself. Switch to **Expert** for every setting.
 
 ![VRX in Easy mode: the game card with Attach / Play, Stop VR and Recenter](docs/vrx-easy-mode.png)
 
-It is not only for games: attach to a browser window and any 2D video you play in
-it — YouTube, a streaming service, your own files — becomes 3D on the same screen.
+It is not only for games: attach to a browser window and 2D video you play in it —
+YouTube, other video sites, your own files — becomes 3D on the same screen. Films and
+series from protected streaming services, such as Netflix and Disney+, show as a black
+picture: Windows blanks copy-protected video in every screen capture (the same reason a
+screenshot of them is black), and VRX respects that.
 
 VRX is free and open source.
 
