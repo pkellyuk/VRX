@@ -97,6 +97,9 @@ public sealed class Profile
 
     public static string FormatColor(int rgb) => "#" + (rgb & 0xFFFFFF).ToString("X6", CultureInfo.InvariantCulture);
     public bool AutoDismiss { get; set; } = true;
+    // While the game is not the window in front (Ctrl+Esc, Alt+Tab...), VR shows the display it
+    // is on (engine --desktop-when-away). Applies at Attach / Play; on for profiles saved before it.
+    public bool DesktopWhenAway { get; set; } = true;
     public int RecenterKey { get; set; } = 0xBB;
     public int MenuKey { get; set; } = 0x77;
 

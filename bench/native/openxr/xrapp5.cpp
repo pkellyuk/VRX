@@ -35,6 +35,9 @@
 //            --window=TEXT        unique visible non-terminal window with matching title
 //            --exe=NAME.exe       unique visible window owned by this executable
 //            --check-source       report selected window and exit without starting VR
+//            --desktop-when-away  with a window: while the game is not the window in front
+//                                 (Ctrl+Esc, Alt+Tab...), show the display it is on instead;
+//                                 back to the game when it is in front again
 //            --image=PATH         still image
 //            --synthetic          the moving test scene (with --truth: ground-truth depth)
 //   options: --scale=N --no-warp --paired --no-smooth --tau=SECONDS
@@ -126,6 +129,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -248,6 +252,7 @@ struct Options
     std::wstring controlPath, executablePath;
     DWORD capturePid = 0;
     HWND captureHwnd = nullptr;
+    bool desktopWhenAway = false;       // --desktop-when-away: show the game's display while the game is not in front
     std::wstring imagePath;
     bool doWarp = true;
     float warpScale = 1.0f;
@@ -387,6 +392,8 @@ struct Capture
     std::atomic<uint64_t> frames{ 0 };
     HWND hwnd = nullptr;                // window capture only; frames are cropped to its client area
     HANDLE process = nullptr;           // the captured window's process (SYNCHRONIZE): Closed is not always raised when a game exits
+    DWORD pid = 0;                      // that process's id (the game's other windows count as the game being in front)
+    bool showingDesktop = false;        // --desktop-when-away: capturing the game's display instead of its window
     int frameW = 0, frameH = 0;         // captured frame (pool) size - the whole window; srcW/srcH may be smaller
     RECT crop{};                        // last client crop applied (for change logging)
     bool cropping = false;
@@ -817,6 +824,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strncmp(a, "--control=", 10)) { opt->controlPath = widen(a + 10); continue; }
         if (!strncmp(a, "--exe-path=", 11)) { opt->executablePath = widen(a + 11); continue; }
         if (!strncmp(a, "--pid=", 6)) { opt->capturePid = strtoul(a + 6, nullptr, 10); if (!opt->capturePid) return false; continue; }
+        if (!strcmp(a, "--desktop-when-away")) { opt->desktopWhenAway = true; continue; }
         if (!strncmp(a, "--hwnd=", 7)) { opt->captureHwnd = (HWND)(uintptr_t)strtoull(a + 7, nullptr, 0); if (!opt->captureHwnd) return false; continue; }
         if (!strncmp(a, "--image=", 8)) { opt->source = SourceKind::Image; opt->imagePath = widen(a + 8); continue; }
         if (!strcmp(a, "--synthetic")) { opt->source = SourceKind::Synthetic; continue; }
@@ -1383,6 +1391,7 @@ static bool SelectCaptureItem(App& app)
         c.hwnd = hwnd;
         DWORD pid = 0;
         GetWindowThreadProcessId(hwnd, &pid);
+        c.pid = pid;
         if (pid) c.process = OpenProcess(SYNCHRONIZE, FALSE, pid);
         if (!c.process) Log("InitCaptureItem: cannot watch process %lu (error %lu) - relying on the window and Closed alone", pid, GetLastError());
     }
@@ -1514,6 +1523,75 @@ static const char* CaptureSourceGone(const Capture& c)
     return nullptr;
 }
 
+// --desktop-when-away: what the window in front says to show. Keep: nothing is in front
+// (switching, or the secure desktop), or it is SteamVR or an overlay drawn over the game,
+// which should not flip the picture.
+enum class FrontSays { Game, Desktop, Keep };
+
+static FrontSays WhatIsInFront(const Capture& c, DWORD& cachedPid, FrontSays& cachedSays)
+{
+    HWND front = GetForegroundWindow();
+    if (!front || !c.hwnd) return FrontSays::Keep;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(front, &pid);
+    if (front == c.hwnd || GetAncestor(front, GA_ROOTOWNER) == c.hwnd || (c.pid && pid == c.pid)) return FrontSays::Game;
+    if (!pid || pid == GetCurrentProcessId()) return FrontSays::Keep;
+    if (pid == cachedPid) return cachedSays;
+    FrontSays says = FrontSays::Desktop;
+    wchar_t path[MAX_PATH] = {};
+    DWORD size = MAX_PATH;
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (process)
+    {
+        if (QueryFullProcessImageNameW(process, 0, path, &size))
+        {
+            std::wstring name = std::filesystem::path(path).filename().wstring();
+            for (auto& ch : name) ch = (wchar_t)towlower(ch);
+            for (const wchar_t* keep : { L"vrmonitor.exe", L"vrserver.exe", L"vrcompositor.exe", L"vrdashboard.exe",
+                                         L"vrwebhelper.exe", L"vrstartup.exe", L"gameoverlayui.exe", L"gameoverlayui64.exe" })
+                if (name == keep) says = FrontSays::Keep;
+            Log("CaptureMain: in front: %s (pid %lu) - %s", winrt::to_string(name).c_str(), pid,
+                says == FrontSays::Keep ? "ignored (SteamVR or an overlay)" : "not the game");
+        }
+        CloseHandle(process);
+    }
+    cachedPid = pid;
+    cachedSays = says;
+    return says;
+}
+
+// Moves the capture to the game's display (desktop) or back to its window, on the capture
+// thread that owns the pool: a new pool and session for the other item, and a new layout,
+// so depth history from the other picture is not mixed in. False (and no change) on failure.
+static bool SwitchCapture(App& app, bool desktop, int& poolW, int& poolH, uint64_t& layout)
+{
+    Capture& c = app.cap;
+    wgc::GraphicsCaptureItem item{ nullptr };
+    if (desktop)
+    {
+        HMONITOR monitor = MonitorFromWindow(c.hwnd, MONITOR_DEFAULTTONEAREST);
+        auto interop = winrt::get_activation_factory<wgc::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+        HRESULT hr = monitor ? interop->CreateForMonitor(monitor, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(item)) : E_FAIL;
+        if (FAILED(hr) || !item) { Log("CaptureMain: FAIL display capture item 0x%08X - staying on the game", (unsigned)hr); return false; }
+    }
+    else item = c.item;
+    const auto size = item.Size();
+    if (size.Width <= 0 || size.Height <= 0) { Log("CaptureMain: %s has no size - not switching", desktop ? "display" : "game window"); return false; }
+    if (c.session) { c.session.Close(); c.session = nullptr; }
+    if (c.pool) { c.pool.Close(); c.pool = nullptr; }
+    c.pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(c.rtDevice, wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
+    c.session = c.pool.CreateCaptureSession(item);
+    try { c.session.IsBorderRequired(false); }
+    catch (const winrt::hresult_error&) {}
+    c.session.StartCapture();
+    poolW = size.Width; poolH = size.Height;
+    ++layout;
+    c.showingDesktop = desktop;
+    Log("CaptureMain: showing the %s (%dx%d, layout %llu)", desktop ? "display the game is on" : "game again", size.Width, size.Height,
+        (unsigned long long)layout);
+    return true;
+}
+
 static void CaptureMain(App* app)
 {
     g_threadName = "capture";
@@ -1529,6 +1607,14 @@ static void CaptureMain(App* app)
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     apartmentInitialized = true;
     ULONGLONG nextSourceCheck = 0;
+    // --desktop-when-away: armed once the game has been in front (the desktop app has the
+    // focus while it starts us); a change must last a moment before the picture switches.
+    const bool followFront = app->opt.desktopWhenAway && c.hwnd;
+    bool armed = false, pendingDesktop = false;
+    ULONGLONG nextFrontCheck = 0, pendingSince = 0;
+    DWORD cachedPid = 0;
+    FrontSays cachedSays = FrontSays::Keep;
+    if (followFront) Log("CaptureMain: showing the display while the game is not in front (--desktop-when-away)");
     while (!app->stop.load())
     {
         if (c.closed.load()) { Log("CaptureMain: source closed; stopping playback"); app->stop = true; break; }
@@ -1541,6 +1627,21 @@ static void CaptureMain(App* app)
                 Log("CaptureMain: source gone (%s) after %llu frames; stopping playback", why, (unsigned long long)c.frames.load());
                 app->stop = true;
                 break;
+            }
+        }
+        if (followFront && now >= nextFrontCheck)
+        {
+            nextFrontCheck = now + 100;
+            const FrontSays says = WhatIsInFront(c, cachedPid, cachedSays);
+            if (says == FrontSays::Game && !armed) { armed = true; Log("CaptureMain: the game is in front - following it"); }
+            const bool wantDesktop = says == FrontSays::Desktop;
+            if (!armed || says == FrontSays::Keep || wantDesktop == c.showingDesktop) pendingSince = 0;
+            else if (!pendingSince || pendingDesktop != wantDesktop) { pendingSince = now; pendingDesktop = wantDesktop; }
+            else if (now - pendingSince >= (wantDesktop ? 300u : 100u))
+            {
+                pendingSince = 0;
+                SwitchCapture(*app, wantDesktop, poolW, poolH, layout);
+                continue;
             }
         }
         auto frame = c.pool.TryGetNextFrame();
@@ -1569,7 +1670,7 @@ static void CaptureMain(App* app)
             // Window capture: crop every frame to the client area (it moves if the
             // window is restyled, resized or changes DPI). Whole frame if unknown.
             RECT crop{};
-            const bool cropping = c.hwnd && QueryClientCrop(c.hwnd, cs.Width, cs.Height, crop);
+            const bool cropping = c.hwnd && !c.showingDesktop && QueryClientCrop(c.hwnd, cs.Width, cs.Height, crop);
             if (cropping != c.cropping || (cropping && !EqualRect(&crop, &c.crop)))
             {
                 if (cropping) Log("CaptureMain: client area %ldx%ld at (%ld,%ld) of %dx%d frame", crop.right - crop.left,

@@ -211,6 +211,8 @@
     <Expander x:Name="SteamVrSection" Header="{l:Tr SectionSteamVr}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="SteamVrContent">
       <CheckBox x:Name="DismissCheck" Content="{l:Tr DismissOnStart}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+      <CheckBox x:Name="DesktopAwayCheck" Content="{l:Tr DesktopWhenAway}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+      <TextBlock Text="{l:Tr DesktopWhenAwayHint}" Style="{StaticResource Hint}" Margin="26,0,0,8"/>
       <TextBlock Text="{l:Tr KeyboardShortcuts}" Style="{StaticResource SubHeader}"/>
       <Grid>
        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="28"/><ColumnDefinition/></Grid.ColumnDefinitions>

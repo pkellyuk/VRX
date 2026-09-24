@@ -229,7 +229,7 @@ public partial class MainWindow : Window
         loading = true;
         WidthSlider.Value = p.Width; DistanceSlider.Value = p.Distance; HeightSlider.Value = p.Height;
         HorizontalSlider.Value = p.Horizontal; StrengthSlider.Value = p.Strength;
-        FollowCheck.IsChecked = p.Follow; StereoCheck.IsChecked = p.Stereo; DismissCheck.IsChecked = p.AutoDismiss;
+        FollowCheck.IsChecked = p.Follow; StereoCheck.IsChecked = p.Stereo; DismissCheck.IsChecked = p.AutoDismiss; DesktopAwayCheck.IsChecked = p.DesktopWhenAway;
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
         FastModelCheck.IsChecked = p.FastDepthModel;
@@ -275,7 +275,7 @@ public partial class MainWindow : Window
             SteadyDepth = SteadyCheck.IsChecked == true,
             FuseModels = FuseCheck.IsChecked == true,
             DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
-            AutoDismiss = DismissCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
+            AutoDismiss = DismissCheck.IsChecked == true, DesktopWhenAway = DesktopAwayCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
             MenuKey = (int)(MenuKeys.SelectedValue ?? 0) };
         if (!p.Valid()) throw new InvalidDataException(Loc.Get("ErrorShortcutsConflict"));
         return p;
@@ -1286,10 +1286,12 @@ public partial class MainWindow : Window
         legacy.Remove("RoomLight");
         legacy.Remove("RoomLightColor");
         legacy.Remove("FuseModels");
+        legacy.Remove("DesktopWhenAway");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
             throw new Exception("Fast depth model must default on for old profiles and keep a per-game opt-out");
         if (!store.Load(one.ExecutablePath).ForegroundRefinement) throw new Exception("Old profiles must default foreground refinement on");
+        if (!store.Load(one.ExecutablePath).DesktopWhenAway) throw new Exception("Old profiles must default \"show the desktop when you leave the game\" on");
         if (store.Load(one.ExecutablePath).DepthGpu != Gpus.Same) throw new Exception("Profiles without a depth GPU must use the game's GPU");
         var three = new Profile { ExecutablePath = Path.Combine(output, "three", "game.exe") };
         store.Save(three);
@@ -1915,6 +1917,13 @@ public partial class MainWindow : Window
         var gameArgs = EngineSession.Arguments(sample, sample.Windows[0], one, "control.txt");
         if (gameArgs.Any(a => a.StartsWith("--monitor")) || !gameArgs.Contains("--pid=1234") || !gameArgs.Contains("--hwnd=42") || !gameArgs.Contains("--exe=game.exe"))
             throw new Exception("Game arguments: " + string.Join(' ', gameArgs));
+        // Show the desktop when you leave the game: for a game's window only, and only when on.
+        if (!one.DesktopWhenAway || !gameArgs.Contains("--desktop-when-away") || screenArgs.Contains("--desktop-when-away"))
+            throw new Exception("--desktop-when-away must go with a game (on by default) and never with a display");
+        var away = System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(one))!;
+        away.DesktopWhenAway = false;
+        if (EngineSession.Arguments(sample, sample.Windows[0], away, "control.txt").Contains("--desktop-when-away"))
+            throw new Exception("--desktop-when-away must be left out when it is turned off");
 
         // The chooser: one tile per display, windows that pass the filter, off screen.
         var apps = RunningApps.List(false);
