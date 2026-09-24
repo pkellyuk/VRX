@@ -47,9 +47,9 @@ From using VRX day to day:
 
 ## Get started
 
-Download VRX v1.7.8: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.7.8/VRX-Setup-1.7.8.exe)
-or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.8/VRX-1.7.8-win-x64.zip)
-([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.7.8); older versions on
+Download VRX v1.7.9: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.7.9/VRX-Setup-1.7.9.exe)
+or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.9/VRX-1.7.9-win-x64.zip)
+([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.7.9); older versions on
 [GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.
@@ -75,6 +75,7 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 - Depth is estimated by [ZipDepth](https://github.com/fabiotosi92/ZipDepth) by default: about 6x less GPU time per estimate than Depth Anything V2 Small (2.0 vs 13.1 ms on an RTX 3090), which keeps depth much closer to the game's frame rate. Untick **Fast depth model — ZipDepth** (per game, applies live) to use Depth Anything V2 instead. Fast motion and foreground edges can still distort.
 - **Depth GPU** (per game, applies at Attach / Play) chooses which graphics card runs the depth model: the game's own GPU (default), any other GPU automatically, or a specific card from the list. Cards are remembered by name, and identical cards by their order, because Windows' GPU numbering can change after driver updates; if the chosen card is missing, VRX uses the game's GPU and the setting shows it as not found. With another card, the capture step makes a small model-size copy of each frame and the game GPU's copy engine sends it across, so depth no longer competes with the game. Measured with the RTX 3090 saturated by other work: ZipDepth 7.7 ms per estimate on an RTX 3060 (vs 19.9 ms on the busy 3090), Depth Anything V2 25.6 ms (vs 120.5 ms). Foreground crop passes still use the game GPU.
 - **Steady depth — motion vectors** (per game, default on, applies live) reduces depth shimmer. Each new depth estimate is blended with the previous one, which the graphics card's hardware motion estimator (its video engine, not the shader cores) moves to where things are now, but only where that motion is verified, so fast pans and occlusions fall back to the new estimate. It adds CPU work to each depth pass, which the session log reports. See [XMMODEL.md](XMMODEL.md).
+- **A still picture keeps its depth.** Windows 11 (24H2 and later) reports which parts of each captured frame changed. While less than 0.5% of the picture has changed since the last depth estimate — a blinking text cursor, the mouse, a clock on a still desktop — VRX keeps that depth for the new frame instead of estimating again, so the screen no longer twitches every time a small thing changes. Scrolling, video and games still get new depth for every frame. On older Windows every new frame gets new depth.
 - **Fuse with Depth Anything V2** (per game, default off, applies live, needs the fast depth model) runs Depth Anything V2 alongside ZipDepth. ZipDepth keeps depth fast; Depth Anything's more detailed layering is moved to the current frame with motion vectors, checked, and fitted onto ZipDepth region by region. It works best with another GPU as the depth GPU, and runs at most 10 times per second on one GPU. In the first headset test, fused and steadied depth together removed most of the "that looks wrong" moments. Offline: 59% closer to Depth Anything's layout than ZipDepth alone and 16% less flicker, or 36% less with steadying (XMMODEL.md).
 - **Smooth depth steps (sub-pixel warp)** (per game, default on, applies live) removes depth banding. Whole-pixel stereo shifts give the entire scene only about 25 distinct depths at 1920 px wide, so a smoothly receding surface such as a field or a road is drawn as flat stripes with a 1 px step between them, which looks like ridges on uniform texture. Measured on a test field, the shift each row receives went from 25 flat bands with 1 px cliffs to 330 steps with a largest jump of 0.075 px. Turning it off restores the earlier warp, which is very slightly sharper. See [XBANDS.md](XBANDS.md).
 - **Screen curve** (per game, applies live, 0% by default) wraps the screen around you like a curved television. A curved screen is drawn as a real cylinder for each eye from its tracked position, so its outline, perspective and the parallax when you move your head are all right; the top view in the desktop app draws the shape. 100% is a 70° wrap, further than any real screen (a curved monitor is about 40°): at the default screen (5.7 m wide at 3 m) the edges come 0.84 m nearer and reach 51° either side instead of 44°. SteamVR offers apps no cylinder layer, so VRX renders it; see [XCURVE.md](XCURVE.md).
@@ -91,7 +92,7 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 - **Game frame timing** (per game, applies live) chooses which game frame is shown with the depth. **Latest frame** (default) is smooth and immediate, but depth lags slightly behind moving things. **Delayed to depth** holds the game image back by the measured depth delay so the two line up, while motion stays at the capture rate. **Matched to depth** (the earlier frame matching) shows each depth estimate with the exact frame it came from: the best alignment, but the game only updates at the depth rate. Offline on four clips with depth 67 ms behind, against the latest frame: delayed cut depth mismatch from 0.050 to 0.016 and improved edge alignment from 0.59 to 0.72, with 26 game updates per second against matched's 15. Delayed and matched both add delay, so they suit slower games. See [XSYNC.md](XSYNC.md).
 - **Extra foreground depth passes** are experimental and default on; their benefit varies.
 - GPU contention can reduce depth update speed. A steady 60 depth updates per second is not guaranteed.
-- SteamVR dashboard dismissal is best-effort. Releases up to v1.7.8 are unsigned, so on a
+- SteamVR dashboard dismissal is best-effort. Releases up to v1.7.9 are unsigned, so on a
   new Windows 11 install Smart App Control can block the engine; signed releases are being
   set up (see [Code signing and privacy](#code-signing-and-privacy)).
 
@@ -136,7 +137,7 @@ which runs the same script in stages around code signing.
 
 Free code signing provided by [SignPath.io](https://signpath.io), certificate by
 [SignPath Foundation](https://signpath.org). Signed releases are being set up; releases up
-to v1.7.8 are unsigned. See the [code signing policy](https://vrx3d.uk/code-signing.html)
+to v1.7.9 are unsigned. See the [code signing policy](https://vrx3d.uk/code-signing.html)
 for what is signed, how it is built and the team roles.
 
 VRX makes no network connections and collects no data: see the

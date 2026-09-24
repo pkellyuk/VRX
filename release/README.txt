@@ -1,6 +1,6 @@
-VRX 1.7.8 - Windows x64
+VRX 1.7.9 - Windows x64
 
-Install with VRX-Setup-1.7.8.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.7.9.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -120,6 +120,11 @@ another graphics card so it no longer competes with the game. Cards are chosen b
 name; if the chosen card is missing, the game's GPU is used. Foreground crop
 passes still run on the game's GPU.
 
+A still picture keeps its depth: on Windows 11 24H2 and later, while less than 0.5% of
+the picture has changed since the last depth estimate (a blinking text cursor, the mouse,
+a clock), VRX keeps that depth instead of estimating again, so a still desktop does not
+twitch. Scrolling, video and games get new depth for every frame as before.
+
 "Steady depth - motion vectors" (per game, default on, applies live) reduces
 depth shimmer: each new depth estimate is blended with the previous one, moved to
 where things are now by the graphics card's hardware motion estimator (its video
@@ -138,7 +143,7 @@ if verifying the download. Do not disable Windows security features.
 
 VRX itself is free software under the GNU General Public License v3.0: see
 LICENSE. Source: https://github.com/pkellyuk/VRX
-Source for this build: https://github.com/pkellyuk/VRX/tree/v1.7.8 (the exact
+Source for this build: https://github.com/pkellyuk/VRX/tree/v1.7.9 (the exact
 commit is in BUILD.txt).
 Third-party components keep their own licenses; notices and license texts are in
 THIRD-PARTY-NOTICES.txt and the licenses folder.
