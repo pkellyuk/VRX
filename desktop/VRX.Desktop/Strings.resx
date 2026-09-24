@@ -254,7 +254,11 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorStopFirst" xml:space="preserve"><value>Stop the current session first.</value></data>
   <data name="ErrorAnotherSession" xml:space="preserve"><value>Another VRX session is running. Close that session before attaching here.</value></data>
   <data name="DesktopWhenAway" xml:space="preserve"><value>Show the desktop when you leave the game</value></data>
-  <data name="DesktopWhenAwayHint" xml:space="preserve"><value>While the game is not in front - after Ctrl+Esc, the Windows key or Alt+Tab - VR shows the display it is on. Back in the game, VR shows the game again. Applies at Attach / Play.</value></data>
+  <data name="DesktopWhenAwayHint" xml:space="preserve"><value>While the game is not in front - after Ctrl+Esc, the Windows key or Alt+Tab - VR shows the display it is on. Back in the game, VR shows the game again. If the game closes, VR carries on with the desktop until you press Stop VR. Applies at Attach / Play.</value></data>
+  <data name="CardDesktop" xml:space="preserve"><value>Desktop</value><comment>The game card while VR shows the display instead of the game.</comment></data>
+  <data name="CardShowingDesktop" xml:space="preserve"><value>Showing the desktop · back to {0} when it is in front</value><comment>{0} = the game's name</comment></data>
+  <data name="CardGameClosed" xml:space="preserve"><value>{0} has closed · showing the desktop until you press Stop VR</value><comment>{0} = the game's name</comment></data>
+  <data name="StatusGameClosedDesktop" xml:space="preserve"><value>{0} has closed. VR shows the desktop until you press Stop VR.</value><comment>{0} = the game's name</comment></data>
   <data name="ErrorScreenChanged" xml:space="preserve"><value>The displays have changed since the list was made. Choose again.</value></data>
   <data name="ChooseButton" xml:space="preserve"><value>Choose…</value><comment>Opens the chooser: pictures of every window and display.</comment></data>
   <data name="ChooseTip" xml:space="preserve"><value>Pick a window or a whole screen from live pictures and play it in VR</value></data>

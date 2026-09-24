@@ -2,8 +2,28 @@ using System.Diagnostics;
 using System.IO;
 
 namespace VRX.Desktop;
+
+// What the engine is showing with --desktop-when-away: the game, the display it is on while
+// it is not in front, or that display after the game has closed.
+public enum SourceShown { Game, Desktop, GameClosed }
+
 public sealed class EngineSession
 {
+    // The engine's "Source: ..." log line (xrapp5.cpp, SwitchCapture), or null for any other line.
+    public static SourceShown? ParseSource(string? line)
+    {
+        if (string.IsNullOrEmpty(line)) return null;
+        int at = line.IndexOf("] Source: ", StringComparison.Ordinal);
+        if (at < 0) return null;
+        return line[(at + 10)..].Trim() switch
+        {
+            "game" => SourceShown.Game,
+            "desktop" => SourceShown.Desktop,
+            "desktop, the game has closed" => SourceShown.GameClosed,
+            _ => null
+        };
+    }
+
     private Process? process;
     private string control = "";
     private uint recenter, menu;

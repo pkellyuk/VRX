@@ -37,7 +37,8 @@
 //            --check-source       report selected window and exit without starting VR
 //            --desktop-when-away  with a window: while the game is not the window in front
 //                                 (Ctrl+Esc, Alt+Tab...), show the display it is on instead;
-//                                 back to the game when it is in front again
+//                                 back to the game when it is in front again. When the game
+//                                 closes, its display carries on until Stop VR.
 //            --image=PATH         still image
 //            --synthetic          the moving test scene (with --truth: ground-truth depth)
 //   options: --scale=N --no-warp --paired --no-smooth --tau=SECONDS
@@ -394,6 +395,8 @@ struct Capture
     HANDLE process = nullptr;           // the captured window's process (SYNCHRONIZE): Closed is not always raised when a game exits
     DWORD pid = 0;                      // that process's id (the game's other windows count as the game being in front)
     bool showingDesktop = false;        // --desktop-when-away: capturing the game's display instead of its window
+    bool gameGone = false;              // --desktop-when-away: the game has closed; its display carries on until Stop VR
+    HMONITOR monitor = nullptr;         // --desktop-when-away: the display the game was last on
     int frameW = 0, frameH = 0;         // captured frame (pool) size - the whole window; srcW/srcH may be smaller
     RECT crop{};                        // last client crop applied (for change logging)
     bool cropping = false;
@@ -1569,7 +1572,10 @@ static bool SwitchCapture(App& app, bool desktop, int& poolW, int& poolH, uint64
     wgc::GraphicsCaptureItem item{ nullptr };
     if (desktop)
     {
-        HMONITOR monitor = MonitorFromWindow(c.hwnd, MONITOR_DEFAULTTONEAREST);
+        // The display the game is on; once it has closed, the one it was last on.
+        if (c.hwnd && IsWindow(c.hwnd)) c.monitor = MonitorFromWindow(c.hwnd, MONITOR_DEFAULTTONEAREST);
+        if (!c.monitor) c.monitor = MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+        HMONITOR monitor = c.monitor;
         auto interop = winrt::get_activation_factory<wgc::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
         HRESULT hr = monitor ? interop->CreateForMonitor(monitor, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(item)) : E_FAIL;
         if (FAILED(hr) || !item) { Log("CaptureMain: FAIL display capture item 0x%08X - staying on the game", (unsigned)hr); return false; }
@@ -1589,6 +1595,8 @@ static bool SwitchCapture(App& app, bool desktop, int& poolW, int& poolH, uint64
     c.showingDesktop = desktop;
     Log("CaptureMain: showing the %s (%dx%d, layout %llu)", desktop ? "display the game is on" : "game again", size.Width, size.Height,
         (unsigned long long)layout);
+    // For the desktop app, which shows it on the game card (EngineSession.SourceShown).
+    Log("Source: %s", desktop ? "desktop" : "game");
     return true;
 }
 
@@ -1617,21 +1625,38 @@ static void CaptureMain(App* app)
     if (followFront) Log("CaptureMain: showing the display while the game is not in front (--desktop-when-away)");
     while (!app->stop.load())
     {
-        if (c.closed.load()) { Log("CaptureMain: source closed; stopping playback"); app->stop = true; break; }
         const ULONGLONG now = GetTickCount64();
-        if (now >= nextSourceCheck)
+        const char* gone = nullptr;
+        if (!c.gameGone)
         {
-            nextSourceCheck = now + 500;
-            if (const char* why = CaptureSourceGone(c))
+            if (c.closed.load()) gone = "the capture item was closed";
+            else if (now >= nextSourceCheck) { nextSourceCheck = now + 500; gone = CaptureSourceGone(c); }
+        }
+        if (gone)
+        {
+            if (!followFront)
             {
-                Log("CaptureMain: source gone (%s) after %llu frames; stopping playback", why, (unsigned long long)c.frames.load());
+                Log("CaptureMain: source gone (%s) after %llu frames; stopping playback", gone, (unsigned long long)c.frames.load());
                 app->stop = true;
                 break;
             }
+            // --desktop-when-away: carry on with the display the game was on, until Stop VR.
+            Log("CaptureMain: the game has gone (%s) after %llu frames - carrying on with its display until Stop VR",
+                gone, (unsigned long long)c.frames.load());
+            c.gameGone = true;
+            if (!c.showingDesktop && !SwitchCapture(*app, true, poolW, poolH, layout))
+            {
+                Log("CaptureMain: cannot show the display; stopping playback");
+                app->stop = true;
+                break;
+            }
+            Log("Source: desktop, the game has closed");
+            continue;
         }
-        if (followFront && now >= nextFrontCheck)
+        if (followFront && !c.gameGone && now >= nextFrontCheck)
         {
             nextFrontCheck = now + 100;
+            if (IsWindow(c.hwnd)) c.monitor = MonitorFromWindow(c.hwnd, MONITOR_DEFAULTTONEAREST);
             const FrontSays says = WhatIsInFront(c, cachedPid, cachedSays);
             if (says == FrontSays::Game && !armed) { armed = true; Log("CaptureMain: the game is in front - following it"); }
             const bool wantDesktop = says == FrontSays::Desktop;

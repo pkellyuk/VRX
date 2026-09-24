@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     // Easy | Expert and the sections' open/closed state (app-wide, AppSettings).
     private bool modeLoading, sectionsLoading;
     private bool playing;                          // the engine has entered its frame loop
+    private SourceShown shown = SourceShown.Game;  // --desktop-when-away: what VR shows now
     private IReadOnlyList<string> gpuLines = [];   // the engine's --list-gpus output, re-labelled when the strings change
     // The window: which mode it is laid out for (-1 before the first), whether Windows 11
     // draws its border, and whether it goes back to maximized after being minimized.
@@ -78,6 +79,14 @@ public partial class MainWindow : Window
             LogBox.ScrollToEnd();
             if (line.Contains("FAIL") || line.Contains("expected one game window") || line.Contains("main: failure"))
                 lastEngineError = line;
+            if (EngineSession.ParseSource(line) is { } source && source != shown)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Engine] source shown: {shown} -> {source}");
+                shown = source;
+                if (source == SourceShown.GameClosed)
+                    Status.Text = Loc.Format("StatusGameClosedDesktop", GameDisplayName((WindowList.SelectedItem as GameWindow)?.Title, (AppList.SelectedItem as RunningApp)?.Name));
+                UpdateGameCard();
+            }
             if (line.Contains("RunFrameLoop: enter"))
             {
                 playing = true;
@@ -92,6 +101,7 @@ public partial class MainWindow : Window
             autoMachine.MarkSpent(sessionWindow);
             sessionWindow = 0;
             playing = false;
+            shown = SourceShown.Game;
             // The renderer's own reason stays English (engine logs are not translated).
             sessionError = code == 0 ? "" : Loc.Format("StatusEngineFailed",
                 lastEngineError.Length > 0 ? lastEngineError[(lastEngineError.LastIndexOf(']') + 1)..].Trim() : Loc.Get("SeeSessionDetails"));
@@ -524,7 +534,14 @@ public partial class MainWindow : Window
         string name = app != null ? GameDisplayName(title, app.Name) : Loc.Get("CardNoGame");
         ImageSource? icon = app?.Icon;
         string state;
-        if (engine.Running)
+        if (engine.Running && !stopping && playing && shown != SourceShown.Game)
+        {
+            // --desktop-when-away: VR shows the display, not the game.
+            state = Loc.Format(shown == SourceShown.GameClosed ? "CardGameClosed" : "CardShowingDesktop", name);
+            name = Loc.Get("CardDesktop");
+            icon = ScreenSources.Icon;
+        }
+        else if (engine.Running)
         {
             state = Loc.Get(stopping ? "CardStopping" : playing ? "CardPlaying" : "CardStarting");
         }
@@ -620,6 +637,7 @@ public partial class MainWindow : Window
         {
             sessionError = lastEngineError = ""; LogBox.Clear();
             playing = false;
+            shown = SourceShown.Game;
             engine.Start(app, window, profile!, store.Root);
             sessionWindow = window.Handle; started = true;
             Status.Text = Loc.Format("StatusStarting", app.Name);
@@ -1920,6 +1938,13 @@ public partial class MainWindow : Window
         // Show the desktop when you leave the game: for a game's window only, and only when on.
         if (!one.DesktopWhenAway || !gameArgs.Contains("--desktop-when-away") || screenArgs.Contains("--desktop-when-away"))
             throw new Exception("--desktop-when-away must go with a game (on by default) and never with a display");
+        // The engine's "Source:" lines, which the game card follows.
+        if (EngineSession.ParseSource("[  12.500][capture] Source: desktop") != SourceShown.Desktop ||
+            EngineSession.ParseSource("[  13.100][capture] Source: game") != SourceShown.Game ||
+            EngineSession.ParseSource("[  40.000][capture] Source: desktop, the game has closed") != SourceShown.GameClosed ||
+            EngineSession.ParseSource("[  12.500][capture] CaptureMain: showing the game again (3840x2160, layout 2)") != null ||
+            EngineSession.ParseSource("[   1.000][main   ] Source: something else") != null || EngineSession.ParseSource(null) != null)
+            throw new Exception("The engine's Source: lines must be read exactly");
         var away = System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(one))!;
         away.DesktopWhenAway = false;
         if (EngineSession.Arguments(sample, sample.Windows[0], away, "control.txt").Contains("--desktop-when-away"))
