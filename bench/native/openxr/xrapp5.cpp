@@ -98,6 +98,7 @@
 #include "steamvr_dashboard.h"
 #include <unknwn.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
@@ -330,6 +331,7 @@ struct DepthSlot
     double modelMs = 0;
     float lo = 0, hi = 0;               // normalisation range actually used
     float back = 0, panel = 0, marker = 0;
+    bool reused = false;                // the previous depth carried forward to a barely changed frame
 };
 
 struct WarpConstants                    // must match cbuffer C in kWarpHlsl
@@ -396,6 +398,8 @@ struct Capture
     DWORD pid = 0;                      // that process's id (the game's other windows count as the game being in front)
     bool showingDesktop = false;        // --desktop-when-away: capturing the game's display instead of its window
     bool gameGone = false;              // --desktop-when-away: the game has closed; its display carries on until Stop VR
+    bool dirtyRegions = false;          // Windows reports which parts of each frame changed (Windows 11 24H2+)
+    double changedTotal = 0;            // running total of the changed share of the picture (SourceFrames::Frame)
     HMONITOR monitor = nullptr;         // --desktop-when-away: the display the game was last on
     int frameW = 0, frameH = 0;         // captured frame (pool) size - the whole window; srcW/srcH may be smaller
     RECT crop{};                        // last client crop applied (for change logging)
@@ -501,6 +505,8 @@ struct App
     struct ResampleTap { int i0, i1; float t; };
     std::vector<ResampleTap> resampleX, resampleY;   // model output -> depth grid, built once
     std::vector<float> rawDepth;        // model output resampled to the W x H depth grid
+    std::vector<float> lastNear;        // the last estimate's near map (before dilation), for reuse (WorkerMain)
+    float lastLo = 0, lastHi = 1;       // and its normalisation range
     std::vector<double> passMs;         // worker: full-pass latencies (submit to model output on the CPU) since the last summary
     RangeSmoother smoother;
     ForegroundTracker foregroundTracker;
@@ -1462,6 +1468,41 @@ static bool InitCaptureItem(App& app)
     return true;
 }
 
+// Asks Windows to report which parts of each captured frame changed (Windows 11 24H2 and
+// later; the frame is still delivered whole). Without it every new frame gets new depth.
+static void RequestDirtyRegions(Capture& c)
+{
+    try { c.session.DirtyRegionMode(wgc::GraphicsCaptureDirtyRegionMode::ReportOnly); c.dirtyRegions = true; }
+    catch (const winrt::hresult_error&) { c.dirtyRegions = false; }
+}
+
+// The share (0..1) of the picture - the window's client area when cropping - that changed
+// from the previous frame, from Windows' dirty regions. 0 when they are not reported.
+static double ChangedShare(Capture& c, const wgc::Direct3D11CaptureFrame& frame, int w, int h, const RECT* crop)
+{
+    if (!c.dirtyRegions || w <= 0 || h <= 0) return 0.0;
+    const RECT area = crop ? *crop : RECT{ 0, 0, w, h };
+    const double total = double(area.right - area.left) * double(area.bottom - area.top);
+    if (total <= 0) return 0.0;
+    try
+    {
+        double changed = 0;
+        for (const auto& r : frame.DirtyRegions())
+        {
+            const RECT dirty{ r.X, r.Y, r.X + r.Width, r.Y + r.Height };
+            RECT overlap{};
+            if (IntersectRect(&overlap, &dirty, &area)) changed += double(overlap.right - overlap.left) * double(overlap.bottom - overlap.top);
+        }
+        return std::min(1.0, changed / total);
+    }
+    catch (const winrt::hresult_error& e)
+    {
+        Log("CaptureMain: changed regions unreadable (0x%08X) - every new frame gets new depth from now", (unsigned)e.code().value);
+        c.dirtyRegions = false;
+        return 0.0;
+    }
+}
+
 // Opens the D3D12 source ring + fence on the D3D11 device and starts the session.
 static bool StartCapture(App& app)
 {
@@ -1509,6 +1550,9 @@ static bool StartCapture(App& app)
     c.session = c.pool.CreateCaptureSession(c.item);
     try { c.session.IsBorderRequired(false); }
     catch (const winrt::hresult_error& e) { Log("StartCapture: capture border cannot be disabled (0x%08X) - continuing", (unsigned)e.code().value); }
+    RequestDirtyRegions(c);
+    Log("StartCapture: %s", c.dirtyRegions ? "Windows reports the changed parts of each frame (depth is reused while almost nothing changes)"
+                                           : "changed-region reports unavailable (before Windows 11 24H2) - every new frame gets new depth");
     c.session.StartCapture();
 
     Log("StartCapture: exit ok");
@@ -1589,6 +1633,7 @@ static bool SwitchCapture(App& app, bool desktop, int& poolW, int& poolH, uint64
     c.session = c.pool.CreateCaptureSession(item);
     try { c.session.IsBorderRequired(false); }
     catch (const winrt::hresult_error&) {}
+    RequestDirtyRegions(c);
     c.session.StartCapture();
     poolW = size.Width; poolH = size.Height;
     ++layout;
@@ -1689,6 +1734,8 @@ static void CaptureMain(App* app)
         winrt::check_hresult(access->GetInterface(IID_PPV_ARGS(&tex)));
         if (!tex) winrt::throw_hresult(E_POINTER);
 
+        // Counted for every frame, including one dropped below, so a change is never missed.
+        c.changedTotal += ChangedShare(c, frame, cs.Width, cs.Height, c.cropping ? &c.crop : nullptr);
         auto source = ReserveSource(*app);
         if (source)
         {
@@ -1718,6 +1765,7 @@ static void CaptureMain(App* app)
                 break;
             }
             c.ctx->Flush();
+            source->changedTotal = c.dirtyRegions ? c.changedTotal : -1.0;
             source->layout = layout;
             app->sources.Publish(source, v, NowSeconds());
             c.frames++;
@@ -5013,8 +5061,10 @@ static bool InitSlots(App& app)
 // Source frame -> prep -> model -> normalise -> publish. Called by the main thread
 // once before the worker starts, then only by the worker.
 static void PublishDepth(App& app, const SourceRef& src, const std::vector<float>& depth,
-    float lo, float hi, double modelMs)
+    float lo, float hi, double modelMs, bool reused = false)
 {
+    // The latest estimate, before dilation: what a barely changed frame reuses (WorkerMain).
+    if (!reused) { app.lastNear = depth; app.lastLo = lo; app.lastHi = hi; }
     auto preparedDepth = depth;
     DepthSlot& s = app.slots[app.writeSlot];
     if (app.opt.source == SourceKind::Synthetic) RegionMeans(preparedDepth, src->time, s.back, s.panel, s.marker);
@@ -5025,7 +5075,7 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
     DilateNear(preparedDepth, W, H, dilateH, dilateV);
     memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
     s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
-    s.lo = lo; s.hi = hi; s.completeTime = NowSeconds();
+    s.lo = lo; s.hi = hi; s.completeTime = NowSeconds(); s.reused = reused;
     app.writeSlot = app.readySlot.exchange(app.writeSlot | SLOT_FRESH) & (SLOT_FRESH - 1);
     app.depthPublished++; app.depthHealthy = true;
 }
@@ -5503,6 +5553,16 @@ static void WorkerMain(App* app)
     std::vector<float> nearScratch;
     uint64_t runs = 0, lastSeq = 0;
     double nextSummary = NowSeconds() + 2.0;
+    // A new captured frame that barely differs from the one the last depth came from - a
+    // blinking text cursor, the mouse, a clock - keeps that depth instead of a new estimate.
+    // A fresh estimate of a near-identical picture is never exactly the same, and on a still
+    // desktop, where frames come only now and then, each one made the whole screen twitch.
+    const double kReuseBelow = 0.005;           // share of the picture changed since the last estimate
+    bool haveEstimate = false;
+    uint64_t estimateLayout = 0;
+    double estimateChanged = 0, nextReuseLog = NowSeconds() + 5.0;
+    const ModelSpec* estimateModel = nullptr;
+    uint64_t reusedCount = 0;
     int failures = 0;
     try
     {
@@ -5517,6 +5577,20 @@ static void WorkerMain(App* app)
         // burn the GPU recomputing identical depth. (Image/synthetic keep running:
         // they double as the throughput benchmark.)
         if (!src || (app->opt.source == SourceKind::Capture && src->seq == lastSeq)) { Sleep(2); continue; }
+        if (app->opt.source == SourceKind::Capture && haveEstimate && src->changedTotal >= 0 && src->layout == estimateLayout &&
+            estimateModel == app->opt.model && !app->lastNear.empty() && src->changedTotal - estimateChanged < kReuseBelow)
+        {
+            PublishDepth(*app, src, app->lastNear, app->lastLo, app->lastHi, 0.0, true);
+            lastSeq = src->seq;
+            ++reusedCount;
+            if (NowSeconds() >= nextReuseLog)
+            {
+                Log("Worker: %llu barely changed frames kept the last depth (%.2f%% of the picture changed since it)",
+                    (unsigned long long)reusedCount, (src->changedTotal - estimateChanged) * 100.0);
+                reusedCount = 0; nextReuseLog = NowSeconds() + 5.0;
+            }
+            continue;
+        }
         if (!ComputeAndPublish(*app, src, nearScratch))
         {
             app->depthHealthy = false;
@@ -5535,6 +5609,8 @@ static void WorkerMain(App* app)
         if (failures) Log("WorkerMain: depth recovered");
         failures = 0;
         lastSeq = src->seq;
+        haveEstimate = src->changedTotal >= 0;
+        estimateLayout = src->layout; estimateChanged = src->changedTotal; estimateModel = app->opt.model;
         runs++;
         if (NowSeconds() >= nextSummary && !app->passMs.empty())
         {
@@ -8381,7 +8457,7 @@ static void RunFrameLoop(App& app)
                     RecordUploadNear(app, cur->nearUp.Get());
                     tookSlot = true;
                     depthUpdates++; repDepth++;
-                    depthDelay.Update(cur->completeTime - cur->sceneTime);
+                    if (!cur->reused) depthDelay.Update(cur->completeTime - cur->sceneTime);   // carried-forward depth took no model time
                 }
 
                 // --- game frame timing (frame_timing.h)

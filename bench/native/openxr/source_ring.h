@@ -20,6 +20,9 @@ public:
         uint64_t value = 0; // producer completion fence
         double time = 0;
         uint64_t layout = 0; // capture layout generation; changes on resize
+        // Running total, since capture began, of the share of the picture that changed from
+        // frame to frame (Windows' dirty regions); -1 when Windows does not report them.
+        double changedTotal = -1;
     };
     using WriteRef = std::shared_ptr<Frame>;
     using ReadRef = std::shared_ptr<const Frame>;
