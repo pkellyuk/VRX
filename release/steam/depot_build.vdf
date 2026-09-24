@@ -1,0 +1,13 @@
+// The one Windows depot: the complete portable payload (what the release ZIP holds),
+// exactly as GitHub Actions built it. Steam installs it as-is; there is no installer.
+"DepotBuild"
+{
+	"DepotID" "<DEPOTID>"
+	"FileMapping"
+	{
+		"LocalPath" "*"
+		"DepotPath" "."
+		"Recursive" "1"
+	}
+	"FileExclusion" "*.pdb"
+}

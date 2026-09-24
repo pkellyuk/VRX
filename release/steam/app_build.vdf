@@ -1,0 +1,18 @@
+// SteamPipe app build for VRX3D on Steam. upload-steam.ps1 fills in the values in <...>
+// and writes the result to release\out\steam\ before running steamcmd; this file is the
+// template. See release\steam\README.md.
+"AppBuild"
+{
+	"AppID" "<APPID>"
+	"Desc" "<DESCRIPTION>"
+	// Preview "1" builds and checks the manifests without uploading anything.
+	"Preview" "<PREVIEW>"
+	// Never set a branch live from here: pick the build in Steamworks (SteamPipe > Builds).
+	"SetLive" ""
+	"ContentRoot" "<CONTENTROOT>"
+	"BuildOutput" "<BUILDOUTPUT>"
+	"Depots"
+	{
+		"<DEPOTID>" "depot_build.vdf"
+	}
+}
