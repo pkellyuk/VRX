@@ -1,6 +1,6 @@
-VRX 1.7.7 - Windows x64
+VRX 1.7.8 - Windows x64
 
-Install with VRX-Setup-1.7.7.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.7.8.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -92,6 +92,13 @@ play it straight away. A display ("Whole screen") plays everything shown on it, 
 your desktop or a video player, until you press Stop VR; all displays share one set of
 settings.
 
+"Show the desktop when you leave the game" (per game, SteamVR & shortcuts section, on by
+default, applies at Attach / Play): while the game is not the window in front - after
+Ctrl+Esc, the Windows key or Alt+Tab - VR shows the display it is on, and the game card
+says "Desktop". Back in the game, VR shows the game again. If the game closes, VR carries
+on with the desktop until you press Stop VR; with the setting off, closing the game ends
+the session as before.
+
 "Make base settings" saves the settings shown as the starting point for games you
 have not set up yet; games already set up keep their own. "Reset this profile"
 returns a game to those base settings, or to VRX's defaults if none are saved.
@@ -131,7 +138,7 @@ if verifying the download. Do not disable Windows security features.
 
 VRX itself is free software under the GNU General Public License v3.0: see
 LICENSE. Source: https://github.com/pkellyuk/VRX
-Source for this build: https://github.com/pkellyuk/VRX/tree/v1.7.7 (the exact
+Source for this build: https://github.com/pkellyuk/VRX/tree/v1.7.8 (the exact
 commit is in BUILD.txt).
 Third-party components keep their own licenses; notices and license texts are in
 THIRD-PARTY-NOTICES.txt and the licenses folder.

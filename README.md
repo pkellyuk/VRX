@@ -47,9 +47,9 @@ From using VRX day to day:
 
 ## Get started
 
-Download VRX v1.7.7: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.7.7/VRX-Setup-1.7.7.exe)
-or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.7/VRX-1.7.7-win-x64.zip)
-([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.7.7); older versions on
+Download VRX v1.7.8: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.7.8/VRX-Setup-1.7.8.exe)
+or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.7.8/VRX-1.7.8-win-x64.zip)
+([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.7.8); older versions on
 [GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.
@@ -87,10 +87,11 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 - **Languages:** every text in the desktop app comes from `desktop/VRX.Desktop/Strings.resx` (English). To translate, copy it to `Strings.<culture>.resx` (for example `Strings.de.resx`), translate the values keeping each `{0}`-style placeholder, and rebuild; VRX follows the Windows display language and falls back to English. Numbers are shown in your regional format; profiles, app settings and the engine's control file stay culture-independent. `VRX.Desktop.exe --pseudo-locale` shows every string accented, about 35% longer and in brackets, to spot untranslated or clipped text. Engine logs stay English.
 - **Auto-attach to the game in front** (checkbox in Expert's Game & window section, always on in Easy, off by default in Expert, app-wide in `app-settings.json`) counts down 3-30 seconds (5 by default) and then attaches to the window in front exactly as if you had picked it and pressed Attach / Play (its own profile, or the base settings for a new game). A window counts when it covers its whole monitor (full screen or borderless, not just a maximized window), or when its game has saved VRX settings and it is not a web browser. VRX, Steam, SteamVR, the Windows shell and terminals never count, and nothing happens while VRX itself is in front. The countdown shows in VRX's status and in a small click-through banner at the top of the game's screen that never takes the focus; switching to another window cancels it. After a session ends, or if attaching fails, that window is left alone until another window has been in front and you come back to it.
 - **Choose…** (on the game card, in Easy and Expert) opens a chooser with a tile for every window VRX can play, most recently used first, each showing a live picture of the window (Windows' own thumbnails, as in Alt+Tab; a minimized window shows its icon), and a tile for each display. Clicking a tile plays it straight away, exactly as picking it in the lists and pressing Attach / Play. A display ("Whole screen", also listed last in Expert's game list) plays everything shown on it, such as the desktop or a video player, until you press Stop VR; its tile shows a snapshot taken as the chooser opens, and one set of settings is shared by all displays. The engine captures a display with `--monitor=N` (Windows' display order).
+- **Show the desktop when you leave the game** (per game, SteamVR & shortcuts, on by default, applies at Attach / Play): while the game is not the window in front — after Ctrl+Esc, the Windows key or Alt+Tab — VR shows the display the game is on, and the game card says **Desktop**; back in the game, VR shows the game again. The engine (`--desktop-when-away`) checks the window in front ten times a second on its capture thread, ignores SteamVR and the Steam overlay, waits for a change to last 0.3 s (0.1 s back to the game), and moves its capture between the window and the display with a fresh depth history each time. If the game closes, VR carries on with the desktop until Stop VR; with the setting off, closing the game ends the session as before.
 - **Game frame timing** (per game, applies live) chooses which game frame is shown with the depth. **Latest frame** (default) is smooth and immediate, but depth lags slightly behind moving things. **Delayed to depth** holds the game image back by the measured depth delay so the two line up, while motion stays at the capture rate. **Matched to depth** (the earlier frame matching) shows each depth estimate with the exact frame it came from: the best alignment, but the game only updates at the depth rate. Offline on four clips with depth 67 ms behind, against the latest frame: delayed cut depth mismatch from 0.050 to 0.016 and improved edge alignment from 0.59 to 0.72, with 26 game updates per second against matched's 15. Delayed and matched both add delay, so they suit slower games. See [XSYNC.md](XSYNC.md).
 - **Extra foreground depth passes** are experimental and default on; their benefit varies.
 - GPU contention can reduce depth update speed. A steady 60 depth updates per second is not guaranteed.
-- SteamVR dashboard dismissal is best-effort. Releases up to v1.7.7 are unsigned, so on a
+- SteamVR dashboard dismissal is best-effort. Releases up to v1.7.8 are unsigned, so on a
   new Windows 11 install Smart App Control can block the engine; signed releases are being
   set up (see [Code signing and privacy](#code-signing-and-privacy)).
 
@@ -135,7 +136,7 @@ which runs the same script in stages around code signing.
 
 Free code signing provided by [SignPath.io](https://signpath.io), certificate by
 [SignPath Foundation](https://signpath.org). Signed releases are being set up; releases up
-to v1.7.7 are unsigned. See the [code signing policy](https://vrx3d.uk/code-signing.html)
+to v1.7.8 are unsigned. See the [code signing policy](https://vrx3d.uk/code-signing.html)
 for what is signed, how it is built and the team roles.
 
 VRX makes no network connections and collects no data: see the
