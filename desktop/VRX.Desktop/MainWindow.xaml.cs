@@ -256,6 +256,7 @@ public partial class MainWindow : Window
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
         GpuDepthCheck.IsChecked = p.GpuDepthProcessing;
+        ShowDepthMapCheck.IsChecked = p.ShowDepthMap;
         ShowGpuChoice(p.DepthGpu);
         RecenterKeys.SelectedValue = p.RecenterKey; MenuKeys.SelectedValue = p.MenuKey;
         SetSettingsEnabled(true);
@@ -287,6 +288,7 @@ public partial class MainWindow : Window
             FuseModels = FuseCheck.IsChecked == true,
             DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
             GpuDepthProcessing = GpuDepthCheck.IsChecked == true,
+            ShowDepthMap = ShowDepthMapCheck.IsChecked == true,
             AutoDismiss = DismissCheck.IsChecked == true, DesktopWhenAway = DesktopAwayCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
             MenuKey = (int)(MenuKeys.SelectedValue ?? 0) };
         if (!p.Valid()) throw new InvalidDataException(Loc.Get("ErrorShortcutsConflict"));
@@ -1307,6 +1309,7 @@ public partial class MainWindow : Window
         legacy.Remove("RoomLightColor");
         legacy.Remove("FuseModels");
         legacy.Remove("GpuDepthProcessing");
+        legacy.Remove("ShowDepthMap");
         legacy.Remove("DesktopWhenAway");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
@@ -1319,6 +1322,11 @@ public partial class MainWindow : Window
         two.GpuDepthProcessing = true; store.Save(two);
         if (!store.Load(two.ExecutablePath).GpuDepthProcessing || store.Load(one.ExecutablePath).GpuDepthProcessing)
             throw new Exception("GPU depth processing must round-trip independently per game");
+        if (store.Load(one.ExecutablePath).ShowDepthMap || new Profile().ShowDepthMap)
+            throw new Exception("Depth preview must default off for old and new profiles");
+        two.ShowDepthMap = true; store.Save(two);
+        if (!store.Load(two.ExecutablePath).ShowDepthMap || !two.Control(0, 0, false).TrimEnd().EndsWith(" 1"))
+            throw new Exception("Depth preview must persist and reach the live snapshot");
         var three = new Profile { ExecutablePath = Path.Combine(output, "three", "game.exe") };
         store.Save(three);
         var earlier = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(three.ExecutablePath)))!.AsObject();
@@ -1342,13 +1350,13 @@ public partial class MainWindow : Window
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
         var roomy = new Profile { Room = 45 };
         var glassy = new Profile { Room = 45, RoomGlass = 60, RoomReflections = 25, RoomLight = 40, RoomLightColor = "#FFD1A3" };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 11 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867") ||
-            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867") ||
-            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347"))
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 13 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 0") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 0") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 0") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 0") ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 0") ||
+            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 0"))
             throw new Exception("Control snapshot must be v11 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
@@ -1525,6 +1533,13 @@ public partial class MainWindow : Window
             gpus[4].Label != card2 || !Loc.NeutralStrings()["GpuLabelCard"].Contains("card {2}") || gpus.Any(g => g.Label.Contains("Basic Render")) ||
             gpus[0].Label != Loc.Get("GpuSame") || gpus[2].Label != Loc.Format("GpuLabel", "NVIDIA GeForce RTX 3090", Loc.Format("GpuSizeGB", 24325 / 1024.0)))
             throw new Exception("GPU list parsing failed");
+        if (ShowDepthMapCheck.IsChecked != false) throw new Exception("Depth preview should default off");
+        ShowDepthMapCheck.IsChecked = true;
+        if (!ReadProfile().ShowDepthMap) throw new Exception("Depth preview checkbox mapping failed");
+        PutProfile(ReadProfile());
+        if (ShowDepthMapCheck.IsChecked != true) throw new Exception("Depth preview profile mapping failed");
+        ShowDepthMapCheck.IsChecked = false;
+        if (ReadProfile().ShowDepthMap) throw new Exception("Depth preview must switch back to game view");
         if (GpuDepthCheck.IsChecked != false) throw new Exception("GPU depth processing should default off");
         GpuDepthCheck.IsChecked = true;
         if (!ReadProfile().GpuDepthProcessing) throw new Exception("GPU depth checkbox is not mapped to settings");

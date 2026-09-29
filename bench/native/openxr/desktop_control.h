@@ -16,6 +16,7 @@ struct DesktopSettings
     int foreground = 0; // v1 launchers retain their original behaviour
     int paired = 0;
     int fastModel = 0;
+    int showDepthMap = 0; // v13: live depth preview (v12 belongs to xoptimal)
     int version = 0;    // snapshot version, so v1-v3 launchers do not override --model  // v4: 1 = ZipDepth, 0 = Depth Anything V2 (worker reloads live)
     int steady = 0;     // v5: steady depth (motion-vector steadying), live
     int fuse = 0;       // v5: fuse with Depth Anything V2, live
@@ -49,10 +50,11 @@ inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& resul
     if (version >= 9 && !(input >> s.ambiStrength >> s.worldColor)) return false;
     if (version >= 10 && !(input >> s.room)) return false;
     if (version >= 11 && !(input >> s.roomGlass >> s.roomReflect >> s.roomLight >> s.roomLightColor)) return false;
+    if (version >= 13 && !(input >> s.showDepthMap)) return false;
     s.version = version;
     if (input >> tail) return false;
     auto between = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
-    if (magic != "VRX" || version < 1 || version > 11 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
+    if (magic != "VRX" || version < 1 || (version > 11 && version != 13) || s.showDepthMap < 0 || s.showDepthMap > 1 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
         s.subpixel < 0 || s.subpixel > 1 || s.curve < 0 || s.curve > 100 || s.ambilight < 0 || s.ambilight > 1 ||
         s.ambiStrength < 0 || s.ambiStrength > 100 || s.worldColor < 0 || s.worldColor > 0xFFFFFF || s.room < 0 || s.room > 100 ||
         s.roomGlass < 0 || s.roomGlass > 100 || s.roomReflect < 0 || s.roomReflect > 100 || s.roomLight < 0 || s.roomLight > 100 ||

@@ -8,7 +8,15 @@ the depth settings, below **Depth GPU**. The checkbox is saved per game and
 applies at the next **Attach / Play**. It defaults off for new and old profiles.
 The desktop app passes `--gpu-depth` only when enabled; `--cpu-depth` explicitly
 selects the default CPU post-processing path for command-line comparisons.
-The live desktop control format remains v11.
+The live desktop control format is v13 (v12 is reserved for the separate
+`xoptimal` experiment); older v1-v11 snapshots remain supported.
+
+**Show depth map instead of game** switches live to the processed nearness
+used by the stereo warp: white is near, black is far. Both eyes see the same
+map without stereo displacement. An unavailable/stale map displays black.
+It works with either CPU or GPU processing and adds no depth readback.
+Unticking it restores the game view. The command-line equivalent is
+`--show-depth-map`.
 
 With GPU processing enabled, DirectML output binding, normalization, resampling,
 dilation, motion luma preparation, steadying, fusion and foreground crop fitting
@@ -60,3 +68,7 @@ source. The CPU default test (fusion off) and all GPU fusion configurations
 passed. The CPU algorithm and age limit have not been changed to mask this.
 These are synthetic validation results, not a game-FPS benchmark or a test of
 recovery from a real driver hang.
+
+Depth-preview validation also passes: per-game persistence, live v13 snapshot
+parsing, checkbox on/off mapping, grayscale GPU pixels for both eyes, unavailable
+map black output, and return to the normal game renderer.

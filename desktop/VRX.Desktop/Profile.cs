@@ -30,8 +30,9 @@ public sealed class Profile
     // Passed to the engine as --depth-gpu; takes effect at Attach / Play.
     public string DepthGpu { get; set; } = Gpus.Same;
     // Optional GPU depth post-processing; applies at the next Attach / Play.
-    // False for both new and older profiles. The live control protocol is unchanged.
+    // False for both new and older profiles. This option is passed on the command line.
     public bool GpuDepthProcessing { get; set; }
+    public bool ShowDepthMap { get; set; } // Live processed-depth preview; off by default.
     // Replaced by DepthGpu; read only so profiles from earlier xgpu builds migrate.
     public bool DepthOnSecondGpu { get; set; }
     // XMMODEL.md; sent in the v5 control snapshot, apply live. Steadying blends in the
@@ -113,7 +114,7 @@ public sealed class Profile
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 11 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)}\n");
+        $"VRX 13 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {(ShowDepthMap ? 1 : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)

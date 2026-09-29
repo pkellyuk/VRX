@@ -286,4 +286,6 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="GpuDepthProcessing" xml:space="preserve"><value>GPU depth post-processing (experimental)</value></data>
   <data name="GpuDepthProcessingTip" xml:space="preserve"><value>Keep depth normalization, resizing, steadying, fusion and foreground refinement on the headset GPU. The depth model still runs on the selected Depth GPU. Reduces CPU work and full depth-map transfers, but uses more headset GPU time. Automatically falls back to CPU processing if GPU processing fails safely. Saved per game; applies at the next Attach / Play.</value></data>
   <data name="GpuDepthProcessingHint" xml:space="preserve"><value>Off by default. Applies at the next Attach / Play.</value></data>
+  <data name="ShowDepthMap" xml:space="preserve"><value>Show depth map instead of game</value></data>
+  <data name="ShowDepthMapTip" xml:space="preserve"><value>Show the processed depth used for 3D as a flat grayscale image: white is near, black is far. Applies immediately and works with CPU or GPU processing. An unavailable depth map shows black. Untick to return to the game.</value></data>
 </root>

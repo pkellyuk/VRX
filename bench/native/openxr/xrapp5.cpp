@@ -262,6 +262,7 @@ struct Options
     bool desktopWhenAway = false;       // --desktop-when-away: show the game's display while the game is not in front
     std::wstring imagePath;
     bool doWarp = true;
+    bool showDepthMap = false;          // live diagnostic: processed nearness, white = near
     float warpScale = 1.0f;
     bool useTruth = false;
     bool doDump = false;
@@ -354,6 +355,7 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     uint32_t fillMode;
     float mirrorTol;
     uint32_t subpixel;
+    uint32_t showDepthMap;             // 0 game, 1 depth, 2 unavailable (black)
 };
 
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
@@ -875,6 +877,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
             if (end == a + 15 || *end || index < 0 || index > 31) { Log("ParseArgs: --selftest-gpu needs a DXGI adapter index 0..31"); return false; }
             opt->selfTestGpu = (int)index; opt->selfTestOnly = true; opt->source = SourceKind::Synthetic; continue;
         }
+        if (!strcmp(a, "--show-depth-map")) { opt->showDepthMap = true; continue; }
         if (!strcmp(a, "--no-warp")) { opt->doWarp = false; continue; }
         if (!strncmp(a, "--scale=", 8)) { opt->warpScale = (float)atof(a + 8); continue; }
         if (!strncmp(a, "--curve=", 8))
@@ -1939,6 +1942,7 @@ cbuffer C : register(b0)
     uint  fillMode;     // 0 stretch, 1 mirror (see FillHole in xr_common.h)
     float mirrorTol;
     uint  subpixel;     // 1: sample at the fractional source position (no depth banding)
+    uint  showDepthMap; // 0 game, 1 depth, 2 unavailable (black)
 };
 
 Texture2D<float4>        scene    : register(t0);
@@ -1971,6 +1975,18 @@ void main(uint3 id : SV_DispatchThreadID)
     uint y = id.y;
     uint e = id.z;
     if (y >= CH) return;
+    if (showDepthMap != 0)
+    {
+        // Display the exact processed nearness used by the warp, before stereo
+        // displacement. Both eyes see the same map; no colour readback is needed.
+        [loop] for (uint x = 0; x < CW; ++x)
+        {
+            float n = showDepthMap == 1 ? saturate(NearAt((int)x, (int)y)) : 0.0;
+            outColor[uint3(x, y, e)] = float4(n, n, n, 1.0);
+            outDepth[uint3(x, y, e)] = 1.0;
+        }
+        return;
+    }
 
     float eye = (e == 0) ? eye0 : eye1;
     int iw = (int)CW;
@@ -6570,6 +6586,15 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     {
         WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode,
                     refColor.data(), refDepth.data(), c.subpixel != 0);
+        if (c.showDepthMap)
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x)
+                {
+                    const unsigned char n = c.showDepthMap == 1 ? (unsigned char)std::lround(std::clamp(near01[(size_t)y * W + x], 0.0f, 1.0f) * 255) : 0;
+                    const size_t pixel = (size_t)y * ROW_PITCH + x * 4;
+                    for (int channel = 0; channel < 3; ++channel) refColor[pixel + channel] = n;
+                    refColor[pixel + 3] = 255; refDepth[pixel / 4] = 1.0f;
+                }
         for (int y = 0; y < H; y++)
         {
             const unsigned char* grow = cp + cfp[e].Offset + (size_t)y * cfp[e].Footprint.RowPitch;
@@ -7621,6 +7646,12 @@ static bool SelfTest(App& app)
     }
     ok = SelfTestAmbilight(app, synth) && ok;
 
+    WarpConstants depthPreview = c;
+    depthPreview.showDepthMap = 1;
+    if (!SelfTestWarp(app, "depth map preview", synth, ramp, depthPreview)) return false;
+    depthPreview.showDepthMap = 2;
+    if (!SelfTestWarp(app, "depth map unavailable", synth, truth, depthPreview)) return false;
+
     WarpConstants off = c;
     off.doWarp = 0;
     ok = SelfTestWarp(app, "no-warp", synth, truth, off) && ok;
@@ -8581,6 +8612,11 @@ static void RunFrameLoop(App& app)
                         Log("Ambilight: %s", app.opt.ambilight ? "enabled" : "disabled");
                     }
                 }
+                if (app.opt.showDepthMap != (next.showDepthMap != 0))
+                {
+                    app.opt.showDepthMap = next.showDepthMap != 0;
+                    Log("Depth map display: %s", app.opt.showDepthMap ? "on (white near, black far)" : "off");
+                }
                 if (next.version >= 10 && app.opt.room != next.room)
                 {
                     app.opt.room = next.room;
@@ -9021,10 +9057,11 @@ static void RunFrameLoop(App& app)
                 {
                     history.clear();
                 }
-                stereo = app.opt.doWarp && source && cur && cur->source &&
+                const bool depthAvailable = source && cur && cur->source &&
                     source->layout == cur->source->layout &&
                     UsableDepth(app.depthHealthy.load(), source->seq, source->time,
                         cur->source->seq, cur->source->time);
+                stereo = app.opt.doWarp && depthAvailable;
                 if (stereo != wasStereo)
                     Log("RunFrameLoop: %s", stereo ? "stereo depth available" : "flat viewing (depth unavailable or stale)");
                 wasStereo = stereo;
@@ -9040,6 +9077,7 @@ static void RunFrameLoop(App& app)
                     WarpConstants c{};
                     c.cw = (uint32_t)target.cw; c.ch = (uint32_t)target.ch; c.dw = W; c.dh = H;
                     c.doWarp = stereo ? 1u : 0u;
+                    c.showDepthMap = app.opt.showDepthMap ? (depthAvailable ? 1u : 2u) : 0u;
                     c.scaleFocal = app.opt.warpScale * focalPx;
                     c.invZNear = 1.0f / 1.2f;
                     c.invZFar = 1.0f / 12.0f;
@@ -9185,7 +9223,7 @@ static void RunFrameLoop(App& app)
                     dinfo[e].maxDepth = 1.0f;
                     dinfo[e].nearZ = DEPTH_NEAR_Z;
                     dinfo[e].farZ = DEPTH_FAR_Z;
-                    pviews[e].next = depthOn && stereo ? &dinfo[e] : nullptr;
+                    pviews[e].next = depthOn && stereo && !app.opt.showDepthMap ? &dinfo[e] : nullptr;
                 }
                 proj.space = app.space;
                 proj.viewCount = VIEWS;
@@ -9428,6 +9466,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     WarpConstants c{};
     c.cw = (uint32_t)t.cw; c.ch = (uint32_t)t.ch; c.dw = W; c.dh = H;
     c.doWarp = app.opt.doWarp ? 1u : 0u;
+    c.showDepthMap = app.opt.showDepthMap ? 1u : 0u;
     c.scaleFocal = app.opt.warpScale * (float)(t.cw * 0.5) / tanHalfX;
     c.invZNear = 1.0f / 1.2f; c.invZFar = 1.0f / 12.0f;
     if (!app.opt.headLocked)
@@ -9610,6 +9649,7 @@ int wmain(int argc, wchar_t** wideArgv)
             app.opt.curve = initial.curve * 0.01f;
             app.opt.ambilight = initial.ambilight != 0;
         }
+        app.opt.showDepthMap = initial.showDepthMap != 0;
         if (initial.version >= 10) app.opt.room = initial.room;
         if (initial.version >= 11)
         {

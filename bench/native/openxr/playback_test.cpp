@@ -469,6 +469,12 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16777216", settings), "v11 light colour over 0xFFFFFF rejected");
     Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 -1", settings), "v11 negative light colour rejected");
     Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 7", settings), "v11 trailing value rejected");
+    Check(ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 1", settings) && settings.showDepthMap == 1, "v13 depth preview enabled");
+    Check(ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 0", settings) && settings.showDepthMap == 0, "v13 depth preview disabled");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347", settings), "v13 depth preview missing rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 2", settings), "v13 depth preview out of range rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 -1", settings), "v13 depth preview negative rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 1 0", settings), "v13 depth preview trailing value rejected");
     Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
@@ -2723,7 +2729,7 @@ int main(int argc, char** argv)
         const std::string path(argv[1]); DesktopSettings settings;
         Check(ReadDesktopSettings(std::wstring(path.begin(), path.end()), settings), "read C# emitted snapshot");
         Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7 && settings.menuKey == 120 && settings.foreground == 1 && settings.paired == 1 &&
-            settings.version == 11 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
+            settings.version == 13 && settings.showDepthMap == 0 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
             "C# to native control contract");
     }
     TestCaptureSelection();
