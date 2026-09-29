@@ -14,9 +14,9 @@
 //       percentile + time-smoothed                  bilinearly
 //         normalisation -> publish slot          -> colour swapchain -> xrEndFrame
 //
-// * The picture never touches the CPU: capture texture -> (shared) -> D3D12 SRV for
-//   both the warp and the model-input prep shader. Only the model's 1 MB output
-//   comes back (M1: ORT cannot bind a DML device output from this API surface).
+// * The picture stays on GPU. By default model output returns to CPU for depth
+//   post-processing. --gpu-depth keeps image-sized depth data on GPU too; only
+//   a small tracker grid and scalar diagnostics return to CPU.
 // * Source textures are ALLOW_SIMULTANEOUS_ACCESS: one writer, many readers across
 //   queues/devices, no resource barriers. Cross-queue ordering is by fence
 //   (ID3D12CommandQueue::Wait). CPU frame references and reader-completion fences
@@ -47,6 +47,9 @@
 //            --dilate=N             widen foreground depth by N depth px (default 2)
 //            --dump                 write the depth map and BOTH eyes as warped by the GPU,
 //                                   for each fill mode, at the presented resolution
+//            --gpu-depth           opt in to GPU depth post-processing (CPU by default)
+//            --cpu-depth           CPU depth post-processing reference/fallback
+//            --selftest-gpu=N      synthetic tests on DXGI adapter N without OpenXR
 //            --selftest --debug --dump --submit-depth --freeze-pose --ab=N --depth-lie
 //            --test-depth-failures=N  diagnostic: fail the first N depth attempts
 //            --steady               steady depth: blend in the previous depth, moved by the GPU's
@@ -152,6 +155,8 @@ using Microsoft::WRL::ComPtr;
 #include "foreground_refinement.h"
 #include "depth_fusion.h"
 #include "motion_estimator.h"
+#include "gpu_depth.h"
+#include "gpu_model_io.h"
 #include "frame_timing.h"
 #include "ambilight.h"
 #include "screen_curve.h"
@@ -262,6 +267,7 @@ struct Options
     bool doDump = false;
     bool paired = false;
     bool foreground = true;
+    bool cpuDepth = true;               // opt in to GPU post-processing with --gpu-depth
     bool boostGpuPriority = true;      // best effort; --normal-gpu-priority disables the experiment
     // Which GPU runs the depth model (gpu_choice.h): same (default), auto, a GPU
     // name + which card of that name, or a DXGI index for diagnostics.
@@ -274,6 +280,7 @@ struct Options
     bool frameTransfer = true;
     const ModelSpec* model = &kZipDepth;          // default; --model=dav2 selects Depth Anything V2
     bool selfTestOnly = false;
+    int selfTestGpu = -1;               // --selftest-gpu=N: synthetic tests on DXGI adapter N without starting OpenXR
     bool debugLayer = false;
     bool smooth = true;
     int fillMode = FILL_MIRROR;
@@ -323,6 +330,9 @@ static const float DEPTH_NEAR_Z = 0.10f, DEPTH_FAR_Z = 30.0f;
 // One completed depth result (worker -> render thread).
 struct DepthSlot
 {
+    ComPtr<ID3D12Resource> gpuNear;     // GPU-published float grid, COMMON at rest
+    ComPtr<ID3D12Fence> gpuFence;
+    UINT64 gpuValue = 0;
     ComPtr<ID3D12Resource> nearUp;      // UPLOAD heap, float[W*H], 0 = far .. 1 = near
     float* nearMapped = nullptr;
     SourceRef source;                  // retains the exact colour frame paired with this depth
@@ -502,6 +512,21 @@ struct App
     ComPtr<ID3D12RootSignature> unpackRootSig;           // inference GPU: frame -> model input
     ComPtr<ID3D12PipelineState> unpackPso;
     std::vector<float> modelOut;        // model output at the model's own size
+    std::unique_ptr<gpudepth::ModelOutput> gpuOutput;
+    std::unique_ptr<gpudepth::Processor> gpuDepth;
+    std::unique_ptr<gpudepth::Bridge> gpuDepthReturn;
+    ComPtr<ID3D12Resource> gpuRawLocal, gpuPackedLuma;
+    double gpuLastTime = 0;
+    bool gpuDepthFailed = false;
+    bool gpuDepthFatal = false;        // failed retirement: never reuse GPU inputs
+    bool testGpuDepthFailure = false;  // only used by the headless lifecycle test
+    bool gpuSteadyHave = false;
+    uint64_t gpuLayout = 0, gpuAnchorId = 0;
+    uint64_t gpuPreviousSeq = 0;
+    uint64_t gpuModelEpoch = 1;
+    int gpuMotionSlot = 0;
+    gpudepth::Processor::Summary gpuSummary;
+    std::array<double, 2> gpuStageMs{};
     struct ResampleTap { int i0, i1; float t; };
     std::vector<ResampleTap> resampleX, resampleY;   // model output -> depth grid, built once
     std::vector<float> rawDepth;        // model output resampled to the W x H depth grid
@@ -628,10 +653,17 @@ struct App
     unsigned postFused = 0, postSteadied = 0, postPasses = 0;
     double postTrustSum = 0, postAgeSum = 0;
     bool motionUnavailableLogged = false, fuseModelLogged = false;
+    std::string depthFeaturesMessage;
 
     // Anchor model (Depth Anything V2) on its own thread and queue on the depth GPU.
-    struct AnchorJob { std::vector<uint32_t> rgba; fusion::Image luma; uint64_t seq = 0; double time = 0; bool valid = false; };
-    struct AnchorResult { fusion::Image nearMap, luma; uint64_t seq = 0, id = 0; double time = 0; };
+    struct GpuAnchorFrame {
+        ComPtr<ID3D12Resource> rgba, luma, fast, nearMap;
+        uint64_t seq = 0, layout = 0;
+        uint64_t epoch = 0;
+        double time = 0;
+    };
+    struct AnchorJob { std::vector<uint32_t> rgba; fusion::Image luma; std::shared_ptr<GpuAnchorFrame> gpu; uint64_t seq = 0; double time = 0; bool valid = false; };
+    struct AnchorResult { fusion::Image nearMap, luma; std::shared_ptr<GpuAnchorFrame> gpu; uint64_t seq = 0, id = 0; double time = 0; };
     std::mutex anchorMutex;
     std::condition_variable anchorCv;
     AnchorJob anchorJob;                // latest request (overwritten; the anchor takes the newest)
@@ -837,6 +869,12 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strncmp(a, "--hwnd=", 7)) { opt->captureHwnd = (HWND)(uintptr_t)strtoull(a + 7, nullptr, 0); if (!opt->captureHwnd) return false; continue; }
         if (!strncmp(a, "--image=", 8)) { opt->source = SourceKind::Image; opt->imagePath = widen(a + 8); continue; }
         if (!strcmp(a, "--synthetic")) { opt->source = SourceKind::Synthetic; continue; }
+        if (!strncmp(a, "--selftest-gpu=", 15))
+        {
+            char* end = nullptr; const long index = strtol(a + 15, &end, 10);
+            if (end == a + 15 || *end || index < 0 || index > 31) { Log("ParseArgs: --selftest-gpu needs a DXGI adapter index 0..31"); return false; }
+            opt->selfTestGpu = (int)index; opt->selfTestOnly = true; opt->source = SourceKind::Synthetic; continue;
+        }
         if (!strcmp(a, "--no-warp")) { opt->doWarp = false; continue; }
         if (!strncmp(a, "--scale=", 8)) { opt->warpScale = (float)atof(a + 8); continue; }
         if (!strncmp(a, "--curve=", 8))
@@ -920,6 +958,8 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--whole-pixel")) { opt->subpixel = false; continue; }
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
+        if (!strcmp(a, "--gpu-depth")) { opt->cpuDepth = false; continue; }
+        if (!strcmp(a, "--cpu-depth")) { opt->cpuDepth = true; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
         if (!strcmp(a, "--xgpu-transfer=frame")) { opt->frameTransfer = true; continue; }
         if (!strcmp(a, "--xgpu-transfer=prep")) { opt->frameTransfer = false; continue; }
@@ -1324,8 +1364,9 @@ static void DumpDeviceMessages(ID3D12Device* device, const char* label)
 
     UINT64 n = iq->GetNumStoredMessages();
     Log("DumpDebugMessages[%s]: %llu stored message(s)", label, (unsigned long long)n);
-    UINT64 shown = 0;
-    for (UINT64 i = 0; i < n && shown < 40; i++)
+    UINT64 warnings = 0, errors = 0;
+    std::vector<D3D12_MESSAGE_ID> warningKinds;
+    for (UINT64 i = 0; i < n; i++)
     {
         SIZE_T len = 0;
         iq->GetMessage(i, nullptr, &len);
@@ -1334,10 +1375,24 @@ static void DumpDeviceMessages(ID3D12Device* device, const char* label)
         D3D12_MESSAGE* m = (D3D12_MESSAGE*)mem.data();
         if (FAILED(iq->GetMessage(i, m, &len))) continue;
         if (m->Severity > D3D12_MESSAGE_SEVERITY_WARNING) continue;
-        Log("  d3d12[%d] %s", (int)m->Severity, m->pDescription ? m->pDescription : "(null)");
-        shown++;
+        // Allocation warnings must not hide later synchronization errors. Count
+        // every message, with separate output budgets for warnings and errors.
+        const bool error = m->Severity <= D3D12_MESSAGE_SEVERITY_ERROR;
+        bool show = false;
+        if (error) show = errors++ < 40;
+        else
+        {
+            warnings++;
+            if (std::find(warningKinds.begin(), warningKinds.end(), m->ID) == warningKinds.end())
+            {
+                show = warningKinds.size() < 40;
+                warningKinds.push_back(m->ID);
+            }
+        }
+        if (show) Log("  d3d12[%d] id %u: %s", (int)m->Severity, (unsigned)m->ID, m->pDescription ? m->pDescription : "(null)");
     }
-    Log("DumpDebugMessages[%s]: %llu warning-or-worse shown", label, (unsigned long long)shown);
+    Log("DumpDebugMessages[%s]: %llu errors, %llu warnings (%zu warning kinds; up to 40 errors and distinct warnings shown)", label,
+        (unsigned long long)errors, (unsigned long long)warnings, warningKinds.size());
 }
 
 static void DumpDebugMessages(App& app)
@@ -4007,6 +4062,7 @@ static bool EngineShaderJobs(std::vector<ShaderJob>& out)
     out.push_back({ "room-light.hlsl", room.light });
     out.push_back({ "room-emit.hlsl", room.emit });
     out.push_back({ "room-mirror.hlsl", room.mirror });
+    for (const auto& job : gpudepth::ShaderJobs()) out.push_back({ job.first, job.second });
     Log("EngineShaderJobs: exit - %zu shaders", out.size());
     return true;
 }
@@ -4014,6 +4070,25 @@ static bool EngineShaderJobs(std::vector<ShaderJob>& out)
 static bool InitShaders(App& app)
 {
     Log("InitShaders: enter");
+    // Warm all depth kernels before an OpenXR session exists. The same names and
+    // text are in EngineShaderJobs, so packaged installs hit their shipped cache.
+    if (!app.opt.cpuDepth && !app.gpuDepthFailed)
+    {
+        const auto jobs = gpudepth::ShaderJobs();
+        std::vector<ComPtr<ID3DBlob>> compiled(jobs.size());
+        std::vector<char> valid(jobs.size(), 0);
+        std::vector<std::thread> threads;
+        for (size_t i = 0; i < jobs.size(); ++i)
+            threads.emplace_back([&jobs, &compiled, &valid, i]() {
+                valid[i] = CompileCs(jobs[i].first.c_str(), jobs[i].second.c_str(), compiled[i]) ? 1 : 0;
+            });
+        for (auto& thread : threads) thread.join();
+        if (std::find(valid.begin(), valid.end(), 0) != valid.end())
+        {
+            app.gpuDepthFailed = true;
+            Log("Depth pipeline: CPU fallback; GPU depth shader compilation failed");
+        }
+    }
     const auto shadersStart = std::chrono::steady_clock::now();
     const int shadersBefore = g_shaderCache.shaders.load(), hitsBefore = g_shaderCache.hits.load(), compiledBefore = g_shaderCache.compiled.load();
     const long long compileMicrosBefore = g_shaderCache.compileMicros.load();
@@ -4305,6 +4380,20 @@ static void RecordUploadNear(App& app, ID3D12Resource* upload)
     Transition(cl, app.nearBuf.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     cl->CopyBufferRegion(app.nearBuf.Get(), 0, upload, 0, (UINT64)W * H * sizeof(float));
     Transition(cl, app.nearBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+}
+
+// Renderer consumes an immutable published GPU slot, or the explicit CPU fallback.
+static void RecordDepthSlot(App& app, const DepthSlot& slot)
+{
+    if (!slot.gpuValue || !slot.gpuNear)
+    {
+        RecordUploadNear(app, slot.nearUp.Get());
+        return;
+    }
+    if (slot.gpuFence) app.gfxQueue->Wait(slot.gpuFence.Get(), slot.gpuValue);
+    Transition(app.cmdList.Get(), slot.gpuNear.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    RecordUploadNear(app, slot.gpuNear.Get());
+    Transition(app.cmdList.Get(), slot.gpuNear.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
 }
 
 // dispatch the warp for both eyes; leaves colorOut/depthOut in COPY_SOURCE
@@ -4666,6 +4755,7 @@ static bool InitModel(App& app)
     Log("InitModel: DirectML on %ls%s", app.inferName.c_str(), app.secondGpu ? " (second GPU)" : "");
 
     const bool ok = LoadModel(app);
+    if (app.opt.cpuDepth) Log("Depth pipeline: CPU post-processing selected (models still use DirectML)");
     Log("InitModel: exit %s", ok ? "ok" : "FAIL");
     return ok;
 }
@@ -4675,6 +4765,11 @@ static bool InitModel(App& app)
 static void ReleaseModel(App& app)
 {
     Log("ReleaseModel: enter (%s)", app.opt.model ? app.opt.model->name : "none");
+    app.gpuOutput.reset();
+    app.gpuSteadyHave = false;
+    app.gpuAnchorId = 0;
+    app.gpuLastTime = 0;
+    ++app.gpuModelEpoch;
     if (app.modelInValue) { ort->ReleaseValue(app.modelInValue); app.modelInValue = nullptr; }
     if (app.dmlAlloc && app.dmlApi)
     {
@@ -4701,6 +4796,8 @@ static bool LoadModel(App& app)
     // each pass, taking cores from the capture thread and steady/fuse maths.
     for (const char* key : { "session.intra_op.allow_spinning", "session.inter_op.allow_spinning" })
         if (OrtStatus* st = ort->AddSessionConfigEntry(so, key, "0")) { Fail("AddSessionConfigEntry", st); ort->ReleaseStatus(st); }
+    if (OrtStatus* st = app.opt.cpuDepth ? nullptr : ort->AddSessionConfigEntry(so, "session.disable_cpu_ep_fallback", "1"))
+    { Fail("disable CPU model fallback", st); ort->ReleaseStatus(st); ort->ReleaseSessionOptions(so); return false; }
     if (OrtStatus* st = app.dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, app.dmlDevice.Get(), app.inferQueue.Get()))
     { Fail("AppendExecutionProvider_DML1", st); ort->ReleaseSessionOptions(so); return false; }
 
@@ -4747,6 +4844,20 @@ static bool LoadModel(App& app)
     };
     app.resampleX = taps(spec.inW, W);
     app.resampleY = taps(spec.inH, H);
+    if (!app.opt.cpuDepth && !app.gpuDepthFailed)
+    {
+        try
+        {
+            app.gpuOutput = std::make_unique<gpudepth::ModelOutput>();
+            app.gpuOutput->Init(ort, app.dmlApi, app.ortSession, app.inferDevice.Get(), app.modelInValue,
+                spec.inName, spec.outName, (size_t)spec.inW * spec.inH);
+        }
+        catch (const std::exception& e)
+        {
+            app.gpuOutput.reset(); app.gpuDepthFailed = true;
+            Log("Depth pipeline: CPU fallback; GPU output binding failed: %s", e.what());
+        }
+    }
     Log("LoadModel: exit ok, %s %dx%d on the shared device via the ml queue (GPU-resident input)%s", spec.name,
         spec.inW, spec.inH, (spec.inW == W && spec.inH == H) ? "" : ", output resampled to the depth grid");
     return true;
@@ -5053,6 +5164,8 @@ static bool InitSlots(App& app)
         DepthSlot& s = app.slots[i];
         if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * sizeof(float), D3D12_RESOURCE_FLAG_NONE,
                         D3D12_RESOURCE_STATE_GENERIC_READ, s.nearUp, (void**)&s.nearMapped)) return false;
+        if (!app.opt.cpuDepth && !MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, (UINT64)W * H * sizeof(float), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_COMMON, s.gpuNear, nullptr)) return false;
     }
     Log("InitSlots: exit ok, %d slots", SLOTS);
     return true;
@@ -5074,6 +5187,7 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
     const int dilateV = app.opt.dilateV >= 0 ? app.opt.dilateV : app.opt.model->dilateV;
     DilateNear(preparedDepth, W, H, dilateH, dilateV);
     memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
+    s.gpuValue = 0; s.gpuFence.Reset();
     s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
     s.lo = lo; s.hi = hi; s.completeTime = NowSeconds(); s.reused = reused;
     app.writeSlot = app.readySlot.exchange(app.writeSlot | SLOT_FRESH) & (SLOT_FRESH - 1);
@@ -5095,7 +5209,7 @@ static bool FuseActive(const App& app)
 // Grid image of the texture at descriptor `srcDesc` (srcW x srcH) on the ml queue,
 // copied to the readback buffer. Returns the ml fence value that marks it complete
 // (0 = not submitted).
-static UINT64 SubmitGridDesc(App& app, UINT srcDesc, int srcW, int srcH, ID3D12Fence* srcFence, UINT64 srcValue)
+static UINT64 SubmitGridDesc(App& app, UINT srcDesc, int srcW, int srcH, ID3D12Fence* srcFence, UINT64 srcValue, bool readback = true)
 {
     if (!app.gridPso || !app.gridList || srcW <= 0 || srcH <= 0) return 0;
 
@@ -5116,9 +5230,12 @@ static UINT64 SubmitGridDesc(App& app, UINT srcDesc, int srcW, int srcH, ID3D12F
     cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDesc));
     cl->SetComputeRootUnorderedAccessView(2, app.gridBuf->GetGPUVirtualAddress());
     cl->Dispatch((W + 7) / 8, (H + 7) / 8, 1);
-    Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    cl->CopyBufferRegion(app.gridReadback.Get(), 0, app.gridBuf.Get(), 0, (UINT64)W * H * sizeof(uint32_t));
-    Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (readback)
+    {
+        Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cl->CopyBufferRegion(app.gridReadback.Get(), 0, app.gridBuf.Get(), 0, (UINT64)W * H * sizeof(uint32_t));
+        Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
     cl->Close();
 
     if (srcFence) app.mlQueue->Wait(srcFence, srcValue);
@@ -5129,10 +5246,10 @@ static UINT64 SubmitGridDesc(App& app, UINT srcDesc, int srcW, int srcH, ID3D12F
     return app.gridLast;
 }
 
-static UINT64 SubmitGrid(App& app, const SourceRef& src)
+static UINT64 SubmitGrid(App& app, const SourceRef& src, bool readback = true)
 {
     if (!src) return 0;
-    const UINT64 done = SubmitGridDesc(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
+    const UINT64 done = SubmitGridDesc(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value, readback);
     if (done) app.sources.MarkRead(src, SourceFrames::Reader::Model, done);
     return done;
 }
@@ -5147,6 +5264,24 @@ static bool EnsureMotion(App& app)
     if (app.motion.Init(app.device.Get(), W, H, &Log)) return true;
     Log("EnsureMotion: no hardware motion estimation on this GPU; steady depth and model fusion have no effect");
     return false;
+}
+
+static void ReportDepthFeatures(App& app)
+{
+    std::string message;
+    if (app.fuseEnabled.load() && app.opt.model != &kZipDepth)
+        message = "Depth features: unavailable; fusion requires ZipDepth as the main model";
+    else if (app.fuseEnabled.load() && app.anchorFailed.load())
+        message = "Depth features: unavailable; anchor depth model failed";
+    else if ((app.steadyEnabled.load() || app.fuseEnabled.load()) && app.motionTried && !app.motion.ok())
+        message = "Depth features: unavailable; headset GPU has no usable hardware motion estimator";
+    else
+        message = "Depth features: available";
+    if (message != app.depthFeaturesMessage)
+    {
+        Log("%s", message.c_str());
+        app.depthFeaturesMessage = std::move(message);
+    }
 }
 
 // Anchor thread: Depth Anything V2 on its own queue on the depth GPU, fed the newest
@@ -5165,8 +5300,17 @@ static void AnchorMain(App* app)
     ComPtr<IDMLDevice> dml;
     OrtSession* session = nullptr;
     OrtMemoryInfo* cpu = nullptr;
+    OrtValue* gpuIn = nullptr;
+    void* gpuAllocation = nullptr;
+    std::unique_ptr<gpudepth::Processor> gpu;
+    std::unique_ptr<gpudepth::ModelOutput> gpuOut;
+    std::unique_ptr<gpudepth::Bridge> colourBridge, depthBridge;
+    ComPtr<ID3D12Resource> gpuColour, gpuInput;
     auto cleanup = [&]()
     {
+        gpuOut.reset();
+        if (gpuIn) { ort->ReleaseValue(gpuIn); gpuIn = nullptr; }
+        if (gpuAllocation) { if (auto* s = app->dmlApi->FreeGPUAllocation(gpuAllocation)) ort->ReleaseStatus(s); gpuAllocation = nullptr; }
         if (cpu) { ort->ReleaseMemoryInfo(cpu); cpu = nullptr; }
         if (session) { ort->ReleaseSession(session); session = nullptr; }
     };
@@ -5180,6 +5324,7 @@ static void AnchorMain(App* app)
     OrtStatus* st = ort->SetIntraOpNumThreads(so, 1);
     for (const char* key : { "session.intra_op.allow_spinning", "session.inter_op.allow_spinning" })
         if (!st) st = ort->AddSessionConfigEntry(so, key, "0");
+    if (!st && !app->opt.cpuDepth) st = ort->AddSessionConfigEntry(so, "session.disable_cpu_ep_fallback", "1");
     if (!st) st = app->dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, dml.Get(), queue.Get());
     if (!st) st = ort->CreateSession(app->env, ModelPath(spec.file).c_str(), so, &session);
     ort->ReleaseSessionOptions(so);
@@ -5195,6 +5340,9 @@ static void AnchorMain(App* app)
     double lastStart = 0, nextLog = NowSeconds() + 5.0;
     const double minInterval = app->secondGpu ? 0.0 : 0.1;
     uint64_t nextId = 1;
+    uint64_t gpuLayout = 0;
+    uint64_t gpuEpoch = 0;
+    double gpuTime = 0;
     int failures = 0;
     while (!app->stop.load())
     {
@@ -5209,8 +5357,69 @@ static void AnchorMain(App* app)
             job = std::move(app->anchorJob);
             app->anchorJob.valid = false;
         }
-        if (!FuseActive(*app) || job.rgba.size() != (size_t)W * H) continue;
+        if (!FuseActive(*app) || (!job.gpu && job.rgba.size() != (size_t)W * H)) continue;
         lastStart = NowSeconds();
+
+        if (job.gpu)
+        {
+            try
+            {
+                if (!gpu)
+                {
+                    gpu = std::make_unique<gpudepth::Processor>();
+                    gpu->SetCompiler(&CompileCs);
+                    gpu->Init(app->inferDevice.Get(), W, H);
+                    gpuColour = gpu->Image();
+                    gpuInput = gpudepth::Buffer(app->inferDevice.Get(), (UINT64)3 * W * H * 4);
+                    colourBridge = std::make_unique<gpudepth::Bridge>();
+                    colourBridge->Init(app->device.Get(), app->inferDevice.Get(), (UINT64)W * H * 4);
+                    depthBridge = std::make_unique<gpudepth::Bridge>();
+                    depthBridge->Init(app->inferDevice.Get(), app->device.Get(), (UINT64)W * H * 4);
+                    gpudepth::OrtCheck(ort, app->dmlApi->CreateGPUAllocationFromD3DResource(gpuInput.Get(), &gpuAllocation), "anchor input allocation");
+                    OrtMemoryInfo* memory = nullptr;
+                    gpudepth::OrtCheck(ort, ort->CreateMemoryInfo("DML", OrtDeviceAllocator, 0, OrtMemTypeDefault, &memory), "anchor memory");
+                    auto* tensorStatus = ort->CreateTensorWithDataAsOrtValue(memory, gpuAllocation, (size_t)3 * W * H * 4, dims, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &gpuIn);
+                    ort->ReleaseMemoryInfo(memory);
+                    gpudepth::OrtCheck(ort, tensorStatus, "anchor input tensor");
+                    gpuOut = std::make_unique<gpudepth::ModelOutput>();
+                    gpuOut->Init(ort, app->dmlApi, session, app->inferDevice.Get(), gpuIn, spec.inName, spec.outName, (size_t)W * H);
+                }
+                colourBridge->Transfer(job.gpu->rgba.Get(), gpuColour.Get(), (UINT64)W * H * 4);
+                gpu->work.Begin();
+                auto constants = gpu->Size(); constants.flags = 1;
+                gpu->Dispatch("Input", constants, { gpuColour.Get() }, { gpuInput.Get() });
+                gpu->work.Submit(); gpu->work.Wait();
+                gpuOut->Run(session);
+                gpu->work.Begin();
+                if (gpuLayout != job.gpu->layout || gpuEpoch != job.gpu->epoch)
+                {
+                    auto clear = gpu->Size(); clear.count = 4;
+                    gpu->Dispatch("Clear", clear, {}, { gpu->range.Get() });
+                    gpuLayout = job.gpu->layout; gpuEpoch = job.gpu->epoch; gpuTime = 0;
+                }
+                const double now = NowSeconds();
+                gpu->Normalize(gpuOut->resource.Get(), W, H, (float)(gpuTime ? now - gpuTime : 1), (float)app->opt.smoothTau, app->opt.smooth);
+                gpuTime = now;
+                gpu->Finish(0, 0); gpu->work.Submit();
+                const auto summary = gpu->ReadSummary();
+                if (summary.invalid) throw std::runtime_error("anchor returned non-finite depth");
+                depthBridge->Transfer(gpu->nearMap.Get(), job.gpu->nearMap.Get(), (UINT64)W * H * 4);
+                {
+                    std::lock_guard<std::mutex> lock(app->anchorMutex);
+                    app->anchorResult.gpu = std::move(job.gpu);
+                    app->anchorResult.seq = job.seq; app->anchorResult.time = job.time;
+                    app->anchorResult.id = nextId++;
+                }
+                app->anchorPasses++; failures = 0;
+            }
+            catch (const std::exception& e)
+            {
+                Log("Depth features: unavailable; GPU anchor failed: %s", e.what());
+                app->anchorFailed = true;
+                break;
+            }
+            continue;
+        }
 
         const size_t plane = (size_t)W * H;
         for (size_t i = 0; i < plane; i++)
@@ -5253,6 +5462,7 @@ static void AnchorMain(App* app)
         for (size_t i = 0; i < plane; i++) nearMap.v[i] = std::clamp((raw[i] - lo) * inv, 0.0f, 1.0f);
         {
             std::lock_guard<std::mutex> lock(app->anchorMutex);
+            app->anchorResult.gpu.reset();
             app->anchorResult.nearMap = std::move(nearMap);
             app->anchorResult.luma = std::move(job.luma);
             app->anchorResult.seq = job.seq;
@@ -5327,6 +5537,7 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
         {
             std::lock_guard<std::mutex> lock(app.anchorMutex);
             app.anchorJob.rgba = std::move(rgba);
+            app.anchorJob.gpu.reset();
             app.anchorJob.luma = luma;
             app.anchorJob.seq = src->seq;
             app.anchorJob.time = src->time;
@@ -5339,7 +5550,7 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
         bool fresh = false;
         {
             std::lock_guard<std::mutex> lock(app.anchorMutex);
-            if (app.anchorResult.id != 0 && app.anchorResult.id != app.anchorUsedId)
+            if (!app.anchorResult.gpu && app.anchorResult.id != 0 && app.anchorResult.id != app.anchorUsedId)
             {
                 app.anchorCurrent = app.anchorResult;
                 fresh = true;
@@ -5437,14 +5648,250 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
     app.postMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
 }
 
+static void PublishGpuDepth(App& app, const SourceRef& src, double modelMs, bool reused = false)
+{
+    auto& gpu = *app.gpuDepth;
+    DepthSlot& slot = app.slots[app.writeSlot];
+    gpu.work.Begin();
+    gpu.work.Copy(slot.gpuNear.Get(), gpu.finalMap.Get(),
+        (UINT64)W * H * 4, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+    slot.gpuValue = gpu.work.Submit();
+    gpu.work.Wait(); // slot publication also retires its source buffers for the next pass
+    slot.gpuFence = gpu.work.fence;
+    slot.source = src; slot.sceneTime = src->time; slot.completeTime = NowSeconds();
+    slot.modelMs = modelMs; slot.lo = app.gpuSummary.lo; slot.hi = app.gpuSummary.hi; slot.reused = reused;
+    app.writeSlot = app.readySlot.exchange(app.writeSlot | SLOT_FRESH) & (SLOT_FRESH - 1);
+    app.depthPublished++; app.depthHealthy = true;
+}
+
+static bool ComputeGpuAndPublish(App& app, const SourceRef& src, std::vector<float>& diagnostic)
+{
+    const UINT64 bytes = (UINT64)W * H * 4;
+    if (!app.gpuDepth)
+    {
+        app.gpuDepth = std::make_unique<gpudepth::Processor>();
+        app.gpuDepth->SetCompiler(&CompileCs);
+        app.gpuDepth->Init(app.device.Get(), W, H);
+        app.gpuRawLocal = gpudepth::Buffer(app.device.Get(), bytes);
+        app.gpuDepthReturn = std::make_unique<gpudepth::Bridge>();
+        app.gpuDepthReturn->Init(app.inferDevice.Get(), app.device.Get(), bytes);
+        Log("Depth pipeline: GPU; model output stays on GPU, post-processing on headset GPU, tracker readback 5.5 KB%s",
+            app.secondGpu ? ", inference on selected depth GPU with GPU return transfer" : "");
+    }
+    auto& gpu = *app.gpuDepth;
+    const auto& spec = *app.opt.model;
+    const double start = NowSeconds();
+    if (app.frameTransfer && app.smallTex[src->index])
+    {
+        const auto sent = SubmitFrameTransfer(app, app.smallTex[src->index].Get(), SourceFence(app), src->value);
+        app.sources.MarkRead(src, SourceFrames::Reader::Transfer, sent);
+    }
+    else
+    {
+        const auto done = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
+        app.sources.MarkRead(src, SourceFrames::Reader::Model, done);
+    }
+    const bool steadyRequested = app.steadyEnabled.load();
+    const bool fuseRequested = FuseActive(app);
+    const bool motion = (steadyRequested || fuseRequested) && EnsureMotion(app);
+    if ((steadyRequested || fuseRequested) && !motion && !app.motionUnavailableLogged)
+    {
+        Log("Depth features: unavailable; selected headset GPU has no hardware motion estimator");
+        app.motionUnavailableLogged = true;
+    }
+    const UINT64 gridDone = motion ? SubmitGrid(app, src, false) : 0;
+    app.gpuOutput->Run(app.ortSession);
+    app.gpuDepthReturn->Transfer(app.gpuOutput->resource.Get(), app.gpuRawLocal.Get(), (UINT64)spec.inW * spec.inH * 4);
+    const double modelMs = (NowSeconds() - start) * 1000;
+    app.passMs.push_back(modelMs);
+    const double postStart = NowSeconds();
+    gpu.work.Begin(); gpu.work.After(app.mlFence.Get(), gridDone);
+    gpu.BeginStage(0);
+    if (app.gpuLayout != src->layout || app.gpuLastTime == 0)
+    {
+        auto clear = gpu.Size(); clear.count = 4;
+        gpu.Dispatch("Clear", clear, {}, { gpu.range.Get() });
+        app.gpuLayout = src->layout; app.gpuSteadyHave = false; app.gpuAnchorId = 0;
+    }
+    const double now = NowSeconds();
+    gpu.Normalize(app.gpuRawLocal.Get(), spec.inW, spec.inH, (float)(app.gpuLastTime ? now - app.gpuLastTime : 1),
+        (float)app.opt.smoothTau, app.opt.smooth);
+    app.gpuLastTime = now;
+    std::shared_ptr<App::GpuAnchorFrame> job;
+    if (motion)
+    {
+        auto c = gpu.Size();
+        gpu.Dispatch("Luma", c, { app.gridBuf.Get() }, { gpu.luma.Get() });
+        if (!app.gpuPackedLuma) app.gpuPackedLuma = gpudepth::Buffer(app.device.Get(), (UINT64)app.motion.lumaPitch() * H);
+        c.pitch = app.motion.lumaPitch();
+        gpu.Dispatch("PackLuma", c, { gpu.luma.Get() }, { app.gpuPackedLuma.Get() });
+        gpudepth::Transition(gpu.work.list.Get(), app.gpuPackedLuma.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+        if (fuseRequested)
+        {
+            job = std::make_shared<App::GpuAnchorFrame>();
+            job->rgba = gpu.Image(); job->luma = gpu.Image(); job->fast = gpu.Image(); job->nearMap = gpu.Image();
+            job->seq = src->seq; job->layout = src->layout; job->time = src->time;
+            job->epoch = app.gpuModelEpoch;
+            gpu.work.Copy(job->rgba.Get(), app.gridBuf.Get(), bytes);
+            gpu.work.Copy(job->luma.Get(), gpu.luma.Get(), bytes);
+            gpu.work.Copy(job->fast.Get(), gpu.nearMap.Get(), bytes);
+        }
+    }
+    gpu.EndStage(0);
+    gpu.work.Submit(); gpu.work.Wait();
+    int previousIndex = -1, anchorIndex = -1, pairCount = 0;
+    bool anchorSameFrame = false, useAnchor = false;
+    MotionEstimator::Pair pairs[2];
+    if (motion)
+    {
+        if (!app.motion.UploadGpu(app.gpuMotionSlot, app.gpuPackedLuma.Get(), gpu.work.fence.Get(), gpu.work.value))
+            throw std::runtime_error("GPU motion luma copy failed");
+        // The copy has retired before PackLuma writes this buffer again.
+        gpu.work.Begin();
+        gpudepth::Transition(gpu.work.list.Get(), app.gpuPackedLuma.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        gpu.work.Submit(); gpu.work.Wait();
+        if (job)
+        {
+            EnsureAnchor(app);
+            std::shared_ptr<App::GpuAnchorFrame> fresh;
+            uint64_t freshId = 0;
+            {
+                std::lock_guard<std::mutex> lock(app.anchorMutex);
+                app.anchorJob.gpu = job; app.anchorJob.seq = job->seq; app.anchorJob.time = job->time; app.anchorJob.valid = true;
+                if (app.anchorResult.gpu && app.anchorResult.id != app.gpuAnchorId && app.anchorResult.gpu->layout == src->layout &&
+                    app.anchorResult.gpu->epoch == app.gpuModelEpoch)
+                { fresh = app.anchorResult.gpu; freshId = app.anchorResult.id; }
+            }
+            app.anchorCv.notify_one();
+            if (fresh)
+            {
+                gpu.work.Begin();
+                gpu.work.Copy(gpu.anchor.Get(), fresh->nearMap.Get(), bytes);
+                gpu.work.Copy(gpu.anchorLuma.Get(), fresh->luma.Get(), bytes);
+                gpu.Fit(fresh->fast.Get(), fresh->nearMap.Get(), gpu.anchorFit.Get());
+                auto c = gpu.Size(); c.pitch = app.motion.lumaPitch();
+                gpu.Dispatch("PackLuma", c, { gpu.anchorLuma.Get() }, { app.gpuPackedLuma.Get() });
+                gpudepth::Transition(gpu.work.list.Get(), app.gpuPackedLuma.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+                gpu.work.Submit(); gpu.work.Wait();
+                if (!app.motion.UploadGpu(2, app.gpuPackedLuma.Get(), gpu.work.fence.Get(), gpu.work.value)) throw std::runtime_error("anchor luma copy failed");
+                gpu.work.Begin();
+                gpudepth::Transition(gpu.work.list.Get(), app.gpuPackedLuma.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                gpu.work.Submit(); gpu.work.Wait();
+                app.gpuAnchorId = freshId; app.anchorCurrent.gpu = fresh;
+            }
+            if (app.gpuAnchorId && app.anchorCurrent.gpu)
+            {
+                const double age = src->time - app.anchorCurrent.gpu->time;
+                useAnchor = age >= 0 && age <= FUSE_MAX_AGE;
+                anchorSameFrame = src->seq == app.anchorCurrent.gpu->seq;
+                if (useAnchor && !anchorSameFrame) { anchorIndex = pairCount; pairs[pairCount++] = { app.gpuMotionSlot, 2 }; }
+            }
+        }
+        else app.gpuAnchorId = 0;
+        if (steadyRequested && app.gpuSteadyHave && app.gpuPreviousSeq != src->seq) { previousIndex = pairCount; pairs[pairCount++] = { app.gpuMotionSlot, 1 - app.gpuMotionSlot }; }
+        if (pairCount && !app.motion.EstimateManyGpu(pairs, pairCount)) throw std::runtime_error("GPU motion estimation failed");
+    }
+    gpu.work.Begin();
+    if (motion) gpu.work.After(app.motion.gpuFence(), app.motion.gpuFenceValue());
+    gpu.BeginStage(1);
+    for (int i = 0; i < pairCount; i++) gpudepth::Transition(gpu.work.list.Get(), app.motion.gpuVectors(i), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (motion && fuseRequested && app.gpuAnchorId)
+    {
+        gpu.Fuse(anchorIndex >= 0 ? app.motion.gpuVectors(anchorIndex) : nullptr, app.motion.vectorPitch(), app.motion.blocksW(), app.motion.blocksH(), anchorSameFrame, useAnchor);
+        if (useAnchor) app.postFused++;
+    }
+    if (previousIndex >= 0)
+    {
+        gpu.Steady(app.motion.gpuVectors(previousIndex), app.motion.vectorPitch(), app.motion.blocksW(), app.motion.blocksH());
+        app.postSteadied++;
+    }
+    for (int i = 0; i < pairCount; i++) gpudepth::Transition(gpu.work.list.Get(), app.motion.gpuVectors(i), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+    gpu.Finish(app.opt.dilate >= 0 ? app.opt.dilate : spec.dilateH, app.opt.dilateV >= 0 ? app.opt.dilateV : spec.dilateV);
+    gpu.EndStage(1);
+    gpu.work.Submit();
+    app.gpuSummary = gpu.ReadSummary();
+    app.gpuStageMs = gpu.StageMilliseconds();
+    if (app.opt.selfTestOnly && app.testGpuDepthFailure)
+    {
+        app.testGpuDepthFailure = false;
+        throw std::runtime_error("self-test injected GPU post-processing failure after retirement");
+    }
+    if (app.gpuSummary.invalid) throw std::runtime_error("model returned non-finite GPU depth");
+    app.gpuSteadyHave = motion && steadyRequested;
+    app.gpuPreviousSeq = src->seq;
+    if (app.gpuSteadyHave) app.gpuMotionSlot = 1 - app.gpuMotionSlot;
+    app.postMs.push_back((NowSeconds() - postStart) * 1000); app.postPasses++;
+    PublishGpuDepth(app, src, modelMs);
+    // Only diagnostic callers request a whole image. Normal playback reads the
+    // same tiny grid that ForegroundTracker would sample from the full image.
+    if (app.opt.selfTestOnly || app.opt.doDump || app.opt.source == SourceKind::Synthetic) diagnostic = gpu.Download(gpu.nearMap.Get());
+    if (!app.foregroundEnabled.load()) { app.foregroundTracker.Reset(); return true; }
+    if (app.foregroundLayout != src->layout) { app.foregroundTracker.Reset(); app.foregroundLayout = src->layout; }
+    DepthCrop crop;
+    const bool persistent = app.foregroundTracker.Update(app.gpuSummary.tracker, 49, 28, src->time, crop);
+    if (!persistent || app.stop.load() || !app.foregroundBudget.CanRun(NowSeconds(), (NowSeconds() - src->time) * 1000, modelMs)) return true;
+    const double cropStart = NowSeconds(); ++app.foregroundAttempts;
+    const auto prepared = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value, crop);
+    app.sources.MarkRead(src, SourceFrames::Reader::Model, prepared);
+    app.gpuOutput->Run(app.ortSession);
+    app.gpuDepthReturn->Transfer(app.gpuOutput->resource.Get(), app.gpuRawLocal.Get(), (UINT64)spec.inW * spec.inH * 4);
+    gpu.work.Begin(); auto c = gpu.Size(); c.sw = spec.inW; c.sh = spec.inH;
+    gpu.Dispatch("Resample", c, { app.gpuRawLocal.Get() }, { gpu.raw.Get() });
+    gpu.Dispatch("RangeReduce", c, { gpu.raw.Get() }, { gpu.reduction.Get() });
+    c.count = (W * H + 255) / 256;
+    gpu.Dispatch("RangeFinish", c, { gpu.reduction.Get() }, { gpu.scratch[13].Get() });
+    c.p0 = crop.x; c.p1 = crop.y; c.p2 = crop.size;
+    gpu.Dispatch("CropFit", c, { gpu.raw.Get(), gpu.nearMap.Get(), gpu.scratch[13].Get() }, { gpu.scratch[15].Get() });
+    gpu.Dispatch("CropApply", c, { gpu.raw.Get(), gpu.nearMap.Get(), gpu.scratch[15].Get() }, { gpu.scratch[14].Get() });
+    gpu.work.Copy(gpu.nearMap.Get(), gpu.scratch[14].Get(), bytes);
+    gpu.Finish(app.opt.dilate >= 0 ? app.opt.dilate : spec.dilateH, app.opt.dilateV >= 0 ? app.opt.dilateV : spec.dilateV, true);
+    gpu.work.Submit(); app.gpuSummary = gpu.ReadSummary();
+    const double cost = (NowSeconds() - cropStart) * 1000; app.foregroundBudget.Complete(NowSeconds(), cost);
+    if (app.gpuSummary.cropAccepted && !app.stop.load() && app.foregroundEnabled.load() && NowSeconds() - src->time < .20)
+    { PublishGpuDepth(app, src, modelMs + cost); ++app.foregroundAccepted; }
+    return true;
+}
+
 static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>& nearScratch)
 {
-    if (!src) return false;
+    if (!src || app.gpuDepthFatal) return false;
     if (app.testDepthFailuresLeft > 0)
     {
         --app.testDepthFailuresLeft;
         Log("ComputeAndPublish: injected depth failure (%d remaining)", app.testDepthFailuresLeft);
         return false;
+    }
+
+    if (!app.opt.cpuDepth && !app.gpuDepthFailed && app.gpuOutput && !app.opt.useTruth)
+    {
+        try { const bool ok = ComputeGpuAndPublish(app, src, nearScratch); ReportDepthFeatures(app); return ok; }
+        catch (const std::exception& e)
+        {
+            app.gpuDepthFailed = true; app.gpuSteadyHave = false; app.gpuAnchorId = 0;
+            try
+            {
+                // The CPU reference reuses the source grid and model input. It
+                // is safe only after every queue that might read them retires.
+                if (app.gpuOutput) app.gpuOutput->Synchronize();
+                gpudepth::RetireQueue(app.inferDevice.Get(), app.inferQueue.Get());
+                gpudepth::RetireQueue(app.device.Get(), app.mlQueue.Get());
+                gpudepth::RetireQueue(app.device.Get(), app.xferQueue.Get());
+                if (app.gpuDepth) app.gpuDepth->work.Wait();
+                if (app.gpuDepthReturn) app.gpuDepthReturn->Wait();
+                if (!app.motion.Retire()) throw std::runtime_error("motion queue did not retire");
+                if (FAILED(app.device->GetDeviceRemovedReason()) || FAILED(app.inferDevice->GetDeviceRemovedReason()))
+                    throw std::runtime_error("D3D12 device removed");
+            }
+            catch (const std::exception& retirement)
+            {
+                app.gpuDepthFatal = true;
+                app.depthHealthy = false;
+                Log("Depth features: unavailable; GPU work could not retire safely (%s); restart playback", retirement.what());
+                return false;
+            }
+            Log("Depth pipeline: CPU fallback; %s", e.what());
+            WaitDepthIdle(app);
+        }
     }
 
     auto m0 = std::chrono::steady_clock::now();
@@ -5478,6 +5925,7 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     for (size_t i = 0; i < nearScratch.size(); i++)
         nearScratch[i] = std::min(1.0f, std::max(0.0f, (app.rawDepth[i] - lo) * inv));
     PostProcessDepth(app, src, gridDone, nearScratch);
+    ReportDepthFeatures(app);
 
     // Make global depth available immediately; an optional crop must never hold
     // back this result or mutate a slot the render thread may be reading.
@@ -5569,18 +6017,27 @@ static void WorkerMain(App* app)
     while (!app->stop.load())
     {
         const ModelSpec* wanted = app->requestedModel.load();
-        if (wanted && wanted != app->opt.model && !SwitchModel(*app, wanted))
-        { app->depthHealthy = false; Log("WorkerMain: no depth model; flat viewing"); break; }
+        if (wanted && wanted != app->opt.model)
+        {
+            if (!SwitchModel(*app, wanted))
+            { app->depthHealthy = false; Log("WorkerMain: no depth model; flat viewing"); break; }
+            lastSeq = 0; haveEstimate = false;
+        }
 
         SourceRef src = app->sources.Latest();
         // A captured desktop that is not changing delivers no new frames - do not
         // burn the GPU recomputing identical depth. (Image/synthetic keep running:
         // they double as the throughput benchmark.)
-        if (!src || (app->opt.source == SourceKind::Capture && src->seq == lastSeq)) { Sleep(2); continue; }
-        if (app->opt.source == SourceKind::Capture && haveEstimate && src->changedTotal >= 0 && src->layout == estimateLayout &&
-            estimateModel == app->opt.model && !app->lastNear.empty() && src->changedTotal - estimateChanged < kReuseBelow)
+        if (!src) { Sleep(2); continue; }
+        if (app->opt.source == SourceKind::Capture && src->seq == lastSeq)
         {
-            PublishDepth(*app, src, app->lastNear, app->lastLo, app->lastHi, 0.0, true);
+            Sleep(2); continue;
+        }
+        if (app->opt.source == SourceKind::Capture && haveEstimate && src->changedTotal >= 0 && src->layout == estimateLayout &&
+            estimateModel == app->opt.model && (!app->lastNear.empty() || (app->gpuDepth && !app->gpuDepthFailed)) && src->changedTotal - estimateChanged < kReuseBelow)
+        {
+            if (app->gpuDepth && !app->gpuDepthFailed) PublishGpuDepth(*app, src, 0.0, true);
+            else PublishDepth(*app, src, app->lastNear, app->lastLo, app->lastHi, 0.0, true);
             lastSeq = src->seq;
             ++reusedCount;
             if (NowSeconds() >= nextReuseLog)
@@ -5594,6 +6051,11 @@ static void WorkerMain(App* app)
         if (!ComputeAndPublish(*app, src, nearScratch))
         {
             app->depthHealthy = false;
+            if (app->gpuDepthFatal)
+            {
+                Log("WorkerMain: GPU retirement failed; depth stopped without reusing inputs");
+                break;
+            }
             app->smoother.have = false;
             app->foregroundTracker.Reset();
             ++failures;
@@ -5621,6 +6083,10 @@ static void WorkerMain(App* app)
             auto pct = [&](double q) { return v[std::min(v.size() - 1, (size_t)(q * v.size()))]; };
             Log("Worker: %zu passes in 2 s | pass ms p50 %.1f p95 %.1f max %.1f | %s", v.size(), pct(.5), pct(.95), v.back(),
                 !app->secondGpu ? "one GPU" : app->frameTransfer ? "second GPU, copy-engine frames" : "second GPU, prep on headset GPU");
+            if (app->gpuDepth && !app->gpuDepthFailed)
+                Log("Depth diagnostics: spread %.3f (p10 %.3f, p50 %.3f, p90 %.3f); GPU normalize/luma %.2f ms, steady/fuse/publish prep %.2f ms",
+                    app->gpuSummary.p90 - app->gpuSummary.p10, app->gpuSummary.p10, app->gpuSummary.p50, app->gpuSummary.p90,
+                    app->gpuStageMs[0], app->gpuStageMs[1]);
             v.clear();
             if (app->postPasses > 0 && !app->postMs.empty())
             {
@@ -5937,9 +6403,36 @@ static bool SelfTestSteadyFuse(App& app, const std::vector<unsigned char>& scene
 // results. Exercises the grid pass, motion estimator, anchor thread and CPU maths.
 static bool FirstSourceFrame(App& app);
 
+static bool SelfTestGpuDepthHandoff(App& app)
+{
+    const DepthSlot& slot = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
+    std::vector<float> expected;
+    if (slot.gpuValue && app.gpuDepth)
+        expected = app.gpuDepth->Download(app.gpuDepth->finalMap.Get());
+    else expected.assign(slot.nearMapped, slot.nearMapped + (size_t)W * H);
+    auto readback = gpudepth::Buffer(app.device.Get(), (UINT64)W * H * 4, D3D12_HEAP_TYPE_READBACK);
+    WaitFence(app, app.fenceVal);
+    gpudepth::Check(app.cmdAlloc[0]->Reset(), "handoff allocator");
+    gpudepth::Check(app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr), "handoff list");
+    RecordDepthSlot(app, slot);
+    Transition(app.cmdList.Get(), app.nearBuf.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    app.cmdList->CopyBufferRegion(readback.Get(), 0, app.nearBuf.Get(), 0, (UINT64)W * H * 4);
+    Transition(app.cmdList.Get(), app.nearBuf.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    gpudepth::Check(app.cmdList->Close(), "handoff close");
+    ID3D12CommandList* lists[] = { app.cmdList.Get() };
+    app.gfxQueue->ExecuteCommandLists(1, lists);
+    gpudepth::Check(app.gfxQueue->Signal(app.fence.Get(), ++app.fenceVal), "handoff signal");
+    WaitFence(app, app.fenceVal);
+    void* mapped = nullptr;
+    gpudepth::Check(readback->Map(0, nullptr, &mapped), "handoff readback");
+    const bool equal = memcmp(mapped, expected.data(), expected.size() * sizeof(float)) == 0;
+    readback->Unmap(0, nullptr);
+    Log("SelfTestGpuDepthHandoff: %s - published %s slot -> render nearBuf, exact %zu floats", equal ? "PASS" : "FAIL", slot.gpuValue ? "GPU" : "CPU", expected.size());
+    return equal;
+}
+
 static bool SelfTestPipeline(App& app)
 {
-    if (!app.steadyEnabled.load() && !app.fuseEnabled.load()) return true;
     Log("SelfTestPipeline: enter (steady %d, fuse %d)", (int)app.steadyEnabled.load(), (int)app.fuseEnabled.load());
     if (!FirstSourceFrame(app)) { Log("SelfTestPipeline: FAIL no source frame"); return false; }
 
@@ -5949,9 +6442,25 @@ static bool SelfTestPipeline(App& app)
     const double end = NowSeconds() + 6.0;
     while (NowSeconds() < end)
     {
+        if (app.opt.source == SourceKind::Synthetic)
+        {
+            std::vector<unsigned char> picture;
+            MakeScene(picture, (passes + 1) / 30.0);
+            WaitFence(app, app.fenceVal);
+            gpudepth::Check(app.cmdAlloc[0]->Reset(), "pipeline source allocator");
+            gpudepth::Check(app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr), "pipeline source list");
+            auto frame = RecordCpuSource(app, picture, 0);
+            if (!frame) { Log("SelfTestPipeline: FAIL source ring full"); return false; }
+            gpudepth::Check(app.cmdList->Close(), "pipeline source close");
+            ID3D12CommandList* lists[] = { app.cmdList.Get() };
+            app.gfxQueue->ExecuteCommandLists(1, lists);
+            gpudepth::Check(app.gfxQueue->Signal(app.fence.Get(), ++app.fenceVal), "pipeline source signal");
+            app.sources.Publish(frame, app.fenceVal, NowSeconds());
+        }
         SourceRef src = app.sources.Latest();
         if (!src) { Sleep(5); continue; }
         if (!ComputeAndPublish(app, src, nearMap)) { Log("SelfTestPipeline: FAIL depth pass"); return false; }
+        if (passes < 2 && !SelfTestGpuDepthHandoff(app)) return false;
         passes++;
         for (float v : nearMap) if (!std::isfinite(v) || v < 0 || v > 1) { bad++; break; }
         steadied += app.postSteadied; fused += app.postFused;
@@ -5966,12 +6475,41 @@ static bool SelfTestPipeline(App& app)
         app.postStageMs[0] / passes, app.postStageMs[1] / passes, app.postStageMs[2] / passes, app.postStageMs[3] / passes,
         app.postStageMs[4] / passes, app.postStageMs[5] / passes);
     const bool fuseOk = !FuseActive(app) || (anchors > 0 && fused > 0);
-    const bool ok = passes > 20 && bad == 0 && !postMs.empty() && fuseOk;
+    const bool needsPost = app.steadyEnabled.load() || FuseActive(app) || (app.gpuDepth && !app.gpuDepthFailed);
+    const bool expectedGpu = !app.opt.cpuDepth && !app.opt.useTruth;
+    const bool ok = passes > 20 && bad == 0 && (!needsPost || !postMs.empty()) && fuseOk && (!expectedGpu || !app.gpuDepthFailed);
     Log("SelfTestPipeline: exit %s - %u passes, %u out of range, post ms p50 %.1f p95 %.1f, steadied %u, fused %u, anchor passes %u%s",
         ok ? "PASS" : "FAIL", passes, bad, postMs.empty() ? 0.0 : postMs[postMs.size() / 2],
         postMs.empty() ? 0.0 : postMs[std::min(postMs.size() - 1, postMs.size() * 95 / 100)], steadied, fused, anchors,
         app.motion.ok() ? "" : " (no motion estimator)");
     return ok;
+}
+
+// Real model switches and the explicit recovery contract, without an XR session.
+// Runs last because the failure-injection case deliberately leaves CPU fallback on.
+static bool SelfTestGpuLifecycle(App& app)
+{
+    Log("SelfTestGpuLifecycle: enter");
+    const ModelSpec* original = app.opt.model;
+    const ModelSpec* other = original == &kZipDepth ? &kDepthAnythingV2 : &kZipDepth;
+    std::vector<float> depth;
+    auto check = [&]() {
+        if (!ComputeAndPublish(app, app.sources.Latest(), depth) || depth.size() != (size_t)W * H) return false;
+        for (float v : depth) if (!std::isfinite(v) || v < 0 || v > 1) return false;
+        return SelfTestGpuDepthHandoff(app);
+    };
+    if (!SwitchModel(app, other) || !check() || !SwitchModel(app, original) || !check())
+    { Log("SelfTestGpuLifecycle: FAIL model switch"); return false; }
+    if (!app.opt.cpuDepth && !app.opt.useTruth)
+    {
+        if (app.gpuDepthFailed) { Log("SelfTestGpuLifecycle: FAIL unexpected fallback before injection"); return false; }
+        app.testGpuDepthFailure = true;
+        if (!check() || !app.gpuDepthFailed || app.gpuDepthFatal ||
+            app.slots[app.readySlot.load() & (SLOT_FRESH - 1)].gpuValue != 0)
+        { Log("SelfTestGpuLifecycle: FAIL CPU fallback handoff"); return false; }
+    }
+    Log("SelfTestGpuLifecycle: PASS - both model bindings switched, %s", app.opt.cpuDepth ? "CPU reference preserved" : "injected GPU failure recovered to rendered CPU depth");
+    return true;
 }
 
 // GPU warp vs the CPU reference at WxH, pixel for pixel.
@@ -8454,7 +8992,7 @@ static void RunFrameLoop(App& app)
                     WaitFence(app, app.slotFence);
                     app.readSlot = app.readySlot.exchange(app.readSlot) & (SLOT_FRESH - 1);
                     cur = &app.slots[app.readSlot];
-                    RecordUploadNear(app, cur->nearUp.Get());
+                    RecordDepthSlot(app, *cur);
                     tookSlot = true;
                     depthUpdates++; repDepth++;
                     if (!cur->reused) depthDelay.Update(cur->completeTime - cur->sceneTime);   // carried-forward depth took no model time
@@ -8910,7 +9448,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     WaitFence(app, app.fenceVal);
     app.cmdAlloc[0]->Reset();
     app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
-    RecordUploadNear(app, slot.nearUp.Get());
+    RecordDepthSlot(app, slot);
     RecordWarp(app, t, DESC_SRC0 + (UINT)source->index, c);
     for (UINT e = 0; e < VIEWS; e++)
     {
@@ -9097,7 +9635,18 @@ int wmain(int argc, wchar_t** wideArgv)
     do
     {
         if (app.opt.source == SourceKind::Capture && !SelectCaptureItem(app)) break;
-        if (!InitXrInstance(app)) break;
+        if (app.opt.selfTestGpu >= 0)
+        {
+            ComPtr<IDXGIFactory4> factory; ComPtr<IDXGIAdapter1> adapter;
+            if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) ||
+                FAILED(factory->EnumAdapters1((UINT)app.opt.selfTestGpu, &adapter)))
+            { Log("Headless self-test: adapter %d unavailable", app.opt.selfTestGpu); break; }
+            DXGI_ADAPTER_DESC1 desc{}; adapter->GetDesc1(&desc);
+            if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) { Log("Headless self-test: a hardware adapter is required"); break; }
+            app.adapterLuid = desc.AdapterLuid; app.minFeatureLevel = D3D_FEATURE_LEVEL_12_0;
+            Log("Headless self-test: %ls (no OpenXR instance or session)", desc.Description);
+        }
+        else if (!InitXrInstance(app)) break;
         if (!InitD3D(app)) break;
         if (!InitModel(app)) break;
         if (!InitSlots(app)) break;
@@ -9119,6 +9668,7 @@ int wmain(int argc, wchar_t** wideArgv)
             bool passed = SelfTestPipeline(app) && fg;
             if (app.opt.benchRoom && !passed) Log("main: --bench-room skipped - the self-test failed, so its passes are not worth timing");
             if (app.opt.benchRoom && passed) passed = BenchRoom(app);
+            if (passed) passed = SelfTestGpuLifecycle(app);
             if (passed) rc = 0;
             break;
         }
@@ -9134,7 +9684,13 @@ int wmain(int argc, wchar_t** wideArgv)
             const DepthSlot& s = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
             Log("main: first depth in %.1f ms (includes warm-up), range %.3f..%.3f", s.modelMs, s.lo, s.hi);
             if (app.opt.source == SourceKind::Synthetic)
-                Log("main: model nearness (0 far..1 near): backdrop %.2f panel %.2f marker %.2f  [truth 0.00 / 0.50 / 1.00]", s.back, s.panel, s.marker);
+            {
+                // GPU slots carry no full CPU map. This explicit synthetic
+                // diagnostic has already requested one from ComputeAndPublish.
+                float back = 0, panel = 0, marker = 0;
+                RegionMeans(firstNear, s.sceneTime, back, panel, marker);
+                Log("main: model nearness (0 far..1 near): backdrop %.2f panel %.2f marker %.2f  [truth 0.00 / 0.50 / 1.00]", back, panel, marker);
+            }
         }
         else
         {

@@ -196,6 +196,8 @@
       <TextBlock Text="{l:Tr DepthGpu}" Style="{StaticResource Label}" Margin="0,4,0,4"/>
       <ComboBox x:Name="DepthGpuList" DisplayMemberPath="Label" SelectedValuePath="Id" SelectionChanged="SettingsChanged" ToolTip="{l:Tr DepthGpuTip}"/>
       <TextBlock Text="{l:Tr DepthGpuHint}" Style="{StaticResource Hint}"/>
+      <CheckBox x:Name="GpuDepthCheck" Content="{l:Tr GpuDepthProcessing}" ToolTip="{l:Tr GpuDepthProcessingTip}" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+      <TextBlock Text="{l:Tr GpuDepthProcessingHint}" Style="{StaticResource Hint}" Margin="26,0,0,8"/>
       <CheckBox x:Name="ForegroundCheck" Content="{l:Tr ForegroundPasses}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr ForegroundTip}"/>
       <TextBlock Text="{l:Tr FrameTiming}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
       <ComboBox x:Name="TimingList" SelectedIndex="0" SelectionChanged="SettingsChanged" ToolTip="{l:Tr FrameTimingTip}">

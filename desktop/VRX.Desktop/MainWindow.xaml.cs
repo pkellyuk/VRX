@@ -255,6 +255,7 @@ public partial class MainWindow : Window
         WorldHex.Text = p.WorldColor;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
+        GpuDepthCheck.IsChecked = p.GpuDepthProcessing;
         ShowGpuChoice(p.DepthGpu);
         RecenterKeys.SelectedValue = p.RecenterKey; MenuKeys.SelectedValue = p.MenuKey;
         SetSettingsEnabled(true);
@@ -285,6 +286,7 @@ public partial class MainWindow : Window
             SteadyDepth = SteadyCheck.IsChecked == true,
             FuseModels = FuseCheck.IsChecked == true,
             DepthGpu = DepthGpuList.SelectedValue as string ?? Gpus.Same,
+            GpuDepthProcessing = GpuDepthCheck.IsChecked == true,
             AutoDismiss = DismissCheck.IsChecked == true, DesktopWhenAway = DesktopAwayCheck.IsChecked == true, RecenterKey = (int)(RecenterKeys.SelectedValue ?? 0),
             MenuKey = (int)(MenuKeys.SelectedValue ?? 0) };
         if (!p.Valid()) throw new InvalidDataException(Loc.Get("ErrorShortcutsConflict"));
@@ -1304,6 +1306,7 @@ public partial class MainWindow : Window
         legacy.Remove("RoomLight");
         legacy.Remove("RoomLightColor");
         legacy.Remove("FuseModels");
+        legacy.Remove("GpuDepthProcessing");
         legacy.Remove("DesktopWhenAway");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
@@ -1311,6 +1314,11 @@ public partial class MainWindow : Window
         if (!store.Load(one.ExecutablePath).ForegroundRefinement) throw new Exception("Old profiles must default foreground refinement on");
         if (!store.Load(one.ExecutablePath).DesktopWhenAway) throw new Exception("Old profiles must default \"show the desktop when you leave the game\" on");
         if (store.Load(one.ExecutablePath).DepthGpu != Gpus.Same) throw new Exception("Profiles without a depth GPU must use the game's GPU");
+        if (store.Load(one.ExecutablePath).GpuDepthProcessing || Profile.NewInstallDefaults().GpuDepthProcessing)
+            throw new Exception("GPU depth processing must remain opt-in for old and new profiles");
+        two.GpuDepthProcessing = true; store.Save(two);
+        if (!store.Load(two.ExecutablePath).GpuDepthProcessing || store.Load(one.ExecutablePath).GpuDepthProcessing)
+            throw new Exception("GPU depth processing must round-trip independently per game");
         var three = new Profile { ExecutablePath = Path.Combine(output, "three", "game.exe") };
         store.Save(three);
         var earlier = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(three.ExecutablePath)))!.AsObject();
@@ -1517,6 +1525,13 @@ public partial class MainWindow : Window
             gpus[4].Label != card2 || !Loc.NeutralStrings()["GpuLabelCard"].Contains("card {2}") || gpus.Any(g => g.Label.Contains("Basic Render")) ||
             gpus[0].Label != Loc.Get("GpuSame") || gpus[2].Label != Loc.Format("GpuLabel", "NVIDIA GeForce RTX 3090", Loc.Format("GpuSizeGB", 24325 / 1024.0)))
             throw new Exception("GPU list parsing failed");
+        if (GpuDepthCheck.IsChecked != false) throw new Exception("GPU depth processing should default off");
+        GpuDepthCheck.IsChecked = true;
+        if (!ReadProfile().GpuDepthProcessing) throw new Exception("GPU depth checkbox is not mapped to settings");
+        PutProfile(ReadProfile());
+        if (GpuDepthCheck.IsChecked != true) throw new Exception("GPU depth profile is not mapped to the checkbox");
+        GpuDepthCheck.IsChecked = false;
+        if (ReadProfile().GpuDepthProcessing) throw new Exception("GPU depth checkbox must allow opting back out");
         SetGpuLines(gpuSample);
         if (DepthGpuList.SelectedValue as string != Gpus.Same) throw new Exception("Depth GPU should default to the game's GPU");
         DepthGpuList.SelectedValue = "name:NVIDIA GeForce RTX 3060#1";
@@ -1545,10 +1560,10 @@ public partial class MainWindow : Window
         // Base settings: new games start from them, existing profiles are untouched,
         // and the game's own path/window never leak into the base.
         var baseSource = new Profile { ExecutablePath = one.ExecutablePath, PreferredWindowTitle = "Example game window",
-            Width = 7.25, Distance = 2.5, Strength = 1.4, SubpixelWarp = false, DelayToDepth = true, FuseModels = true, MenuKey = 0x79 };
+            Width = 7.25, Distance = 2.5, Strength = 1.4, SubpixelWarp = false, DelayToDepth = true, FuseModels = true, GpuDepthProcessing = true, MenuKey = 0x79 };
         store.SaveBase(baseSource);
         var fresh = store.Load(Path.Combine(output, "fresh", "game.exe"));
-        if (fresh.Width != 7.25 || fresh.Strength != 1.4 || fresh.SubpixelWarp || !fresh.DelayToDepth || !fresh.FuseModels || fresh.MenuKey != 0x79)
+        if (fresh.Width != 7.25 || fresh.Strength != 1.4 || fresh.SubpixelWarp || !fresh.DelayToDepth || !fresh.FuseModels || !fresh.GpuDepthProcessing || fresh.MenuKey != 0x79)
             throw new Exception("A new game must start from the saved base settings");
         if (fresh.ExecutablePath != Path.Combine(output, "fresh", "game.exe") || fresh.PreferredWindowTitle.Length != 0)
             throw new Exception("Base settings must not carry another game's path or window");
@@ -1569,12 +1584,12 @@ public partial class MainWindow : Window
         allStore.Save(gameA); allStore.Save(gameB);
         string broken = Path.Combine(allStore.Root, "profiles", "broken.json");
         File.WriteAllText(broken, "{ not json");
-        var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false };
+        var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false, GpuDepthProcessing = true };
         if (allStore.ApplyToAll(chosen, out int skippedAll, out int failedAll) != 2 || skippedAll != 1 || failedAll != 0)
             throw new Exception("Apply to all must update both saved games and skip the unreadable one");
         var afterA = allStore.Load(gameA.ExecutablePath);
         var afterB = allStore.Load(gameB.ExecutablePath);
-        if (afterA.Width != 8.5 || afterB.Width != 8.5 || afterA.ScreenCurve != 30 || !afterB.Ambilight || afterB.SteadyDepth || afterB.FuseModels)
+        if (afterA.Width != 8.5 || afterB.Width != 8.5 || afterA.ScreenCurve != 30 || !afterB.Ambilight || afterB.SteadyDepth || afterB.FuseModels || !afterA.GpuDepthProcessing || !afterB.GpuDepthProcessing)
             throw new Exception("Apply to all did not copy the settings to every saved game");
         if (afterA.PreferredWindowTitle != "Game A" || afterB.PreferredWindowTitle != "Game B")
             throw new Exception("Apply to all must keep each game's own window");
@@ -1932,6 +1947,14 @@ public partial class MainWindow : Window
         if (!screenArgs.Contains("--monitor=" + display.Monitor.ToString(CultureInfo.InvariantCulture)) ||
             screenArgs.Any(a => a.StartsWith("--pid=") || a.StartsWith("--hwnd=") || a.StartsWith("--exe")) || screenArgs[0] != "0" || !screenArgs.Contains("--control=control.txt"))
             throw new Exception("Display arguments: " + string.Join(' ', screenArgs));
+        var gpuProfile = new Profile { GpuDepthProcessing = true };
+        if (EngineSession.Arguments(sample, sample.Windows[0], new Profile(), "control.txt").Contains("--gpu-depth") ||
+            !EngineSession.Arguments(sample, sample.Windows[0], gpuProfile, "control.txt").Contains("--gpu-depth") ||
+            !EngineSession.Arguments(screenApp, display, gpuProfile, "control.txt").Contains("--gpu-depth"))
+            throw new Exception("GPU depth processing must be selected only for opted-in game or display launches");
+        gpuProfile.GpuDepthProcessing = false;
+        if (EngineSession.Arguments(sample, sample.Windows[0], gpuProfile, "control.txt").Contains("--gpu-depth"))
+            throw new Exception("Disabling GPU depth must restore the default launch path");
         var gameArgs = EngineSession.Arguments(sample, sample.Windows[0], one, "control.txt");
         if (gameArgs.Any(a => a.StartsWith("--monitor")) || !gameArgs.Contains("--pid=1234") || !gameArgs.Contains("--hwnd=42") || !gameArgs.Contains("--exe=game.exe"))
             throw new Exception("Game arguments: " + string.Join(' ', gameArgs));

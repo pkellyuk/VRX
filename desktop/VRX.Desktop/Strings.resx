@@ -283,4 +283,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorRendererMissing" xml:space="preserve"><value>VRX renderer is missing. Reinstall VRX or build the project.</value></data>
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
   <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
+  <data name="GpuDepthProcessing" xml:space="preserve"><value>GPU depth post-processing (experimental)</value></data>
+  <data name="GpuDepthProcessingTip" xml:space="preserve"><value>Keep depth normalization, resizing, steadying, fusion and foreground refinement on the headset GPU. The depth model still runs on the selected Depth GPU. Reduces CPU work and full depth-map transfers, but uses more headset GPU time. Automatically falls back to CPU processing if GPU processing fails safely. Saved per game; applies at the next Attach / Play.</value></data>
+  <data name="GpuDepthProcessingHint" xml:space="preserve"><value>Off by default. Applies at the next Attach / Play.</value></data>
 </root>

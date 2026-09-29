@@ -114,6 +114,7 @@ public sealed class EngineSession
         if (window.Monitor < 0 && profile.DesktopWhenAway) args.Add("--desktop-when-away");
         args.Add("--control=" + controlFile);
         if (profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) args.Add("--depth-gpu=" + profile.DepthGpu);
+        if (profile.GpuDepthProcessing) args.Add("--gpu-depth");
         return args;
     }
     // Windows refusing to run the engine, in plain words: Smart App Control or App Control for

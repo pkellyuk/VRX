@@ -29,6 +29,9 @@ public sealed class Profile
     // Which GPU runs depth (Gpus.cs): "same", "auto" or "name:<GPU name>#<n>".
     // Passed to the engine as --depth-gpu; takes effect at Attach / Play.
     public string DepthGpu { get; set; } = Gpus.Same;
+    // Optional GPU depth post-processing; applies at the next Attach / Play.
+    // False for both new and older profiles. The live control protocol is unchanged.
+    public bool GpuDepthProcessing { get; set; }
     // Replaced by DepthGpu; read only so profiles from earlier xgpu builds migrate.
     public bool DepthOnSecondGpu { get; set; }
     // XMMODEL.md; sent in the v5 control snapshot, apply live. Steadying blends in the
