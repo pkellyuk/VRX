@@ -189,6 +189,13 @@
       <Slider x:Name="StrengthSlider" Minimum="0" Maximum="2" Value="1" ValueChanged="SettingsChanged"/>
       <CheckBox x:Name="StereoCheck" Content="{l:Tr EnableStereo}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
       <CheckBox x:Name="FastModelCheck" Content="{l:Tr FastModel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FastModelTip}"/>
+      <TextBlock Text="{l:Tr Dav2Resolution}" Style="{StaticResource Label}" Margin="0,4,0,4"/>
+      <ComboBox x:Name="Dav2ResolutionList" SelectedIndex="0" SelectionChanged="SettingsChanged" ToolTip="{l:Tr Dav2ResolutionTip}">
+       <ComboBoxItem Content="{l:Tr Dav2ResolutionDefault}"/>
+       <ComboBoxItem Content="{l:Tr Dav2ResolutionMedium}"/>
+       <ComboBoxItem Content="{l:Tr Dav2ResolutionHigh}"/>
+      </ComboBox>
+      <TextBlock Text="{l:Tr Dav2ResolutionHint}" Style="{StaticResource Hint}"/>
       <CheckBox x:Name="SubpixelCheck" Content="{l:Tr Subpixel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SubpixelTip}"/>
       <CheckBox x:Name="SteadyCheck" Content="{l:Tr Steady}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SteadyTip}"/>
       <CheckBox x:Name="FuseCheck" Content="{l:Tr Fuse}" IsEnabled="{Binding ElementName=FastModelCheck, Path=IsChecked}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FuseTip}"/>

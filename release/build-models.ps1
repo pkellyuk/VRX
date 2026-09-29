@@ -1,7 +1,7 @@
-# Builds the two depth models VRX ships from their upstream sources, pinned, and checks
+# Builds the depth model exports VRX ships from their upstream sources, pinned, and checks
 # each result against the SHA-256 of the model in the tested releases. The exports are
 # deterministic, so a mismatch means an input or tool changed and the build stops.
-#   Depth Anything V2 Small: onnx-community's FP16 export, given fixed shapes (make_fixed_shape.py)
+#   Depth Anything V2 Small: onnx-community's FP16 export, given three fixed shapes (make_fixed_shape.py)
 #   ZipDepth-base:           the authors' checkpoint, exported by zipdepth_export.py
 # Existing models whose hash already matches are kept. Needs Python 3.12 (py launcher or PATH) and git.
 param([string]$Python = '')
@@ -15,6 +15,8 @@ $zdCommit = '91f3fd21e131641f51e8d35736d1958350180e3a'       # github.com/fabiot
 $zdCheckpointHash = 'a55910bb0b99c8c5e641cb9206e810b269690ad94e8a2ef08c827c4679391a65'
 $outputs = [ordered]@{
     'model_fixed_686x392.onnx'             = '849995e5cd40d3de8df198b8b7616a0bdfd8cea917e0c8a66a68d2de8d924671'
+    'model_fixed_1008x560.onnx'            = 'cef73edf0012e218b6764a1f821c65935b4c314e8441ba1b83dff7e3d3caa827'
+    'model_fixed_1344x756.onnx'            = '8494dbd5fc23f87926b976266bbb075665792d4d5e6ebe39507fd1a7c947d2bc'
     'zipdepth_faithful_fp16_672x384.onnx' = '614925332b4f4ade6460279609b94a93eeae42fc1cd4be29283b0b51334acf61'
 }
 
@@ -35,7 +37,7 @@ New-Item -ItemType Directory -Path $models -Force | Out-Null
 $missing = @($outputs.Keys | Where-Object { (Get-Sha256 (Join-Path $models $_)) -ne $outputs[$_] })
 if ($missing.Count -eq 0)
 {
-    Write-Output 'build-models: both models already present with the expected hashes'
+    Write-Output 'build-models: all models already present with the expected hashes'
     return
 }
 Write-Output "build-models: to build: $($missing -join ', ')"
@@ -58,7 +60,7 @@ $env:PYTHONUTF8 = '1'
 $env:ATEN_CPU_CAPABILITY = 'avx2'
 Write-Output "build-models: CPU $((Get-CimInstance Win32_Processor | Select-Object -First 1).Name), PyTorch kernels $env:ATEN_CPU_CAPABILITY"
 
-if ($missing -contains 'model_fixed_686x392.onnx')
+if (@($missing | Where-Object { $_ -like 'model_fixed_*' }).Count -gt 0)
 {
     $source = Join-Path $models 'onnx-community-depth-anything-v2-small\onnx\model_fp16.onnx'
     if ((Get-Sha256 $source) -ne $daSourceHash)
@@ -69,8 +71,16 @@ if ($missing -contains 'model_fixed_686x392.onnx')
         Invoke-WebRequest -Uri $url -OutFile $source -UseBasicParsing
     }
     Assert-Hash $source $daSourceHash
-    & $venvPython (Join-Path $projectRoot 'bench\make_fixed_shape.py') $source (Join-Path $models 'model_fixed_686x392.onnx') 392 686
-    if ($LASTEXITCODE) { throw 'make_fixed_shape.py failed' }
+    foreach ($variant in @(
+        @{ Name = 'model_fixed_686x392.onnx'; H = 392; W = 686 },
+        @{ Name = 'model_fixed_1008x560.onnx'; H = 560; W = 1008 },
+        @{ Name = 'model_fixed_1344x756.onnx'; H = 756; W = 1344 }
+    ))
+    {
+        if ($missing -notcontains $variant.Name) { continue }
+        & $venvPython (Join-Path $projectRoot 'bench\make_fixed_shape.py') $source (Join-Path $models $variant.Name) $variant.H $variant.W
+        if ($LASTEXITCODE) { throw "make_fixed_shape.py failed for $($variant.Name)" }
+    }
 }
 
 if ($missing -contains 'zipdepth_faithful_fp16_672x384.onnx')
@@ -92,4 +102,4 @@ if ($missing -contains 'zipdepth_faithful_fp16_672x384.onnx')
 }
 
 foreach ($name in $outputs.Keys) { Assert-Hash (Join-Path $models $name) $outputs[$name] }
-Write-Output 'build-models: exit, both models built and verified'
+Write-Output 'build-models: exit, all models built and verified'

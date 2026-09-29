@@ -72,3 +72,25 @@ recovery from a real driver hang.
 Depth-preview validation also passes: per-game persistence, live v13 snapshot
 parsing, checkbox on/off mapping, grayscale GPU pixels for both eyes, unavailable
 map black output, and return to the normal game renderer.
+
+## Higher resolution Depth Anything V2 Small
+
+The desktop Depth Anything V2 resolution dropdown selects 686x392 (default),
+1008x560, or 1344x756 for the **main** DAV2 model. Selection is saved per game
+and applies at the next Attach / Play. The fast ZipDepth model and the optional
+DAV2 fusion anchor keep their original sizes. CLI selection is
+`--dav2-resolution=1008x560` or `--dav2-resolution=1344x756` with `--model=dav2`.
+
+The models are fixed-shape exports of the pinned FP16 source. `release/build-models.ps1`
+checks their SHA-256 hashes and `release/build-release.ps1` copies all three DAV2
+variants into the package. The larger input and output buffers and cross-GPU
+transfer resources are sized to the selected model. Both CPU and GPU
+post-processing resample its output to VRX's existing 686x392 depth grid. The
+larger input can improve the estimate, but the renderer cannot display new
+spatial frequencies above that grid without a separate grid-resolution change.
+
+On the RTX 3090 synthetic test, the default 686x392 completed 191 depth
+passes in 6 seconds, 1008x560 completed 96, and 1344x756 completed 43. At 1344x756 with the RTX 3060 chosen as the depth
+GPU, the test completed 20 passes in 6 seconds. These figures include synthetic
+source handling and test overhead; they are not game FPS or pure inference
+measurements. The 1344x756 option is intentionally labelled slow.

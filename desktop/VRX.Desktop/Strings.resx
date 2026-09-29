@@ -151,6 +151,12 @@
   <data name="EnableStereo" xml:space="preserve"><value>Enable stereo 3D</value></data>
   <data name="FastModel" xml:space="preserve"><value>Fast depth model — ZipDepth</value></data>
   <data name="FastModelTip" xml:space="preserve"><value>On (default): ZipDepth, about 6x less GPU time per depth estimate than Depth Anything V2 (2.0 vs 13.1 ms on an RTX 3090), so depth keeps up with the game much better. Off: Depth Anything V2, the original model; depth detail differs slightly between them. Applies live (depth pauses for under a second while the model loads); saved per game.</value></data>
+  <data name="Dav2Resolution" xml:space="preserve"><value>Depth Anything V2 resolution</value></data>
+  <data name="Dav2ResolutionDefault" xml:space="preserve"><value>686 x 392 (default)</value></data>
+  <data name="Dav2ResolutionMedium" xml:space="preserve"><value>1008 x 560 (higher resolution)</value></data>
+  <data name="Dav2ResolutionHigh" xml:space="preserve"><value>1344 x 756 (slowest)</value></data>
+  <data name="Dav2ResolutionTip" xml:space="preserve"><value>Set the input resolution of Depth Anything V2 Small. Higher sizes use more GPU memory and time. The processed depth grid and VR rendering remain 686 x 392, so this tests whether a larger input improves the estimate. ZipDepth and the fusion anchor keep their existing resolution. Saved per game; applies at the next Attach / Play.</value></data>
+  <data name="Dav2ResolutionHint" xml:space="preserve"><value>Uncheck Fast depth model to use this option. Applies at the next Attach / Play.</value></data>
   <data name="Subpixel" xml:space="preserve"><value>Smooth depth steps (sub-pixel warp)</value></data>
   <data name="SubpixelTip" xml:space="preserve"><value>On (default): the stereo shift keeps its fractional part, so smoothly receding surfaces such as grass, roads and walls look smooth. Off: whole-pixel shifts, which quantise the scene into about 25 depth bands and can show ridges like a ploughed field. Off is very slightly sharper. Applies live; saved per game.</value></data>
   <data name="Steady" xml:space="preserve"><value>Steady depth — motion vectors</value></data>

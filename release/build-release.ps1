@@ -44,7 +44,7 @@ function Build-Payload
     Push-Location $projectRoot
     $oldNativeOutput = $env:VRX_NATIVE_OUT
     try {
-        # Pinned inputs: the native NuGet packages and the two depth models (built from source).
+        # Pinned inputs: the native NuGet packages and the four depth model exports (built from source).
         & dotnet restore release/NativePackages.csproj
         if ($LASTEXITCODE) { throw 'Native package restore failed' }
         & (Join-Path $PSScriptRoot 'build-models.ps1')
@@ -74,8 +74,8 @@ function Build-Payload
         if ((Get-AuthenticodeSignature -LiteralPath $shaderCompiler).Status -ne 'Valid') { throw 'd3dcompiler_47.dll signature is not valid' }
         Copy-Item "$ortPackage\runtimes\win-x64\native\*.dll" $engine
         Copy-Item "$dmlPackage\bin\x64-win\DirectML.dll" $engine
-        # Both built from their upstream sources and hash-checked by build-models.ps1.
-        Copy-Item bench/models/model_fixed_686x392.onnx, bench/models/zipdepth_faithful_fp16_672x384.onnx $models
+        # All built from their upstream sources and hash-checked by build-models.ps1.
+        Copy-Item bench/models/model_fixed_686x392.onnx, bench/models/model_fixed_1008x560.onnx, bench/models/model_fixed_1344x756.onnx, bench/models/zipdepth_faithful_fp16_672x384.onnx $models
         $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
         $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
         $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1

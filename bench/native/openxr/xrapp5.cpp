@@ -49,6 +49,7 @@
 //                                   for each fill mode, at the presented resolution
 //            --gpu-depth           opt in to GPU depth post-processing (CPU by default)
 //            --cpu-depth           CPU depth post-processing reference/fallback
+//            --dav2-resolution=WxH select Depth Anything V2 Small input size: 686x392, 1008x560, 1344x756
 //            --selftest-gpu=N      synthetic tests on DXGI adapter N without OpenXR
 //            --selftest --debug --dump --submit-depth --freeze-pose --ab=N --depth-lie
 //            --test-depth-failures=N  diagnostic: fail the first N depth attempts
@@ -205,6 +206,14 @@ struct ModelSpec
 // Depth Anything V2 Small, fixed-shape export (bench/make_fixed_shape.py).
 static const ModelSpec kDepthAnythingV2 = { "Depth Anything V2 Small", L"model_fixed_686x392.onnx",
     "pixel_values", "predicted_depth", 686, 392, true, 2, 2 };
+static const ModelSpec kDepthAnythingV2Medium = { "Depth Anything V2 Small (1008x560)", L"model_fixed_1008x560.onnx",
+    "pixel_values", "predicted_depth", 1008, 560, true, 2, 2 };
+static const ModelSpec kDepthAnythingV2High = { "Depth Anything V2 Small (1344x756)", L"model_fixed_1344x756.onnx",
+    "pixel_values", "predicted_depth", 1344, 756, true, 2, 2 };
+static bool IsDav2(const ModelSpec* model)
+{
+    return model == &kDepthAnythingV2 || model == &kDepthAnythingV2Medium || model == &kDepthAnythingV2High;
+}
 
 // ZipDepth-base (MIT), faithful FP16 export by bench/zipdepth_export.py. Sides must be
 // multiples of 32; 672x384 keeps the 1.75 aspect. It normalises internally. Measured
@@ -279,7 +288,8 @@ struct Options
     // and the headset GPU's copy engine sends it across (no depth work waits on its
     // graphics/compute engines). false: model-input prep on the headset GPU.
     bool frameTransfer = true;
-    const ModelSpec* model = &kZipDepth;          // default; --model=dav2 selects Depth Anything V2
+    const ModelSpec* model = &kZipDepth;  // default; --model=dav2 selects Depth Anything V2
+    const ModelSpec* dav2Model = &kDepthAnythingV2; // main model only; fusion anchor stays 686x392
     bool selfTestOnly = false;
     int selfTestGpu = -1;               // --selftest-gpu=N: synthetic tests on DXGI adapter N without starting OpenXR
     bool debugLayer = false;
@@ -981,7 +991,18 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
             continue;
         }
         if (!strcmp(a, "--model=zipdepth")) { opt->model = &kZipDepth; continue; }
-        if (!strcmp(a, "--model=dav2")) { opt->model = &kDepthAnythingV2; continue; }
+        if (!strcmp(a, "--model=dav2")) { opt->model = opt->dav2Model; continue; }
+        if (!strncmp(a, "--dav2-resolution=", 18))
+        {
+            const ModelSpec* selected = nullptr;
+            if (!strcmp(a + 18, "686x392")) selected = &kDepthAnythingV2;
+            else if (!strcmp(a + 18, "1008x560")) selected = &kDepthAnythingV2Medium;
+            else if (!strcmp(a + 18, "1344x756")) selected = &kDepthAnythingV2High;
+            if (!selected) { Log("ParseArgs: --dav2-resolution must be 686x392, 1008x560 or 1344x756"); return false; }
+            if (IsDav2(opt->model)) opt->model = selected;
+            opt->dav2Model = selected;
+            continue;
+        }
         if (!strcmp(a, "--selftest")) { opt->selfTestOnly = true; continue; }
         if (!strcmp(a, "--debug")) { opt->debugLayer = true; continue; }
         if (!strncmp(a, "--test-depth-failures=", 22)) { opt->testDepthFailures = atoi(a + 22); continue; }
@@ -1183,7 +1204,7 @@ static bool InitSecondGpu(App& app, IDXGIFactory4* fac)
 
     // Largest input of any model the worker may switch to live.
     UINT64 largest = 0;
-    for (const ModelSpec* spec : { &kDepthAnythingV2, &kZipDepth })
+    for (const ModelSpec* spec : { app.opt.dav2Model, &kZipDepth })
         largest = std::max<UINT64>(largest, (UINT64)3 * spec->inW * spec->inH * sizeof(float));
     const UINT64 align = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     app.crossBytes = (largest + align - 1) & ~(align - 1);
@@ -3415,7 +3436,7 @@ static bool InitFrameTransfer(App& app)
     if (!app.secondGpu || !app.device || !app.inferDevice) return false;
 
     int w = 0, h = 0;
-    for (const ModelSpec* spec : { &kDepthAnythingV2, &kZipDepth }) { w = std::max(w, spec->inW); h = std::max(h, spec->inH); }
+    for (const ModelSpec* spec : { app.opt.dav2Model, &kZipDepth }) { w = std::max(w, spec->inW); h = std::max(h, spec->inH); }
     app.xferW = w; app.xferH = h;
 
     D3D12_RESOURCE_DESC td{};
@@ -5688,9 +5709,10 @@ static bool ComputeGpuAndPublish(App& app, const SourceRef& src, std::vector<flo
         app.gpuDepth = std::make_unique<gpudepth::Processor>();
         app.gpuDepth->SetCompiler(&CompileCs);
         app.gpuDepth->Init(app.device.Get(), W, H);
-        app.gpuRawLocal = gpudepth::Buffer(app.device.Get(), bytes);
+        const UINT64 rawBytes = (UINT64)std::max(app.opt.dav2Model->inW * app.opt.dav2Model->inH, kZipDepth.inW * kZipDepth.inH) * 4;
+        app.gpuRawLocal = gpudepth::Buffer(app.device.Get(), rawBytes);
         app.gpuDepthReturn = std::make_unique<gpudepth::Bridge>();
-        app.gpuDepthReturn->Init(app.inferDevice.Get(), app.device.Get(), bytes);
+        app.gpuDepthReturn->Init(app.inferDevice.Get(), app.device.Get(), rawBytes);
         Log("Depth pipeline: GPU; model output stays on GPU, post-processing on headset GPU, tracker readback 5.5 KB%s",
             app.secondGpu ? ", inference on selected depth GPU with GPU return transfer" : "");
     }
@@ -6493,7 +6515,11 @@ static bool SelfTestPipeline(App& app)
     const bool fuseOk = !FuseActive(app) || (anchors > 0 && fused > 0);
     const bool needsPost = app.steadyEnabled.load() || FuseActive(app) || (app.gpuDepth && !app.gpuDepthFailed);
     const bool expectedGpu = !app.opt.cpuDepth && !app.opt.useTruth;
-    const bool ok = passes > 20 && bad == 0 && (!needsPost || !postMs.empty()) && fuseOk && (!expectedGpu || !app.gpuDepthFailed);
+    // The optional 1344x756 model can take several hundred milliseconds per
+    // pass on a second GPU. Validate output and lifecycle without treating that
+    // expected throughput cost as a processing error.
+    const unsigned minimumPasses = app.opt.model == &kDepthAnythingV2High ? 10 : 21;
+    const bool ok = passes >= minimumPasses && bad == 0 && (!needsPost || !postMs.empty()) && fuseOk && (!expectedGpu || !app.gpuDepthFailed);
     Log("SelfTestPipeline: exit %s - %u passes, %u out of range, post ms p50 %.1f p95 %.1f, steadied %u, fused %u, anchor passes %u%s",
         ok ? "PASS" : "FAIL", passes, bad, postMs.empty() ? 0.0 : postMs[postMs.size() / 2],
         postMs.empty() ? 0.0 : postMs[std::min(postMs.size() - 1, postMs.size() * 95 / 100)], steadied, fused, anchors,
@@ -6507,7 +6533,7 @@ static bool SelfTestGpuLifecycle(App& app)
 {
     Log("SelfTestGpuLifecycle: enter");
     const ModelSpec* original = app.opt.model;
-    const ModelSpec* other = original == &kZipDepth ? &kDepthAnythingV2 : &kZipDepth;
+    const ModelSpec* other = original == &kZipDepth ? app.opt.dav2Model : &kZipDepth;
     std::vector<float> depth;
     auto check = [&]() {
         if (!ComputeAndPublish(app, app.sources.Latest(), depth) || depth.size() != (size_t)W * H) return false;
@@ -8584,7 +8610,7 @@ static void RunFrameLoop(App& app)
                     Log("Foreground refinement: %s", foreground ? "enabled" : "disabled");
                 if (next.version >= 4)
                 {
-                    const ModelSpec* model = next.fastModel ? &kZipDepth : &kDepthAnythingV2;
+                    const ModelSpec* model = next.fastModel ? &kZipDepth : app.opt.dav2Model;
                     if (app.requestedModel.exchange(model) != model)
                         Log("Depth model requested: %s", model->name);
                 }
@@ -9638,7 +9664,7 @@ int wmain(int argc, wchar_t** wideArgv)
         app.opt.paired = initial.paired != 0;
         if (initial.version >= 4)
         {
-            app.opt.model = initial.fastModel ? &kZipDepth : &kDepthAnythingV2;
+            app.opt.model = initial.fastModel ? &kZipDepth : app.opt.dav2Model;
             app.requestedModel = app.opt.model;
             Log("Desktop control: depth model %s", app.opt.model->name);
         }

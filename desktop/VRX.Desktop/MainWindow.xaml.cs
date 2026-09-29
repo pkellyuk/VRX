@@ -243,6 +243,7 @@ public partial class MainWindow : Window
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
         FastModelCheck.IsChecked = p.FastDepthModel;
+        Dav2ResolutionList.SelectedIndex = Math.Clamp(p.Dav2Resolution, 0, 2);
         SubpixelCheck.IsChecked = p.SubpixelWarp;
         CurveSlider.Value = p.ScreenCurve;
         AmbilightCheck.IsChecked = p.Ambilight;
@@ -273,6 +274,7 @@ public partial class MainWindow : Window
             MatchFrameToDepth = TimingList.SelectedIndex == 2,
             DelayToDepth = TimingList.SelectedIndex == 1,
             FastDepthModel = FastModelCheck.IsChecked == true,
+            Dav2Resolution = Dav2ResolutionList.SelectedIndex,
             SubpixelWarp = SubpixelCheck.IsChecked == true,
             ScreenCurve = (int)Math.Round(CurveSlider.Value),
             Ambilight = AmbilightCheck.IsChecked == true,
@@ -1296,6 +1298,7 @@ public partial class MainWindow : Window
         legacy.Remove("MatchFrameToDepth");
         legacy.Remove("DelayToDepth");
         legacy.Remove("FastDepthModel");
+        legacy.Remove("Dav2Resolution");
         legacy.Remove("SteadyDepth");
         legacy.Remove("SubpixelWarp");
         legacy.Remove("ScreenCurve");
@@ -1327,6 +1330,11 @@ public partial class MainWindow : Window
         two.ShowDepthMap = true; store.Save(two);
         if (!store.Load(two.ExecutablePath).ShowDepthMap || !two.Control(0, 0, false).TrimEnd().EndsWith(" 1"))
             throw new Exception("Depth preview must persist and reach the live snapshot");
+        if (store.Load(one.ExecutablePath).Dav2Resolution != 0 || Profile.NewInstallDefaults().Dav2Resolution != 0)
+            throw new Exception("Older and new profiles must use the original DAV2 resolution");
+        two.Dav2Resolution = 2; store.Save(two);
+        if (store.Load(two.ExecutablePath).Dav2Resolution != 2 || store.Load(one.ExecutablePath).Dav2Resolution != 0)
+            throw new Exception("DAV2 resolution must be saved independently per game");
         var three = new Profile { ExecutablePath = Path.Combine(output, "three", "game.exe") };
         store.Save(three);
         var earlier = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(store.FileFor(three.ExecutablePath)))!.AsObject();
@@ -1517,12 +1525,20 @@ public partial class MainWindow : Window
         TimingList.SelectedIndex = 2;
         if (ReadProfile().DelayToDepth || !ReadProfile().MatchFrameToDepth) throw new Exception("Matched timing is not mapped to settings");
         PutProfile(two);
+        if (Dav2ResolutionList.SelectedIndex != 2) throw new Exception("Saved DAV2 resolution was not restored to the dropdown");
         if (TimingList.SelectedIndex != 2) throw new Exception("A saved frame-matching profile must show as matched to depth");
         PutProfile(one);
         TimingList.SelectedIndex = 2;
         ForegroundCheck.IsChecked = false;
         if (ReadProfile().ForegroundRefinement) throw new Exception("Foreground checkbox not mapped to saved settings");
         if (FastModelCheck.IsChecked != true) throw new Exception("Fast depth model should default on");
+        if (Dav2ResolutionList.SelectedIndex != 0) throw new Exception("DAV2 resolution should default to 686x392");
+        Dav2ResolutionList.SelectedIndex = 1;
+        if (ReadProfile().Dav2Resolution != 1) throw new Exception("DAV2 resolution dropdown is not mapped to settings");
+        Dav2ResolutionList.SelectedIndex = 2;
+        if (ReadProfile().Dav2Resolution != 2) throw new Exception("DAV2 high resolution dropdown is not mapped to settings");
+        Dav2ResolutionList.SelectedIndex = 0;
+        if (ReadProfile().Dav2Resolution != 0) throw new Exception("DAV2 resolution dropdown cannot restore the default");
         // GPU list: two identical cards stay distinguishable, software adapters are hidden,
         // a saved card that is no longer present is shown rather than silently replaced.
         string[] gpuSample = ["ParseArgs noise", "GPU|0|0|24325|0|NVIDIA GeForce RTX 3090", "GPU|1|0|12115|0|NVIDIA GeForce RTX 3060",
@@ -1575,10 +1591,10 @@ public partial class MainWindow : Window
         // Base settings: new games start from them, existing profiles are untouched,
         // and the game's own path/window never leak into the base.
         var baseSource = new Profile { ExecutablePath = one.ExecutablePath, PreferredWindowTitle = "Example game window",
-            Width = 7.25, Distance = 2.5, Strength = 1.4, SubpixelWarp = false, DelayToDepth = true, FuseModels = true, GpuDepthProcessing = true, MenuKey = 0x79 };
+            Width = 7.25, Distance = 2.5, Strength = 1.4, SubpixelWarp = false, DelayToDepth = true, FuseModels = true, GpuDepthProcessing = true, Dav2Resolution = 1, MenuKey = 0x79 };
         store.SaveBase(baseSource);
         var fresh = store.Load(Path.Combine(output, "fresh", "game.exe"));
-        if (fresh.Width != 7.25 || fresh.Strength != 1.4 || fresh.SubpixelWarp || !fresh.DelayToDepth || !fresh.FuseModels || !fresh.GpuDepthProcessing || fresh.MenuKey != 0x79)
+        if (fresh.Width != 7.25 || fresh.Strength != 1.4 || fresh.SubpixelWarp || !fresh.DelayToDepth || !fresh.FuseModels || !fresh.GpuDepthProcessing || fresh.Dav2Resolution != 1 || fresh.MenuKey != 0x79)
             throw new Exception("A new game must start from the saved base settings");
         if (fresh.ExecutablePath != Path.Combine(output, "fresh", "game.exe") || fresh.PreferredWindowTitle.Length != 0)
             throw new Exception("Base settings must not carry another game's path or window");
@@ -1599,12 +1615,12 @@ public partial class MainWindow : Window
         allStore.Save(gameA); allStore.Save(gameB);
         string broken = Path.Combine(allStore.Root, "profiles", "broken.json");
         File.WriteAllText(broken, "{ not json");
-        var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false, GpuDepthProcessing = true };
+        var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false, GpuDepthProcessing = true, Dav2Resolution = 2 };
         if (allStore.ApplyToAll(chosen, out int skippedAll, out int failedAll) != 2 || skippedAll != 1 || failedAll != 0)
             throw new Exception("Apply to all must update both saved games and skip the unreadable one");
         var afterA = allStore.Load(gameA.ExecutablePath);
         var afterB = allStore.Load(gameB.ExecutablePath);
-        if (afterA.Width != 8.5 || afterB.Width != 8.5 || afterA.ScreenCurve != 30 || !afterB.Ambilight || afterB.SteadyDepth || afterB.FuseModels || !afterA.GpuDepthProcessing || !afterB.GpuDepthProcessing)
+        if (afterA.Width != 8.5 || afterB.Width != 8.5 || afterA.ScreenCurve != 30 || !afterB.Ambilight || afterB.SteadyDepth || afterB.FuseModels || !afterA.GpuDepthProcessing || !afterB.GpuDepthProcessing || afterA.Dav2Resolution != 2 || afterB.Dav2Resolution != 2)
             throw new Exception("Apply to all did not copy the settings to every saved game");
         if (afterA.PreferredWindowTitle != "Game A" || afterB.PreferredWindowTitle != "Game B")
             throw new Exception("Apply to all must keep each game's own window");
@@ -1970,6 +1986,15 @@ public partial class MainWindow : Window
         gpuProfile.GpuDepthProcessing = false;
         if (EngineSession.Arguments(sample, sample.Windows[0], gpuProfile, "control.txt").Contains("--gpu-depth"))
             throw new Exception("Disabling GPU depth must restore the default launch path");
+        if (EngineSession.Arguments(sample, sample.Windows[0], new Profile(), "control.txt").Any(a => a.StartsWith("--dav2-resolution=")))
+            throw new Exception("Default DAV2 resolution should not add a launch argument");
+        foreach (int value in new[] { 1, 2 })
+        {
+            var selected = new Profile { Dav2Resolution = value };
+            string expected = value == 1 ? "--dav2-resolution=1008x560" : "--dav2-resolution=1344x756";
+            if (!EngineSession.Arguments(sample, sample.Windows[0], selected, "control.txt").Contains(expected))
+                throw new Exception("Selected DAV2 resolution was not passed to the engine");
+        }
         var gameArgs = EngineSession.Arguments(sample, sample.Windows[0], one, "control.txt");
         if (gameArgs.Any(a => a.StartsWith("--monitor")) || !gameArgs.Contains("--pid=1234") || !gameArgs.Contains("--hwnd=42") || !gameArgs.Contains("--exe=game.exe"))
             throw new Exception("Game arguments: " + string.Join(' ', gameArgs));

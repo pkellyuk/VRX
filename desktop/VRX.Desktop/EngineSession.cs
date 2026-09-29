@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 
 namespace VRX.Desktop;
@@ -115,6 +115,7 @@ public sealed class EngineSession
         args.Add("--control=" + controlFile);
         if (profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) args.Add("--depth-gpu=" + profile.DepthGpu);
         if (profile.GpuDepthProcessing) args.Add("--gpu-depth");
+        if (profile.Dav2Resolution is 1 or 2) args.Add(profile.Dav2Resolution == 1 ? "--dav2-resolution=1008x560" : "--dav2-resolution=1344x756");
         return args;
     }
     // Windows refusing to run the engine, in plain words: Smart App Control or App Control for
