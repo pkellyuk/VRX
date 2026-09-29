@@ -43,6 +43,16 @@ public sealed class Profile
     // very slight softening. On by default, including for older profiles.
     public bool SubpixelWarp { get; set; } = true;
 
+    // v12 image and stereo controls. Zero/off preserves existing profiles. All apply
+    // live except HDR capture, which selects the capture format at Attach / Play.
+    public int DepthContrast { get; set; }
+    public int Convergence { get; set; }
+    public bool EdgeRefinement { get; set; }
+    public bool TemporalFill { get; set; }
+    public int Sharpness { get; set; }
+    public int HeadParallax { get; set; }
+    public bool HdrCapture { get; set; }
+
     // Curved screen: 0 flat (default) .. 100 fully wrapped. The wrap this stands for
     // lives in bench/native/openxr/screen_curve.h (kCurveMaxWrap).
     public int ScreenCurve { get; set; }
@@ -107,10 +117,11 @@ public sealed class Profile
         Range(Height, -2, 2) && Range(Horizontal, -3, 3) && Range(Strength, 0, 2) &&
         ScreenCurve is >= 0 and <= 100 && AmbilightStrength is >= 0 and <= 100 && TryParseColor(WorldColor, out _) && Room is >= 0 and <= 100 &&
         RoomGlass is >= 0 and <= 100 && RoomReflections is >= 0 and <= 100 && RoomLight is >= 0 and <= 100 && TryParseColor(RoomLightColor, out _) &&
+        DepthContrast is >= 0 and <= 100 && Convergence is >= -100 and <= 100 && Sharpness is >= 0 and <= 100 && HeadParallax is >= 0 and <= 100 &&
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 11 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)}\n");
+        $"VRX 12 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {DepthContrast} {Convergence} {(EdgeRefinement ? 1 : 0)} {(TemporalFill ? 1 : 0)} {Sharpness} {HeadParallax} {(HdrCapture ? 1 : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)

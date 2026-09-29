@@ -51,6 +51,11 @@
      </WrapPanel>
     </Grid>
    </Border>
+   <StackPanel x:Name="StereoHealthPanel" Visibility="Collapsed" Margin="2,-4,2,12">
+    <TextBlock x:Name="StereoHealthText" FontWeight="SemiBold" TextWrapping="Wrap"/>
+    <TextBlock x:Name="DepthPipelineText" Foreground="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0"/>
+    <TextBlock x:Name="DepthFeaturesText" Foreground="#FFC878" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0" Visibility="Collapsed"/>
+   </StackPanel>
   </StackPanel>
 
   <!-- Easy: a few hints; everything else is hidden -->
@@ -188,6 +193,30 @@
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueNumber, Element=StrengthSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Strength3D}"/></DockPanel>
       <Slider x:Name="StrengthSlider" Minimum="0" Maximum="2" Value="1" ValueChanged="SettingsChanged"/>
       <CheckBox x:Name="StereoCheck" Content="{l:Tr EnableStereo}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+      <Grid Margin="0,4,0,8">
+       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="28"/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+       <StackPanel>
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=DepthContrastSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr DepthContrast}"/></DockPanel>
+        <Slider x:Name="DepthContrastSlider" Minimum="0" Maximum="100" Value="0" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" ToolTip="{l:Tr DepthContrastTip}"/>
+       </StackPanel>
+       <StackPanel Grid.Column="2">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=ConvergenceSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Convergence}"/></DockPanel>
+        <Slider x:Name="ConvergenceSlider" Minimum="-100" Maximum="100" Value="0" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" ToolTip="{l:Tr ConvergenceTip}"/>
+       </StackPanel>
+       <StackPanel Grid.Row="1">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=SharpnessSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Sharpness}"/></DockPanel>
+        <Slider x:Name="SharpnessSlider" Minimum="0" Maximum="100" Value="0" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" ToolTip="{l:Tr SharpnessTip}"/>
+       </StackPanel>
+       <StackPanel Grid.Row="1" Grid.Column="2">
+        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=HeadParallaxSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr HeadParallax}"/></DockPanel>
+        <Slider x:Name="HeadParallaxSlider" Minimum="0" Maximum="100" Value="0" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" ToolTip="{l:Tr HeadParallaxTip}"/>
+       </StackPanel>
+      </Grid>
+      <CheckBox x:Name="EdgeRefinementCheck" Content="{l:Tr EdgeRefinement}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr EdgeRefinementTip}"/>
+      <CheckBox x:Name="TemporalFillCheck" Content="{l:Tr TemporalFill}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr TemporalFillTip}"/>
+      <CheckBox x:Name="HdrCaptureCheck" Content="{l:Tr HdrCapture}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr HdrCaptureTip}"/>
+      <TextBlock Text="{l:Tr HdrCaptureHint}" Style="{StaticResource Hint}" Margin="26,0,0,8"/>
       <CheckBox x:Name="FastModelCheck" Content="{l:Tr FastModel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FastModelTip}"/>
       <CheckBox x:Name="SubpixelCheck" Content="{l:Tr Subpixel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SubpixelTip}"/>
       <CheckBox x:Name="SteadyCheck" Content="{l:Tr Steady}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SteadyTip}"/>

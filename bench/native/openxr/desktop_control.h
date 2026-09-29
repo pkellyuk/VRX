@@ -30,6 +30,13 @@ struct DesktopSettings
     int roomReflect = 0;    // v11: reflections, 0 off .. 100, live
     int roomLight = 0;      // v11: the ceiling panel light, 0 off .. 100, live
     int roomLightColor = 0xFFB46B; // v11: the room light colour 0xRRGGBB, live
+    int depthContrast = 0;  // v12: mid-depth separation, 0 unchanged .. 100, live
+    int convergence = 0;    // v12: scene position, -100 .. 100, live
+    int edgeRefinement = 0; // v12: colour-guided depth edges, live
+    int temporalFill = 0;   // v12: experimental temporal hole filling, live
+    int sharpness = 0;      // v12: final image sharpening, 0 off .. 100, live
+    int headParallax = 0;   // v12: experimental head translation, 0 off .. 100, live
+    int hdrCapture = 0;     // v12: HDR capture; applies at Attach / Play (--hdr-capture)
 };
 
 inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& result)
@@ -49,14 +56,18 @@ inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& resul
     if (version >= 9 && !(input >> s.ambiStrength >> s.worldColor)) return false;
     if (version >= 10 && !(input >> s.room)) return false;
     if (version >= 11 && !(input >> s.roomGlass >> s.roomReflect >> s.roomLight >> s.roomLightColor)) return false;
+    if (version >= 12 && !(input >> s.depthContrast >> s.convergence >> s.edgeRefinement >> s.temporalFill >> s.sharpness >> s.headParallax >> s.hdrCapture)) return false;
     s.version = version;
     if (input >> tail) return false;
     auto between = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
-    if (magic != "VRX" || version < 1 || version > 11 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
+    if (magic != "VRX" || version < 1 || version > 12 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
         s.subpixel < 0 || s.subpixel > 1 || s.curve < 0 || s.curve > 100 || s.ambilight < 0 || s.ambilight > 1 ||
         s.ambiStrength < 0 || s.ambiStrength > 100 || s.worldColor < 0 || s.worldColor > 0xFFFFFF || s.room < 0 || s.room > 100 ||
         s.roomGlass < 0 || s.roomGlass > 100 || s.roomReflect < 0 || s.roomReflect > 100 || s.roomLight < 0 || s.roomLight > 100 ||
         s.roomLightColor < 0 || s.roomLightColor > 0xFFFFFF ||
+        s.depthContrast < 0 || s.depthContrast > 100 || s.convergence < -100 || s.convergence > 100 ||
+        s.edgeRefinement < 0 || s.edgeRefinement > 1 || s.temporalFill < 0 || s.temporalFill > 1 ||
+        s.sharpness < 0 || s.sharpness > 100 || s.headParallax < 0 || s.headParallax > 100 || s.hdrCapture < 0 || s.hdrCapture > 1 ||
         !between(s.width, 1, 10) || !between(s.distance, 1, 8) ||
         !between(s.height, -2, 2) || !between(s.horizontal, -3, 3) || !between(s.strength, 0, 2) ||
         s.follow < 0 || s.follow > 1 || s.stereo < 0 || s.stereo > 1 || s.autoDismiss < 0 || s.autoDismiss > 1 ||

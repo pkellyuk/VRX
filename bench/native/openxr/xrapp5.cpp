@@ -14,9 +14,10 @@
 //       percentile + time-smoothed                  bilinearly
 //         normalisation -> publish slot          -> colour swapchain -> xrEndFrame
 //
-// * The picture never touches the CPU: capture texture -> (shared) -> D3D12 SRV for
-//   both the warp and the model-input prep shader. Only the model's 1 MB output
-//   comes back (M1: ORT cannot bind a DML device output from this API surface).
+// * Normal capture and image-sized depth data stay on GPU: capture texture ->
+//   shared D3D12 SRV -> model input/output binding -> compute post-processing.
+//   Only a small tracker grid and diagnostics return to CPU. --cpu-depth keeps
+//   the earlier post-processing reference path; it still uses GPU inference.
 // * Source textures are ALLOW_SIMULTANEOUS_ACCESS: one writer, many readers across
 //   queues/devices, no resource barriers. Cross-queue ordering is by fence
 //   (ID3D12CommandQueue::Wait). CPU frame references and reader-completion fences
@@ -48,6 +49,16 @@
 //            --dump                 write the depth map and BOTH eyes as warped by the GPU,
 //                                   for each fill mode, at the presented resolution
 //            --selftest --debug --dump --submit-depth --freeze-pose --ab=N --depth-lie
+//            --selftest-gpu=N       synthetic tests on DXGI adapter N without OpenXR
+//            --cpu-depth            CPU depth post-processing reference/fallback
+//            --depth-contrast=N     depth curve amount, 0..100 (default 0)
+//            --convergence=N        scene depth position, -100..100 (default 0)
+//            --edge-refinement      colour-guided depth edges
+//            --temporal-fill        experimental verified background recovery
+//            --sharpness=N          bounded source sharpening, 0..100 (default 0)
+//            --head-parallax=N      fixed-screen horizontal parallax, 0..100
+//            --hdr-capture          float scRGB capture, GPU tone mapped to SDR
+//            --bench-stereo         with --selftest: 1080p stereo/effects GPU timings
 //            --test-depth-failures=N  diagnostic: fail the first N depth attempts
 //            --steady               steady depth: blend in the previous depth, moved by the GPU's
 //                                   hardware motion estimator, where the motion is verified
@@ -145,13 +156,17 @@ using Microsoft::WRL::ComPtr;
 #include "gpu_choice.h"
 #include "source_ring.h"
 #include "capture_scaler.h"
+#include "hdr_capture.h"
 #include "xr_frame_guard.h"
 #include "screen_anchor.h"
 #include "capture_window.h"
 #include "desktop_control.h"
 #include "foreground_refinement.h"
+#include "stereo_enhancement.h"
 #include "depth_fusion.h"
 #include "motion_estimator.h"
+#include "gpu_depth.h"
+#include "gpu_model_io.h"
 #include "frame_timing.h"
 #include "ambilight.h"
 #include "screen_curve.h"
@@ -255,6 +270,7 @@ struct Options
     DWORD capturePid = 0;
     HWND captureHwnd = nullptr;
     bool desktopWhenAway = false;       // --desktop-when-away: show the game's display while the game is not in front
+    bool hdrCapture = false;            // capture scRGB float, tone-map once on GPU before inference and stereo
     std::wstring imagePath;
     bool doWarp = true;
     float warpScale = 1.0f;
@@ -262,6 +278,7 @@ struct Options
     bool doDump = false;
     bool paired = false;
     bool foreground = true;
+    bool cpuDepth = false;              // diagnostic/reference path; GPU is the default
     bool boostGpuPriority = true;      // best effort; --normal-gpu-priority disables the experiment
     // Which GPU runs the depth model (gpu_choice.h): same (default), auto, a GPU
     // name + which card of that name, or a DXGI index for diagnostics.
@@ -274,6 +291,7 @@ struct Options
     bool frameTransfer = true;
     const ModelSpec* model = &kZipDepth;          // default; --model=dav2 selects Depth Anything V2
     bool selfTestOnly = false;
+    int selfTestGpu = -1;               // --selftest-gpu=N: synthetic tests on DXGI adapter N without starting OpenXR
     bool debugLayer = false;
     bool smooth = true;
     int fillMode = FILL_MIRROR;
@@ -291,6 +309,8 @@ struct Options
     bool fuse = false;                  // --fuse (likewise)
     bool delayed = false;               // --delayed: game frame timing "delayed to depth" (paired wins if both)
     bool subpixel = true;               // sub-pixel warp (no depth banding); --whole-pixel restores the old warp
+    int depthContrast = 0, convergence = 0, sharpness = 0, headParallax = 0;
+    bool edgeRefinement = false, temporalFill = false;
     float curve = 0.0f;                 // curved screen: 0 flat .. 1 fully wrapped (screen_curve.h)
     bool ambilight = false;             // spill the picture's edge colours around the screen
     int ambiStrength = kAmbiDefaultStrength;    // percent: the glow's brightness next to the screen
@@ -301,6 +321,7 @@ struct Options
     int roomLight = 0;                  // the room light: 0 off .. 100 (room.h RoomLook)
     uint32_t roomLightColor = kRoomLightDefault;    // its colour, 0xRRGGBB
     bool benchRoom = false;             // --bench-room (with --selftest): the offline room benchmark
+    bool benchStereo = false;           // --bench-stereo (with --selftest): 1080p post-processing GPU timing
     bool benchBoost = false;            // --bench-boost: leave the GPU clocks unlocked while benchmarking
     bool benchLock = false;             // --bench-lock: lock the GPU clocks even while SteamVR's compositor runs
     float benchFov[4] = { -52.0f, 43.5f, 48.7f, -48.7f };   // --bench-fov: left eye L, R, U, D degrees (estimates)
@@ -323,6 +344,10 @@ static const float DEPTH_NEAR_Z = 0.10f, DEPTH_FAR_Z = 30.0f;
 // One completed depth result (worker -> render thread).
 struct DepthSlot
 {
+    ComPtr<ID3D12Resource> gpuNear;     // GPU-published float grid, COMMON at rest
+    ComPtr<ID3D12Fence> gpuFence;
+    UINT64 gpuValue = 0;
+    bool edgeRefinedInput = false;     // this slot holds undilated depth for guided upsampling
     ComPtr<ID3D12Resource> nearUp;      // UPLOAD heap, float[W*H], 0 = far .. 1 = near
     float* nearMapped = nullptr;
     SourceRef source;                  // retains the exact colour frame paired with this depth
@@ -330,6 +355,7 @@ struct DepthSlot
     double completeTime = 0;
     double modelMs = 0;
     float lo = 0, hi = 0;               // normalisation range actually used
+    float p10 = 0, p50 = 0, p90 = 0;     // normalized depth distribution
     float back = 0, panel = 0, marker = 0;
     bool reused = false;                // the previous depth carried forward to a barely changed frame
 };
@@ -344,7 +370,14 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     uint32_t fillMode;
     float mirrorTol;
     uint32_t subpixel;
+    float depthContrast = 0;
+    float convergence = 0;
+    uint32_t edgeRefinement = 0, temporalFill = 0;
+    float sharpness = 0;
+    float headOffset = 0;
+    uint32_t prepared = 0, historyValid = 0, enhancementPad = 0;
 };
+using WarpHistoryFrame = stereo_enhancement::HistoryFrame;
 
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
 {
@@ -361,6 +394,13 @@ struct WarpTarget
     ComPtr<ID3D12Resource> depthOut;    // R32_TYPELESS[2],      UNORDERED_ACCESS at rest
     ComPtr<ID3D12Resource> scratch;     // uint[cw*ch*2*2]: per-row scatter state
     UINT tableIndex = 0;                // first of 4 descriptors: near SRV, colour UAV, depth UAV, scratch UAV
+    UINT enhancementIndex = 0;          // 7: current RGB/depth, history RGB/depth, stats, prep output UAVs
+    ComPtr<ID3D12Resource> preparedColor, preparedNear, historyColor, historyNear, enhancementStats;
+    WarpHistoryFrame preparedFrame{}, historyFrame{};
+    bool havePrepared = false, enhancementFailed = false;
+    float preparedSharpness = 0;
+    float preparedContrast = 0;
+    uint32_t preparedEdge = 0;
 };
 
 struct RangeSmoother
@@ -404,6 +444,7 @@ struct Capture
     int frameW = 0, frameH = 0;         // captured frame (pool) size - the whole window; srcW/srcH may be smaller
     RECT crop{};                        // last client crop applied (for change logging)
     bool cropping = false;
+    float sdrWhiteScale = 1.0f;
 };
 
 struct App
@@ -502,6 +543,23 @@ struct App
     ComPtr<ID3D12RootSignature> unpackRootSig;           // inference GPU: frame -> model input
     ComPtr<ID3D12PipelineState> unpackPso;
     std::vector<float> modelOut;        // model output at the model's own size
+    std::unique_ptr<gpudepth::ModelOutput> gpuOutput;
+    std::unique_ptr<gpudepth::Processor> gpuDepth;
+    std::unique_ptr<gpudepth::Bridge> gpuDepthReturn;
+    ComPtr<ID3D12Resource> gpuRawLocal, gpuPackedLuma;
+    double gpuLastTime = 0;
+    bool gpuDepthFailed = false;
+    bool gpuDepthFatal = false;        // failed retirement: never reuse GPU inputs
+    bool testGpuDepthFailure = false;  // only used by the headless lifecycle test
+    SourceRef lastDepthSource;         // exact colour pairing for settings-only republication
+    bool lastDepthEdgeRefinedInput = false;
+    bool gpuSteadyHave = false;
+    uint64_t gpuLayout = 0, gpuAnchorId = 0;
+    uint64_t gpuPreviousSeq = 0;
+    uint64_t gpuModelEpoch = 1;
+    int gpuMotionSlot = 0;
+    gpudepth::Processor::Summary gpuSummary;
+    std::array<double, 2> gpuStageMs{};
     struct ResampleTap { int i0, i1; float t; };
     std::vector<ResampleTap> resampleX, resampleY;   // model output -> depth grid, built once
     std::vector<float> rawDepth;        // model output resampled to the W x H depth grid
@@ -512,6 +570,8 @@ struct App
     ForegroundTracker foregroundTracker;
     ForegroundBudget foregroundBudget;
     std::atomic<bool> foregroundEnabled{ true };
+    std::atomic<bool> edgeRefinementEnabled{ false };
+    std::atomic<bool> stereoEffectsAvailable{ true };
     unsigned foregroundAttempts = 0, foregroundAccepted = 0;
     double foregroundLogTime = 0;
     uint64_t foregroundLayout = 0;
@@ -519,6 +579,7 @@ struct App
     // shaders
     ComPtr<ID3D12RootSignature> warpRootSig, prepRootSig;
     ComPtr<ID3D12PipelineState> warpPso, prepPso;
+    ComPtr<ID3D12PipelineState> stereoWarpPso, stereoPrepPso, stereoCutPso;
     ComPtr<ID3D12DescriptorHeap> descHeap;
     UINT descInc = 0;
     ComPtr<ID3D12Resource> nearBuf;                      // structured float[W*H]
@@ -628,10 +689,17 @@ struct App
     unsigned postFused = 0, postSteadied = 0, postPasses = 0;
     double postTrustSum = 0, postAgeSum = 0;
     bool motionUnavailableLogged = false, fuseModelLogged = false;
+    std::string depthFeaturesMessage;
 
     // Anchor model (Depth Anything V2) on its own thread and queue on the depth GPU.
-    struct AnchorJob { std::vector<uint32_t> rgba; fusion::Image luma; uint64_t seq = 0; double time = 0; bool valid = false; };
-    struct AnchorResult { fusion::Image nearMap, luma; uint64_t seq = 0, id = 0; double time = 0; };
+    struct GpuAnchorFrame {
+        ComPtr<ID3D12Resource> rgba, luma, fast, nearMap;
+        uint64_t seq = 0, layout = 0;
+        uint64_t epoch = 0;
+        double time = 0;
+    };
+    struct AnchorJob { std::vector<uint32_t> rgba; fusion::Image luma; std::shared_ptr<GpuAnchorFrame> gpu; uint64_t seq = 0; double time = 0; bool valid = false; };
+    struct AnchorResult { fusion::Image nearMap, luma; std::shared_ptr<GpuAnchorFrame> gpu; uint64_t seq = 0, id = 0; double time = 0; };
     std::mutex anchorMutex;
     std::condition_variable anchorCv;
     AnchorJob anchorJob;                // latest request (overwritten; the anchor takes the newest)
@@ -655,7 +723,9 @@ static const UINT DESC_CURVE_MAIN = SRC_RING + 12;       // 5: warped pictures, 
 static const UINT DESC_CURVE_TEST = SRC_RING + 17;       // 5: the same for the self-test
 static const UINT DESC_ROOM = SRC_RING + 22;             // 5: decode table, glow, emitters (UAV), lightmap (UAV), mirror picture (UAV)
 static const UINT DESC_CURVE_BENCH = SRC_RING + 27;      // 5: the same as DESC_CURVE_MAIN for the room benchmark (--bench-room)
-static const UINT DESC_COUNT = SRC_RING + 32;
+static const UINT DESC_STEREO_MAIN = SRC_RING + 32;     // 7: stereo post-processing resources
+static const UINT DESC_STEREO_TEST = SRC_RING + 39;     // 7: self-test resources
+static const UINT DESC_COUNT = SRC_RING + 46;
 static const int WORLD_W = 8;                            // the world colour layer: one colour needs few pixels
 static const int TEST_EYE_W = 256, TEST_EYE_H = 192;     // self-test eye buffers
 
@@ -834,9 +904,22 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strncmp(a, "--exe-path=", 11)) { opt->executablePath = widen(a + 11); continue; }
         if (!strncmp(a, "--pid=", 6)) { opt->capturePid = strtoul(a + 6, nullptr, 10); if (!opt->capturePid) return false; continue; }
         if (!strcmp(a, "--desktop-when-away")) { opt->desktopWhenAway = true; continue; }
+        if (!strcmp(a, "--hdr-capture")) { opt->hdrCapture = true; continue; }
+        if (!strcmp(a, "--edge-refinement")) { opt->edgeRefinement = true; continue; }
+        if (!strcmp(a, "--temporal-fill")) { opt->temporalFill = true; continue; }
+        if (!strncmp(a, "--depth-contrast=", 17)) { opt->depthContrast = std::clamp(atoi(a + 17), 0, 100); continue; }
+        if (!strncmp(a, "--convergence=", 14)) { opt->convergence = std::clamp(atoi(a + 14), -100, 100); continue; }
+        if (!strncmp(a, "--sharpness=", 12)) { opt->sharpness = std::clamp(atoi(a + 12), 0, 100); continue; }
+        if (!strncmp(a, "--head-parallax=", 16)) { opt->headParallax = std::clamp(atoi(a + 16), 0, 100); continue; }
         if (!strncmp(a, "--hwnd=", 7)) { opt->captureHwnd = (HWND)(uintptr_t)strtoull(a + 7, nullptr, 0); if (!opt->captureHwnd) return false; continue; }
         if (!strncmp(a, "--image=", 8)) { opt->source = SourceKind::Image; opt->imagePath = widen(a + 8); continue; }
         if (!strcmp(a, "--synthetic")) { opt->source = SourceKind::Synthetic; continue; }
+        if (!strncmp(a, "--selftest-gpu=", 15))
+        {
+            char* end = nullptr; const long index = strtol(a + 15, &end, 10);
+            if (end == a + 15 || *end || index < 0 || index > 31) { Log("ParseArgs: --selftest-gpu needs a DXGI adapter index 0..31"); return false; }
+            opt->selfTestGpu = (int)index; opt->selfTestOnly = true; opt->source = SourceKind::Synthetic; continue;
+        }
         if (!strcmp(a, "--no-warp")) { opt->doWarp = false; continue; }
         if (!strncmp(a, "--scale=", 8)) { opt->warpScale = (float)atof(a + 8); continue; }
         if (!strncmp(a, "--curve=", 8))
@@ -881,6 +964,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
             continue;
         }
         if (!strcmp(a, "--bench-room")) { opt->benchRoom = true; continue; }
+        if (!strcmp(a, "--bench-stereo")) { opt->benchStereo = true; continue; }
         if (!strcmp(a, "--bench-boost")) { opt->benchBoost = true; continue; }
         if (!strcmp(a, "--bench-lock")) { opt->benchLock = true; continue; }
         if (!strncmp(a, "--bench-fov=", 12))
@@ -920,6 +1004,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--whole-pixel")) { opt->subpixel = false; continue; }
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
+        if (!strcmp(a, "--cpu-depth")) { opt->cpuDepth = true; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
         if (!strcmp(a, "--xgpu-transfer=frame")) { opt->frameTransfer = true; continue; }
         if (!strcmp(a, "--xgpu-transfer=prep")) { opt->frameTransfer = false; continue; }
@@ -973,6 +1058,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
     Log("ParseArgs: screen %s; '=' recenters the fixed screen", opt->headLocked ? "head-following" : "fixed in room");
     if (opt->useTruth && opt->source != SourceKind::Synthetic) { Log("ParseArgs: --truth only applies to --synthetic, ignored"); opt->useTruth = false; }
     if (opt->benchRoom && !opt->selfTestOnly) { Log("ParseArgs: --bench-room only runs with --selftest, ignored"); opt->benchRoom = false; }
+    if (opt->benchStereo && !opt->selfTestOnly) { Log("ParseArgs: --bench-stereo only runs with --selftest, ignored"); opt->benchStereo = false; }
     if (opt->benchRoom)
         Log("ParseArgs: room benchmark after the self-test - left eye fov %.1f / %.1f / %.1f / %.1f deg (mirrored for the right), GPU clocks %s",
             opt->benchFov[0], opt->benchFov[1], opt->benchFov[2], opt->benchFov[3],
@@ -1324,8 +1410,9 @@ static void DumpDeviceMessages(ID3D12Device* device, const char* label)
 
     UINT64 n = iq->GetNumStoredMessages();
     Log("DumpDebugMessages[%s]: %llu stored message(s)", label, (unsigned long long)n);
-    UINT64 shown = 0;
-    for (UINT64 i = 0; i < n && shown < 40; i++)
+    UINT64 warnings = 0, errors = 0;
+    std::vector<D3D12_MESSAGE_ID> warningKinds;
+    for (UINT64 i = 0; i < n; i++)
     {
         SIZE_T len = 0;
         iq->GetMessage(i, nullptr, &len);
@@ -1334,10 +1421,24 @@ static void DumpDeviceMessages(ID3D12Device* device, const char* label)
         D3D12_MESSAGE* m = (D3D12_MESSAGE*)mem.data();
         if (FAILED(iq->GetMessage(i, m, &len))) continue;
         if (m->Severity > D3D12_MESSAGE_SEVERITY_WARNING) continue;
-        Log("  d3d12[%d] %s", (int)m->Severity, m->pDescription ? m->pDescription : "(null)");
-        shown++;
+        // Allocation warnings must not hide later synchronization errors. Count
+        // every message, with separate output budgets for warnings and errors.
+        const bool error = m->Severity <= D3D12_MESSAGE_SEVERITY_ERROR;
+        bool show = false;
+        if (error) show = errors++ < 40;
+        else
+        {
+            warnings++;
+            if (std::find(warningKinds.begin(), warningKinds.end(), m->ID) == warningKinds.end())
+            {
+                show = warningKinds.size() < 40;
+                warningKinds.push_back(m->ID);
+            }
+        }
+        if (show) Log("  d3d12[%d] id %u: %s", (int)m->Severity, (unsigned)m->ID, m->pDescription ? m->pDescription : "(null)");
     }
-    Log("DumpDebugMessages[%s]: %llu warning-or-worse shown", label, (unsigned long long)shown);
+    Log("DumpDebugMessages[%s]: %llu errors, %llu warnings (%zu warning kinds; up to 40 errors and distinct warnings shown)", label,
+        (unsigned long long)errors, (unsigned long long)warnings, warningKinds.size());
 }
 
 static void DumpDebugMessages(App& app)
@@ -1415,6 +1516,7 @@ static bool SelectCaptureItem(App& app)
             mon = me.list[app.opt.monitorIndex];
         }
         Log("InitCaptureItem: monitor %d%s", app.opt.monitorIndex, app.opt.monitorIndex < 0 ? " (primary)" : "");
+        c.monitor = mon;
         hr = interop->CreateForMonitor(mon, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(c.item));
     }
     if (FAILED(hr) || !c.item) { Log("InitCaptureItem: FAIL create capture item 0x%08X", (unsigned)hr); return false; }
@@ -1546,7 +1648,9 @@ static bool StartCapture(App& app)
     if (FAILED(hr)) { Log("StartCapture: FAIL OpenSharedFence 0x%08X", (unsigned)hr); return false; }
 
     winrt::Windows::Graphics::SizeInt32 size{ c.frameW, c.frameH };   // whole window, not the cropped source
-    c.pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(c.rtDevice, wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
+    c.pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(c.rtDevice,
+        app.opt.hdrCapture ? wdx::DirectXPixelFormat::R16G16B16A16Float : wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
+    Log("HDR capture: %s", app.opt.hdrCapture ? "float scRGB with GPU SDR tone mapping" : "off (SDR capture)");
     c.session = c.pool.CreateCaptureSession(c.item);
     try { c.session.IsBorderRequired(false); }
     catch (const winrt::hresult_error& e) { Log("StartCapture: capture border cannot be disabled (0x%08X) - continuing", (unsigned)e.code().value); }
@@ -1629,7 +1733,8 @@ static bool SwitchCapture(App& app, bool desktop, int& poolW, int& poolH, uint64
     if (size.Width <= 0 || size.Height <= 0) { Log("CaptureMain: %s has no size - not switching", desktop ? "display" : "game window"); return false; }
     if (c.session) { c.session.Close(); c.session = nullptr; }
     if (c.pool) { c.pool.Close(); c.pool = nullptr; }
-    c.pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(c.rtDevice, wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
+    c.pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(c.rtDevice,
+        app.opt.hdrCapture ? wdx::DirectXPixelFormat::R16G16B16A16Float : wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
     c.session = c.pool.CreateCaptureSession(item);
     try { c.session.IsBorderRequired(false); }
     catch (const winrt::hresult_error&) {}
@@ -1660,6 +1765,7 @@ static void CaptureMain(App* app)
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     apartmentInitialized = true;
     ULONGLONG nextSourceCheck = 0;
+    ULONGLONG nextHdrWhiteCheck = 0;
     // --desktop-when-away: armed once the game has been in front (the desktop app has the
     // focus while it starts us); a change must last a moment before the picture switches.
     const bool followFront = app->opt.desktopWhenAway && c.hwnd;
@@ -1671,6 +1777,13 @@ static void CaptureMain(App* app)
     while (!app->stop.load())
     {
         const ULONGLONG now = GetTickCount64();
+        if (app->opt.hdrCapture && now >= nextHdrWhiteCheck)
+        {
+            HMONITOR monitor = c.hwnd && IsWindow(c.hwnd) ? MonitorFromWindow(c.hwnd, MONITOR_DEFAULTTONEAREST) : c.monitor;
+            if (!monitor) monitor = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+            c.sdrWhiteScale = CaptureSdrWhiteScale(monitor);
+            nextHdrWhiteCheck = now + 2000;
+        }
         const char* gone = nullptr;
         if (!c.gameGone)
         {
@@ -1724,7 +1837,8 @@ static void CaptureMain(App* app)
             Log("CaptureMain: resize %dx%d -> %dx%d; fitting into %dx%d", poolW, poolH,
                 cs.Width, cs.Height, app->srcW, app->srcH);
             frame = nullptr;
-            c.pool.Recreate(c.rtDevice, wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, cs);
+            c.pool.Recreate(c.rtDevice,
+                app->opt.hdrCapture ? wdx::DirectXPixelFormat::R16G16B16A16Float : wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, cs);
             poolW = cs.Width; poolH = cs.Height;
             ++layout;
             continue; // the old pool's surface may be clipped; wait for the new size
@@ -1751,7 +1865,7 @@ static void CaptureMain(App* app)
                 c.cropping = cropping; c.crop = crop;
             }
             winrt::check_hresult(c.scaler.Copy(c.dev.Get(), c.ctx.Get(), tex.Get(), cs.Width, cs.Height,
-                c.tex11[source->index].Get(), c.rtv11[source->index].Get(), app->srcW, app->srcH, cropping ? &crop : nullptr));
+                c.tex11[source->index].Get(), c.rtv11[source->index].Get(), app->srcW, app->srcH, cropping ? &crop : nullptr, c.sdrWhiteScale));
             // Second GPU: the model-size frame is made here, in work this GPU is
             // already doing for the picture, so depth adds no later wait on it.
             if (app->frameTransfer)
@@ -1866,6 +1980,9 @@ static SourceFrames::WriteRef RecordCpuSource(App& app, const std::vector<unsign
 // bilinearly. One GPU thread owns one whole row of one eye, so the scatter + z-test
 // + hole fill are race-free and identical to WarpEye (CPU) when the sizes match.
 static const char* kWarpHlsl = R"HLSL(
+#ifndef ENHANCED_WARP
+#define ENHANCED_WARP 1
+#endif
 cbuffer C : register(b0)
 {
     uint  CW; uint CH; uint DW; uint DH;
@@ -1884,6 +2001,12 @@ cbuffer C : register(b0)
     uint  fillMode;     // 0 stretch, 1 mirror (see FillHole in xr_common.h)
     float mirrorTol;
     uint  subpixel;     // 1: sample at the fractional source position (no depth banding)
+    float depthContrast;
+    float convergence;
+    uint edgeRefinement; uint temporalFill;
+    float sharpness;
+    float headOffset;
+    uint prepared; uint historyValid; uint enhancementPad;
 };
 
 Texture2D<float4>        scene    : register(t0);
@@ -1894,8 +2017,15 @@ RWTexture2DArray<float>  outDepth : register(u1);   // D3D projective depth for 
 // really lands (fractional), for sub-pixel sampling; N = CW*CH*2
 RWStructuredBuffer<uint> scratch  : register(u2);
 SamplerState             samp     : register(s0);
+Texture2D<float4>        preparedScene : register(t2);
+StructuredBuffer<float> refinedNear : register(t3);
+Texture2D<float4>        oldScene : register(t4);
+StructuredBuffer<float> oldNear : register(t5);
+RWStructuredBuffer<uint> enhancementStats : register(u3); // trusted scene, holes, recovered, patch searches
+RWTexture2D<float4>      prepColor : register(u4);
+RWStructuredBuffer<float> prepNear : register(u5);
 
-float NearAt(int x, int y)
+float BaseNearAt(int x, int y)
 {
     float fx = ((float)x + 0.5) * (float)DW / (float)CW - 0.5;
     float fy = ((float)y + 0.5) * (float)DH / (float)CH - 0.5;
@@ -1910,6 +2040,110 @@ float NearAt(int x, int y)
     return top + ty * (bot - top);
 }
 
+float ShapeNear(float n)
+{
+#if ENHANCED_WARP
+    if (depthContrast > 0.0)
+    {
+        float a = 2.0 * saturate(depthContrast);
+        n = saturate(n);
+        return (1.0 + a) * n / (1.0 + a * n);
+    }
+#endif
+    return n;
+}
+
+float NearAt(int x, int y)
+{
+    x = clamp(x, 0, (int)CW - 1); y = clamp(y, 0, (int)CH - 1);
+#if ENHANCED_WARP
+    // Uniform across the dispatch. A ternary can make FXC evaluate both sides,
+    // repeating the low-resolution lookup and rational curve in every motion tap.
+    [branch] if (prepared != 0) return refinedNear[y * CW + x];
+    return ShapeNear(BaseNearAt(x, y));
+#else
+    return BaseNearAt(x, y);
+#endif
+}
+
+float4 SceneAt(int x, int y)
+{
+    x = clamp(x, 0, (int)CW - 1); y = clamp(y, 0, (int)CH - 1);
+    float4 colour = float4(0.0, 0.0, 0.0, 1.0);
+#if ENHANCED_WARP && !defined(STEREO_PREP)
+    if (prepared != 0) colour = preparedScene.Load(int3(x, y, 0));
+    else
+#endif
+    if (exactLoad != 0) colour = scene.Load(int3(x, y, 0));
+    else colour = scene.SampleLevel(samp, float2((x + 0.5) / (float)CW, (y + 0.5) / (float)CH), 0);
+    return colour;
+}
+
+float RelativeInvZ(float n)
+{
+    float z = invZFar + n * (invZNear - invZFar);
+#if ENHANCED_WARP
+    if (convergence != 0.0) z += 0.25 * clamp(convergence, -1.0, 1.0);
+#endif
+    return z;
+}
+
+#if ENHANCED_WARP
+// Compare a visible BACKGROUND patch, not a disoccluded pixel whose current RGB
+// is foreground. Local matching also rejects cuts that have similar global colours.
+float HistoryPatchError(int2 p, int2 delta, float background)
+{
+    float error = 0.0;
+    [loop] for (int j = -2; j <= 2; j += 2)
+    [loop] for (int i = -2; i <= 2; i += 2)
+    {
+        int2 q = p + int2(i, j), old = q + delta;
+        if (q.x < 0 || q.y < 0 || q.x >= (int)CW || q.y >= (int)CH ||
+            old.x < 0 || old.y < 0 || old.x >= (int)CW || old.y >= (int)CH) return 1000.0;
+        if (NearAt(q.x, q.y) > background + 0.035 ||
+            oldNear[old.y * CW + old.x] > background + 0.035) return 1000.0;
+        float3 d = abs(preparedScene.Load(int3(q, 0)).rgb - oldScene.Load(int3(old, 0)).rgb);
+        error += (d.r + d.g + d.b) / 27.0;
+    }
+    return error;
+}
+
+bool HistoryMotion(int anchor, int y, int direction, float background, out int2 motion)
+{
+    motion = int2(0, 0);
+    int2 p = int2(anchor + 4 * direction, y);
+    if (p.x < 14 || p.y < 8 || p.x >= (int)CW - 14 || p.y >= (int)CH - 8) return false;
+    float3 lo = 1.0, hi = 0.0;
+    [loop] for (int j = -2; j <= 2; j += 2)
+    [loop] for (int i = -2; i <= 2; i += 2)
+    {
+        float3 c = preparedScene.Load(int3(p + int2(i, j), 0)).rgb;
+        lo = min(lo, c); hi = max(hi, c);
+    }
+    float3 spread = hi - lo;
+    if (max(spread.r, max(spread.g, spread.b)) < 0.08) return false;
+    float best = 1000.0, second = 1000.0;
+    [loop] for (int dy = -4; dy <= 4; dy += 2)
+    [loop] for (int dx = -8; dx <= 8; dx += 2)
+    {
+        float score = HistoryPatchError(p, int2(dx, dy), background);
+        if (score < best) { second = best; best = score; motion = int2(dx, dy); }
+        else second = min(second, score);
+    }
+    int2 coarse = motion;
+    [loop] for (int yy = -1; yy <= 1; yy++)
+    [loop] for (int xx = -1; xx <= 1; xx++)
+    {
+        int2 candidate = coarse + int2(xx, yy);
+        float score = HistoryPatchError(p, candidate, background);
+        if (score < best) { best = score; motion = candidate; }
+    }
+    // Uniqueness is assessed outside the fine neighbourhood: adjacent samples on
+    // a smooth texture need not differ much, while a second coarse match is ambiguous.
+    return best < 0.025 && second > best + 0.004;
+}
+#endif
+
 [numthreads(1, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
@@ -1918,6 +2152,9 @@ void main(uint3 id : SV_DispatchThreadID)
     if (y >= CH) return;
 
     float eye = (e == 0) ? eye0 : eye1;
+#if ENHANCED_WARP
+    eye += clamp(headOffset, -0.025, 0.025);
+#endif
     int iw = (int)CW;
     uint N = CW * CH * 2;
     uint base = (e * CH + y) * CW;
@@ -1934,7 +2171,7 @@ void main(uint3 id : SV_DispatchThreadID)
         float destF = (float)x;
         if (doWarp != 0)
         {
-            float invZ = invZFar + n * (invZNear - invZFar);
+            float invZ = RelativeInvZ(n);
             float s = scaleFocal * eye * invZ;
             int r = (s < 0.0) ? -(int)floor(-s + 0.5) : (int)floor(s + 0.5);   // lround
             dx = x - r;
@@ -1955,6 +2192,9 @@ void main(uint3 id : SV_DispatchThreadID)
     // hole fill from the FARTHER neighbour (background side) - same as FillHole (CPU)
     int lastValid = -1;
     float lastNear = 0;
+#if ENHANCED_WARP
+    uint historySearches = 0;
+#endif
     x = 0;
     [loop] while (x < iw)
     {
@@ -2001,6 +2241,42 @@ void main(uint3 id : SV_DispatchThreadID)
                     scratch[2 * N + base + h] = asuint((float)h);
                 }
             }
+#if ENHANCED_WARP
+            if (temporalFill != 0 && prepared != 0)
+            {
+                uint ignored;
+                InterlockedAdd(enhancementStats[1], (uint)(r - x), ignored);
+                int2 motion;
+                float backgroundShift = scaleFocal * eye * RelativeInvZ(anchorNear);
+                int middleSource = (int)floor((float)(x + r - 1) * 0.5 + backgroundShift + 0.5);
+                // Guided edges and fractional splats can leave many isolated
+                // one-pixel gaps. They are resampling gaps, not missing surfaces:
+                // don't spend a motion search on each one. Check foreground
+                // evidence BEFORE matching and bound worst-case work on a row.
+                bool search = historyValid != 0 && enhancementStats[0] != 0 && r - x >= 3 && r - x <= 64 &&
+                    historySearches < 2 && middleSource >= 0 && middleSource < iw &&
+                    NearAt(middleSource, (int)y) > anchorNear + 0.06;
+                if (search) { historySearches++; InterlockedAdd(enhancementStats[3], 1, ignored); }
+                if (search && HistoryMotion(anchor, (int)y, useLeft ? -1 : 1, anchorNear, motion))
+                {
+                    [loop] for (h = x; h < r; h++)
+                    {
+                        int sx = (int)floor((float)h + backgroundShift + 0.5);
+                        int2 old = int2(sx, (int)y) + motion;
+                        if (sx < 0 || sx >= iw || old.x < 0 || old.x >= iw || old.y < 0 || old.y >= (int)CH) continue;
+                        // Only recover background hidden by an actual foreground
+                        // surface. Ordinary resampling gaps keep the spatial fill.
+                        if (NearAt(sx, (int)y) <= anchorNear + 0.06) continue;
+                        float oldN = oldNear[old.y * CW + old.x];
+                        if (oldN > anchorNear + 0.035 || abs(oldN - anchorNear) > 0.08) continue;
+                        scratch[base + h] = 0x80000000 | (uint)(old.y * CW + old.x);
+                        scratch[N + base + h] = asuint(oldN);
+                        scratch[2 * N + base + h] = asuint((float)h);
+                        InterlockedAdd(enhancementStats[2], 1, ignored);
+                    }
+                }
+            }
+#endif
         }
         x = r;      // lastValid/lastNear deliberately unchanged: fills are not sources
     }
@@ -2009,6 +2285,14 @@ void main(uint3 id : SV_DispatchThreadID)
     {
         int s = (int)scratch[base + x];
         float4 col;
+#if ENHANCED_WARP
+        if (s < 0)
+        {
+            uint old = ((uint)s) & 0x7FFFFFFF;
+            col = oldScene.Load(int3(old % CW, old / CW, 0));
+        }
+        else
+#endif
         if (subpixel != 0)
         {
             // The source pixel `s` lands at scratch[2N+...]; the content that lands
@@ -2018,17 +2302,10 @@ void main(uint3 id : SV_DispatchThreadID)
             int i0 = (int)pos;
             int i1 = min(i0 + 1, iw - 1);
             float fr = pos - (float)i0;
-            float4 c0, c1;
-            if (exactLoad != 0) { c0 = scene.Load(int3(i0, y, 0)); c1 = scene.Load(int3(i1, y, 0)); }
-            else
-            {
-                c0 = scene.SampleLevel(samp, float2(((float)i0 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
-                c1 = scene.SampleLevel(samp, float2(((float)i1 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
-            }
+            float4 c0 = SceneAt(i0, (int)y), c1 = SceneAt(i1, (int)y);
             col = lerp(c0, c1, fr);
         }
-        else if (exactLoad != 0) col = scene.Load(int3(s, y, 0));
-        else col = scene.SampleLevel(samp, float2(((float)s + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
+        else col = SceneAt(s, (int)y);
         col.a = 1.0;
 
         if (indicator != 0 && y >= CH / 49 && y < CH / 12 && x >= iw / 2 - iw / 17 && x < iw / 2 + iw / 17)
@@ -2037,13 +2314,15 @@ void main(uint3 id : SV_DispatchThreadID)
 
         if (writeDepth != 0)
         {
-            float invZ = invZFar + asfloat(scratch[N + base + x]) * (invZNear - invZFar);
+            float invZ = RelativeInvZ(asfloat(scratch[N + base + x]));
             if (depthLie != 0) invZ = (x < iw / 2) ? (1.0 / 0.5) : (1.0 / 10.0);
             outDepth[uint3(x, y, e)] = (farZ / (farZ - nearZ)) * (1.0 - nearZ * invZ);
         }
     }
 }
 )HLSL";
+
+#include "stereo_enhancement_shaders.h"
 
 // Source texture (any size, RGBA or BGRA view) -> the model's input tensor:
 // NCHW float at the model's input size, box-filtered down with taps x taps bilinear
@@ -3724,7 +4003,18 @@ static bool MakeRootSig(App& app, UINT numConstants, bool uavTable, ComPtr<ID3D1
     tbl[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     tbl[1].NumDescriptors = 3; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 1;
 
-    D3D12_ROOT_PARAMETER params[3]{};
+    D3D12_DESCRIPTOR_RANGE enhancement[3]{};
+    enhancement[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    enhancement[0].NumDescriptors = 4; enhancement[0].BaseShaderRegister = 2;
+    enhancement[0].OffsetInDescriptorsFromTableStart = 0;
+    enhancement[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    enhancement[1].NumDescriptors = 1; enhancement[1].BaseShaderRegister = 3;
+    enhancement[1].OffsetInDescriptorsFromTableStart = 4;
+    enhancement[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    enhancement[2].NumDescriptors = 2; enhancement[2].BaseShaderRegister = 4;
+    enhancement[2].OffsetInDescriptorsFromTableStart = 5;
+
+    D3D12_ROOT_PARAMETER params[4]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants.ShaderRegister = 0;
     params[0].Constants.Num32BitValues = numConstants;
@@ -3736,6 +4026,9 @@ static bool MakeRootSig(App& app, UINT numConstants, bool uavTable, ComPtr<ID3D1
         params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         params[2].DescriptorTable.NumDescriptorRanges = 2;
         params[2].DescriptorTable.pDescriptorRanges = tbl;
+        params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[3].DescriptorTable.NumDescriptorRanges = 3;
+        params[3].DescriptorTable.pDescriptorRanges = enhancement;
     }
     else
     {
@@ -3751,7 +4044,7 @@ static bool MakeRootSig(App& app, UINT numConstants, bool uavTable, ComPtr<ID3D1
     ss.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC rsd{};
-    rsd.NumParameters = 3;
+    rsd.NumParameters = uavTable ? 4 : 3;
     rsd.pParameters = params;
     rsd.NumStaticSamplers = 1;
     rsd.pStaticSamplers = &ss;
@@ -3903,11 +4196,70 @@ static void MakeEyeUav(App& app, ID3D12Resource* eyes, UINT index)
     app.device->CreateUnorderedAccessView(eyes, nullptr, &u, CpuDesc(app, index));
 }
 
+static void MakeStereoDescriptors(App& app, WarpTarget& t)
+{
+    auto* dev = app.device.Get();
+    D3D12_SHADER_RESOURCE_VIEW_DESC texture{};
+    texture.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    texture.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    texture.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    texture.Texture2D.MipLevels = 1;
+    dev->CreateShaderResourceView(t.preparedColor.Get(), &texture, CpuDesc(app, t.enhancementIndex));
+    dev->CreateShaderResourceView(t.historyColor.Get(), &texture, CpuDesc(app, t.enhancementIndex + 2));
+    D3D12_SHADER_RESOURCE_VIEW_DESC buffer{};
+    buffer.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    buffer.Format = DXGI_FORMAT_UNKNOWN; buffer.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    buffer.Buffer.NumElements = (UINT)t.cw * t.ch; buffer.Buffer.StructureByteStride = 4;
+    dev->CreateShaderResourceView(t.preparedNear.Get(), &buffer, CpuDesc(app, t.enhancementIndex + 1));
+    dev->CreateShaderResourceView(t.historyNear.Get(), &buffer, CpuDesc(app, t.enhancementIndex + 3));
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+    uav.Format = DXGI_FORMAT_UNKNOWN; uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    uav.Buffer.NumElements = 4; uav.Buffer.StructureByteStride = 4;
+    dev->CreateUnorderedAccessView(t.enhancementStats.Get(), nullptr, &uav, CpuDesc(app, t.enhancementIndex + 4));
+    uav.Buffer.NumElements = (UINT)t.cw * t.ch;
+    dev->CreateUnorderedAccessView(t.preparedNear.Get(), nullptr, &uav, CpuDesc(app, t.enhancementIndex + 6));
+    uav = {};
+    uav.Format = DXGI_FORMAT_R8G8B8A8_UNORM; uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    dev->CreateUnorderedAccessView(t.preparedColor.Get(), nullptr, &uav, CpuDesc(app, t.enhancementIndex + 5));
+}
+
+static bool EnsureStereoResources(App& app, WarpTarget& t)
+{
+    if (!app.stereoEffectsAvailable.load()) return false;
+    if (t.preparedColor && t.preparedNear && t.historyColor && t.historyNear) return true;
+    if (t.enhancementFailed) return false;
+    const bool made =
+        MakeTexture(app.device.Get(), t.cw, t.ch, DXGI_FORMAT_R8G8B8A8_TYPELESS, 1,
+            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_HEAP_FLAG_NONE,
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, t.preparedColor) &&
+        MakeTexture(app.device.Get(), t.cw, t.ch, DXGI_FORMAT_R8G8B8A8_TYPELESS, 1,
+            D3D12_RESOURCE_FLAG_NONE, D3D12_HEAP_FLAG_NONE,
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, t.historyColor) &&
+        MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, (UINT64)t.cw * t.ch * 4,
+            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, t.preparedNear, nullptr) &&
+        MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, (UINT64)t.cw * t.ch * 4,
+            D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, t.historyNear, nullptr);
+    t.enhancementFailed = !made;
+    if (!made)
+    {
+        t.preparedColor.Reset(); t.preparedNear.Reset(); t.historyColor.Reset(); t.historyNear.Reset();
+        app.stereoEffectsAvailable = false;
+        app.edgeRefinementEnabled = false;
+        Log("Stereo effects: unavailable; GPU allocation failed; guided edges, sharpening and temporal fill disabled for this session");
+        return false;
+    }
+    MakeStereoDescriptors(app, t);
+    Log("Stereo enhancement: GPU buffers %dx%d, %.1f MB (allocated on first use)", t.cw, t.ch,
+        (double)t.cw * t.ch * 16 / (1024.0 * 1024.0));
+    return true;
+}
+
 static bool MakeWarpTarget(App& app, int cw, int ch, UINT tableIndex, WarpTarget& t)
 {
     Log("MakeWarpTarget: enter %dx%d table %u", cw, ch, tableIndex);
     ID3D12Device* dev = app.device.Get();
     t.cw = cw; t.ch = ch; t.tableIndex = tableIndex;
+    t.enhancementIndex = tableIndex == DESC_MAIN_TABLE ? DESC_STEREO_MAIN : DESC_STEREO_TEST;
 
     if (!MakeTexture(dev, cw, ch, DXGI_FORMAT_R8G8B8A8_TYPELESS, VIEWS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                      D3D12_HEAP_FLAG_NONE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, t.colorOut)) return false;
@@ -3939,6 +4291,10 @@ static bool MakeWarpTarget(App& app, int cw, int ch, UINT tableIndex, WarpTarget
     sv.Buffer.NumElements = scratchElems;
     sv.Buffer.StructureByteStride = 4;
     dev->CreateUnorderedAccessView(t.scratch.Get(), nullptr, &sv, CpuDesc(app, tableIndex + 3));
+
+    if (!MakeBuffer(dev, D3D12_HEAP_TYPE_DEFAULT, 16, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, t.enhancementStats, nullptr)) return false;
+    MakeStereoDescriptors(app, t); // valid null descriptors until an option needs the buffers
 
     Log("MakeWarpTarget: exit ok");
     return true;
@@ -3996,7 +4352,10 @@ static bool EngineShaderJobs(std::vector<ShaderJob>& out)
     RoomShaderTexts room;
     if (!BuildRoomShaderTexts(room)) { Log("EngineShaderJobs: FAIL room texts"); return false; }
     out.push_back({ "unpack.hlsl", kUnpackHlsl });            // InitFrameTransfer (second GPU)
-    out.push_back({ "warp.hlsl", kWarpHlsl });
+    out.push_back({ "warp.hlsl", WarpShaderText(false) });
+    out.push_back({ "warp-enhanced.hlsl", WarpShaderText(true) });
+    out.push_back({ "stereo-prepare.hlsl", StereoPrepareShaderText() });
+    out.push_back({ "stereo-cut.hlsl", StereoCutShaderText() });
     out.push_back({ "prep.hlsl", kPrepHlsl });
     out.push_back({ "grid.hlsl", kGridHlsl });
     out.push_back({ "ambilight.hlsl", kAmbiHlsl });
@@ -4007,6 +4366,7 @@ static bool EngineShaderJobs(std::vector<ShaderJob>& out)
     out.push_back({ "room-light.hlsl", room.light });
     out.push_back({ "room-emit.hlsl", room.emit });
     out.push_back({ "room-mirror.hlsl", room.mirror });
+    for (auto& job : gpudepth::ShaderJobs()) out.push_back({ std::move(job.first), std::move(job.second) });
     Log("EngineShaderJobs: exit - %zu shaders", out.size());
     return true;
 }
@@ -4014,12 +4374,34 @@ static bool EngineShaderJobs(std::vector<ShaderJob>& out)
 static bool InitShaders(App& app)
 {
     Log("InitShaders: enter");
+    // Warm all depth kernels before an OpenXR session exists. The same names and
+    // text are in EngineShaderJobs, so packaged installs hit their shipped cache.
+    if (!app.opt.cpuDepth && !app.gpuDepthFailed)
+    {
+        const auto jobs = gpudepth::ShaderJobs();
+        std::vector<ComPtr<ID3DBlob>> compiled(jobs.size());
+        std::vector<char> valid(jobs.size(), 0);
+        std::vector<std::thread> threads;
+        for (size_t i = 0; i < jobs.size(); ++i)
+            threads.emplace_back([&jobs, &compiled, &valid, i]() {
+                valid[i] = CompileCs(jobs[i].first.c_str(), jobs[i].second.c_str(), compiled[i]) ? 1 : 0;
+            });
+        for (auto& thread : threads) thread.join();
+        if (std::find(valid.begin(), valid.end(), 0) != valid.end())
+        {
+            app.gpuDepthFailed = true;
+            Log("Depth pipeline: CPU fallback; GPU depth shader compilation failed");
+        }
+    }
     const auto shadersStart = std::chrono::steady_clock::now();
     const int shadersBefore = g_shaderCache.shaders.load(), hitsBefore = g_shaderCache.hits.load(), compiledBefore = g_shaderCache.compiled.load();
     const long long compileMicrosBefore = g_shaderCache.compileMicros.load();
 
-    ComPtr<ID3DBlob> warpCs, prepCs, gridCs;
-    if (!CompileCs("warp.hlsl", kWarpHlsl, warpCs)) return false;
+    ComPtr<ID3DBlob> warpCs, enhancedCs, stereoPrepCs, stereoCutCs, prepCs, gridCs;
+    if (!CompileCs("warp.hlsl", WarpShaderText(false).c_str(), warpCs)) return false;
+    if (!CompileCs("warp-enhanced.hlsl", WarpShaderText(true).c_str(), enhancedCs)) return false;
+    if (!CompileCs("stereo-prepare.hlsl", StereoPrepareShaderText().c_str(), stereoPrepCs)) return false;
+    if (!CompileCs("stereo-cut.hlsl", StereoCutShaderText().c_str(), stereoCutCs)) return false;
     if (!CompileCs("prep.hlsl", kPrepHlsl, prepCs)) return false;
     if (!CompileCs("grid.hlsl", kGridHlsl, gridCs)) return false;
     if (!MakeRootSig(app, sizeof(WarpConstants) / 4, true, app.warpRootSig)) return false;
@@ -4029,6 +4411,12 @@ static bool InitShaders(App& app)
     pd.pRootSignature = app.warpRootSig.Get();
     pd.CS = { warpCs->GetBufferPointer(), warpCs->GetBufferSize() };
     if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.warpPso)))) { Log("InitShaders: FAIL warp PSO"); return false; }
+    pd.CS = { enhancedCs->GetBufferPointer(), enhancedCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.stereoWarpPso)))) { Log("InitShaders: FAIL enhanced warp PSO"); return false; }
+    pd.CS = { stereoPrepCs->GetBufferPointer(), stereoPrepCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.stereoPrepPso)))) { Log("InitShaders: FAIL stereo prep PSO"); return false; }
+    pd.CS = { stereoCutCs->GetBufferPointer(), stereoCutCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.stereoCutPso)))) { Log("InitShaders: FAIL stereo history PSO"); return false; }
     pd.pRootSignature = app.prepRootSig.Get();
     pd.CS = { prepCs->GetBufferPointer(), prepCs->GetBufferSize() };
     if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.prepPso)))) { Log("InitShaders: FAIL prep PSO"); return false; }
@@ -4307,17 +4695,87 @@ static void RecordUploadNear(App& app, ID3D12Resource* upload)
     Transition(cl, app.nearBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 }
 
-// dispatch the warp for both eyes; leaves colorOut/depthOut in COPY_SOURCE
-static void RecordWarp(App& app, WarpTarget& t, UINT srcDescIndex, const WarpConstants& c)
+// Renderer consumes an immutable published GPU slot, or the explicit CPU fallback.
+static void RecordDepthSlot(App& app, const DepthSlot& slot)
 {
+    if (!slot.gpuValue || !slot.gpuNear)
+    {
+        RecordUploadNear(app, slot.nearUp.Get());
+        return;
+    }
+    if (slot.gpuFence) app.gfxQueue->Wait(slot.gpuFence.Get(), slot.gpuValue);
+    Transition(app.cmdList.Get(), slot.gpuNear.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    RecordUploadNear(app, slot.gpuNear.Get());
+    Transition(app.cmdList.Get(), slot.gpuNear.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+}
+
+// dispatch the warp for both eyes; leaves colorOut/depthOut in COPY_SOURCE
+static void RecordWarp(App& app, WarpTarget& t, UINT srcDescIndex, const WarpConstants& requested,
+    const WarpHistoryFrame& frame = {})
+{
+    WarpConstants c = requested;
+    c.prepared = c.historyValid = 0;
+    c.headOffset = stereo_enhancement::HeadOffset(c.headOffset);
     ID3D12GraphicsCommandList* cl = app.cmdList.Get();
     ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
     cl->SetDescriptorHeaps(1, heaps);
     cl->SetComputeRootSignature(app.warpRootSig.Get());
-    cl->SetPipelineState(app.warpPso.Get());
-    cl->SetComputeRoot32BitConstants(0, sizeof(WarpConstants) / 4, &c, 0);
     cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDescIndex));
     cl->SetComputeRootDescriptorTable(2, GpuDesc(app, t.tableIndex));
+    cl->SetComputeRootDescriptorTable(3, GpuDesc(app, t.enhancementIndex));
+    const bool needsPrep = c.edgeRefinement != 0 || c.sharpness > 0 || c.temporalFill != 0;
+    if (needsPrep && EnsureStereoResources(app, t))
+    {
+        const bool compatible = t.havePrepared && t.preparedSharpness == c.sharpness && t.preparedContrast == c.depthContrast && t.preparedEdge == c.edgeRefinement &&
+            t.preparedFrame.layout == frame.layout && frame.sourceSeq >= t.preparedFrame.sourceSeq;
+        if (!compatible || !c.temporalFill || !c.doWarp || !stereo_enhancement::Aligned(frame)) t.historyFrame = {};
+        if (compatible && c.temporalFill && c.doWarp && frame.sourceSeq > t.preparedFrame.sourceSeq &&
+            stereo_enhancement::UsableHistory(frame, t.preparedFrame))
+        {
+            // Save the preceding source BEFORE replacing the prepared image. Keep
+            // that history on repeated headset frames of the same source, avoiding
+            // an alternating recovered/mirrored edge at the display refresh rate.
+            Transition(cl, t.preparedColor.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            Transition(cl, t.preparedNear.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            Transition(cl, t.historyColor.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+            Transition(cl, t.historyNear.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+            cl->CopyResource(t.historyColor.Get(), t.preparedColor.Get());
+            cl->CopyResource(t.historyNear.Get(), t.preparedNear.Get());
+            Transition(cl, t.preparedColor.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            Transition(cl, t.preparedNear.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            Transition(cl, t.historyColor.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            Transition(cl, t.historyNear.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            t.historyFrame = t.preparedFrame;
+        }
+        c.historyValid = c.temporalFill && c.doWarp && stereo_enhancement::UsableHistory(frame, t.historyFrame) ? 1u : 0u;
+        Transition(cl, t.preparedColor.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        Transition(cl, t.preparedNear.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        cl->SetPipelineState(app.stereoPrepPso.Get());
+        cl->SetComputeRoot32BitConstants(0, sizeof(WarpConstants) / 4, &c, 0);
+        cl->Dispatch(((UINT)t.cw + 7) / 8, ((UINT)t.ch + 7) / 8, 1);
+        Transition(cl, t.preparedColor.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        Transition(cl, t.preparedNear.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        c.prepared = 1;
+        // UAV ordering covers both the last frame's counters and this frame's
+        // scene-cut result before the row warp starts reading/updating them.
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV; barrier.UAV.pResource = t.enhancementStats.Get();
+        cl->ResourceBarrier(1, &barrier);
+        cl->SetPipelineState(app.stereoCutPso.Get());
+        cl->SetComputeRoot32BitConstants(0, sizeof(WarpConstants) / 4, &c, 0);
+        cl->Dispatch(1, 1, 1);
+        cl->ResourceBarrier(1, &barrier);
+        t.havePrepared = c.doWarp != 0 && c.temporalFill != 0;
+        t.preparedFrame = frame; t.preparedSharpness = c.sharpness; t.preparedContrast = c.depthContrast; t.preparedEdge = c.edgeRefinement;
+    }
+    else
+    {
+        t.havePrepared = false; t.historyFrame = {};
+        c.edgeRefinement = c.temporalFill = 0; c.sharpness = 0;
+    }
+    const bool enhanced = c.depthContrast != 0 || c.convergence != 0 || c.headOffset != 0 || c.prepared != 0;
+    cl->SetPipelineState(enhanced ? app.stereoWarpPso.Get() : app.warpPso.Get());
+    cl->SetComputeRoot32BitConstants(0, sizeof(WarpConstants) / 4, &c, 0);
     cl->Dispatch(1, ((UINT)t.ch + 7) / 8, VIEWS);
     Transition(cl, t.colorOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     Transition(cl, t.depthOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -4666,6 +5124,7 @@ static bool InitModel(App& app)
     Log("InitModel: DirectML on %ls%s", app.inferName.c_str(), app.secondGpu ? " (second GPU)" : "");
 
     const bool ok = LoadModel(app);
+    if (app.opt.cpuDepth) Log("Depth pipeline: CPU fallback; --cpu-depth reference post-processing requested (models still use DirectML)");
     Log("InitModel: exit %s", ok ? "ok" : "FAIL");
     return ok;
 }
@@ -4675,6 +5134,11 @@ static bool InitModel(App& app)
 static void ReleaseModel(App& app)
 {
     Log("ReleaseModel: enter (%s)", app.opt.model ? app.opt.model->name : "none");
+    app.gpuOutput.reset();
+    app.gpuSteadyHave = false;
+    app.gpuAnchorId = 0;
+    app.gpuLastTime = 0;
+    ++app.gpuModelEpoch;
     if (app.modelInValue) { ort->ReleaseValue(app.modelInValue); app.modelInValue = nullptr; }
     if (app.dmlAlloc && app.dmlApi)
     {
@@ -4701,6 +5165,8 @@ static bool LoadModel(App& app)
     // each pass, taking cores from the capture thread and steady/fuse maths.
     for (const char* key : { "session.intra_op.allow_spinning", "session.inter_op.allow_spinning" })
         if (OrtStatus* st = ort->AddSessionConfigEntry(so, key, "0")) { Fail("AddSessionConfigEntry", st); ort->ReleaseStatus(st); }
+    if (OrtStatus* st = ort->AddSessionConfigEntry(so, "session.disable_cpu_ep_fallback", "1"))
+    { Fail("disable CPU model fallback", st); ort->ReleaseStatus(st); ort->ReleaseSessionOptions(so); return false; }
     if (OrtStatus* st = app.dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, app.dmlDevice.Get(), app.inferQueue.Get()))
     { Fail("AppendExecutionProvider_DML1", st); ort->ReleaseSessionOptions(so); return false; }
 
@@ -4747,6 +5213,20 @@ static bool LoadModel(App& app)
     };
     app.resampleX = taps(spec.inW, W);
     app.resampleY = taps(spec.inH, H);
+    if (!app.opt.cpuDepth && !app.gpuDepthFailed)
+    {
+        try
+        {
+            app.gpuOutput = std::make_unique<gpudepth::ModelOutput>();
+            app.gpuOutput->Init(ort, app.dmlApi, app.ortSession, app.inferDevice.Get(), app.modelInValue,
+                spec.inName, spec.outName, (size_t)spec.inW * spec.inH);
+        }
+        catch (const std::exception& e)
+        {
+            app.gpuOutput.reset(); app.gpuDepthFailed = true;
+            Log("Depth pipeline: CPU fallback; GPU output binding failed: %s", e.what());
+        }
+    }
     Log("LoadModel: exit ok, %s %dx%d on the shared device via the ml queue (GPU-resident input)%s", spec.name,
         spec.inW, spec.inH, (spec.inW == W && spec.inH == H) ? "" : ", output resampled to the depth grid");
     return true;
@@ -5053,6 +5533,8 @@ static bool InitSlots(App& app)
         DepthSlot& s = app.slots[i];
         if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * sizeof(float), D3D12_RESOURCE_FLAG_NONE,
                         D3D12_RESOURCE_STATE_GENERIC_READ, s.nearUp, (void**)&s.nearMapped)) return false;
+        if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, (UINT64)W * H * sizeof(float), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_COMMON, s.gpuNear, nullptr)) return false;
     }
     Log("InitSlots: exit ok, %d slots", SLOTS);
     return true;
@@ -5072,10 +5554,13 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
     // Worker thread: opt.model is the model that produced this depth.
     const int dilateH = app.opt.dilate >= 0 ? app.opt.dilate : app.opt.model->dilateH;
     const int dilateV = app.opt.dilateV >= 0 ? app.opt.dilateV : app.opt.model->dilateV;
-    DilateNear(preparedDepth, W, H, dilateH, dilateV);
+    s.edgeRefinedInput = app.edgeRefinementEnabled.load();
+    if (!s.edgeRefinedInput) DilateNear(preparedDepth, W, H, dilateH, dilateV);
     memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
+    s.gpuValue = 0; s.gpuFence.Reset();
     s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
     s.lo = lo; s.hi = hi; s.completeTime = NowSeconds(); s.reused = reused;
+    app.lastDepthSource = src; app.lastDepthEdgeRefinedInput = s.edgeRefinedInput;
     app.writeSlot = app.readySlot.exchange(app.writeSlot | SLOT_FRESH) & (SLOT_FRESH - 1);
     app.depthPublished++; app.depthHealthy = true;
 }
@@ -5095,7 +5580,7 @@ static bool FuseActive(const App& app)
 // Grid image of the texture at descriptor `srcDesc` (srcW x srcH) on the ml queue,
 // copied to the readback buffer. Returns the ml fence value that marks it complete
 // (0 = not submitted).
-static UINT64 SubmitGridDesc(App& app, UINT srcDesc, int srcW, int srcH, ID3D12Fence* srcFence, UINT64 srcValue)
+static UINT64 SubmitGridDesc(App& app, UINT srcDesc, int srcW, int srcH, ID3D12Fence* srcFence, UINT64 srcValue, bool readback = true)
 {
     if (!app.gridPso || !app.gridList || srcW <= 0 || srcH <= 0) return 0;
 
@@ -5116,9 +5601,12 @@ static UINT64 SubmitGridDesc(App& app, UINT srcDesc, int srcW, int srcH, ID3D12F
     cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDesc));
     cl->SetComputeRootUnorderedAccessView(2, app.gridBuf->GetGPUVirtualAddress());
     cl->Dispatch((W + 7) / 8, (H + 7) / 8, 1);
-    Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    cl->CopyBufferRegion(app.gridReadback.Get(), 0, app.gridBuf.Get(), 0, (UINT64)W * H * sizeof(uint32_t));
-    Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (readback)
+    {
+        Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cl->CopyBufferRegion(app.gridReadback.Get(), 0, app.gridBuf.Get(), 0, (UINT64)W * H * sizeof(uint32_t));
+        Transition(cl, app.gridBuf.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
     cl->Close();
 
     if (srcFence) app.mlQueue->Wait(srcFence, srcValue);
@@ -5129,10 +5617,10 @@ static UINT64 SubmitGridDesc(App& app, UINT srcDesc, int srcW, int srcH, ID3D12F
     return app.gridLast;
 }
 
-static UINT64 SubmitGrid(App& app, const SourceRef& src)
+static UINT64 SubmitGrid(App& app, const SourceRef& src, bool readback = true)
 {
     if (!src) return 0;
-    const UINT64 done = SubmitGridDesc(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
+    const UINT64 done = SubmitGridDesc(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value, readback);
     if (done) app.sources.MarkRead(src, SourceFrames::Reader::Model, done);
     return done;
 }
@@ -5147,6 +5635,24 @@ static bool EnsureMotion(App& app)
     if (app.motion.Init(app.device.Get(), W, H, &Log)) return true;
     Log("EnsureMotion: no hardware motion estimation on this GPU; steady depth and model fusion have no effect");
     return false;
+}
+
+static void ReportDepthFeatures(App& app)
+{
+    std::string message;
+    if (app.fuseEnabled.load() && app.opt.model != &kZipDepth)
+        message = "Depth features: unavailable; fusion requires ZipDepth as the main model";
+    else if (app.fuseEnabled.load() && app.anchorFailed.load())
+        message = "Depth features: unavailable; anchor depth model failed";
+    else if ((app.steadyEnabled.load() || app.fuseEnabled.load()) && app.motionTried && !app.motion.ok())
+        message = "Depth features: unavailable; headset GPU has no usable hardware motion estimator";
+    else
+        message = "Depth features: available";
+    if (message != app.depthFeaturesMessage)
+    {
+        Log("%s", message.c_str());
+        app.depthFeaturesMessage = std::move(message);
+    }
 }
 
 // Anchor thread: Depth Anything V2 on its own queue on the depth GPU, fed the newest
@@ -5165,8 +5671,17 @@ static void AnchorMain(App* app)
     ComPtr<IDMLDevice> dml;
     OrtSession* session = nullptr;
     OrtMemoryInfo* cpu = nullptr;
+    OrtValue* gpuIn = nullptr;
+    void* gpuAllocation = nullptr;
+    std::unique_ptr<gpudepth::Processor> gpu;
+    std::unique_ptr<gpudepth::ModelOutput> gpuOut;
+    std::unique_ptr<gpudepth::Bridge> colourBridge, depthBridge;
+    ComPtr<ID3D12Resource> gpuColour, gpuInput;
     auto cleanup = [&]()
     {
+        gpuOut.reset();
+        if (gpuIn) { ort->ReleaseValue(gpuIn); gpuIn = nullptr; }
+        if (gpuAllocation) { if (auto* s = app->dmlApi->FreeGPUAllocation(gpuAllocation)) ort->ReleaseStatus(s); gpuAllocation = nullptr; }
         if (cpu) { ort->ReleaseMemoryInfo(cpu); cpu = nullptr; }
         if (session) { ort->ReleaseSession(session); session = nullptr; }
     };
@@ -5180,6 +5695,7 @@ static void AnchorMain(App* app)
     OrtStatus* st = ort->SetIntraOpNumThreads(so, 1);
     for (const char* key : { "session.intra_op.allow_spinning", "session.inter_op.allow_spinning" })
         if (!st) st = ort->AddSessionConfigEntry(so, key, "0");
+    if (!st) st = ort->AddSessionConfigEntry(so, "session.disable_cpu_ep_fallback", "1");
     if (!st) st = app->dmlApi->SessionOptionsAppendExecutionProvider_DML1(so, dml.Get(), queue.Get());
     if (!st) st = ort->CreateSession(app->env, ModelPath(spec.file).c_str(), so, &session);
     ort->ReleaseSessionOptions(so);
@@ -5195,6 +5711,9 @@ static void AnchorMain(App* app)
     double lastStart = 0, nextLog = NowSeconds() + 5.0;
     const double minInterval = app->secondGpu ? 0.0 : 0.1;
     uint64_t nextId = 1;
+    uint64_t gpuLayout = 0;
+    uint64_t gpuEpoch = 0;
+    double gpuTime = 0;
     int failures = 0;
     while (!app->stop.load())
     {
@@ -5209,8 +5728,69 @@ static void AnchorMain(App* app)
             job = std::move(app->anchorJob);
             app->anchorJob.valid = false;
         }
-        if (!FuseActive(*app) || job.rgba.size() != (size_t)W * H) continue;
+        if (!FuseActive(*app) || (!job.gpu && job.rgba.size() != (size_t)W * H)) continue;
         lastStart = NowSeconds();
+
+        if (job.gpu)
+        {
+            try
+            {
+                if (!gpu)
+                {
+                    gpu = std::make_unique<gpudepth::Processor>();
+                    gpu->SetCompiler(&CompileCs);
+                    gpu->Init(app->inferDevice.Get(), W, H);
+                    gpuColour = gpu->Image();
+                    gpuInput = gpudepth::Buffer(app->inferDevice.Get(), (UINT64)3 * W * H * 4);
+                    colourBridge = std::make_unique<gpudepth::Bridge>();
+                    colourBridge->Init(app->device.Get(), app->inferDevice.Get(), (UINT64)W * H * 4);
+                    depthBridge = std::make_unique<gpudepth::Bridge>();
+                    depthBridge->Init(app->inferDevice.Get(), app->device.Get(), (UINT64)W * H * 4);
+                    gpudepth::OrtCheck(ort, app->dmlApi->CreateGPUAllocationFromD3DResource(gpuInput.Get(), &gpuAllocation), "anchor input allocation");
+                    OrtMemoryInfo* memory = nullptr;
+                    gpudepth::OrtCheck(ort, ort->CreateMemoryInfo("DML", OrtDeviceAllocator, 0, OrtMemTypeDefault, &memory), "anchor memory");
+                    auto* tensorStatus = ort->CreateTensorWithDataAsOrtValue(memory, gpuAllocation, (size_t)3 * W * H * 4, dims, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &gpuIn);
+                    ort->ReleaseMemoryInfo(memory);
+                    gpudepth::OrtCheck(ort, tensorStatus, "anchor input tensor");
+                    gpuOut = std::make_unique<gpudepth::ModelOutput>();
+                    gpuOut->Init(ort, app->dmlApi, session, app->inferDevice.Get(), gpuIn, spec.inName, spec.outName, (size_t)W * H);
+                }
+                colourBridge->Transfer(job.gpu->rgba.Get(), gpuColour.Get(), (UINT64)W * H * 4);
+                gpu->work.Begin();
+                auto constants = gpu->Size(); constants.flags = 1;
+                gpu->Dispatch("Input", constants, { gpuColour.Get() }, { gpuInput.Get() });
+                gpu->work.Submit(); gpu->work.Wait();
+                gpuOut->Run(session);
+                gpu->work.Begin();
+                if (gpuLayout != job.gpu->layout || gpuEpoch != job.gpu->epoch)
+                {
+                    auto clear = gpu->Size(); clear.count = 4;
+                    gpu->Dispatch("Clear", clear, {}, { gpu->range.Get() });
+                    gpuLayout = job.gpu->layout; gpuEpoch = job.gpu->epoch; gpuTime = 0;
+                }
+                const double now = NowSeconds();
+                gpu->Normalize(gpuOut->resource.Get(), W, H, (float)(gpuTime ? now - gpuTime : 1), (float)app->opt.smoothTau, app->opt.smooth);
+                gpuTime = now;
+                gpu->Finish(0, 0); gpu->work.Submit();
+                const auto summary = gpu->ReadSummary();
+                if (summary.invalid) throw std::runtime_error("anchor returned non-finite depth");
+                depthBridge->Transfer(gpu->nearMap.Get(), job.gpu->nearMap.Get(), (UINT64)W * H * 4);
+                {
+                    std::lock_guard<std::mutex> lock(app->anchorMutex);
+                    app->anchorResult.gpu = std::move(job.gpu);
+                    app->anchorResult.seq = job.seq; app->anchorResult.time = job.time;
+                    app->anchorResult.id = nextId++;
+                }
+                app->anchorPasses++; failures = 0;
+            }
+            catch (const std::exception& e)
+            {
+                Log("Depth features: unavailable; GPU anchor failed: %s", e.what());
+                app->anchorFailed = true;
+                break;
+            }
+            continue;
+        }
 
         const size_t plane = (size_t)W * H;
         for (size_t i = 0; i < plane; i++)
@@ -5253,6 +5833,7 @@ static void AnchorMain(App* app)
         for (size_t i = 0; i < plane; i++) nearMap.v[i] = std::clamp((raw[i] - lo) * inv, 0.0f, 1.0f);
         {
             std::lock_guard<std::mutex> lock(app->anchorMutex);
+            app->anchorResult.gpu.reset();
             app->anchorResult.nearMap = std::move(nearMap);
             app->anchorResult.luma = std::move(job.luma);
             app->anchorResult.seq = job.seq;
@@ -5327,6 +5908,7 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
         {
             std::lock_guard<std::mutex> lock(app.anchorMutex);
             app.anchorJob.rgba = std::move(rgba);
+            app.anchorJob.gpu.reset();
             app.anchorJob.luma = luma;
             app.anchorJob.seq = src->seq;
             app.anchorJob.time = src->time;
@@ -5339,7 +5921,7 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
         bool fresh = false;
         {
             std::lock_guard<std::mutex> lock(app.anchorMutex);
-            if (app.anchorResult.id != 0 && app.anchorResult.id != app.anchorUsedId)
+            if (!app.anchorResult.gpu && app.anchorResult.id != 0 && app.anchorResult.id != app.anchorUsedId)
             {
                 app.anchorCurrent = app.anchorResult;
                 fresh = true;
@@ -5437,14 +6019,253 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
     app.postMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
 }
 
+static void PublishGpuDepth(App& app, const SourceRef& src, double modelMs, bool reused = false)
+{
+    auto& gpu = *app.gpuDepth;
+    DepthSlot& slot = app.slots[app.writeSlot];
+    slot.edgeRefinedInput = app.edgeRefinementEnabled.load();
+    gpu.work.Begin();
+    gpu.work.Copy(slot.gpuNear.Get(), slot.edgeRefinedInput ? gpu.nearMap.Get() : gpu.finalMap.Get(),
+        (UINT64)W * H * 4, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+    slot.gpuValue = gpu.work.Submit();
+    gpu.work.Wait(); // slot publication also retires its source buffers for the next pass
+    slot.gpuFence = gpu.work.fence;
+    slot.source = src; slot.sceneTime = src->time; slot.completeTime = NowSeconds();
+    slot.modelMs = modelMs; slot.lo = app.gpuSummary.lo; slot.hi = app.gpuSummary.hi; slot.reused = reused;
+    slot.p10 = app.gpuSummary.p10; slot.p50 = app.gpuSummary.p50; slot.p90 = app.gpuSummary.p90;
+    app.lastDepthSource = src; app.lastDepthEdgeRefinedInput = slot.edgeRefinedInput;
+    app.writeSlot = app.readySlot.exchange(app.writeSlot | SLOT_FRESH) & (SLOT_FRESH - 1);
+    app.depthPublished++; app.depthHealthy = true;
+}
+
+static bool ComputeGpuAndPublish(App& app, const SourceRef& src, std::vector<float>& diagnostic)
+{
+    const UINT64 bytes = (UINT64)W * H * 4;
+    if (!app.gpuDepth)
+    {
+        app.gpuDepth = std::make_unique<gpudepth::Processor>();
+        app.gpuDepth->SetCompiler(&CompileCs);
+        app.gpuDepth->Init(app.device.Get(), W, H);
+        app.gpuRawLocal = gpudepth::Buffer(app.device.Get(), bytes);
+        app.gpuDepthReturn = std::make_unique<gpudepth::Bridge>();
+        app.gpuDepthReturn->Init(app.inferDevice.Get(), app.device.Get(), bytes);
+        Log("Depth pipeline: GPU; model output stays on GPU, post-processing on headset GPU, tracker readback 5.5 KB%s",
+            app.secondGpu ? ", inference on selected depth GPU with GPU return transfer" : "");
+    }
+    auto& gpu = *app.gpuDepth;
+    const auto& spec = *app.opt.model;
+    const double start = NowSeconds();
+    if (app.frameTransfer && app.smallTex[src->index])
+    {
+        const auto sent = SubmitFrameTransfer(app, app.smallTex[src->index].Get(), SourceFence(app), src->value);
+        app.sources.MarkRead(src, SourceFrames::Reader::Transfer, sent);
+    }
+    else
+    {
+        const auto done = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
+        app.sources.MarkRead(src, SourceFrames::Reader::Model, done);
+    }
+    const bool steadyRequested = app.steadyEnabled.load();
+    const bool fuseRequested = FuseActive(app);
+    const bool motion = (steadyRequested || fuseRequested) && EnsureMotion(app);
+    if ((steadyRequested || fuseRequested) && !motion && !app.motionUnavailableLogged)
+    {
+        Log("Depth features: unavailable; selected headset GPU has no hardware motion estimator");
+        app.motionUnavailableLogged = true;
+    }
+    const UINT64 gridDone = motion ? SubmitGrid(app, src, false) : 0;
+    app.gpuOutput->Run(app.ortSession);
+    app.gpuDepthReturn->Transfer(app.gpuOutput->resource.Get(), app.gpuRawLocal.Get(), (UINT64)spec.inW * spec.inH * 4);
+    const double modelMs = (NowSeconds() - start) * 1000;
+    app.passMs.push_back(modelMs);
+    const double postStart = NowSeconds();
+    gpu.work.Begin(); gpu.work.After(app.mlFence.Get(), gridDone);
+    gpu.BeginStage(0);
+    if (app.gpuLayout != src->layout || app.gpuLastTime == 0)
+    {
+        auto clear = gpu.Size(); clear.count = 4;
+        gpu.Dispatch("Clear", clear, {}, { gpu.range.Get() });
+        app.gpuLayout = src->layout; app.gpuSteadyHave = false; app.gpuAnchorId = 0;
+    }
+    const double now = NowSeconds();
+    gpu.Normalize(app.gpuRawLocal.Get(), spec.inW, spec.inH, (float)(app.gpuLastTime ? now - app.gpuLastTime : 1),
+        (float)app.opt.smoothTau, app.opt.smooth);
+    app.gpuLastTime = now;
+    std::shared_ptr<App::GpuAnchorFrame> job;
+    if (motion)
+    {
+        auto c = gpu.Size();
+        gpu.Dispatch("Luma", c, { app.gridBuf.Get() }, { gpu.luma.Get() });
+        if (!app.gpuPackedLuma) app.gpuPackedLuma = gpudepth::Buffer(app.device.Get(), (UINT64)app.motion.lumaPitch() * H);
+        c.pitch = app.motion.lumaPitch();
+        gpu.Dispatch("PackLuma", c, { gpu.luma.Get() }, { app.gpuPackedLuma.Get() });
+        gpudepth::Transition(gpu.work.list.Get(), app.gpuPackedLuma.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+        if (fuseRequested)
+        {
+            job = std::make_shared<App::GpuAnchorFrame>();
+            job->rgba = gpu.Image(); job->luma = gpu.Image(); job->fast = gpu.Image(); job->nearMap = gpu.Image();
+            job->seq = src->seq; job->layout = src->layout; job->time = src->time;
+            job->epoch = app.gpuModelEpoch;
+            gpu.work.Copy(job->rgba.Get(), app.gridBuf.Get(), bytes);
+            gpu.work.Copy(job->luma.Get(), gpu.luma.Get(), bytes);
+            gpu.work.Copy(job->fast.Get(), gpu.nearMap.Get(), bytes);
+        }
+    }
+    gpu.EndStage(0);
+    gpu.work.Submit(); gpu.work.Wait();
+    int previousIndex = -1, anchorIndex = -1, pairCount = 0;
+    bool anchorSameFrame = false, useAnchor = false;
+    MotionEstimator::Pair pairs[2];
+    if (motion)
+    {
+        if (!app.motion.UploadGpu(app.gpuMotionSlot, app.gpuPackedLuma.Get(), gpu.work.fence.Get(), gpu.work.value))
+            throw std::runtime_error("GPU motion luma copy failed");
+        // The copy has retired before PackLuma writes this buffer again.
+        gpu.work.Begin();
+        gpudepth::Transition(gpu.work.list.Get(), app.gpuPackedLuma.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        gpu.work.Submit(); gpu.work.Wait();
+        if (job)
+        {
+            EnsureAnchor(app);
+            std::shared_ptr<App::GpuAnchorFrame> fresh;
+            uint64_t freshId = 0;
+            {
+                std::lock_guard<std::mutex> lock(app.anchorMutex);
+                app.anchorJob.gpu = job; app.anchorJob.seq = job->seq; app.anchorJob.time = job->time; app.anchorJob.valid = true;
+                if (app.anchorResult.gpu && app.anchorResult.id != app.gpuAnchorId && app.anchorResult.gpu->layout == src->layout &&
+                    app.anchorResult.gpu->epoch == app.gpuModelEpoch)
+                { fresh = app.anchorResult.gpu; freshId = app.anchorResult.id; }
+            }
+            app.anchorCv.notify_one();
+            if (fresh)
+            {
+                gpu.work.Begin();
+                gpu.work.Copy(gpu.anchor.Get(), fresh->nearMap.Get(), bytes);
+                gpu.work.Copy(gpu.anchorLuma.Get(), fresh->luma.Get(), bytes);
+                gpu.Fit(fresh->fast.Get(), fresh->nearMap.Get(), gpu.anchorFit.Get());
+                auto c = gpu.Size(); c.pitch = app.motion.lumaPitch();
+                gpu.Dispatch("PackLuma", c, { gpu.anchorLuma.Get() }, { app.gpuPackedLuma.Get() });
+                gpudepth::Transition(gpu.work.list.Get(), app.gpuPackedLuma.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+                gpu.work.Submit(); gpu.work.Wait();
+                if (!app.motion.UploadGpu(2, app.gpuPackedLuma.Get(), gpu.work.fence.Get(), gpu.work.value)) throw std::runtime_error("anchor luma copy failed");
+                gpu.work.Begin();
+                gpudepth::Transition(gpu.work.list.Get(), app.gpuPackedLuma.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                gpu.work.Submit(); gpu.work.Wait();
+                app.gpuAnchorId = freshId; app.anchorCurrent.gpu = fresh;
+            }
+            if (app.gpuAnchorId && app.anchorCurrent.gpu)
+            {
+                const double age = src->time - app.anchorCurrent.gpu->time;
+                useAnchor = age >= 0 && age <= FUSE_MAX_AGE;
+                anchorSameFrame = src->seq == app.anchorCurrent.gpu->seq;
+                if (useAnchor && !anchorSameFrame) { anchorIndex = pairCount; pairs[pairCount++] = { app.gpuMotionSlot, 2 }; }
+            }
+        }
+        else app.gpuAnchorId = 0;
+        if (steadyRequested && app.gpuSteadyHave && app.gpuPreviousSeq != src->seq) { previousIndex = pairCount; pairs[pairCount++] = { app.gpuMotionSlot, 1 - app.gpuMotionSlot }; }
+        if (pairCount && !app.motion.EstimateManyGpu(pairs, pairCount)) throw std::runtime_error("GPU motion estimation failed");
+    }
+    gpu.work.Begin();
+    if (motion) gpu.work.After(app.motion.gpuFence(), app.motion.gpuFenceValue());
+    gpu.BeginStage(1);
+    for (int i = 0; i < pairCount; i++) gpudepth::Transition(gpu.work.list.Get(), app.motion.gpuVectors(i), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (motion && fuseRequested && app.gpuAnchorId)
+    {
+        gpu.Fuse(anchorIndex >= 0 ? app.motion.gpuVectors(anchorIndex) : nullptr, app.motion.vectorPitch(), app.motion.blocksW(), app.motion.blocksH(), anchorSameFrame, useAnchor);
+        if (useAnchor) app.postFused++;
+    }
+    if (previousIndex >= 0)
+    {
+        gpu.Steady(app.motion.gpuVectors(previousIndex), app.motion.vectorPitch(), app.motion.blocksW(), app.motion.blocksH());
+        app.postSteadied++;
+    }
+    for (int i = 0; i < pairCount; i++) gpudepth::Transition(gpu.work.list.Get(), app.motion.gpuVectors(i), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+    gpu.Finish(app.opt.dilate >= 0 ? app.opt.dilate : spec.dilateH, app.opt.dilateV >= 0 ? app.opt.dilateV : spec.dilateV);
+    gpu.EndStage(1);
+    gpu.work.Submit();
+    app.gpuSummary = gpu.ReadSummary();
+    app.gpuStageMs = gpu.StageMilliseconds();
+    if (app.opt.selfTestOnly && app.testGpuDepthFailure)
+    {
+        app.testGpuDepthFailure = false;
+        throw std::runtime_error("self-test injected GPU post-processing failure after retirement");
+    }
+    if (app.gpuSummary.invalid) throw std::runtime_error("model returned non-finite GPU depth");
+    app.gpuSteadyHave = motion && steadyRequested;
+    app.gpuPreviousSeq = src->seq;
+    if (app.gpuSteadyHave) app.gpuMotionSlot = 1 - app.gpuMotionSlot;
+    app.postMs.push_back((NowSeconds() - postStart) * 1000); app.postPasses++;
+    PublishGpuDepth(app, src, modelMs);
+    // Only diagnostic callers request a whole image. Normal playback reads the
+    // same tiny grid that ForegroundTracker would sample from the full image.
+    if (app.opt.selfTestOnly || app.opt.doDump || app.opt.source == SourceKind::Synthetic) diagnostic = gpu.Download(gpu.nearMap.Get());
+    if (!app.foregroundEnabled.load()) { app.foregroundTracker.Reset(); return true; }
+    if (app.foregroundLayout != src->layout) { app.foregroundTracker.Reset(); app.foregroundLayout = src->layout; }
+    DepthCrop crop;
+    const bool persistent = app.foregroundTracker.Update(app.gpuSummary.tracker, 49, 28, src->time, crop);
+    if (!persistent || app.stop.load() || !app.foregroundBudget.CanRun(NowSeconds(), (NowSeconds() - src->time) * 1000, modelMs)) return true;
+    const double cropStart = NowSeconds(); ++app.foregroundAttempts;
+    const auto prepared = SubmitPrep(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value, crop);
+    app.sources.MarkRead(src, SourceFrames::Reader::Model, prepared);
+    app.gpuOutput->Run(app.ortSession);
+    app.gpuDepthReturn->Transfer(app.gpuOutput->resource.Get(), app.gpuRawLocal.Get(), (UINT64)spec.inW * spec.inH * 4);
+    gpu.work.Begin(); auto c = gpu.Size(); c.sw = spec.inW; c.sh = spec.inH;
+    gpu.Dispatch("Resample", c, { app.gpuRawLocal.Get() }, { gpu.raw.Get() });
+    gpu.Dispatch("RangeReduce", c, { gpu.raw.Get() }, { gpu.reduction.Get() });
+    c.count = (W * H + 255) / 256;
+    gpu.Dispatch("RangeFinish", c, { gpu.reduction.Get() }, { gpu.scratch[13].Get() });
+    c.p0 = crop.x; c.p1 = crop.y; c.p2 = crop.size;
+    gpu.Dispatch("CropFit", c, { gpu.raw.Get(), gpu.nearMap.Get(), gpu.scratch[13].Get() }, { gpu.scratch[15].Get() });
+    gpu.Dispatch("CropApply", c, { gpu.raw.Get(), gpu.nearMap.Get(), gpu.scratch[15].Get() }, { gpu.scratch[14].Get() });
+    gpu.work.Copy(gpu.nearMap.Get(), gpu.scratch[14].Get(), bytes);
+    gpu.Finish(app.opt.dilate >= 0 ? app.opt.dilate : spec.dilateH, app.opt.dilateV >= 0 ? app.opt.dilateV : spec.dilateV, true);
+    gpu.work.Submit(); app.gpuSummary = gpu.ReadSummary();
+    const double cost = (NowSeconds() - cropStart) * 1000; app.foregroundBudget.Complete(NowSeconds(), cost);
+    if (app.gpuSummary.cropAccepted && !app.stop.load() && app.foregroundEnabled.load() && NowSeconds() - src->time < .20)
+    { PublishGpuDepth(app, src, modelMs + cost); ++app.foregroundAccepted; }
+    return true;
+}
+
 static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>& nearScratch)
 {
-    if (!src) return false;
+    if (!src || app.gpuDepthFatal) return false;
     if (app.testDepthFailuresLeft > 0)
     {
         --app.testDepthFailuresLeft;
         Log("ComputeAndPublish: injected depth failure (%d remaining)", app.testDepthFailuresLeft);
         return false;
+    }
+
+    if (!app.opt.cpuDepth && !app.gpuDepthFailed && app.gpuOutput && !app.opt.useTruth)
+    {
+        try { const bool ok = ComputeGpuAndPublish(app, src, nearScratch); ReportDepthFeatures(app); return ok; }
+        catch (const std::exception& e)
+        {
+            app.gpuDepthFailed = true; app.gpuSteadyHave = false; app.gpuAnchorId = 0;
+            try
+            {
+                // The CPU reference reuses the source grid and model input. It
+                // is safe only after every queue that might read them retires.
+                if (app.gpuOutput) app.gpuOutput->Synchronize();
+                gpudepth::RetireQueue(app.inferDevice.Get(), app.inferQueue.Get());
+                gpudepth::RetireQueue(app.device.Get(), app.mlQueue.Get());
+                gpudepth::RetireQueue(app.device.Get(), app.xferQueue.Get());
+                if (app.gpuDepth) app.gpuDepth->work.Wait();
+                if (app.gpuDepthReturn) app.gpuDepthReturn->Wait();
+                if (!app.motion.Retire()) throw std::runtime_error("motion queue did not retire");
+                if (FAILED(app.device->GetDeviceRemovedReason()) || FAILED(app.inferDevice->GetDeviceRemovedReason()))
+                    throw std::runtime_error("D3D12 device removed");
+            }
+            catch (const std::exception& retirement)
+            {
+                app.gpuDepthFatal = true;
+                app.depthHealthy = false;
+                Log("Depth features: unavailable; GPU work could not retire safely (%s); restart playback", retirement.what());
+                return false;
+            }
+            Log("Depth pipeline: CPU fallback; %s", e.what());
+            WaitDepthIdle(app);
+        }
     }
 
     auto m0 = std::chrono::steady_clock::now();
@@ -5478,6 +6299,7 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     for (size_t i = 0; i < nearScratch.size(); i++)
         nearScratch[i] = std::min(1.0f, std::max(0.0f, (app.rawDepth[i] - lo) * inv));
     PostProcessDepth(app, src, gridDone, nearScratch);
+    ReportDepthFeatures(app);
 
     // Make global depth available immediately; an optional crop must never hold
     // back this result or mutate a slot the render thread may be reading.
@@ -5544,6 +6366,18 @@ static bool SwitchModel(App& app, const ModelSpec* next)
     return true;
 }
 
+// Rebuild only the published representation when capture is idle. This also
+// handles a renderer allocation failure turning the effective edge option off.
+static bool RepublishDepthMode(App& app)
+{
+    if (!app.lastDepthSource || app.lastDepthEdgeRefinedInput == app.edgeRefinementEnabled.load()) return false;
+    const SourceRef source = app.lastDepthSource;
+    if (app.gpuDepth && !app.gpuDepthFailed) PublishGpuDepth(app, source, 0.0, true);
+    else if (!app.lastNear.empty()) PublishDepth(app, source, app.lastNear, app.lastLo, app.lastHi, 0.0, true);
+    else return false;
+    return true;
+}
+
 static void WorkerMain(App* app)
 {
     g_threadName = "worker";
@@ -5569,18 +6403,30 @@ static void WorkerMain(App* app)
     while (!app->stop.load())
     {
         const ModelSpec* wanted = app->requestedModel.load();
-        if (wanted && wanted != app->opt.model && !SwitchModel(*app, wanted))
-        { app->depthHealthy = false; Log("WorkerMain: no depth model; flat viewing"); break; }
+        if (wanted && wanted != app->opt.model)
+        {
+            if (!SwitchModel(*app, wanted))
+            { app->depthHealthy = false; Log("WorkerMain: no depth model; flat viewing"); break; }
+            lastSeq = 0; haveEstimate = false;
+        }
 
         SourceRef src = app->sources.Latest();
         // A captured desktop that is not changing delivers no new frames - do not
         // burn the GPU recomputing identical depth. (Image/synthetic keep running:
         // they double as the throughput benchmark.)
-        if (!src || (app->opt.source == SourceKind::Capture && src->seq == lastSeq)) { Sleep(2); continue; }
-        if (app->opt.source == SourceKind::Capture && haveEstimate && src->changedTotal >= 0 && src->layout == estimateLayout &&
-            estimateModel == app->opt.model && !app->lastNear.empty() && src->changedTotal - estimateChanged < kReuseBelow)
+        if (!src) { Sleep(2); continue; }
+        if (app->opt.source == SourceKind::Capture && src->seq == lastSeq)
         {
-            PublishDepth(*app, src, app->lastNear, app->lastLo, app->lastHi, 0.0, true);
+            // A toggle must take effect even when capture is idle. Preserve the
+            // colour/depth pairing from the completed estimate, not Latest().
+            RepublishDepthMode(*app);
+            Sleep(2); continue;
+        }
+        if (app->opt.source == SourceKind::Capture && haveEstimate && src->changedTotal >= 0 && src->layout == estimateLayout &&
+            estimateModel == app->opt.model && (!app->lastNear.empty() || (app->gpuDepth && !app->gpuDepthFailed)) && src->changedTotal - estimateChanged < kReuseBelow)
+        {
+            if (app->gpuDepth && !app->gpuDepthFailed) PublishGpuDepth(*app, src, 0.0, true);
+            else PublishDepth(*app, src, app->lastNear, app->lastLo, app->lastHi, 0.0, true);
             lastSeq = src->seq;
             ++reusedCount;
             if (NowSeconds() >= nextReuseLog)
@@ -5594,6 +6440,11 @@ static void WorkerMain(App* app)
         if (!ComputeAndPublish(*app, src, nearScratch))
         {
             app->depthHealthy = false;
+            if (app->gpuDepthFatal)
+            {
+                Log("WorkerMain: GPU retirement failed; depth stopped without reusing inputs");
+                break;
+            }
             app->smoother.have = false;
             app->foregroundTracker.Reset();
             ++failures;
@@ -5621,6 +6472,10 @@ static void WorkerMain(App* app)
             auto pct = [&](double q) { return v[std::min(v.size() - 1, (size_t)(q * v.size()))]; };
             Log("Worker: %zu passes in 2 s | pass ms p50 %.1f p95 %.1f max %.1f | %s", v.size(), pct(.5), pct(.95), v.back(),
                 !app->secondGpu ? "one GPU" : app->frameTransfer ? "second GPU, copy-engine frames" : "second GPU, prep on headset GPU");
+            if (app->gpuDepth && !app->gpuDepthFailed)
+                Log("Depth diagnostics: spread %.3f (p10 %.3f, p50 %.3f, p90 %.3f); GPU normalize/luma %.2f ms, steady/fuse/publish prep %.2f ms",
+                    app->gpuSummary.p90 - app->gpuSummary.p10, app->gpuSummary.p10, app->gpuSummary.p50, app->gpuSummary.p90,
+                    app->gpuStageMs[0], app->gpuStageMs[1]);
             v.clear();
             if (app->postPasses > 0 && !app->postMs.empty())
             {
@@ -5937,9 +6792,36 @@ static bool SelfTestSteadyFuse(App& app, const std::vector<unsigned char>& scene
 // results. Exercises the grid pass, motion estimator, anchor thread and CPU maths.
 static bool FirstSourceFrame(App& app);
 
+static bool SelfTestGpuDepthHandoff(App& app)
+{
+    const DepthSlot& slot = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
+    std::vector<float> expected;
+    if (slot.gpuValue && app.gpuDepth)
+        expected = app.gpuDepth->Download(slot.edgeRefinedInput ? app.gpuDepth->nearMap.Get() : app.gpuDepth->finalMap.Get());
+    else expected.assign(slot.nearMapped, slot.nearMapped + (size_t)W * H);
+    auto readback = gpudepth::Buffer(app.device.Get(), (UINT64)W * H * 4, D3D12_HEAP_TYPE_READBACK);
+    WaitFence(app, app.fenceVal);
+    gpudepth::Check(app.cmdAlloc[0]->Reset(), "handoff allocator");
+    gpudepth::Check(app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr), "handoff list");
+    RecordDepthSlot(app, slot);
+    Transition(app.cmdList.Get(), app.nearBuf.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    app.cmdList->CopyBufferRegion(readback.Get(), 0, app.nearBuf.Get(), 0, (UINT64)W * H * 4);
+    Transition(app.cmdList.Get(), app.nearBuf.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    gpudepth::Check(app.cmdList->Close(), "handoff close");
+    ID3D12CommandList* lists[] = { app.cmdList.Get() };
+    app.gfxQueue->ExecuteCommandLists(1, lists);
+    gpudepth::Check(app.gfxQueue->Signal(app.fence.Get(), ++app.fenceVal), "handoff signal");
+    WaitFence(app, app.fenceVal);
+    void* mapped = nullptr;
+    gpudepth::Check(readback->Map(0, nullptr, &mapped), "handoff readback");
+    const bool equal = memcmp(mapped, expected.data(), expected.size() * sizeof(float)) == 0;
+    readback->Unmap(0, nullptr);
+    Log("SelfTestGpuDepthHandoff: %s - published %s slot -> render nearBuf, exact %zu floats", equal ? "PASS" : "FAIL", slot.gpuValue ? "GPU" : "CPU", expected.size());
+    return equal;
+}
+
 static bool SelfTestPipeline(App& app)
 {
-    if (!app.steadyEnabled.load() && !app.fuseEnabled.load()) return true;
     Log("SelfTestPipeline: enter (steady %d, fuse %d)", (int)app.steadyEnabled.load(), (int)app.fuseEnabled.load());
     if (!FirstSourceFrame(app)) { Log("SelfTestPipeline: FAIL no source frame"); return false; }
 
@@ -5949,9 +6831,25 @@ static bool SelfTestPipeline(App& app)
     const double end = NowSeconds() + 6.0;
     while (NowSeconds() < end)
     {
+        if (app.opt.source == SourceKind::Synthetic)
+        {
+            std::vector<unsigned char> picture;
+            MakeScene(picture, (passes + 1) / 30.0);
+            WaitFence(app, app.fenceVal);
+            gpudepth::Check(app.cmdAlloc[0]->Reset(), "pipeline source allocator");
+            gpudepth::Check(app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr), "pipeline source list");
+            auto frame = RecordCpuSource(app, picture, 0);
+            if (!frame) { Log("SelfTestPipeline: FAIL source ring full"); return false; }
+            gpudepth::Check(app.cmdList->Close(), "pipeline source close");
+            ID3D12CommandList* lists[] = { app.cmdList.Get() };
+            app.gfxQueue->ExecuteCommandLists(1, lists);
+            gpudepth::Check(app.gfxQueue->Signal(app.fence.Get(), ++app.fenceVal), "pipeline source signal");
+            app.sources.Publish(frame, app.fenceVal, NowSeconds());
+        }
         SourceRef src = app.sources.Latest();
         if (!src) { Sleep(5); continue; }
         if (!ComputeAndPublish(app, src, nearMap)) { Log("SelfTestPipeline: FAIL depth pass"); return false; }
+        if (passes < 2 && !SelfTestGpuDepthHandoff(app)) return false;
         passes++;
         for (float v : nearMap) if (!std::isfinite(v) || v < 0 || v > 1) { bad++; break; }
         steadied += app.postSteadied; fused += app.postFused;
@@ -5966,12 +6864,56 @@ static bool SelfTestPipeline(App& app)
         app.postStageMs[0] / passes, app.postStageMs[1] / passes, app.postStageMs[2] / passes, app.postStageMs[3] / passes,
         app.postStageMs[4] / passes, app.postStageMs[5] / passes);
     const bool fuseOk = !FuseActive(app) || (anchors > 0 && fused > 0);
-    const bool ok = passes > 20 && bad == 0 && !postMs.empty() && fuseOk;
+    const bool needsPost = app.steadyEnabled.load() || FuseActive(app) || (app.gpuDepth && !app.gpuDepthFailed);
+    const bool expectedGpu = !app.opt.cpuDepth && !app.opt.useTruth;
+    const bool ok = passes > 20 && bad == 0 && (!needsPost || !postMs.empty()) && fuseOk && (!expectedGpu || !app.gpuDepthFailed);
     Log("SelfTestPipeline: exit %s - %u passes, %u out of range, post ms p50 %.1f p95 %.1f, steadied %u, fused %u, anchor passes %u%s",
         ok ? "PASS" : "FAIL", passes, bad, postMs.empty() ? 0.0 : postMs[postMs.size() / 2],
         postMs.empty() ? 0.0 : postMs[std::min(postMs.size() - 1, postMs.size() * 95 / 100)], steadied, fused, anchors,
         app.motion.ok() ? "" : " (no motion estimator)");
     return ok;
+}
+
+// Real model switches and the explicit recovery contract, without an XR session.
+// Runs last because the failure-injection case deliberately leaves CPU fallback on.
+static bool SelfTestGpuLifecycle(App& app)
+{
+    Log("SelfTestGpuLifecycle: enter");
+    const ModelSpec* original = app.opt.model;
+    const ModelSpec* other = original == &kZipDepth ? &kDepthAnythingV2 : &kZipDepth;
+    std::vector<float> depth;
+    auto check = [&]() {
+        if (!ComputeAndPublish(app, app.sources.Latest(), depth) || depth.size() != (size_t)W * H) return false;
+        for (float v : depth) if (!std::isfinite(v) || v < 0 || v > 1) return false;
+        return SelfTestGpuDepthHandoff(app);
+    };
+    auto checkEdge = [&]() {
+        const SourceRef source = app.lastDepthSource;
+        const bool originalEdge = app.edgeRefinementEnabled.load();
+        for (bool mode : { !originalEdge, originalEdge })
+        {
+            app.edgeRefinementEnabled = mode;
+            if (!RepublishDepthMode(app)) return false;
+            const DepthSlot& slot = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
+            if (slot.edgeRefinedInput != mode || slot.source != source || !SelfTestGpuDepthHandoff(app)) return false;
+        }
+        Log("SelfTestGpuLifecycle: PASS static-frame edge toggles, original colour/depth pairing retained");
+        return true;
+    };
+    if (!SwitchModel(app, other) || !check() || !SwitchModel(app, original) || !check())
+    { Log("SelfTestGpuLifecycle: FAIL model switch"); return false; }
+    if (!checkEdge()) { Log("SelfTestGpuLifecycle: FAIL static-frame edge toggle"); return false; }
+    if (!app.opt.cpuDepth && !app.opt.useTruth)
+    {
+        if (app.gpuDepthFailed) { Log("SelfTestGpuLifecycle: FAIL unexpected fallback before injection"); return false; }
+        app.testGpuDepthFailure = true;
+        if (!check() || !app.gpuDepthFailed || app.gpuDepthFatal ||
+            app.slots[app.readySlot.load() & (SLOT_FRESH - 1)].gpuValue != 0)
+        { Log("SelfTestGpuLifecycle: FAIL CPU fallback handoff"); return false; }
+        if (!checkEdge()) { Log("SelfTestGpuLifecycle: FAIL CPU fallback edge toggle"); return false; }
+    }
+    Log("SelfTestGpuLifecycle: PASS - both model bindings switched, %s", app.opt.cpuDepth ? "CPU reference preserved" : "injected GPU failure recovered to rendered CPU depth");
+    return true;
 }
 
 // GPU warp vs the CPU reference at WxH, pixel for pixel.
@@ -6025,12 +6967,20 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
 
     std::vector<unsigned char> refColor((size_t)ROW_PITCH * H);
     std::vector<float> refDepth((size_t)(ROW_PITCH / 4) * H);
-    const float eyes[VIEWS] = { c.eye0, c.eye1 };
+    std::vector<float> referenceNear = near01;
+    if (c.edgeRefinement)
+        for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x)
+            referenceNear[(size_t)y * W + x] = stereo_enhancement::GuidedNear(scene, W, H, near01, W, H, x, y);
+    for (float& n : referenceNear) n = stereo_enhancement::DepthCurve(n, c.depthContrast);
+    const auto referenceScene = stereo_enhancement::Sharpen(scene, W, H, c.sharpness);
+    const float head = stereo_enhancement::HeadOffset(c.headOffset);
+    const float shift = stereo_enhancement::ConvergenceOffset(c.convergence);
+    const float eyes[VIEWS] = { c.eye0 + head, c.eye1 + head };
     size_t badColor = 0, badDepth = 0;
     int worstColor = 0;
     for (UINT e = 0; e < VIEWS; e++)
     {
-        WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode,
+        WarpEyeFill(referenceScene, referenceNear, eyes[e], c.scaleFocal, 1.0f, c.invZNear + shift, c.invZFar + shift, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode,
                     refColor.data(), refDepth.data(), c.subpixel != 0);
         for (int y = 0; y < H; y++)
         {
@@ -6067,6 +7017,258 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     bool ok = badColor <= tolerance && badDepth <= tolerance;
     Log("SelfTestWarp[%s]: exit %s - mismatches colour %zu depth %zu of %zu px (tolerance %zu)%s", name, ok ? "PASS" : "FAIL",
         badColor, badDepth, total, tolerance, c.subpixel ? (worstColor <= 1 ? " [sub-pixel: worst 1 bit]" : " [sub-pixel: worst > 1 bit]") : "");
+    return ok;
+}
+
+// Genuine history recovery: a textured background moves by (4,2) pixels while a
+// foreground panel moves independently. A recovered hole must use the old source
+// at that measured offset, never an unmoved old eye pixel. Also exercise repeated
+// headset frames, colour cuts and stale/layout-invalid history.
+static bool SelfTestStereoHistory(App& app, const WarpConstants& base)
+{
+    Log("SelfTestStereoHistory: enter");
+    auto& t = app.testTarget;
+    auto* dev = app.device.Get();
+    WarpConstants c = base;
+    c.temporalFill = 1; c.subpixel = 0; c.writeDepth = 0;
+    c.depthContrast = .65f; // history must carry the already-shaped depth exactly once
+    c.scaleFocal *= 4;
+    c.invZNear = 1.0f / 1.2f - 1.0f / 3.0f;
+    c.invZFar = 1.0f / 12.0f - 1.0f / 3.0f;
+    std::vector<unsigned char> oldRgb((size_t)W * H * 3), newRgb(oldRgb.size()), cutRgb(oldRgb.size());
+    std::vector<float> oldDepth((size_t)W * H, .1f), newDepth(oldDepth);
+    auto noise = [](int x, int y, int ch) -> unsigned char
+    {
+        uint32_t v = (uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u ^ (uint32_t)(ch + 1) * 83492791u;
+        v ^= v >> 13; v *= 1274126177u; v ^= v >> 16;
+        return (unsigned char)(35 + v % 185);
+    };
+    for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x)
+    {
+        const bool oldPanel = x >= 210 && x < 310 && y >= 45 && y < H - 45;
+        const bool newPanel = x >= 250 && x < 350 && y >= 45 && y < H - 45;
+        const size_t pixel = (size_t)y * W + x;
+        if (oldPanel) oldDepth[pixel] = .9f;
+        if (newPanel) newDepth[pixel] = .9f;
+        for (int ch = 0; ch < 3; ++ch)
+        {
+            oldRgb[pixel * 3 + ch] = oldPanel ? (unsigned char)(ch == 1 ? 200 : 25) : noise(x, y, ch);
+            newRgb[pixel * 3 + ch] = newPanel ? (unsigned char)(ch == 1 ? 200 : 25) : noise(x + 4, y + 2, ch);
+            cutRgb[pixel * 3 + ch] = (unsigned char)(ch == 1 ? 0 : 255);
+        }
+    }
+    ComPtr<ID3D12Resource> depthUp, statsRead, scratchRead, colorRead, timeRead;
+    float* mapped = nullptr;
+    const UINT64 scratchBytes = (UINT64)W * H * VIEWS * sizeof(uint32_t);
+    if (!MakeBuffer(dev, D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * 4, D3D12_RESOURCE_FLAG_NONE,
+        D3D12_RESOURCE_STATE_GENERIC_READ, depthUp, (void**)&mapped) ||
+        !MakeBuffer(dev, D3D12_HEAP_TYPE_READBACK, 16, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, statsRead, nullptr) ||
+        !MakeBuffer(dev, D3D12_HEAP_TYPE_READBACK, scratchBytes, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, scratchRead, nullptr)) return false;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint[VIEWS];
+    UINT64 colorBytes = 0;
+    const auto colorDesc = t.colorOut->GetDesc();
+    dev->GetCopyableFootprints(&colorDesc, 0, VIEWS, 0, footprint, nullptr, nullptr, &colorBytes);
+    if (!MakeBuffer(dev, D3D12_HEAP_TYPE_READBACK, colorBytes, D3D12_RESOURCE_FLAG_NONE,
+        D3D12_RESOURCE_STATE_COPY_DEST, colorRead, nullptr)) return false;
+    ComPtr<ID3D12QueryHeap> timer;
+    UINT64 frequency = 0;
+    D3D12_QUERY_HEAP_DESC query{}; query.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP; query.Count = 2;
+    const bool timed = SUCCEEDED(dev->CreateQueryHeap(&query, IID_PPV_ARGS(&timer))) &&
+        SUCCEEDED(app.gfxQueue->GetTimestampFrequency(&frequency)) && frequency > 0 &&
+        MakeBuffer(dev, D3D12_HEAP_TYPE_READBACK, 16, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, timeRead, nullptr);
+    t.havePrepared = false; t.historyFrame = {};
+    auto draw = [&](const std::vector<unsigned char>& rgb, const std::vector<float>& depth, const WarpHistoryFrame& frame,
+        const char* label, bool shouldRecover, bool verifyMotion) -> bool
+    {
+        if (!UploadTestSource(app, rgb)) return false;
+        memcpy(mapped, depth.data(), depth.size() * sizeof(float));
+        app.cmdAlloc[0]->Reset(); app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+        RecordUploadNear(app, depthUp.Get());
+        if (timed) app.cmdList->EndQuery(timer.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+        RecordWarp(app, t, DESC_TEST_SRC, c, frame);
+        if (timed)
+        {
+            app.cmdList->EndQuery(timer.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
+            app.cmdList->ResolveQueryData(timer.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timeRead.Get(), 0);
+        }
+        Transition(app.cmdList.Get(), t.enhancementStats.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        Transition(app.cmdList.Get(), t.scratch.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        app.cmdList->CopyBufferRegion(statsRead.Get(), 0, t.enhancementStats.Get(), 0, 16);
+        app.cmdList->CopyBufferRegion(scratchRead.Get(), 0, t.scratch.Get(), 0, scratchBytes);
+        Transition(app.cmdList.Get(), t.enhancementStats.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        Transition(app.cmdList.Get(), t.scratch.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        for (UINT eye = 0; eye < VIEWS; ++eye)
+        {
+            D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+            dst.pResource = colorRead.Get(); dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dst.PlacedFootprint = footprint[eye];
+            src.pResource = t.colorOut.Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; src.SubresourceIndex = eye;
+            app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        }
+        RecordWarpOutputsBackToUav(app, t);
+        app.cmdList->Close(); WaitFence(app, SubmitAndSignal(app));
+        uint32_t* stats = nullptr; uint32_t* scatter = nullptr; unsigned char* pixels = nullptr;
+        if (FAILED(statsRead->Map(0, nullptr, (void**)&stats)) || FAILED(scratchRead->Map(0, nullptr, (void**)&scatter)) ||
+            FAILED(colorRead->Map(0, nullptr, (void**)&pixels))) return false;
+        bool good = shouldRecover ? stats[2] > 0 : stats[2] == 0;
+        size_t recovered = 0, badMotion = 0, badColor = 0;
+        for (UINT eye = 0; eye < VIEWS; ++eye) for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x)
+        {
+            const uint32_t stored = scatter[((size_t)eye * H + y) * W + x];
+            if (!(stored & 0x80000000)) continue;
+            ++recovered;
+            const uint32_t old = stored & 0x7FFFFFFF;
+            if (old >= (uint32_t)W * H) { ++badMotion; continue; }
+            const int oldX = old % W, oldY = old / W;
+            const float eyeOffset = eye == 0 ? c.eye0 : c.eye1;
+            const float background = stereo_enhancement::DepthCurve(.1f, c.depthContrast);
+            const float shift = c.scaleFocal * eyeOffset * (c.invZFar + background * (c.invZNear - c.invZFar));
+            const int sourceX = (int)floorf(x + shift + .5f);
+            if (verifyMotion && (oldX != sourceX + 4 || oldY != y + 2)) ++badMotion;
+            const unsigned char* result = pixels + footprint[eye].Offset + (size_t)y * footprint[eye].Footprint.RowPitch + x * 4;
+            for (int ch = 0; ch < 3; ++ch)
+                if (result[ch] != oldRgb[(size_t)old * 3 + ch]) { ++badColor; break; }
+        }
+        good = good && recovered == stats[2] && badMotion == 0 && badColor == 0;
+        double milliseconds = 0;
+        if (timed)
+        {
+            UINT64* times = nullptr;
+            if (SUCCEEDED(timeRead->Map(0, nullptr, (void**)&times)))
+            { milliseconds = (times[1] - times[0]) * 1000.0 / frequency; timeRead->Unmap(0, nullptr); }
+        }
+        Log("SelfTestStereoHistory[%s]: %s, holes %u recovered %zu, bad motion %zu colour %zu, GPU %.3f ms at %dx%d",
+            label, good ? "PASS" : "FAIL", stats[1], recovered, badMotion, badColor, milliseconds, W, H);
+        statsRead->Unmap(0, nullptr); scratchRead->Unmap(0, nullptr); colorRead->Unmap(0, nullptr);
+        return good;
+    };
+    bool ok = draw(oldRgb, oldDepth, {1, 1, 1, 1.0, 1.0}, "first frame", false, false);
+    ok = draw(newRgb, newDepth, {2, 1, 2, 1.04, 1.04}, "translated background", true, true) && ok;
+    ok = draw(newRgb, newDepth, {2, 1, 2, 1.04, 1.04}, "repeated source", true, true) && ok;
+    ok = draw(cutRgb, newDepth, {3, 1, 3, 1.08, 1.08}, "scene cut", false, false) && ok;
+    ok = draw(newRgb, newDepth, {4, 2, 4, 1.12, 1.12}, "layout reset", false, false) && ok;
+    ok = draw(oldRgb, oldDepth, {5, 2, 5, 1.40, 1.40}, "stale history", false, false) && ok;
+    c.depthContrast = .25f;
+    ok = draw(newRgb, newDepth, {6, 2, 6, 1.44, 1.44}, "depth curve reset", false, false) && ok;
+    t.havePrepared = false; t.historyFrame = {};
+    Log("SelfTestStereoHistory: exit %s", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// Optional 1080p benchmark. Timings include all enhancement preparation, history
+// copies, matching and the stereo warp, and exclude test uploads/readback. It
+// alternates two different source frames so temporal filling performs its real
+// new-frame work. Run after every correctness test because it borrows the test
+// descriptors; no live session or headset is needed.
+static bool BenchStereo(App& app)
+{
+    const int bw = 1920, bh = 1080, warmup = 6, samples = 24;
+    Log("BenchStereo: enter (%dx%d, normal disparity, %d warmups + %d samples/case; synthetic source upsampled from %dx%d)",
+        bw, bh, warmup, samples, W, H);
+    WarpTarget target;
+    if (!MakeWarpTarget(app, bw, bh, DESC_TEST_TABLE, target)) return false;
+    auto* dev = app.device.Get();
+    ComPtr<ID3D12Resource> nearUp, readback;
+    float* nearMapped = nullptr;
+    if (!MakeBuffer(dev, D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * 4, D3D12_RESOURCE_FLAG_NONE,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nearUp, (void**)&nearMapped) ||
+        !MakeBuffer(dev, D3D12_HEAP_TYPE_READBACK, 32, D3D12_RESOURCE_FLAG_NONE,
+            D3D12_RESOURCE_STATE_COPY_DEST, readback, nullptr)) return false;
+    D3D12_QUERY_HEAP_DESC query{}; query.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP; query.Count = 2;
+    ComPtr<ID3D12QueryHeap> timer;
+    UINT64 frequency = 0;
+    if (FAILED(dev->CreateQueryHeap(&query, IID_PPV_ARGS(&timer))) ||
+        FAILED(app.gfxQueue->GetTimestampFrequency(&frequency)) || !frequency) return false;
+    std::vector<unsigned char> scenes[2]; std::vector<float> depths[2];
+    for (int frame = 0; frame < 2; ++frame)
+    {
+        scenes[frame].resize((size_t)W * H * 3); depths[frame].assign((size_t)W * H, .1f);
+        for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x)
+        {
+            const bool foreground = x >= 210 + frame * 30 && x < 310 + frame * 30 && y >= 45 && y < H - 45;
+            if (foreground) depths[frame][(size_t)y * W + x] = .9f;
+            for (int ch = 0; ch < 3; ++ch)
+            {
+                uint32_t hash = (uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u ^ (uint32_t)(ch + 1) * 83492791u;
+                hash ^= hash >> 13; hash *= 1274126177u; hash ^= hash >> 16;
+                scenes[frame][((size_t)y * W + x) * 3 + ch] = foreground ? (unsigned char)(ch == 1 ? 200 : 25) : (unsigned char)(35 + hash % 185);
+            }
+        }
+    }
+    struct Case { const char* name; float contrast, sharpen; bool edges, temporal; };
+    const Case cases[] = {
+        {"baseline", 0, 0, false, false}, {"depth curve", .65f, 0, false, false},
+        {"guided depth", 0, 0, true, false}, {"sharpen 50%", 0, .5f, false, false},
+        {"temporal fill", 0, 0, false, true}, {"combined", .65f, .5f, true, true},
+        {"baseline repeat", 0, 0, false, false}
+    };
+    uint64_t seq = 0;
+    bool ok = true;
+    for (const auto& test : cases)
+    {
+        WarpConstants c{};
+        c.cw = bw; c.ch = bh; c.dw = W; c.dh = H; c.doWarp = 1;
+        c.scaleFocal = bw * 3.0f / 5.7f;
+        c.invZNear = 1.0f / 1.2f - 1.0f / 3.0f; c.invZFar = 1.0f / 12.0f - 1.0f / 3.0f;
+        c.eye0 = -.0315f; c.eye1 = .0315f; c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
+        c.fillMode = FILL_MIRROR; c.mirrorTol = MIRROR_TOL; c.subpixel = 1;
+        c.depthContrast = test.contrast; c.sharpness = test.sharpen; c.edgeRefinement = test.edges; c.temporalFill = test.temporal;
+        std::vector<double> elapsed;
+        uint64_t holes = 0, recovered = 0, searches = 0;
+        target.havePrepared = false; target.historyFrame = {};
+        for (int i = 0; i < warmup + samples; ++i)
+        {
+            const int frame = i % 2;
+            if (!UploadTestSource(app, scenes[frame])) return false;
+            memcpy(nearMapped, depths[frame].data(), depths[frame].size() * sizeof(float));
+            app.cmdAlloc[0]->Reset(); app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+            RecordUploadNear(app, nearUp.Get());
+            ++seq;
+            const WarpHistoryFrame metadata{seq, 1, seq, seq / 60.0, seq / 60.0};
+            app.cmdList->EndQuery(timer.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+            RecordWarp(app, target, DESC_TEST_SRC, c, metadata);
+            app.cmdList->EndQuery(timer.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
+            app.cmdList->ResolveQueryData(timer.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, readback.Get(), 0);
+            if (test.temporal)
+            {
+                Transition(app.cmdList.Get(), target.enhancementStats.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                app.cmdList->CopyBufferRegion(readback.Get(), 16, target.enhancementStats.Get(), 0, 16);
+                Transition(app.cmdList.Get(), target.enhancementStats.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            }
+            RecordWarpOutputsBackToUav(app, target);
+            app.cmdList->Close(); WaitFence(app, SubmitAndSignal(app));
+            UINT64* values = nullptr;
+            if (FAILED(readback->Map(0, nullptr, (void**)&values)) || !values) return false;
+            if (i >= warmup)
+            {
+                elapsed.push_back((values[1] - values[0]) * 1000.0 / frequency);
+                if (test.temporal)
+                {
+                    const uint32_t* stats = (const uint32_t*)(values + 2);
+                    holes += stats[1]; recovered += stats[2]; searches += stats[3];
+                }
+            }
+            readback->Unmap(0, nullptr);
+        }
+        std::sort(elapsed.begin(), elapsed.end());
+        if (test.temporal && !recovered) ok = false;
+        Log("BenchStereo[%s]: GPU min %.3f p50 %.3f p95 %.3f ms; mean holes %llu recovered %llu searches %llu per pair%s",
+            test.name, elapsed.front(), elapsed[elapsed.size() / 2], elapsed[(elapsed.size() * 95) / 100],
+            (unsigned long long)(holes / samples), (unsigned long long)(recovered / samples), (unsigned long long)(searches / samples),
+            test.temporal && !recovered ? " [FAIL: temporal path did no recovery]" : "");
+    }
+    // Restore the original test descriptors so later cleanup/diagnostics cannot
+    // accidentally refer to these temporary benchmark resources.
+    MakeStereoDescriptors(app, app.testTarget);
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+    uav.Format = DXGI_FORMAT_R8G8B8A8_UNORM; uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+    uav.Texture2DArray.ArraySize = VIEWS;
+    dev->CreateUnorderedAccessView(app.testTarget.colorOut.Get(), nullptr, &uav, CpuDesc(app, DESC_TEST_TABLE + 1));
+    uav.Format = DXGI_FORMAT_R32_FLOAT;
+    dev->CreateUnorderedAccessView(app.testTarget.depthOut.Get(), nullptr, &uav, CpuDesc(app, DESC_TEST_TABLE + 2));
+    uav = {}; uav.Format = DXGI_FORMAT_UNKNOWN; uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    uav.Buffer.NumElements = W * H * VIEWS * 3; uav.Buffer.StructureByteStride = 4;
+    dev->CreateUnorderedAccessView(app.testTarget.scratch.Get(), nullptr, &uav, CpuDesc(app, DESC_TEST_TABLE + 3));
+    Log("BenchStereo: exit %s; synthetic GPU-only costs, not a busy-game/headset performance guarantee", ok ? "PASS" : "FAIL");
     return ok;
 }
 
@@ -7083,6 +8285,22 @@ static bool SelfTest(App& app)
     }
     ok = SelfTestAmbilight(app, synth) && ok;
 
+    WarpConstants enhanced = c;
+    enhanced.subpixel = 1;
+    enhanced.depthContrast = 0.65f;
+    enhanced.convergence = -0.2f;
+    enhanced.headOffset = 0.012f;
+    ok = SelfTestWarp(app, "depth curve + convergence + head parallax", synth, ramp, enhanced) && ok;
+    enhanced.headOffset = 0.10f; // must be clamped to 25 mm in shader and CPU policy
+    ok = SelfTestWarp(app, "bounded head parallax", synth, ramp, enhanced) && ok;
+    enhanced = c; enhanced.subpixel = 1; enhanced.edgeRefinement = 1;
+    ok = SelfTestWarp(app, "image-guided depth", synth, truth, enhanced) && ok;
+    enhanced = c; enhanced.subpixel = 1; enhanced.sharpness = 0.8f;
+    ok = SelfTestWarp(app, "bounded source sharpening", synth, truth, enhanced) && ok;
+    enhanced.depthContrast = .65f; enhanced.edgeRefinement = 1;
+    ok = SelfTestWarp(app, "combined depth curve + guided edges + sharpening", synth, truth, enhanced) && ok;
+    ok = SelfTestStereoHistory(app, c) && ok;
+
     WarpConstants off = c;
     off.doWarp = 0;
     ok = SelfTestWarp(app, "no-warp", synth, truth, off) && ok;
@@ -7927,6 +9145,15 @@ static void RunFrameLoop(App& app)
     XrSessionState state = XR_SESSION_STATE_UNKNOWN;
     bool running = false, exitLoop = false, printedView = false;
     bool trackingWasValid = true, wasStereo = false;
+    std::string stereoStatus;
+    auto reportStereo = [&](const char* status, const char* detail)
+    {
+        const std::string key = std::string(status) + "; " + detail;
+        if (key == stereoStatus) return;
+        stereoStatus = key;
+        Log("Stereo status: %s", key.c_str());
+    };
+    reportStereo("waiting", "waiting for a visible frame and depth");
     uint64_t invalidTrackingFrames = 0;
     double loopStart = NowSeconds(), lastReport = loopStart;
     uint64_t frames = 0, drawn = 0, depthUpdates = 0;
@@ -8023,6 +9250,18 @@ static void RunFrameLoop(App& app)
                 {
                     app.opt.subpixel = next.subpixel != 0;
                     Log("Stereo warp: %s", app.opt.subpixel ? "sub-pixel (smooth depth)" : "whole pixels");
+                }
+                if (next.version >= 12)
+                {
+                    const bool changed = app.opt.depthContrast != next.depthContrast || app.opt.convergence != next.convergence ||
+                        app.opt.edgeRefinement != (next.edgeRefinement != 0) || app.opt.temporalFill != (next.temporalFill != 0) ||
+                        app.opt.sharpness != next.sharpness || app.opt.headParallax != next.headParallax;
+                    app.opt.depthContrast = next.depthContrast; app.opt.convergence = next.convergence;
+                    app.opt.edgeRefinement = next.edgeRefinement != 0; app.opt.temporalFill = next.temporalFill != 0;
+                    app.edgeRefinementEnabled = app.opt.edgeRefinement && app.stereoEffectsAvailable.load();
+                    app.opt.sharpness = next.sharpness; app.opt.headParallax = next.headParallax;
+                    if (changed) Log("Stereo enhancements: contrast %d, position %d, edges %d, temporal fill %d, sharpness %d, head parallax %d",
+                        next.depthContrast, next.convergence, next.edgeRefinement, next.temporalFill, next.sharpness, next.headParallax);
                 }
                 if (next.version >= 6 && app.opt.delayed != (next.delayed != 0))
                 {
@@ -8151,6 +9390,7 @@ static void RunFrameLoop(App& app)
         if (XR_FAILED(xrWaitFrame_(app.session, nullptr, &fs))) { Log("RunFrameLoop: xrWaitFrame failed"); app.stop = true; break; }
         if (XR_FAILED(xrBeginFrame_(app.session, nullptr))) { Log("RunFrameLoop: xrBeginFrame failed"); app.stop = true; break; }
         frames++; repFrames++;
+        if (!fs.shouldRender) reportStereo("waiting", "headset is not requesting a picture");
 
         const XrCompositionLayerBaseHeader* layers[VIEWS + 2] = {};
         uint32_t layerCount = 0;
@@ -8181,6 +9421,7 @@ static void RunFrameLoop(App& app)
                 Log("RunFrameLoop: tracking %s (locate %s, views %u, flags %llu)",
                     validTracking ? "restored" : "unavailable; submitting empty frames", XRStr(vr), vc,
                     (unsigned long long)vs.viewStateFlags);
+            if (!validTracking) reportStereo("waiting", "headset tracking unavailable");
             trackingWasValid = validTracking;
             if (!validTracking) ++invalidTrackingFrames;
             if (validTracking)
@@ -8454,7 +9695,7 @@ static void RunFrameLoop(App& app)
                     WaitFence(app, app.slotFence);
                     app.readSlot = app.readySlot.exchange(app.readSlot) & (SLOT_FRESH - 1);
                     cur = &app.slots[app.readSlot];
-                    RecordUploadNear(app, cur->nearUp.Get());
+                    RecordDepthSlot(app, *cur);
                     tookSlot = true;
                     depthUpdates++; repDepth++;
                     if (!cur->reused) depthDelay.Update(cur->completeTime - cur->sceneTime);   // carried-forward depth took no model time
@@ -8490,6 +9731,13 @@ static void RunFrameLoop(App& app)
                 if (stereo != wasStereo)
                     Log("RunFrameLoop: %s", stereo ? "stereo depth available" : "flat viewing (depth unavailable or stale)");
                 wasStereo = stereo;
+                if (!app.opt.doWarp || app.opt.warpScale == 0) reportStereo("disabled", "3D is off or strength is zero");
+                else if (!source) reportStereo("waiting", "waiting for capture");
+                else if (!cur || !cur->source) reportStereo("waiting", "waiting for depth");
+                else if (!app.depthHealthy.load()) reportStereo("flat", "depth processing unavailable");
+                else if (source->layout != cur->source->layout) reportStereo("flat", "capture changed; waiting for matching depth");
+                else if (!stereo) reportStereo("flat", "depth is too old for the displayed frame");
+                else reportStereo("active", "stereo depth available");
                 if (app.opt.paired && stereo) source = cur->source;
 
                 if (source)
@@ -8516,13 +9764,28 @@ static void RunFrameLoop(App& app)
                     c.eye0 = -0.5f * ipd; c.eye1 = 0.5f * ipd;
                     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
                     c.subpixel = app.opt.subpixel ? 1u : 0u;
+                    c.depthContrast = app.opt.depthContrast * 0.01f;
+                    c.convergence = app.opt.convergence * 0.01f;
+                    // The worker republishes static frames after an edge-mode
+                    // change. Follow the mode of this depth slot so interpolation
+                    // never consumes a map prepared for the other edge treatment.
+                    c.edgeRefinement = cur && cur->edgeRefinedInput && app.stereoEffectsAvailable.load() ? 1u : 0u;
+                    c.temporalFill = app.opt.temporalFill ? 1u : 0u;
+                    c.sharpness = app.opt.sharpness * 0.01f;
+                    const XrVector3f head{(views[0].pose.position.x + views[1].pose.position.x)*0.5f,
+                        (views[0].pose.position.y + views[1].pose.position.y)*0.5f,
+                        (views[0].pose.position.z + views[1].pose.position.z)*0.5f};
+                    c.headOffset = !app.opt.headLocked && !followsHead ?
+                        PictureHeadOffset(screen.origin, screen.pose.orientation, head, app.opt.headParallax * 0.01f) : 0.0f;
                     c.indicator = (app.opt.abSeconds > 0.0) ? (depthOn ? 1u : 2u) : 0u;
                     c.depthLie = app.opt.depthLie ? 1u : 0u;
                     c.writeDepth = useDepthSc && stereo ? 1u : 0u;
                     c.exactLoad = (app.srcW == target.cw && app.srcH == target.ch) ? 1u : 0u;
                     c.fillMode = (uint32_t)app.opt.fillMode;
                     c.mirrorTol = MIRROR_TOL;
-                    RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c);
+                    WarpHistoryFrame warpFrame{source->seq, source->layout, cur && cur->source ? cur->source->seq : 0,
+                        source->time, cur && cur->source ? cur->source->time : 0};
+                    RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c, warpFrame);
                     if (!curvedScreen)
                         RecordCopyToSwapchain(app, target, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
                     drewSource = true;
@@ -8910,7 +10173,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     WaitFence(app, app.fenceVal);
     app.cmdAlloc[0]->Reset();
     app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
-    RecordUploadNear(app, slot.nearUp.Get());
+    RecordDepthSlot(app, slot);
     RecordWarp(app, t, DESC_SRC0 + (UINT)source->index, c);
     for (UINT e = 0; e < VIEWS; e++)
     {
@@ -9035,6 +10298,7 @@ int wmain(int argc, wchar_t** wideArgv)
     app.foregroundEnabled = app.opt.foreground && app.opt.doWarp;
     app.steadyEnabled = app.opt.steady;
     app.fuseEnabled = app.opt.fuse;
+    app.edgeRefinementEnabled = app.opt.edgeRefinement;
 
     int rc = 1;
     try
@@ -9067,6 +10331,14 @@ int wmain(int argc, wchar_t** wideArgv)
         }
         if (initial.version >= 6) app.opt.delayed = initial.delayed != 0;
         if (initial.version >= 7) app.opt.subpixel = initial.subpixel != 0;
+        if (initial.version >= 12)
+        {
+            app.opt.depthContrast = initial.depthContrast; app.opt.convergence = initial.convergence;
+            app.opt.edgeRefinement = initial.edgeRefinement != 0; app.opt.temporalFill = initial.temporalFill != 0;
+            app.edgeRefinementEnabled = app.opt.edgeRefinement;
+            app.opt.sharpness = initial.sharpness; app.opt.headParallax = initial.headParallax;
+            app.opt.hdrCapture = initial.hdrCapture != 0;
+        }
         if (initial.version >= 8)
         {
             app.opt.curve = initial.curve * 0.01f;
@@ -9097,7 +10369,18 @@ int wmain(int argc, wchar_t** wideArgv)
     do
     {
         if (app.opt.source == SourceKind::Capture && !SelectCaptureItem(app)) break;
-        if (!InitXrInstance(app)) break;
+        if (app.opt.selfTestGpu >= 0)
+        {
+            ComPtr<IDXGIFactory4> factory; ComPtr<IDXGIAdapter1> adapter;
+            if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) ||
+                FAILED(factory->EnumAdapters1((UINT)app.opt.selfTestGpu, &adapter)))
+            { Log("Headless self-test: adapter %d unavailable", app.opt.selfTestGpu); break; }
+            DXGI_ADAPTER_DESC1 desc{}; adapter->GetDesc1(&desc);
+            if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) { Log("Headless self-test: a hardware adapter is required"); break; }
+            app.adapterLuid = desc.AdapterLuid; app.minFeatureLevel = D3D_FEATURE_LEVEL_12_0;
+            Log("Headless self-test: %ls (no OpenXR instance or session)", desc.Description);
+        }
+        else if (!InitXrInstance(app)) break;
         if (!InitD3D(app)) break;
         if (!InitModel(app)) break;
         if (!InitSlots(app)) break;
@@ -9119,6 +10402,8 @@ int wmain(int argc, wchar_t** wideArgv)
             bool passed = SelfTestPipeline(app) && fg;
             if (app.opt.benchRoom && !passed) Log("main: --bench-room skipped - the self-test failed, so its passes are not worth timing");
             if (app.opt.benchRoom && passed) passed = BenchRoom(app);
+            if (app.opt.benchStereo && passed) passed = BenchStereo(app);
+            if (passed) passed = SelfTestGpuLifecycle(app);
             if (passed) rc = 0;
             break;
         }
@@ -9134,7 +10419,13 @@ int wmain(int argc, wchar_t** wideArgv)
             const DepthSlot& s = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
             Log("main: first depth in %.1f ms (includes warm-up), range %.3f..%.3f", s.modelMs, s.lo, s.hi);
             if (app.opt.source == SourceKind::Synthetic)
-                Log("main: model nearness (0 far..1 near): backdrop %.2f panel %.2f marker %.2f  [truth 0.00 / 0.50 / 1.00]", s.back, s.panel, s.marker);
+            {
+                // GPU slots carry no full CPU map. This explicit synthetic
+                // diagnostic has already requested one from ComputeAndPublish.
+                float back = 0, panel = 0, marker = 0;
+                RegionMeans(firstNear, s.sceneTime, back, panel, marker);
+                Log("main: model nearness (0 far..1 near): backdrop %.2f panel %.2f marker %.2f  [truth 0.00 / 0.50 / 1.00]", back, panel, marker);
+            }
         }
         else
         {

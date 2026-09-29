@@ -283,4 +283,30 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorRendererMissing" xml:space="preserve"><value>VRX renderer is missing. Reinstall VRX or build the project.</value></data>
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
   <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
+  <data name="DepthContrast" xml:space="preserve"><value>Depth separation</value></data>
+  <data name="DepthContrastTip" xml:space="preserve"><value>Redistributes estimated depth to emphasize distant layers while compressing the near end. 0% keeps the original depth mapping. Increase gently: strong settings can exaggerate estimated depth and expose more gaps around objects. Applies live; saved per game.</value></data>
+  <data name="Convergence" xml:space="preserve"><value>Scene depth position</value></data>
+  <data name="ConvergenceTip" xml:space="preserve"><value>Moves the scene's depth relative to the screen. This changes where objects appear in front of or behind the screen; it does not add separation between objects. 0% keeps the original position. Applies live; saved per game.</value></data>
+  <data name="EdgeRefinement" xml:space="preserve"><value>Refine depth edges</value></data>
+  <data name="EdgeRefinementTip" xml:space="preserve"><value>Uses the captured image to keep depth boundaries closer to object edges. Can reduce halos around foreground objects; fine textures and shadows can still confuse estimated depth. Off by default. Applies live; saved per game.</value></data>
+  <data name="TemporalFill" xml:space="preserve"><value>Recover background from earlier frames (experimental)</value></data>
+  <data name="TemporalFillTip" xml:space="preserve"><value>Uses verified background from earlier frames to repair gaps exposed by the stereo view. Falls back to the usual filling when history is unreliable. Fast movement can still leave artifacts. Off by default. Applies live; saved per game.</value></data>
+  <data name="Sharpness" xml:space="preserve"><value>Image sharpness</value></data>
+  <data name="SharpnessTip" xml:space="preserve"><value>Adds gentle adaptive sharpening to the picture. Improves clarity; it does not add depth. High values can emphasize outlines, text and reconstruction artifacts. 0% is off. Applies live; saved per game.</value></data>
+  <data name="HeadParallax" xml:space="preserve"><value>Head movement depth</value></data>
+  <data name="HeadParallaxTip" xml:space="preserve"><value>Experimental: adds a small change of viewpoint inside the picture as you move your head sideways. Needs the fixed screen. Estimated depth cannot reveal every hidden surface, so movement is limited and may expose gaps. 0% is off. Applies live; saved per game.</value></data>
+  <data name="HdrCapture" xml:space="preserve"><value>Capture HDR colour</value></data>
+  <data name="HdrCaptureTip" xml:space="preserve"><value>Captures a wider colour range for HDR games and maps it to a normal SDR headset picture. Enable when Windows and the game use HDR. Off by default; saved per game. Takes effect the next time you Attach / Play.</value></data>
+  <data name="HdrCaptureHint" xml:space="preserve"><value>HDR capture applies at the next Attach / Play.</value></data>
+  <data name="StereoHealthActive" xml:space="preserve"><value>3D active</value></data>
+  <data name="StereoHealthFlat" xml:space="preserve"><value>Flat picture — depth unavailable or out of date</value></data>
+  <data name="StereoHealthDisabled" xml:space="preserve"><value>3D turned off</value></data>
+  <data name="StereoHealthWaiting" xml:space="preserve"><value>Waiting for 3D depth</value></data>
+  <data name="DepthPipelineGpu" xml:space="preserve"><value>Depth processing: GPU</value></data>
+  <data name="DepthPipelineCpuFallback" xml:space="preserve"><value>Depth processing: CPU fallback</value></data>
+  <data name="DepthPipelineWaiting" xml:space="preserve"><value>Checking depth processing</value></data>
+  <data name="DepthFeaturesUnavailable" xml:space="preserve"><value>Some depth improvements are unavailable</value></data>
+  <data name="StereoEffectsUnavailable" xml:space="preserve"><value>Some picture improvements are unavailable</value></data>
+  <data name="DepthFusionUnavailable" xml:space="preserve"><value>Depth model fusion could not start or stopped.</value></data>
+  <data name="HealthDetails" xml:space="preserve"><value>{0} — {1}</value><comment>{0} = localized status, {1} = engine diagnostic detail, retained in its original language</comment></data>
 </root>

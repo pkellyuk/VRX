@@ -112,6 +112,7 @@ public sealed class EngineSession
         else args.AddRange(["--exe=" + Path.GetFileName(app.FullPath), "--exe-path=" + app.FullPath,
             "--pid=" + app.Pid.ToString(invariant), "--hwnd=" + window.Handle.ToInt64().ToString(invariant)]);
         if (window.Monitor < 0 && profile.DesktopWhenAway) args.Add("--desktop-when-away");
+        if (profile.HdrCapture) args.Add("--hdr-capture");
         args.Add("--control=" + controlFile);
         if (profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) args.Add("--depth-gpu=" + profile.DepthGpu);
         return args;

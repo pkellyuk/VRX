@@ -469,7 +469,28 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16777216", settings), "v11 light colour over 0xFFFFFF rejected");
     Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 -1", settings), "v11 negative light colour rejected");
     Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 7", settings), "v11 trailing value rejected");
-    Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347", settings), "a newer snapshot version is rejected");
+    Check(settings.depthContrast == 0 && settings.convergence == 0 && settings.edgeRefinement == 0 && settings.temporalFill == 0 &&
+          settings.sharpness == 0 && settings.headParallax == 0 && settings.hdrCapture == 0, "v11 keeps all image improvements neutral");
+    const std::string v12 = "VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347";
+    Check(ParseDesktopSettings(v12 + " 65 -35 1 1 25 40 1", settings) && settings.version == 12 && settings.depthContrast == 65 &&
+          settings.convergence == -35 && settings.edgeRefinement == 1 && settings.temporalFill == 1 && settings.sharpness == 25 &&
+          settings.headParallax == 40 && settings.hdrCapture == 1 && settings.roomLightColor == 0xFFD1A3 && settings.recenter == 4,
+          "v12 appends image controls without changing older fields");
+    Check(ParseDesktopSettings(v12 + " 100 -100 1 1 100 100 1", settings), "v12 limits accepted");
+    Check(ParseDesktopSettings(v12 + " 0 100 0 0 0 0 0", settings), "v12 positive convergence limit accepted");
+    const std::vector<std::string> badV12 = {
+        "", " 0", " 0 0", " 0 0 0", " 0 0 0 0", " 0 0 0 0 0", " 0 0 0 0 0 0",
+        " -1 0 0 0 0 0 0", " 101 0 0 0 0 0 0", " 0 -101 0 0 0 0 0", " 0 101 0 0 0 0 0",
+        " 0 0 -1 0 0 0 0", " 0 0 2 0 0 0 0", " 0 0 0 -1 0 0 0", " 0 0 0 2 0 0 0",
+        " 0 0 0 0 -1 0 0", " 0 0 0 0 101 0 0", " 0 0 0 0 0 -1 0", " 0 0 0 0 0 101 0",
+        " 0 0 0 0 0 0 -1", " 0 0 0 0 0 0 2", " 0 0 0 0 0 0 0 7", " nan 0 0 0 0 0 0"
+    };
+    for (const auto& tail : badV12)
+        Check(!ParseDesktopSettings(v12 + tail, settings) && settings.convergence == 100 && settings.version == 12,
+              "invalid/partial v12 leaves the last complete settings unchanged");
+    Check(ParseDesktopSettings(v12 + " 0 0 0 0 0 0 0", settings) && settings.convergence == 0 && settings.hdrCapture == 0,
+          "v12 neutral settings accepted after invalid updates");
+    Check(!ParseDesktopSettings("VRX 13" + v12.substr(6) + " 0 0 0 0 0 0 0", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -2723,7 +2744,8 @@ int main(int argc, char** argv)
         const std::string path(argv[1]); DesktopSettings settings;
         Check(ReadDesktopSettings(std::wstring(path.begin(), path.end()), settings), "read C# emitted snapshot");
         Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7 && settings.menuKey == 120 && settings.foreground == 1 && settings.paired == 1 &&
-            settings.version == 11 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
+            settings.version == 12 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0 && settings.depthContrast == 0 &&
+            settings.convergence == 0 && settings.edgeRefinement == 0 && settings.temporalFill == 0 && settings.sharpness == 0 && settings.headParallax == 0 && settings.hdrCapture == 0,
             "C# to native control contract");
     }
     TestCaptureSelection();

@@ -2,6 +2,22 @@
 #include <openxr/openxr.h>
 #include <cmath>
 
+// Extra horizontal view translation inside the picture, relative to the capture
+// viewpoint saved at recenter. The screen plane itself is already projected by
+// OpenXR. A smooth 25 mm bound limits newly exposed background and avoids a hard
+// stop when the player leans further. Disabling/follow mode is handled by caller.
+inline float PictureHeadOffset(const XrPosef& origin, const XrQuaternionf& screenRotation,
+    const XrVector3f& head, float gain)
+{
+    const auto q = screenRotation;
+    const float rx = 1 - 2 * (q.y*q.y + q.z*q.z);
+    const float ry = 2 * (q.x*q.y + q.w*q.z);
+    const float rz = 2 * (q.x*q.z - q.w*q.y);
+    const float shift = (head.x-origin.position.x)*rx + (head.y-origin.position.y)*ry + (head.z-origin.position.z)*rz;
+    if (!std::isfinite(shift) || !std::isfinite(gain) || gain <= 0) return 0;
+    return 0.025f * std::tanh(shift * (gain < 1 ? gain : 1) / 0.025f);
+}
+
 // Heading only: an orientation with pitch and roll removed, so a floor under it is
 // level. Looking straight up or down, the heading comes from the head's up vector.
 inline XrQuaternionf YawOnly(const XrQuaternionf& q)

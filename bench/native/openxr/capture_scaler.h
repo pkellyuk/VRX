@@ -19,6 +19,7 @@ class CaptureScaler
     Ptr<ID3D11PixelShader> boxPs_;           // Downscale: taps x taps box filter
     Ptr<ID3D11Buffer> boxConstants_;
     int width_ = 0, height_ = 0;
+    DXGI_FORMAT inputFormat_ = DXGI_FORMAT_UNKNOWN;
 public:
     HRESULT Init(ID3D11Device* device)
     {
@@ -29,8 +30,22 @@ V VS(uint id : SV_VertexID) {
     v.p = float4(v.uv * float2(2, -2) + float2(-1, 1), 0, 1); return v;
 }
 Texture2D picture : register(t0); SamplerState linearClamp : register(s0);
-float4 PS(V v) : SV_TARGET { return float4(picture.Sample(linearClamp, v.uv).rgb, 1); }
-cbuffer Box : register(b0) { float2 outSize; uint taps; uint pad; };
+cbuffer Box : register(b0) { float2 outSize; uint taps; uint hdr; float whiteScale; float3 pad; };
+float3 Encode(float3 c) {
+    return float3(c.r <= 0.0031308 ? 12.92*c.r : 1.055*pow(c.r, 1.0/2.4)-0.055,
+                  c.g <= 0.0031308 ? 12.92*c.g : 1.055*pow(c.g, 1.0/2.4)-0.055,
+                  c.b <= 0.0031308 ? 12.92*c.b : 1.055*pow(c.b, 1.0/2.4)-0.055);
+}
+float3 ToneMap(float3 c) {
+    c = float3(isfinite(c.r) ? max(c.r, 0) : 0, isfinite(c.g) ? max(c.g, 0) : 0, isfinite(c.b) ? max(c.b, 0) : 0) / max(whiteScale, 0.5);
+    float peak = max(c.r, max(c.g, c.b));
+    float mapped = peak <= 0.75 ? peak : 0.75 + 0.25*(1-exp(-4*(peak-0.75)));
+    return Encode(c * (peak > 0 ? mapped / peak : 1));
+}
+float4 PS(V v) : SV_TARGET {
+    float3 c = picture.Sample(linearClamp, v.uv).rgb;
+    return float4(hdr != 0 ? ToneMap(c) : c, 1);
+}
 // Same filter as VRX's model-input prep shader (kPrepHlsl): average taps x taps
 // bilinear samples spread evenly over each output pixel.
 float4 BoxPS(V v) : SV_TARGET {
@@ -59,7 +74,7 @@ float4 BoxPS(V v) : SV_TARGET {
         hr = device->CreatePixelShader(box->GetBufferPointer(), box->GetBufferSize(), nullptr, &boxPs_);
         if (FAILED(hr)) return hr;
         D3D11_BUFFER_DESC cb{};
-        cb.ByteWidth = 16; cb.Usage = D3D11_USAGE_DEFAULT; cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        cb.ByteWidth = 32; cb.Usage = D3D11_USAGE_DEFAULT; cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         hr = device->CreateBuffer(&cb, nullptr, &boxConstants_);
         if (FAILED(hr)) return hr;
         D3D11_SAMPLER_DESC sd{};
@@ -77,7 +92,7 @@ float4 BoxPS(V v) : SV_TARGET {
     // (e.g. a window's client area, excluding its frame and title bar).
     HRESULT Copy(ID3D11Device* device, ID3D11DeviceContext* context,
         ID3D11Texture2D* captured, int w, int h, ID3D11Texture2D* target,
-        ID3D11RenderTargetView* rtv, int targetW, int targetH, const RECT* region = nullptr)
+        ID3D11RenderTargetView* rtv, int targetW, int targetH, const RECT* region = nullptr, float whiteScale = 1.0f)
     {
         D3D11_TEXTURE2D_DESC desc{}; captured->GetDesc(&desc);
         if (w <= 0 || h <= 0 || UINT(w) > desc.Width || UINT(h) > desc.Height) return E_INVALIDARG;
@@ -90,23 +105,25 @@ float4 BoxPS(V v) : SV_TARGET {
             w = region->right - region->left;
             h = region->bottom - region->top;
         }
-        if (w == targetW && h == targetH)
+        const bool hdr = desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+        D3D11_TEXTURE2D_DESC targetDesc{}; target->GetDesc(&targetDesc);
+        if (w == targetW && h == targetH && desc.Format == targetDesc.Format && !hdr)
         {
             context->CopySubresourceRegion(target, 0, 0, 0, 0, captured, 0, &box);
             return S_OK;
         }
-        if (w != width_ || h != height_)
+        if (w != width_ || h != height_ || inputFormat_ != desc.Format)
         {
             srv_.Reset(); input_.Reset(); width_ = height_ = 0;
             D3D11_TEXTURE2D_DESC td{};
             td.Width = UINT(w); td.Height = UINT(h); td.MipLevels = td.ArraySize = 1;
-            td.Format = DXGI_FORMAT_B8G8R8A8_UNORM; td.SampleDesc.Count = 1;
+            td.Format = desc.Format; td.SampleDesc.Count = 1;
             td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
             HRESULT hr = device->CreateTexture2D(&td, nullptr, &input_);
             if (FAILED(hr)) return hr;
             hr = device->CreateShaderResourceView(input_.Get(), nullptr, &srv_);
             if (FAILED(hr)) return hr;
-            width_ = w; height_ = h;
+            width_ = w; height_ = h; inputFormat_ = desc.Format;
         }
         context->CopySubresourceRegion(input_.Get(), 0, 0, 0, 0, captured, 0, &box);
         const float black[4] = { 0, 0, 0, 1 };
@@ -120,6 +137,10 @@ float4 BoxPS(V v) : SV_TARGET {
         context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context->VSSetShader(vs_.Get(), nullptr, 0);
         context->PSSetShader(ps_.Get(), nullptr, 0);
+        struct { float w, h; unsigned taps, hdr; float white, pad[3]; } constants{
+            float(targetW), float(targetH), 1, hdr ? 1u : 0u, whiteScale, {} };
+        context->UpdateSubresource(boxConstants_.Get(), 0, nullptr, &constants, 0, 0);
+        auto* cb = boxConstants_.Get(); context->PSSetConstantBuffers(0, 1, &cb);
         auto* srv = srv_.Get(); auto* sampler = sampler_.Get();
         context->PSSetShaderResources(0, 1, &srv);
         context->PSSetSamplers(0, 1, &sampler);
@@ -137,7 +158,7 @@ float4 BoxPS(V v) : SV_TARGET {
         ID3D11RenderTargetView* rtv, int dstW, int dstH)
     {
         if (!context || !picture || !rtv || srcW <= 0 || dstW <= 0 || dstH <= 0) return E_INVALIDARG;
-        struct { float w, h; unsigned taps, pad; } constants{ float(dstW), float(dstH), 1, 0 };
+        struct { float w, h; unsigned taps, hdr; float white, pad[3]; } constants{ float(dstW), float(dstH), 1, 0, 1.0f, {} };
         const int taps = (srcW + dstW - 1) / dstW;
         constants.taps = unsigned(taps < 1 ? 1 : (taps > 4 ? 4 : taps));
         context->UpdateSubresource(boxConstants_.Get(), 0, nullptr, &constants, 0, 0);

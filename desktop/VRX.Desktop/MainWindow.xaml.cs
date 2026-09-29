@@ -17,6 +17,7 @@ public partial class MainWindow : Window
 {
     private readonly ProfileStore store;
     private readonly EngineSession engine = new();
+    private readonly StereoHealth stereoHealth = new();
     private readonly DispatcherTimer saveTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private readonly DispatcherTimer refreshTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private Profile? profile;
@@ -77,6 +78,7 @@ public partial class MainWindow : Window
             LogBox.AppendText(line + Environment.NewLine);
             if (LogBox.Text.Length > 24000) LogBox.Text = LogBox.Text[^16000..];
             LogBox.ScrollToEnd();
+            if (stereoHealth.Consume(line)) UpdateStereoHealth();
             if (line.Contains("FAIL") || line.Contains("expected one game window") || line.Contains("main: failure"))
                 lastEngineError = line;
             if (EngineSession.ParseSource(line) is { } source && source != shown)
@@ -102,6 +104,7 @@ public partial class MainWindow : Window
             sessionWindow = 0;
             playing = false;
             shown = SourceShown.Game;
+            stereoHealth.Reset();
             // The renderer's own reason stays English (engine logs are not translated).
             sessionError = code == 0 ? "" : Loc.Format("StatusEngineFailed",
                 lastEngineError.Length > 0 ? lastEngineError[(lastEngineError.LastIndexOf(']') + 1)..].Trim() : Loc.Get("SeeSessionDetails"));
@@ -244,6 +247,13 @@ public partial class MainWindow : Window
         TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
         FastModelCheck.IsChecked = p.FastDepthModel;
         SubpixelCheck.IsChecked = p.SubpixelWarp;
+        DepthContrastSlider.Value = p.DepthContrast;
+        ConvergenceSlider.Value = p.Convergence;
+        EdgeRefinementCheck.IsChecked = p.EdgeRefinement;
+        TemporalFillCheck.IsChecked = p.TemporalFill;
+        SharpnessSlider.Value = p.Sharpness;
+        HeadParallaxSlider.Value = p.HeadParallax;
+        HdrCaptureCheck.IsChecked = p.HdrCapture;
         CurveSlider.Value = p.ScreenCurve;
         AmbilightCheck.IsChecked = p.Ambilight;
         AmbiStrengthSlider.Value = p.AmbilightStrength;
@@ -272,6 +282,13 @@ public partial class MainWindow : Window
             DelayToDepth = TimingList.SelectedIndex == 1,
             FastDepthModel = FastModelCheck.IsChecked == true,
             SubpixelWarp = SubpixelCheck.IsChecked == true,
+            DepthContrast = (int)Math.Round(DepthContrastSlider.Value),
+            Convergence = (int)Math.Round(ConvergenceSlider.Value),
+            EdgeRefinement = EdgeRefinementCheck.IsChecked == true,
+            TemporalFill = TemporalFillCheck.IsChecked == true,
+            Sharpness = (int)Math.Round(SharpnessSlider.Value),
+            HeadParallax = (int)Math.Round(HeadParallaxSlider.Value),
+            HdrCapture = HdrCaptureCheck.IsChecked == true,
             ScreenCurve = (int)Math.Round(CurveSlider.Value),
             Ambilight = AmbilightCheck.IsChecked == true,
             AmbilightStrength = (int)Math.Round(AmbiStrengthSlider.Value),
@@ -312,6 +329,7 @@ public partial class MainWindow : Window
         if (RoomSlider == null || RoomValue == null || FollowCheck == null) return;
         bool follows = FollowCheck.IsChecked == true;
         RoomSlider.IsEnabled = !follows;
+        if (HeadParallaxSlider != null) HeadParallaxSlider.IsEnabled = !follows;
         int room = (int)Math.Round(RoomSlider.Value);
         RoomValue.Text = follows ? Loc.Get("NeedsFixedScreen") : room == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", room);
         if (GlassSlider == null || GlassValue == null || ReflectSlider == null || ReflectValue == null ||
@@ -522,6 +540,34 @@ public partial class MainWindow : Window
         RecenterButton.IsEnabled = EasyRecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
         AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = !running;
         UpdateGameCard();
+        UpdateStereoHealth();
+    }
+
+    // Engine-confirmed health stays visible in both Easy and Expert mode. Detail text
+    // is the engine's diagnostic wording, like the session log; status labels localize.
+    private void UpdateStereoHealth(bool preview = false)
+    {
+        if (StereoHealthPanel == null) return;
+        StereoHealthPanel.Visibility = engine.Running || preview ? Visibility.Visible : Visibility.Collapsed;
+        string stereoLabel = stereoHealth.Stereo switch
+        {
+            StereoState.Active => Loc.Get("StereoHealthActive"), StereoState.Flat => Loc.Get("StereoHealthFlat"),
+            StereoState.Disabled => Loc.Get("StereoHealthDisabled"), _ => Loc.Get("StereoHealthWaiting")
+        };
+        static string WithDetail(string label, string detail) => detail.Length == 0 ? label : Loc.Format("HealthDetails", label, detail);
+        StereoHealthText.Text = WithDetail(stereoLabel, stereoHealth.StereoDetails);
+        StereoHealthText.Foreground = stereoHealth.Stereo == StereoState.Flat ? new SolidColorBrush(Color.FromRgb(255, 200, 120)) :
+            (Brush)FindResource(stereoHealth.Stereo == StereoState.Active ? "Accent" : "Soft");
+        string pipelineLabel = stereoHealth.Pipeline switch
+        {
+            DepthPipelineState.Gpu => Loc.Get("DepthPipelineGpu"), DepthPipelineState.CpuFallback => Loc.Get("DepthPipelineCpuFallback"), _ => Loc.Get("DepthPipelineWaiting")
+        };
+        DepthPipelineText.Text = WithDetail(pipelineLabel, stereoHealth.PipelineDetails);
+        DepthFeaturesText.Visibility = stereoHealth.FeaturesUnavailable || stereoHealth.StereoEffectsUnavailable ? Visibility.Visible : Visibility.Collapsed;
+        var warnings = new List<string>();
+        if (stereoHealth.FeaturesUnavailable) warnings.Add(WithDetail(Loc.Get("DepthFeaturesUnavailable"), stereoHealth.FeatureDetails));
+        if (stereoHealth.StereoEffectsUnavailable) warnings.Add(WithDetail(Loc.Get("StereoEffectsUnavailable"), stereoHealth.StereoEffectDetails));
+        DepthFeaturesText.Text = string.Join(Environment.NewLine, warnings);
     }
 
     // The game card at the top (both modes): the game in front or attached, with its icon
@@ -636,6 +682,7 @@ public partial class MainWindow : Window
         try
         {
             sessionError = lastEngineError = ""; LogBox.Clear();
+            stereoHealth.Reset();
             playing = false;
             shown = SourceShown.Game;
             engine.Start(app, window, profile!, store.Root);
@@ -1049,6 +1096,7 @@ public partial class MainWindow : Window
         if (profile == null) PathLabel.Text = Loc.Get(AppList.SelectedItem == null ? "PathChoose" : "PathNoAccess");
         UpdateRoomControls();
         UpdateGameCard();
+        UpdateStereoHealth();
         UpdateCaptionButtons();
         if (placedMode == 0) FitEasyWidth();
         System.Diagnostics.Debug.WriteLine("[MainWindow] RefreshLanguage exit");
@@ -1305,6 +1353,7 @@ public partial class MainWindow : Window
         legacy.Remove("RoomLightColor");
         legacy.Remove("FuseModels");
         legacy.Remove("DesktopWhenAway");
+        foreach (string name in new[] { "DepthContrast", "Convergence", "EdgeRefinement", "TemporalFill", "Sharpness", "HeadParallax", "HdrCapture" }) legacy.Remove(name);
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
         if (!store.Load(one.ExecutablePath).FastDepthModel || store.Load(two.ExecutablePath).FastDepthModel)
             throw new Exception("Fast depth model must default on for old profiles and keep a per-game opt-out");
@@ -1334,14 +1383,18 @@ public partial class MainWindow : Window
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
         var roomy = new Profile { Room = 45 };
         var glassy = new Profile { Room = 45, RoomGlass = 60, RoomReflections = 25, RoomLight = 40, RoomLightColor = "#FFD1A3" };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 11 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867") ||
-            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867") ||
-            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347"))
-            throw new Exception("Control snapshot must be v11 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour (see desktop_control.h)");
+        const string neutralImageFields = " 0 0 0 0 0 0 0";
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 12 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867" + neutralImageFields) ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867" + neutralImageFields) || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867" + neutralImageFields) ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867" + neutralImageFields) || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867" + neutralImageFields) ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867" + neutralImageFields) || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867" + neutralImageFields) ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867" + neutralImageFields) || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867" + neutralImageFields) ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867" + neutralImageFields) ||
+            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347" + neutralImageFields))
+            throw new Exception("The v12 control snapshot must preserve the earlier fields and append seven neutral image controls (see desktop_control.h)");
+        var oldImage = store.Load(one.ExecutablePath);
+        if (oldImage.DepthContrast != 0 || oldImage.Convergence != 0 || oldImage.EdgeRefinement || oldImage.TemporalFill || oldImage.Sharpness != 0 || oldImage.HeadParallax != 0 || oldImage.HdrCapture)
+            throw new Exception("Older profiles must preserve their picture with neutral image controls");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
@@ -1545,11 +1598,14 @@ public partial class MainWindow : Window
         // Base settings: new games start from them, existing profiles are untouched,
         // and the game's own path/window never leak into the base.
         var baseSource = new Profile { ExecutablePath = one.ExecutablePath, PreferredWindowTitle = "Example game window",
-            Width = 7.25, Distance = 2.5, Strength = 1.4, SubpixelWarp = false, DelayToDepth = true, FuseModels = true, MenuKey = 0x79 };
+            Width = 7.25, Distance = 2.5, Strength = 1.4, SubpixelWarp = false, DelayToDepth = true, FuseModels = true, MenuKey = 0x79,
+            DepthContrast = 55, Convergence = -25, EdgeRefinement = true, TemporalFill = true, Sharpness = 30, HeadParallax = 15, HdrCapture = true };
         store.SaveBase(baseSource);
         var fresh = store.Load(Path.Combine(output, "fresh", "game.exe"));
         if (fresh.Width != 7.25 || fresh.Strength != 1.4 || fresh.SubpixelWarp || !fresh.DelayToDepth || !fresh.FuseModels || fresh.MenuKey != 0x79)
             throw new Exception("A new game must start from the saved base settings");
+        if (fresh.DepthContrast != 55 || fresh.Convergence != -25 || !fresh.EdgeRefinement || !fresh.TemporalFill || fresh.Sharpness != 30 || fresh.HeadParallax != 15 || !fresh.HdrCapture)
+            throw new Exception("Base settings must include every v12 image control");
         if (fresh.ExecutablePath != Path.Combine(output, "fresh", "game.exe") || fresh.PreferredWindowTitle.Length != 0)
             throw new Exception("Base settings must not carry another game's path or window");
         if (store.Load(two.ExecutablePath).Width != 4) throw new Exception("Base settings must not change games that already have a profile");
@@ -1569,13 +1625,17 @@ public partial class MainWindow : Window
         allStore.Save(gameA); allStore.Save(gameB);
         string broken = Path.Combine(allStore.Root, "profiles", "broken.json");
         File.WriteAllText(broken, "{ not json");
-        var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false };
+        var chosen = new Profile { ExecutablePath = Path.Combine(output, "c", "c.exe"), Width = 8.5, ScreenCurve = 30, Ambilight = true, SteadyDepth = false,
+            DepthContrast = 60, Convergence = 25, EdgeRefinement = true, TemporalFill = true, Sharpness = 35, HeadParallax = 20, HdrCapture = true };
         if (allStore.ApplyToAll(chosen, out int skippedAll, out int failedAll) != 2 || skippedAll != 1 || failedAll != 0)
             throw new Exception("Apply to all must update both saved games and skip the unreadable one");
         var afterA = allStore.Load(gameA.ExecutablePath);
         var afterB = allStore.Load(gameB.ExecutablePath);
         if (afterA.Width != 8.5 || afterB.Width != 8.5 || afterA.ScreenCurve != 30 || !afterB.Ambilight || afterB.SteadyDepth || afterB.FuseModels)
             throw new Exception("Apply to all did not copy the settings to every saved game");
+        foreach (var applied in new[] { afterA, afterB })
+            if (applied.DepthContrast != 60 || applied.Convergence != 25 || !applied.EdgeRefinement || !applied.TemporalFill || applied.Sharpness != 35 || applied.HeadParallax != 20 || !applied.HdrCapture)
+                throw new Exception("Apply to all must copy every v12 image control");
         if (afterA.PreferredWindowTitle != "Game A" || afterB.PreferredWindowTitle != "Game B")
             throw new Exception("Apply to all must keep each game's own window");
         if (File.ReadAllText(broken) != "{ not json") throw new Exception("Apply to all must leave an unreadable profile untouched");
@@ -1596,6 +1656,7 @@ public partial class MainWindow : Window
         SmokeTestModes(output, sample, one);
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
+        await SmokeTestImageControls(output, sample, one);
         SmokeTestStrings(root);
 
         PutProfile(one);
@@ -1631,6 +1692,138 @@ public partial class MainWindow : Window
         if (Loc.Missing.Count > 0) throw new Exception("Strings asked for but missing from Strings.resx: " + string.Join(", ", Loc.Missing));
         File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; window: places remembered culture-independently and kept on screen, Easy compact and growing to its content, Expert back at its size, title bar buttons named; strings: " +
             Loc.NeutralStrings().Count.ToString(CultureInfo.InvariantCulture) + " keys, all referenced keys present, placeholders consistent, no literal text in MainWindow.xaml, pseudo-locale transforms every string; screenshots ui-easy-skin, ui-easy-skin-pseudo, ui-expert-skin, ui-expert-all-open, ui-expert-pseudo. No VR session started.");
+    }
+
+    private async Task SmokeTestImageControls(string output, RunningApp sample, Profile originalProfile)
+    {
+        var enhanced = new Profile
+        {
+            ExecutablePath = Path.Combine(output, "image-controls", "game.exe"), PreferredWindowTitle = "Image controls",
+            DepthContrast = 65, Convergence = -35, EdgeRefinement = true, TemporalFill = true,
+            Sharpness = 25, HeadParallax = 40, HdrCapture = true
+        };
+        static void CheckImageProfile(Profile p)
+        {
+            if (p.DepthContrast != 65 || p.Convergence != -35 || !p.EdgeRefinement || !p.TemporalFill || p.Sharpness != 25 || p.HeadParallax != 40 || !p.HdrCapture)
+                throw new Exception("Every v12 image setting must round-trip through profile, UI and reset");
+        }
+        foreach (var invalid in new[]
+        {
+            new Profile { DepthContrast = -1 }, new Profile { DepthContrast = 101 },
+            new Profile { Convergence = -101 }, new Profile { Convergence = 101 },
+            new Profile { Sharpness = -1 }, new Profile { Sharpness = 101 },
+            new Profile { HeadParallax = -1 }, new Profile { HeadParallax = 101 }
+        }) if (invalid.Valid()) throw new Exception("Out-of-range v12 profile field was accepted");
+        if (!new Profile { DepthContrast = 100, Convergence = -100, Sharpness = 100, HeadParallax = 100 }.Valid() || !new Profile { Convergence = 100 }.Valid())
+            throw new Exception("The limits of v12 controls must be valid");
+        var format = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+            string snapshot = enhanced.Control(4, 7, false);
+            if (!snapshot.StartsWith("VRX 12 5.700 3.000 ") || snapshot.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length != 38 ||
+                !snapshot.TrimEnd().EndsWith(" 65 -35 1 1 25 40 1", StringComparison.Ordinal))
+                throw new Exception("v12 control fields must be complete, ordered and culture invariant");
+        }
+        finally { CultureInfo.CurrentCulture = format; }
+        store.Save(enhanced);
+        CheckImageProfile(store.Load(enhanced.ExecutablePath));
+        profile = enhanced;
+        PutProfile(enhanced);
+        CheckImageProfile(ReadProfile());
+        FollowCheck.IsChecked = true;
+        if (HeadParallaxSlider.IsEnabled || ReadProfile().HeadParallax != 40)
+            throw new Exception("Head movement depth rests with a following screen but keeps its setting");
+        FollowCheck.IsChecked = false;
+        if (!HeadParallaxSlider.IsEnabled) throw new Exception("A fixed screen must re-enable head movement depth");
+        DepthContrastSlider.Value = 0; ConvergenceSlider.Value = 0;
+        EdgeRefinementCheck.IsChecked = TemporalFillCheck.IsChecked = false;
+        SharpnessSlider.Value = HeadParallaxSlider.Value = 0; HdrCaptureCheck.IsChecked = false;
+        if (!ReadProfile().Control(0, 0, false).TrimEnd().EndsWith(" 0 0 0 0 0 0 0", StringComparison.Ordinal))
+            throw new Exception("v12 UI controls must be able to restore the neutral picture");
+        string? savedBase = File.Exists(store.BaseFile) ? File.ReadAllText(store.BaseFile) : null;
+        try
+        {
+            store.SaveBase(enhanced);
+            ResetClick(ResetButton, new RoutedEventArgs());
+            CheckImageProfile(ReadProfile());
+        }
+        finally
+        {
+            if (savedBase == null) File.Delete(store.BaseFile);
+            else ProfileStore.AtomicWrite(store.BaseFile, savedBase);
+        }
+        if (!EngineSession.Arguments(sample, sample.Windows[0], enhanced, "control.txt").Contains("--hdr-capture") ||
+            EngineSession.Arguments(sample, sample.Windows[0], new Profile(), "control.txt").Contains("--hdr-capture"))
+            throw new Exception("HDR capture must be an opt-in startup argument");
+
+        // Invalid/unrelated lines keep the most recent engine-confirmed state. State
+        // transitions clear old details, and a new session starts with no stale warning.
+        var health = new StereoHealth();
+        if (!health.Consume("[  1.000][main] Stereo status: active; age=16ms") || health.Stereo != StereoState.Active || health.StereoDetails != "age=16ms" ||
+            health.Consume("[  1.000][main] example Stereo status: flat") || health.Consume("Stereo status: actively rendering") || health.Consume(null) || health.Stereo != StereoState.Active)
+            throw new Exception("Stereo status parsing must accept exact states only");
+        if (!health.Consume("Stereo status: flat; stale depth") || health.Stereo != StereoState.Flat ||
+            !health.Consume("Stereo status: disabled") || health.Stereo != StereoState.Disabled || health.StereoDetails.Length != 0 ||
+            !health.Consume("Stereo status: waiting") || health.Stereo != StereoState.Waiting)
+            throw new Exception("Stereo status transitions must replace earlier diagnostics");
+        if (!health.Consume("[  2.000][worker] Depth pipeline: GPU; post=1.2ms") || health.Pipeline != DepthPipelineState.Gpu ||
+            !health.Consume("Depth pipeline: CPU fallback; GPU initialization failed") || health.Pipeline != DepthPipelineState.CpuFallback ||
+            health.Consume("Depth pipeline: GPU unavailable") || health.PipelineDetails != "GPU initialization failed")
+            throw new Exception("GPU/CPU fallback health must follow the engine result");
+        if (!health.Consume("Depth features: unavailable; no motion estimator") || !health.FeaturesUnavailable ||
+            !health.Consume("Depth features: available") || health.FeaturesUnavailable || health.FeatureDetails.Length != 0 ||
+            !health.Consume("[  2.000][worker] EnsureMotion: no hardware motion estimation on this GPU; steady depth and model fusion have no effect") || !health.FeaturesUnavailable)
+            throw new Exception("Unavailable depth features must be visible and recoverable");
+        if (!health.Consume("[  2.000][main] Stereo effects: unavailable; GPU effects allocation failed") || !health.StereoEffectsUnavailable ||
+            health.StereoEffectDetails != "GPU effects allocation failed" || health.Consume("Stereo effects: disabled") ||
+            !health.Consume("Depth features: available") || health.FeaturesUnavailable || !health.StereoEffectsUnavailable ||
+            !health.Consume("Stereo effects: available") || health.StereoEffectsUnavailable || health.StereoEffectDetails.Length != 0)
+            throw new Exception("Stereo effects failures must remain independent of depth feature availability");
+        health.Consume("Stereo effects: unavailable; failed");
+        health.Reset();
+        if (health.Stereo != StereoState.Waiting || health.Pipeline != DepthPipelineState.Unknown || health.FeaturesUnavailable || health.StereoEffectsUnavailable ||
+            health.StereoDetails.Length != 0 || health.PipelineDetails.Length != 0 || health.FeatureDetails.Length != 0 || health.StereoEffectDetails.Length != 0)
+            throw new Exception("Starting another session must reset all health state");
+
+        bool expert = appSettings.IsExpert;
+        bool auto = appSettings.AutoAttach;
+        foreach (bool mode in new[] { false, true })
+        {
+            SetMode(mode);
+            stereoHealth.Consume("Stereo status: flat; depth is 250 ms old");
+            stereoHealth.Consume("Depth pipeline: CPU fallback; GPU depth processing unavailable");
+            stereoHealth.Consume("Depth features: unavailable; motion estimator unavailable");
+            stereoHealth.Consume("Stereo effects: unavailable; optional GPU effects unavailable");
+            UpdateStereoHealth(preview: true);
+            saveTimer.Stop();
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            UpdateLayout();
+            if (!StereoHealthText.IsVisible || !DepthPipelineText.IsVisible || !DepthFeaturesText.IsVisible ||
+                !StereoHealthText.Text.Contains(Loc.Get("StereoHealthFlat"), StringComparison.Ordinal) ||
+                !DepthFeaturesText.Text.Contains(Loc.Get("DepthFeaturesUnavailable"), StringComparison.Ordinal) ||
+                !DepthFeaturesText.Text.Contains(Loc.Get("StereoEffectsUnavailable"), StringComparison.Ordinal))
+                throw new Exception("Engine health must be visible in both Easy and Expert mode");
+            CheckNothingClipped("Stereo health", StereoHealthPanel, StereoHealthText, DepthPipelineText, DepthFeaturesText);
+            SaveWindowShot(Path.Combine(output, mode ? "ui-stereo-health-expert.png" : "ui-stereo-health-easy.png"));
+        }
+        stereoHealth.Reset();
+        foreach (string state in new[] { "waiting", "active", "disabled" })
+        {
+            stereoHealth.Consume("Stereo status: " + state);
+            UpdateStereoHealth(preview: true);
+        }
+        stereoHealth.Consume("Depth pipeline: GPU");
+        stereoHealth.Consume("Depth features: available");
+        UpdateStereoHealth(preview: true);
+        if (DepthFeaturesText.Visibility != Visibility.Collapsed || DepthPipelineText.Text != Loc.Get("DepthPipelineGpu"))
+            throw new Exception("Recovered GPU processing must clear the unavailable feature warning");
+        SetMode(expert);
+        appSettings.AutoAttach = auto;
+        autoSettingsLoading = true; AutoAttachCheck.IsChecked = auto; autoSettingsLoading = false;
+        SaveAppSettings();
+        profile = originalProfile; PutProfile(originalProfile);
+        stereoHealth.Reset(); UpdateStereoHealth(); saveTimer.Stop();
     }
 
     // Easy | Expert and the sections: defaults for new and existing users, memory, Easy

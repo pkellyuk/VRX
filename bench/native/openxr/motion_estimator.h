@@ -100,6 +100,14 @@ public:
         device->GetCopyableFootprints(&vd, 0, 1, 0, &vectorFootprint_, nullptr, nullptr, &vbytes);
         vectorStride_ = (vbytes + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) / D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT * D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT;
         if (!MakeBuffer(&rb, vectorStride_ * MAX_BATCH, D3D12_RESOURCE_STATE_COPY_DEST, readback_)) { Say("MotionEstimator::Init: FAIL readback"); return false; }
+        D3D12_RESOURCE_DESC gpuDesc{};
+        gpuDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        gpuDesc.Width = vectorStride_; gpuDesc.Height = gpuDesc.DepthOrArraySize = gpuDesc.MipLevels = 1;
+        gpuDesc.SampleDesc.Count = 1; gpuDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        gpuDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        for (auto& buffer : gpuVectors_)
+            if (FAILED(device->CreateCommittedResource(&def, D3D12_HEAP_FLAG_NONE, &gpuDesc,
+                D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&buffer)))) return false;
 
         ok_ = true;
         Say("MotionEstimator::Init: exit ok (%dx%d blocks of 8x8, quarter-pel)", bw_, bh_);
@@ -117,6 +125,7 @@ public:
             frames_[s].Reset();
         }
         for (int b = 0; b < MAX_BATCH; b++) { vectors_[b].Reset(); heap_[b].Reset(); }
+        for (auto& buffer : gpuVectors_) buffer.Reset();
         readback_.Reset(); est_.Reset();
         encodeList_.Reset(); encodeAlloc_.Reset(); copyList_.Reset(); copyAlloc_.Reset();
         encodeQueue_.Reset(); copyQueue_.Reset(); fence_.Reset(); video_.Reset();
@@ -129,6 +138,37 @@ public:
     bool ok() const { return ok_; }
     int blocksW() const { return bw_; }
     int blocksH() const { return bh_; }
+
+    UINT lumaPitch() const { return planeFootprint_[0].Footprint.RowPitch; }
+    UINT vectorPitch() const { return vectorFootprint_.Footprint.RowPitch; }
+    ID3D12Resource* gpuVectors(int i) const { return i >= 0 && i < MAX_BATCH ? gpuVectors_[i].Get() : nullptr; }
+    ID3D12Fence* gpuFence() const { return fence_.Get(); }
+    UINT64 gpuFenceValue() const { return fenceValue_; }
+    bool Retire() { return !fence_ || WaitFor(fenceValue_); }
+
+    // Packed GPU luma has lumaPitch() bytes per row and starts at byte zero.
+    // Caller retires its producer and restores the buffer to COMMON before this
+    // call. No CPU image mapping or conversion occurs.
+    bool UploadGpu(int slot, ID3D12Resource* packed, ID3D12Fence* ready, UINT64 value)
+    {
+        if (!ok_ || !packed || slot < 0 || slot >= SLOTS || !WaitFor(fenceValue_)) return false;
+        if (FAILED(copyAlloc_->Reset()) || FAILED(copyList_->Reset(copyAlloc_.Get(), nullptr))) return false;
+        D3D12_TEXTURE_COPY_LOCATION dst{ frames_[slot].Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX };
+        dst.SubresourceIndex = 0;
+        D3D12_TEXTURE_COPY_LOCATION src{ packed, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT };
+        src.PlacedFootprint = planeFootprint_[0]; src.PlacedFootprint.Offset = 0;
+        copyList_->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        if (FAILED(copyList_->Close())) return false;
+        if (ready && value && FAILED(copyQueue_->Wait(ready, value))) return false;
+        ID3D12CommandList* lists[] = { copyList_.Get() }; copyQueue_->ExecuteCommandLists(1, lists);
+        if (FAILED(copyQueue_->Signal(fence_.Get(), ++fenceValue_))) return false;
+        return WaitFor(fenceValue_);
+    }
+
+    bool EstimateManyGpu(const Pair* pairs, int count)
+    {
+        return EstimateManyImpl(pairs, count, nullptr, true);
+    }
 
     // Luma 0..255 (w*h floats, rounded to bytes) into a frame slot.
     bool Upload(int slot, const float* luma)
@@ -158,7 +198,12 @@ public:
     // Up to MAX_BATCH estimates, recorded in one list, copied out together, one wait.
     bool EstimateMany(const Pair* pairs, int count, std::vector<int16_t>* outs)
     {
-        if (!ok_ || !pairs || !outs || count < 1 || count > MAX_BATCH) return false;
+        return EstimateManyImpl(pairs, count, outs, false);
+    }
+
+    bool EstimateManyImpl(const Pair* pairs, int count, std::vector<int16_t>* outs, bool gpu)
+    {
+        if (!ok_ || !pairs || (!outs && !gpu) || count < 1 || count > MAX_BATCH) return false;
         for (int i = 0; i < count; i++)
         {
             const Pair& p = pairs[i];
@@ -195,9 +240,9 @@ public:
         if (FAILED(copyAlloc_->Reset()) || FAILED(copyList_->Reset(copyAlloc_.Get(), nullptr))) { Say("MotionEstimator::Estimate: FAIL copy reset"); return false; }
         for (int i = 0; i < count; i++)
         {
-            D3D12_TEXTURE_COPY_LOCATION dst{ readback_.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT };
+            D3D12_TEXTURE_COPY_LOCATION dst{ gpu ? gpuVectors_[i].Get() : readback_.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT };
             dst.PlacedFootprint = vectorFootprint_;
-            dst.PlacedFootprint.Offset = vectorStride_ * i;
+            dst.PlacedFootprint.Offset = gpu ? 0 : vectorStride_ * i;
             D3D12_TEXTURE_COPY_LOCATION src{ vectors_[i].Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX };
             src.SubresourceIndex = 0;
             copyList_->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
@@ -208,6 +253,8 @@ public:
         copyQueue_->ExecuteCommandLists(1, copies);
         copyQueue_->Signal(fence_.Get(), ++fenceValue_);
         if (!WaitFor(fenceValue_)) { Say("MotionEstimator::Estimate: FAIL wait (device removed 0x%08lx)", (unsigned long)device_->GetDeviceRemovedReason()); return false; }
+
+        if (gpu) return true; // DEFAULT buffers, COMMON after copy-queue decay.
 
         const char* p = nullptr;
         if (FAILED(readback_->Map(0, nullptr, (void**)&p)) || !p) { Say("MotionEstimator::Estimate: FAIL map"); return false; }
@@ -248,7 +295,9 @@ private:
 
     bool WaitFor(UINT64 value)
     {
-        if (fence_->GetCompletedValue() >= value) return true;
+        const UINT64 completed = fence_->GetCompletedValue();
+        if (completed == UINT64_MAX) return false;
+        if (completed >= value) return true;
         if (FAILED(fence_->SetEventOnCompletion(value, event_))) return false;
         return WaitForSingleObject(event_, 2000) == WAIT_OBJECT_0 && fence_->GetCompletedValue() != UINT64_MAX;
     }
@@ -289,6 +338,7 @@ private:
     UINT64 fenceValue_ = 0;
     HANDLE event_ = nullptr;
     Microsoft::WRL::ComPtr<ID3D12Resource> frames_[SLOTS], upload_[SLOTS], vectors_[MAX_BATCH], readback_;
+    Microsoft::WRL::ComPtr<ID3D12Resource> gpuVectors_[MAX_BATCH];
     UINT64 vectorStride_ = 0;
     unsigned char* uploadMapped_[SLOTS] = {};
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT planeFootprint_[2]{}, vectorFootprint_{};
