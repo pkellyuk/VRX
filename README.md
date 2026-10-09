@@ -44,6 +44,8 @@ From using VRX day to day:
   while SteamVR is running, SteamVR also shows it on its own flat screen in front of
   VRX's. In Steam, right-click the game → **Properties → General** and untick **Use
   Desktop Game Theatre while SteamVR is active**.
+- **The screen is black in one eye** (seen on an Oculus Rift with an older Oculus
+  app): set **Screen curve** to 1 % in Expert mode. The screen stays practically flat.
 
 ## Get started
 
