@@ -11,10 +11,12 @@ installer on Steam.
 
 ## One-time setup in Steamworks
 
-1. **App and depot.** In the app's SteamPipe > Depots, create one depot for Windows 64-bit,
-   all languages. Note the App ID and Depot ID.
-2. **Launch option.** In Installation > General: executable `VRX.Desktop.exe`, operating
-   system Windows, 64-bit. It needs no arguments.
+1. **App and depot (done 2026-10-16).** VRX3D is App ID **5458290**, a Software Application.
+   Steam created its one depot, **5458291** ("VRX3D Content", all languages and
+   architectures), and the store package 1883489.
+2. **Launch option (done 2026-10-16).** In Installation > General: executable
+   `VRX.Desktop.exe`, launch type "Launch (Default)", Windows, 64-bit only, no arguments.
+   VRX3D opens its desktop window and starts SteamVR itself when you press Start VR.
 3. **Steam Cloud (optional).** In Steam Cloud > Auto-Cloud, sync VRX's per-game settings with
    no code: root **WinAppDataLocal** (Windows `%LOCALAPPDATA%`), subdirectory `VRX\profiles`,
    pattern `*.json`, and root **WinAppDataLocal**, subdirectory `VRX`, pattern
@@ -23,7 +25,9 @@ installer on Steam.
    PCs only when the game is installed at the same path.
 4. **Source code (GPL-3.0).** The payload already includes `LICENSE`, `THIRD-PARTY-NOTICES.txt`,
    the `licenses` folder and, in `README.txt` and `BUILD.txt`, the link to the exact source
-   of the build. Also link https://github.com/pkellyuk/VRX from the store page.
+   of the build. Steam's store review rejects descriptions that link to other websites, so
+   do not put the GitHub link in the description: set the store page's website to
+   https://vrx3d.uk (which links to the source) and say in words that the source is on GitHub.
 5. **A build account (recommended).** A separate Steam account with only the "Edit App
    Metadata" and "Publish App Changes To Steam" permissions for this app, used just for
    uploads.
@@ -34,7 +38,7 @@ Download the release ZIP from GitHub (it is checked file by file against its own
 `FILES.sha256.txt` before upload), then:
 
 ```powershell
-./release/steam/upload-steam.ps1 -AppId <app id> -DepotId <depot id> -Account <build account> `
+./release/steam/upload-steam.ps1 -AppId 5458290 -DepotId 5458291 -Account <build account> `
     -Release C:\path\to\VRX-1.7.8-win-x64.zip -Preview
 ```
 

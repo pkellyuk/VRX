@@ -94,9 +94,9 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 - **Game frame timing** (per game, applies live) chooses which game frame is shown with the depth. **Latest frame** (default) is smooth and immediate, but depth lags slightly behind moving things. **Delayed to depth** holds the game image back by the measured depth delay so the two line up, while motion stays at the capture rate. **Matched to depth** (the earlier frame matching) shows each depth estimate with the exact frame it came from: the best alignment, but the game only updates at the depth rate. Offline on four clips with depth 67 ms behind, against the latest frame: delayed cut depth mismatch from 0.050 to 0.016 and improved edge alignment from 0.59 to 0.72, with 26 game updates per second against matched's 15. Delayed and matched both add delay, so they suit slower games. See [XSYNC.md](XSYNC.md).
 - **Extra foreground depth passes** are experimental and default on; their benefit varies.
 - GPU contention can reduce depth update speed. A steady 60 depth updates per second is not guaranteed.
-- SteamVR dashboard dismissal is best-effort. Releases up to v1.7.9 are unsigned, so on a
-  new Windows 11 install Smart App Control can block the engine; signed releases are being
-  set up (see [Code signing and privacy](#code-signing-and-privacy)).
+- SteamVR dashboard dismissal is best-effort. Releases are not code-signed, so on a new
+  Windows 11 install Smart App Control can block the engine (see
+  [Code signing and privacy](#code-signing-and-privacy)).
 
 ## Build locally
 
@@ -137,10 +137,12 @@ which runs the same script in stages around code signing.
 
 ## Code signing and privacy
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by
-[SignPath Foundation](https://signpath.org). Signed releases are being set up; releases up
-to v1.7.9 are unsigned. See the [code signing policy](https://vrx3d.uk/code-signing.html)
-for what is signed, how it is built and the team roles.
+VRX releases are not code-signed. The free open-source signing from the
+[SignPath Foundation](https://signpath.org) was declined for now (VRX does not have enough
+users yet), so Windows 11's Smart App Control blocks VRX on PCs where it is turned on. The
+release workflow is ready to sign once a certificate is available; the
+[code signing policy](https://vrx3d.uk/code-signing.html) describes what would be signed
+and how it is built.
 
 VRX makes no network connections and collects no data: see the
 [privacy policy](https://vrx3d.uk/privacy.html).
