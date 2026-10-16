@@ -233,8 +233,10 @@ def to_rgba(arr):
 def capsule(W, H, out, kind):
     log(f'capsule {kind} {W}x{H}')
     if kind == 'wide':
-        img = to_rgba(scene(W, H, (W * 0.76, H * 0.40, W * 0.40, H * 0.44), H * 0.66))
-        place(img, lockup(400), W * 0.29, H * 0.50, W * 0.52, H * 0.60)
+        # The logo spans over half the width and over a third of the height: Steam asks
+        # that it fill at least a third of the capsule.
+        img = to_rgba(scene(W, H, (W * 0.80, H * 0.40, W * 0.36, H * 0.44), H * 0.66))
+        place(img, lockup(400), W * 0.335, H * 0.50, W * 0.62, H * 0.66)
     elif kind == 'small':
         img = to_rgba(scene(W, H, (W * 0.5, H * 0.40, W * 0.70, H * 0.60), H * 0.70))
         place(img, lockup(400), W * 0.5, H * 0.5, W * 0.90, H * 0.78)
