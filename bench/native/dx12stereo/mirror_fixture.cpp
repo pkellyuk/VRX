@@ -56,7 +56,7 @@ int main(int argc,char** argv) {
         Check(result.draws==(bindings?30u:unsupported?13u:12u) && result.indexedDraws==6,"the app issues expected draws per simulation frame");
         Check(!result.mirrorLiveObjects,"all original identities and shadow objects retire after app release");
         if(modern)Check(result.streamPipelines>=2 && result.memoryHeaps>=7 && result.placedResources>=8 && result.modernResources>=5,"modern pipeline/resource factories were actually intercepted");
-        if(unsupported)Check(std::strstr(result.reason,"predication")!=nullptr,"unsupported command has an actionable stop reason");
+        if(unsupported)Check(std::strstr(result.reason,"SOSetTargets")!=nullptr,"unsupported command has an actionable stop reason");
         vrx::dx12::StatusReader status;vrx::dx12::StatusFrame frame;
         Check(status.Open(session) && status.Read(frame,GetCurrentProcessId()) && frame.mirroring && frame.counts.mirrorReplays==result.mirrorReplays &&
             frame.counts.streamPipelines==result.streamPipelines && !std::strcmp(frame.counts.reason,result.reason),"live bridge status exposes the same counts and stop reason over bounded IPC");

@@ -239,7 +239,19 @@ ROOT_ADDRESS(SetComputeRootUnorderedAccessView)
 #undef ROOT_ADDRESS
 void STDMETHODCALLTYPE SetPredication(ID3D12GraphicsCommandList* object,ID3D12Resource* resource,UINT64 offset,D3D12_PREDICATION_OP operation) {
     Call call; Original<decltype(&SetPredication)>(object,slot::ID3D12GraphicsCommandList_SetPredication)(object,resource,offset,operation);
-    if(call.outer) mirror::Unsupported(object,"predication is not mirrored yet");
+    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto r=map.Resource(resource);if(map.Valid())q->SetPredication(r,offset,operation);});
+}
+#define QUERY(Name) \
+void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT index){ \
+    Call call;Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name)(object,heap,type,index); \
+    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto h=map.Query(heap);if(map.Valid())q->Name(h,type,index);}); \
+}
+QUERY(BeginQuery)
+QUERY(EndQuery)
+#undef QUERY
+void STDMETHODCALLTYPE ResolveQueryData(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT first,UINT count,ID3D12Resource* buffer,UINT64 offset){
+    Call call;Original<decltype(&ResolveQueryData)>(object,slot::ID3D12GraphicsCommandList_ResolveQueryData)(object,heap,type,first,count,buffer,offset);
+    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto h=map.Query(heap);auto r=map.Resource(buffer);if(map.Valid())q->ResolveQueryData(h,type,first,count,r,offset);});
 }
 // Forward the native call exactly, but never submit a second eye whose command
 // stream silently omits state, clears, queries or GPU-generated arguments.
@@ -253,9 +265,6 @@ GUARDED(SOSetTargets,(ID3D12GraphicsCommandList* object,UINT start,UINT count,co
 GUARDED(ClearUnorderedAccessViewUint,(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const UINT values[4],UINT count,const D3D12_RECT* rects),(object,gpu,cpu,resource,values,count,rects))
 GUARDED(ClearUnorderedAccessViewFloat,(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const FLOAT values[4],UINT count,const D3D12_RECT* rects),(object,gpu,cpu,resource,values,count,rects))
 GUARDED(DiscardResource,(ID3D12GraphicsCommandList* object,ID3D12Resource* resource,const D3D12_DISCARD_REGION* region),(object,resource,region))
-GUARDED(BeginQuery,(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT index),(object,heap,type,index))
-GUARDED(EndQuery,(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT index),(object,heap,type,index))
-GUARDED(ResolveQueryData,(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT first,UINT count,ID3D12Resource* buffer,UINT64 offset),(object,heap,type,first,count,buffer,offset))
 GUARDED(ExecuteIndirect,(ID3D12GraphicsCommandList* object,ID3D12CommandSignature* signature,UINT count,ID3D12Resource* buffer,UINT64 offset,ID3D12Resource* counter,UINT64 counterOffset),(object,signature,count,buffer,offset,counter,counterOffset))
 #undef GUARDED
 void STDMETHODCALLTYPE Dispatch(ID3D12GraphicsCommandList* object,UINT x,UINT y,UINT z) {
@@ -315,6 +324,7 @@ void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* object,UINT count,ID3D12Comma
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*,UINT,ID3D12CommandList* const*);
     if(call.outer) ++State().submits;
     const auto execute=Original<Fn>(object,slot::ID3D12CommandQueue_ExecuteCommandLists);
+    if(call.outer && State().failures.load())mirror::Unsupported(object,"native command interception is incomplete");
     if(call.outer){mirror::Execute(object,count,lists,execute);Report();}else execute(object,count,lists);
 }
 HRESULT STDMETHODCALLTYPE CreateQueue(ID3D12Device* object,const D3D12_COMMAND_QUEUE_DESC* desc,REFIID iid,void** output) {
@@ -433,6 +443,13 @@ HRESULT STDMETHODCALLTYPE CreateAllocator(ID3D12Device* object,D3D12_COMMAND_LIS
         }
     } return result;
 }
+HRESULT STDMETHODCALLTYPE CreateQueryHeap(ID3D12Device* object,const D3D12_QUERY_HEAP_DESC* desc,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreateQueryHeap)>(object,slot::ID3D12Device_CreateQueryHeap)(object,desc,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){
+        auto* original=static_cast<IUnknown*>(*output);ComPtr<ID3D12QueryHeap> queries;
+        if(SUCCEEDED(original->QueryInterface(IID_PPV_ARGS(&queries)))){Lifetime(queries.Get());Lifetime(original);mirror::QueryHeap(object,queries.Get(),desc);mirror::Alias(queries.Get(),original);}
+    }return result;
+}
 HRESULT STDMETHODCALLTYPE CreateHeap(ID3D12Device* object,const D3D12_DESCRIPTOR_HEAP_DESC* desc,REFIID iid,void** output) {
     Call call; auto result=Original<decltype(&CreateHeap)>(object,slot::ID3D12Device_CreateDescriptorHeap)(object,desc,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output) {
@@ -500,11 +517,11 @@ HRESULT STDMETHODCALLTYPE SetColorSpace1(IDXGISwapChain3* object,DXGI_COLOR_SPAC
     if(call.outer && SUCCEEDED(result))mirror::ColorSpace(object,color);return result;
 }
 HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* object,UINT sync,UINT flags) {
-    Call call;if(call.outer)mirror::Present(object,flags);
+    Call call;if(call.outer){if(State().failures.load())mirror::Unsupported(object,"native command interception is incomplete");mirror::Present(object,flags);}
     return Original<decltype(&Present)>(object,slot::IDXGISwapChain_Present)(object,sync,flags);
 }
 HRESULT STDMETHODCALLTYPE Present1(IDXGISwapChain1* object,UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* parameters) {
-    Call call;if(call.outer)mirror::Present(object,flags);
+    Call call;if(call.outer){if(State().failures.load())mirror::Unsupported(object,"native command interception is incomplete");mirror::Present(object,flags);}
     return Original<decltype(&Present1)>(object,slot::IDXGISwapChain1_Present1)(object,sync,flags,parameters);
 }
 HRESULT STDMETHODCALLTYPE GetBuffer(IDXGISwapChain* object,UINT index,REFIID iid,void** output) {
@@ -590,6 +607,7 @@ void Attach(ID3D12Device* device) noexcept {
         DEVICE_HOOK(CreateDepthStencilView) DEVICE_HOOK(CreateConstantBufferView) DEVICE_HOOK(CreateShaderResourceView)
         DEVICE_HOOK(CreateUnorderedAccessView) DEVICE_HOOK(CreateSampler) DEVICE_HOOK(CopyDescriptors) DEVICE_HOOK(CopyDescriptorsSimple)
         DEVICE_HOOK(CreateComputePipelineState)
+        DEVICE_HOOK(CreateQueryHeap)
 #undef DEVICE_HOOK
         Add(state,device,slot::ID3D12Device_CreateCommandList,reinterpret_cast<void*>(&CreateList));
         Add(state,device,slot::ID3D12Device_CreateGraphicsPipelineState,reinterpret_cast<void*>(&CreatePipeline));

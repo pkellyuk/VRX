@@ -52,6 +52,7 @@ def main():
     selected["ID3D12GraphicsCommandList"] += ["CopyTiles"]
     selected["ID3D12Device4"] += ["CreateReservedResource1"]
     selected["IDXGISwapChain3"] += ["SetColorSpace1"]
+    selected["ID3D12Device"] += ["CreateQueryHeap"]
     selected["ID3D12GraphicsCommandList"] += ["ResolveSubresource", "OMSetBlendFactor", "OMSetStencilRef", "SOSetTargets", "ClearUnorderedAccessViewUint", "ClearUnorderedAccessViewFloat", "DiscardResource", "BeginQuery", "EndQuery", "ResolveQueryData", "ExecuteIndirect"]
     rows = ["// Generated from Microsoft's installed d3d12.h; do not edit.", "#pragma once", "namespace vrx::dx12::slot {"]
     for interface, methods in selected.items():

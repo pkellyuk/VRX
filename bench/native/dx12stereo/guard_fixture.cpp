@@ -1,5 +1,5 @@
 // Copyright (C) 2026 Paul Kelly. SPDX-License-Identifier: GPL-3.0-or-later
-// An unsupported timestamp query stops replay while native GPU results survive.
+// Unsupported stream-output state stops replay while native GPU results survive.
 #include "mirror_scene.h"
 int main(int argc,char** argv){try {
     const bool warp=argc==3 && !std::strcmp(argv[2],"--warp");Check(argc==2 || warp,"known guard fixture adapter");
@@ -15,6 +15,7 @@ int main(int argc,char** argv){try {
         scene.Wait();Hr(scene.allocator->Reset());Hr(scene.commands->Reset(scene.allocator.Get(),nullptr));
         const char marker[]="native marker";scene.commands->SetMarker(0,marker,sizeof(marker));
         vrx::dx12::Counts before;Hr(counts(&before,sizeof(before)));Check(!before.mirrorStops,"passive annotations never stop stereo");
+        scene.commands->SOSetTargets(0,0,nullptr);
         scene.commands->EndQuery(queries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0);
         scene.commands->ResolveQueryData(queries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0,1,output.Get(),0);Hr(scene.commands->Close());
         ID3D12CommandList* lists[]={scene.commands.Get()};scene.queue->ExecuteCommandLists(1,lists);scene.Wait();scene.DebugCheck();
@@ -22,6 +23,6 @@ int main(int argc,char** argv){try {
         Frame(scene,2,2,false,false);Pixels(scene,Capture(scene,false),2,true);
     }
     vrx::dx12::Counts result;Hr(counts(&result,sizeof(result)));
-    Check(result.mirrorReplays==1 && result.mirrorStops==1 && !result.hookFailures && !result.mirrorLiveObjects && std::strstr(result.reason,"EndQuery"),"unsupported query stops only replay and all tracked objects retire");
+    Check(result.mirrorReplays==1 && result.mirrorStops==1 && !result.hookFailures && !result.mirrorLiveObjects && std::strstr(result.reason,"SOSetTargets"),"unsupported stream output stops only replay and all tracked objects retire");
     std::puts("PASS: native DX12 unsupported-command guard, original GPU query results and continued native rendering");return 0;
 }catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}

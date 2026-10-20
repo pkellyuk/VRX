@@ -29,6 +29,7 @@ public:
     D3D12_GPU_DESCRIPTOR_HANDLE Gpu(D3D12_GPU_DESCRIPTOR_HANDLE original);
     ID3D12DescriptorHeap* Heap(ID3D12DescriptorHeap* original);
     ID3D12Heap* Memory(ID3D12Heap* original);
+    ID3D12QueryHeap* Query(ID3D12QueryHeap* original);
     D3D12_GPU_VIRTUAL_ADDRESS Address(D3D12_GPU_VIRTUAL_ADDRESS original);
     bool Valid() const;
 };
@@ -48,6 +49,7 @@ void Allocator(ID3D12Device*,ID3D12CommandAllocator*,D3D12_COMMAND_LIST_TYPE) no
 void AllocatorReset(ID3D12CommandAllocator*) noexcept;
 void Resource(ID3D12Device*,ID3D12Resource*,const D3D12_HEAP_PROPERTIES*,D3D12_HEAP_FLAGS,const D3D12_RESOURCE_DESC*,D3D12_RESOURCE_STATES,const D3D12_CLEAR_VALUE*) noexcept;
 void MemoryHeap(ID3D12Device*,ID3D12Heap*,const D3D12_HEAP_DESC*) noexcept;
+void QueryHeap(ID3D12Device*,ID3D12QueryHeap*,const D3D12_QUERY_HEAP_DESC*) noexcept;
 void PlacedResource(ID3D12Device*,ID3D12Resource*,ID3D12Heap*,UINT64,const D3D12_RESOURCE_DESC*,D3D12_RESOURCE_STATES,const D3D12_CLEAR_VALUE*) noexcept;
 void ReservedResource(ID3D12Device*,ID3D12Resource*,const D3D12_RESOURCE_DESC*,D3D12_RESOURCE_STATES,const D3D12_CLEAR_VALUE*) noexcept;
 void Pipeline(ID3D12Device*,ID3D12PipelineState*,const D3D12_GRAPHICS_PIPELINE_STATE_DESC*) noexcept;

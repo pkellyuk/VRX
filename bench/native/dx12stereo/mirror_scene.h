@@ -176,7 +176,7 @@ inline void Frame(Scene& scene,UINT number,float w,bool stop=false,bool indexed=
     if(stop) {
         D3D12_DESCRIPTOR_HEAP_DESC desc{}; desc.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; desc.NumDescriptors=1; desc.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         Hr(scene.device->CreateDescriptorHeap(&desc,IID_PPV_ARGS(&unsupported))); auto* heap=unsupported.Get(); scene.commands->SetDescriptorHeaps(1,&heap);
-        scene.commands->SetPredication(nullptr,0,D3D12_PREDICATION_OP_EQUAL_ZERO);
+        scene.commands->SOSetTargets(0,0,nullptr);
     }
     const float values[]={w,float(number+1)/32,.5f,.75f}; scene.commands->SetGraphicsRoot32BitConstants(0,4,values,0);
     if(bindings) {bindings->Bind(scene,number);const float front[]={w,1,0,.5f};scene.commands->SetGraphicsRoot32BitConstants(0,4,front,0);}

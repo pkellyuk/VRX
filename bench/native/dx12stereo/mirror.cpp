@@ -28,7 +28,7 @@ struct Context {
     std::string reason;
 };
 namespace {
-enum class Kind { Device,Queue,Allocator,Resource,Pipeline,Heap,List,Swapchain,MemoryHeap };
+enum class Kind { Device,Queue,Allocator,Resource,Pipeline,Heap,List,Swapchain,MemoryHeap,QueryHeap };
 struct Item {
     Kind kind;
     std::shared_ptr<Context> context;
@@ -38,6 +38,7 @@ struct Item {
     ID3D12PipelineState* pipelineAlias=nullptr;
     std::string pipelineReason;
     ComPtr<ID3D12Heap> memory;
+    ComPtr<ID3D12QueryHeap> queries;
     ComPtr<ID3D12DescriptorHeap> heap;
     ComPtr<ID3D12CommandAllocator> allocator;
     ComPtr<ID3D12GraphicsCommandList> list;
@@ -202,6 +203,9 @@ ID3D12Heap* Mapper::Memory(ID3D12Heap* original) {
     if(!original)return nullptr;
     auto item=Mapped(original,Kind::MemoryHeap,context_);return item?item->memory.Get():nullptr;
 }
+ID3D12QueryHeap* Mapper::Query(ID3D12QueryHeap* original) {
+    auto item=Mapped(original,Kind::QueryHeap,context_);return item?item->queries.Get():nullptr;
+}
 void Device(ID3D12Device* device) noexcept {
     if(!IsEnabled()) return;
     try {
@@ -325,6 +329,14 @@ void MemoryHeap(ID3D12Device* device,ID3D12Heap* original,const D3D12_HEAP_DESC*
         if(!HeapSupported(desc->Properties,desc->Flags) || FAILED(device->CreateHeap(desc,IID_PPV_ARGS(&item->memory)))){Stop(context,"memory heap cannot be mirrored");return;}
         Remember(original,item);
     }catch(...){Failure(device,"memory heap observation failed");}
+}
+void QueryHeap(ID3D12Device* device,ID3D12QueryHeap* original,const D3D12_QUERY_HEAP_DESC* desc) noexcept {
+    try {
+        Lock lock(Registry().mutex);Drain();auto context=Owner(device);if(!context || !context->active)return;
+        auto item=New(Kind::QueryHeap,context);
+        if(desc->NodeMask>1 || FAILED(device->CreateQueryHeap(desc,IID_PPV_ARGS(&item->queries)))){Stop(context,"query heap cannot be mirrored");return;}
+        Remember(original,item);
+    }catch(...){Failure(device,"query heap observation failed");}
 }
 void PlacedResource(ID3D12Device* device,ID3D12Resource* original,ID3D12Heap* heap,UINT64 offset,const D3D12_RESOURCE_DESC* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear) noexcept {
     try {

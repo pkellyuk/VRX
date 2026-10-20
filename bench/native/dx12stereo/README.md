@@ -230,20 +230,30 @@ on hardware and WARP. Only compatible format families are copied, following Micr
 [CopyTextureRegion requirements](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytextureregion).
 
 This remains a limited graphics/compute/presentation subset, not a game-ready DX12 route.
-Predication and raytracing acceleration-structure views currently stop replay.
+Raytracing acceleration-structure views currently stop replay.
 Several commands and newer resource/pipeline creation APIs still need
 translation. Base graphics-command-list calls now either replay or explicitly
 stop stereo; passive markers/events and COM bookkeeping are excluded. The SDK
-slot generator checks this base-interface coverage at configure time. Query,
-indirect, stream-output, UAV-clear, discard and resolve
+slot generator checks this base-interface coverage at configure time. Indirect,
+stream-output, UAV-clear, discard and multisample resolve
 calls currently forward natively and stop replay. Hardware/WARP tests verify
-that an unsupported timestamp query still produces its native GPU result and
+that an unsupported stream-output binding still allows a native timestamp query
+to produce its GPU result and
 that the original game view continues after replay stops. Newer command-list
 interfaces are not yet comprehensively guarded and remain a compatibility gap.
 Dynamic blend factors and stencil references are replayed. A dedicated
 hardware/WARP test renders through a stencil-equality test with changing
 references and blend constants, verifies native and right-eye colours and
 disparity, and checks complete retirement.
+Query heaps are cloned independently. Begin/end/resolve operations translate
+the query heap and output buffer, and GPU predication translates its buffer
+while preserving offsets and operations. Hardware/WARP tests cover binary
+occlusion queries with visible and empty draws, timestamp ordering, result
+offsets, conditional rendering, null-predicate disable and heap reuse over
+multiple frames. Both native and right-eye GPU query results and rendered
+pixels are checked; no query values are emulated on the CPU.
+Hook installation failures also stop replay before queue submission or
+publication; native execution continues.
 Upload buffers are copied in full at submission and need a scalable update
 strategy. Presentation currently requires one of those typed SDR formats, a single direct queue/node and
 blocking Present semantics; `DO_NOT_WAIT` stops the stream rather than reporting
