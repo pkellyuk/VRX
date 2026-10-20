@@ -5,8 +5,9 @@ not load Vulkan or DXVK. `Publisher` accepts two eye resources from the same
 simulation frame and submits GPU copies on their rendering queue. The shared
 transport is also used by the local experimental Vulkan backend.
 
-**Status:** producer and transport implemented; arbitrary-game interception,
-command/resource mirroring and shader adjustment are not implemented here yet.
+**Status:** producer, transport and native command interception foundation
+implemented; command/resource mirroring and shader adjustment are not implemented
+here yet. Interception is tested with a fixture, not arbitrary real games.
 This does not enable the desktop DX12 button. The fixture supplies both views
 explicitly, so passing these tests does not prove stereo in an unmodified game.
 
@@ -73,3 +74,39 @@ cover GPU presentation, command mirroring and six real metadata-mutex holds
 followed by ten verified fresh pairs. The hold count has a deadline rather than
 a fixed number of rendered frames, because reservation observation depends on
 thread scheduling. The adapted mirror source itself is not included.
+
+## Native interception prototype
+
+The build produces an opt-in app-local `d3d12.dll` under `out/proxy/Release`.
+It forwards Windows' D3D12 exports by their names and ordinals, loading the real
+runtime by its absolute System32 path. Private and PIX exports use Win64
+tail-call forwarders which preserve argument registers and the stack. Nothing
+is installed into Windows or an existing game by this build or these tests.
+
+Only a child launched with `VRX_DX12_INTERCEPT=1` installs the hooks. The native
+device, graphics command lists and queues stay the original COM objects, so
+their identity, QueryInterface behavior and parameters passed to the driver are
+preserved. Nested driver/debug-layer calls are forwarded without a second app
+event. Hook slots are derived from the installed Microsoft SDK declarations.
+The bridge is pinned once hooks are installed; unloading active trampolines is
+not supported. It captures legacy and Device4 command-list creation, resources,
+graphics pipelines, draws, close/reset and queue submission. This is currently
+observation/forwarding, **not same-frame replay or shader modification**.
+
+MinHook 1.3.4 is fetched at commit
+`c3fcafdc10146beb5919319d0683e44e3c30d537`. Its upstream BSD license, including
+the bundled disassembler notices, is copied beside the DLL as
+`MinHook-LICENSE.txt` and must accompany binary distributions. See
+[MinHook upstream](https://github.com/TsudaKageyu/minhook/tree/c3fcafdc10146beb5919319d0683e44e3c30d537).
+Use `VRX_DX12_BUILD_INTERCEPTOR=OFF` to build only the producer tests without
+this dependency or MASM. Interceptor builds require MSVC's x64 assembler.
+
+The enabled/disabled interception tests copy only their fixture and the new DLL
+into a fresh temporary directory, then remove that directory after child exit.
+They check native API interception counts, a null-output capability probe,
+legacy/versioned root signatures, original COM identity, pixel preservation,
+list reset, indexed draws inside bundles, and concurrent device use. A separate
+assembly test checks integer, floating-point and stack arguments and returns
+through the opaque export forwarders. Existing games and headset sessions are
+not touched. The desktop DX12 route remains disabled pending actual stereo
+replay, shader coverage, managed launch/cleanup and real-game validation.

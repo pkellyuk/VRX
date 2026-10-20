@@ -1,0 +1,22 @@
+LIBRARY d3d12
+EXPORTS
+    D3D12PrivateOrdinal99 @99 NONAME
+    SetAppCompatStringPointer @100
+    D3D12CreateDevice @101
+    D3D12GetDebugInterface @102
+    D3D12CoreCreateLayeredDevice @103
+    D3D12CoreGetLayeredDeviceSize @104
+    D3D12CoreRegisterLayers @105
+    D3D12CreateRootSignatureDeserializer @106
+    D3D12CreateVersionedRootSignatureDeserializer @107
+    D3D12DeviceRemovedExtendedData @108
+    D3D12EnableExperimentalFeatures @109
+    D3D12GetInterface @110
+    D3D12PIXEventsReplaceBlock @111
+    D3D12PIXGetThreadInfo @112
+    D3D12PIXNotifyWakeFromFenceSignal @113
+    D3D12PIXReportCounter @114
+    D3D12SerializeRootSignature @115
+    D3D12SerializeVersionedRootSignature @116
+    GetBehaviorValue @117
+    VRX_DX12_GetCounts @1000
