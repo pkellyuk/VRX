@@ -52,9 +52,15 @@ def main():
     selected["ID3D12GraphicsCommandList"] += ["CopyTiles"]
     selected["ID3D12Device4"] += ["CreateReservedResource1"]
     selected["IDXGISwapChain3"] += ["SetColorSpace1"]
+    selected["ID3D12GraphicsCommandList"] += ["ResolveSubresource", "OMSetBlendFactor", "OMSetStencilRef", "SOSetTargets", "ClearUnorderedAccessViewUint", "ClearUnorderedAccessViewFloat", "DiscardResource", "BeginQuery", "EndQuery", "ResolveQueryData", "ExecuteIndirect"]
     rows = ["// Generated from Microsoft's installed d3d12.h; do not edit.", "#pragma once", "namespace vrx::dx12::slot {"]
     for interface, methods in selected.items():
         table = slots(source, interface)
+        if interface == "ID3D12GraphicsCommandList":
+            passive = {"QueryInterface", "AddRef", "Release", "GetPrivateData", "SetPrivateData", "SetPrivateDataInterface", "SetName", "GetDevice", "GetType", "SetMarker", "BeginEvent", "EndEvent"}
+            missing = table.keys() - set(methods) - passive
+            if missing:
+                raise RuntimeError(f"Base command-list calls need replay or explicit guards: {sorted(missing)}")
         for method in methods:
             rows.append(f"constexpr unsigned {interface}_{method} = {table[method]};")
     rows.append("}")

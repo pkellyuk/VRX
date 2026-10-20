@@ -134,6 +134,8 @@ void STDMETHODCALLTYPE Name Parameters { \
 SIMPLE(RSSetViewports,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_VIEWPORT* values),(object,count,values),(count,values))
 SIMPLE(RSSetScissorRects,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_RECT* values),(object,count,values),(count,values))
 SIMPLE(IASetPrimitiveTopology,(ID3D12GraphicsCommandList* object,D3D12_PRIMITIVE_TOPOLOGY value),(object,value),(value))
+SIMPLE(OMSetBlendFactor,(ID3D12GraphicsCommandList* object,const FLOAT values[4]),(object,values),(values))
+SIMPLE(OMSetStencilRef,(ID3D12GraphicsCommandList* object,UINT value),(object,value),(value))
 SIMPLE(SetGraphicsRootSignature,(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value),(object,value),(value))
 SIMPLE(SetGraphicsRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
 SIMPLE(SetGraphicsRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT index,UINT count,const void* data,UINT offset),(object,index,count,data,offset),(index,count,data,offset))
@@ -239,6 +241,23 @@ void STDMETHODCALLTYPE SetPredication(ID3D12GraphicsCommandList* object,ID3D12Re
     Call call; Original<decltype(&SetPredication)>(object,slot::ID3D12GraphicsCommandList_SetPredication)(object,resource,offset,operation);
     if(call.outer) mirror::Unsupported(object,"predication is not mirrored yet");
 }
+// Forward the native call exactly, but never submit a second eye whose command
+// stream silently omits state, clears, queries or GPU-generated arguments.
+#define GUARDED(Name,Parameters,Arguments) \
+void STDMETHODCALLTYPE Name Parameters { \
+    Call call;Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name) Arguments; \
+    if(call.outer)mirror::Unsupported(object,#Name " is not mirrored yet"); \
+}
+GUARDED(ResolveSubresource,(ID3D12GraphicsCommandList* object,ID3D12Resource* dst,UINT target,ID3D12Resource* src,UINT source,DXGI_FORMAT format),(object,dst,target,src,source,format))
+GUARDED(SOSetTargets,(ID3D12GraphicsCommandList* object,UINT start,UINT count,const D3D12_STREAM_OUTPUT_BUFFER_VIEW* views),(object,start,count,views))
+GUARDED(ClearUnorderedAccessViewUint,(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const UINT values[4],UINT count,const D3D12_RECT* rects),(object,gpu,cpu,resource,values,count,rects))
+GUARDED(ClearUnorderedAccessViewFloat,(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const FLOAT values[4],UINT count,const D3D12_RECT* rects),(object,gpu,cpu,resource,values,count,rects))
+GUARDED(DiscardResource,(ID3D12GraphicsCommandList* object,ID3D12Resource* resource,const D3D12_DISCARD_REGION* region),(object,resource,region))
+GUARDED(BeginQuery,(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT index),(object,heap,type,index))
+GUARDED(EndQuery,(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT index),(object,heap,type,index))
+GUARDED(ResolveQueryData,(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT first,UINT count,ID3D12Resource* buffer,UINT64 offset),(object,heap,type,first,count,buffer,offset))
+GUARDED(ExecuteIndirect,(ID3D12GraphicsCommandList* object,ID3D12CommandSignature* signature,UINT count,ID3D12Resource* buffer,UINT64 offset,ID3D12Resource* counter,UINT64 counterOffset),(object,signature,count,buffer,offset,counter,counterOffset))
+#undef GUARDED
 void STDMETHODCALLTYPE Dispatch(ID3D12GraphicsCommandList* object,UINT x,UINT y,UINT z) {
     Call call; Original<decltype(&Dispatch)>(object,slot::ID3D12GraphicsCommandList_Dispatch)(object,x,y,z);
     if(call.outer) mirror::Record(object,[&](auto* q,auto&){q->Dispatch(x,y,z);});
@@ -262,6 +281,9 @@ void List(ID3D12GraphicsCommandList* object) noexcept {
     RECORD_HOOK(ClearDepthStencilView) RECORD_HOOK(SetGraphicsRootDescriptorTable)
     RECORD_HOOK(SetGraphicsRootConstantBufferView) RECORD_HOOK(SetGraphicsRootShaderResourceView) RECORD_HOOK(SetGraphicsRootUnorderedAccessView)
     RECORD_HOOK(SetPredication) RECORD_HOOK(CopyTiles)
+    RECORD_HOOK(ResolveSubresource) RECORD_HOOK(OMSetBlendFactor) RECORD_HOOK(OMSetStencilRef) RECORD_HOOK(SOSetTargets)
+    RECORD_HOOK(ClearUnorderedAccessViewUint) RECORD_HOOK(ClearUnorderedAccessViewFloat) RECORD_HOOK(DiscardResource)
+    RECORD_HOOK(BeginQuery) RECORD_HOOK(EndQuery) RECORD_HOOK(ResolveQueryData) RECORD_HOOK(ExecuteIndirect)
     RECORD_HOOK(SetComputeRootSignature) RECORD_HOOK(SetComputeRoot32BitConstant) RECORD_HOOK(SetComputeRoot32BitConstants)
     RECORD_HOOK(SetComputeRootDescriptorTable) RECORD_HOOK(SetComputeRootConstantBufferView)
     RECORD_HOOK(SetComputeRootShaderResourceView) RECORD_HOOK(SetComputeRootUnorderedAccessView)

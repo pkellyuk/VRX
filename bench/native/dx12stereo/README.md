@@ -231,8 +231,19 @@ on hardware and WARP. Only compatible format families are copied, following Micr
 
 This remains a limited graphics/compute/presentation subset, not a game-ready DX12 route.
 Predication and raytracing acceleration-structure views currently stop replay.
-Many commands and newer resource/pipeline creation APIs still need interception
-and translation; unobserved commands are not yet comprehensively rejected.
+Several commands and newer resource/pipeline creation APIs still need
+translation. Base graphics-command-list calls now either replay or explicitly
+stop stereo; passive markers/events and COM bookkeeping are excluded. The SDK
+slot generator checks this base-interface coverage at configure time. Query,
+indirect, stream-output, UAV-clear, discard and resolve
+calls currently forward natively and stop replay. Hardware/WARP tests verify
+that an unsupported timestamp query still produces its native GPU result and
+that the original game view continues after replay stops. Newer command-list
+interfaces are not yet comprehensively guarded and remain a compatibility gap.
+Dynamic blend factors and stencil references are replayed. A dedicated
+hardware/WARP test renders through a stencil-equality test with changing
+references and blend constants, verifies native and right-eye colours and
+disparity, and checks complete retirement.
 Upload buffers are copied in full at submission and need a scalable update
 strategy. Presentation currently requires one of those typed SDR formats, a single direct queue/node and
 blocking Present semantics; `DO_NOT_WAIT` stops the stream rather than reporting
@@ -275,7 +286,11 @@ Unreal GPU-hang report (`DXGI_ERROR_DEVICE_HUNG`), despite zero recorded replays
 the cause has not been established. After implementing sparse-resource mapping,
 a later attempt replayed three submissions, then rejected the presentation
 format/extent and exited normally when closed. A diagnostic retry identified a
-1280x720, single-sample `R10G10B10A2_UNORM` swapchain. No stereo frames were published.
+1280x720, single-sample `R10G10B10A2_UNORM` swapchain. Those attempts published no
+stereo frames. With SDR ten-bit conversion and base-command guards, a later
+attempt published one frame before stopping at `OMSetStencilRef`; after dynamic
+output-state replay was added, it stopped at `BeginQuery`. Gameplay stereo
+remains unverified.
 This establishes concrete compatibility gaps, not native DX12 game compatibility.
 
 Reserved resources created through Device/Device4 now have independent right-eye
