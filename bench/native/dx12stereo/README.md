@@ -486,37 +486,63 @@ Rejected transforms return no replacement bytecode, allowing native forwarding
 without advertising a stereo stream. W=1 is a heuristic and cannot identify
 every HUD or projection convention automatically.
 
-The System Shock comparison preserves the full native scene with cloning and
-mirrored queue mappings enabled, but loses the scene when shadow command
-recording is enabled, even without submitting those lists. `-RecordOnly
--SkipRecordingWork` isolates state, copies, clears and query recording from draws,
-dispatch, indirect work and bundles. These diagnostics never submit or publish a
-second eye; normal managed launches strip the diagnostic child environment.
+## System Shock recording regression
 
-System Shock still loses its world scene with second-eye work recording omitted.
-`-RecordOnly -RecordStateOnly` further excludes copies, clears, barriers and
-queries while retaining pipeline/root bindings and other draw state.
+Controlled saved-game comparisons use native `-dx12 -norhithread`, the same
+bridge build and ordinary VRX depth capture. The user checks actual gameplay
+following each restart. A visible menu does not count as a successful comparison.
 
-The state-only comparison also reproduces the missing System Shock world.
-`-RecordOnly -RecordCommands SetPipelineState` restricts recording to one exact
-API name; a comma-separated list permits further bisection without rebuilding.
-The allowlist is accepted only in record-only diagnostics and is removed from
-normal managed launches. Original game commands are always forwarded.
+| Shadow behavior | Gameplay result |
+| --- | --- |
+| No bridge | Full scene on desktop and headset |
+| Resource/pipeline cloning only | Full scene |
+| Cloning plus mirrored queue mappings, no command recording | Full scene |
+| Full command recording, no shadow submission | HUD over black world |
+| State recording only, no transfers, queries or work | HUD over black world |
+| Pipeline binding only | Full scene |
+| Root parameters and descriptor heaps only | Full scene |
+| Render targets, vertex/index buffers, predication and ClearState only | Full scene |
+| Shading rate, shading-rate image and depth bounds only | Full scene |
+| Viewports and scissor rectangles only | Full scene |
+| Blend factor, stencil reference and primitive topology only | HUD over black world |
+| Primitive topology only | Full scene |
+| Blend factor only | Pending visual result |
 
-Recording only `SetPipelineState` preserves the full System Shock scene. Root parameters and descriptor-heap bindings also preserve the scene, as do
-render-target/input-buffer bindings, predication and ClearState. Shading-rate
-and depth-bounds calls are the next live comparison. Native DX12 remains unavailable in the chooser
-until actual gameplay rendering passes, regardless of fixture results.
+`-RecordOnly` never submits shadow lists or publishes a stereo stream.
+`-SkipRecordingWork` omits draw, dispatch, bundle and indirect work;
+`-RecordStateOnly` also omits copies, clears, barriers and queries.
+`-RecordCommands SetPipelineState` limits recording to an exact API name;
+comma-separated names permit bisection without rebuilding. These restrictions
+are accepted only in record-only diagnostics. Normal managed launches remove
+the diagnostic environment. Original game commands are always forwarded.
+Native DX12 remains unavailable in the chooser until gameplay rendering passes.
 
-A clean archive of commit `5fd1b32` builds without local prototype sources. Its
-Release suite passed 79 checks with zero failures; one WARP shading-rate check
-was skipped because that adapter lacks the required feature. Managed native
-launch integration also passed with all diagnostic environment settings inherited,
+A clean archive of commit `5fd1b32` builds without local prototype sources.
+Its Release suite passed 79 checks with zero failures; one WARP shading-rate
+check was skipped because that adapter lacks the required feature. Managed
+native launch integration also passed with all diagnostic settings inherited,
 including two restarts, distinct same-frame GPU pixels and consumer handoff.
 
-Additional hardware/WARP probes verify exact diagnostic call selection, including
-comma-separated names at either end and rejection of partial matches. A valid
-native PSO created outside mirror tracking must reach the mapper only when its
-binding is selected. Native pixels still render after that deliberate stop,
-and an inherited allowlist cannot filter an ordinary stereo launch. All twelve
-cases pass in both Release and Debug.
+Additional hardware/WARP probes verify exact diagnostic call selection,
+comma-separated names at either end, and rejection of partial matches. A valid
+native PSO created outside tracking reaches the mapper only when its binding
+is selected. Native pixels still render after that deliberate stop, and an
+inherited allowlist cannot filter an ordinary stereo launch. All twelve cases
+pass in both Release and Debug.
+
+## Native null blend input
+
+On the installed Windows runtime, `OMSetBlendFactor(nullptr)` access-violates
+in a standalone application using System32 D3D12, with both hardware and WARP,
+with the debug layer enabled or disabled. This reproduces without the VRX DLL.
+Microsoft [documents null as the default `{1,1,1,1}`](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-omsetblendfactor).
+The interceptor supplies that equivalent explicit array to native and shadow
+calls. Non-null input is forwarded unchanged. This is a separate runtime edge
+case; it does not establish the cause of System Shock's missing world scene.
+
+Native/replayed pixel tests exercise the null default under blending and stencil
+masking, verify that caller arrays remain unchanged and may be immediately
+reused, and check depth-bounds rejection. A focused null-call probe also covers
+interception with mirroring disabled. `dx12_state_fixture --null-blend --warp`
+and `--null-blend-no-debug --warp` reproduce the native runtime issue when run
+without the bridge; they are diagnostic reproductions, not passing test cases.

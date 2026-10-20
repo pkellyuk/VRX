@@ -135,7 +135,6 @@ void STDMETHODCALLTYPE Name Parameters { \
 SIMPLE(RSSetViewports,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_VIEWPORT* values),(object,count,values),(count,values))
 SIMPLE(RSSetScissorRects,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_RECT* values),(object,count,values),(count,values))
 SIMPLE(IASetPrimitiveTopology,(ID3D12GraphicsCommandList* object,D3D12_PRIMITIVE_TOPOLOGY value),(object,value),(value))
-SIMPLE(OMSetBlendFactor,(ID3D12GraphicsCommandList* object,const FLOAT values[4]),(object,values),(values))
 SIMPLE(OMSetStencilRef,(ID3D12GraphicsCommandList* object,UINT value),(object,value),(value))
 SIMPLE(SetGraphicsRootSignature,(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value),(object,value),(value))
 SIMPLE(SetGraphicsRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
@@ -144,6 +143,14 @@ SIMPLE(SetComputeRootSignature,(ID3D12GraphicsCommandList* object,ID3D12RootSign
 SIMPLE(SetComputeRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
 SIMPLE(SetComputeRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT index,UINT count,const void* data,UINT offset),(object,index,count,data,offset),(index,count,data,offset))
 #undef SIMPLE
+// NULL is the documented {1,1,1,1} default. The installed native runtime
+// dereferences NULL even without interception (hardware and WARP), so pass its
+// equivalent explicit value to both native and replay recording paths.
+void STDMETHODCALLTYPE OMSetBlendFactor(ID3D12GraphicsCommandList* object,const FLOAT values[4]) {
+    Call call;const FLOAT defaults[]={1,1,1,1};const auto* normalized=values?values:defaults;
+    Original<decltype(&OMSetBlendFactor)>(object,slot::ID3D12GraphicsCommandList_OMSetBlendFactor)(object,normalized);
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto&){q->OMSetBlendFactor(normalized);});
+}
 void STDMETHODCALLTYPE SetPipelineState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
     Call call; Original<decltype(&SetPipelineState)>(object,slot::ID3D12GraphicsCommandList_SetPipelineState)(object,value);
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->SetPipelineState(right);});

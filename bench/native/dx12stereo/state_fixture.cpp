@@ -3,12 +3,20 @@
 #include "mirror_scene.h"
 int main(int argc,char** argv){try {
     const bool warp=argc==3 && !std::strcmp(argv[2],"--warp");Check(argc==2 || warp,"known output-state fixture adapter");
+    const bool nullProbe=!std::strcmp(argv[1],"--null-blend") || !std::strcmp(argv[1],"--null-blend-no-debug");
     const bool depthBounds=!std::strcmp(argv[1],"--depth-bounds");
-    const auto module=GetModuleHandleW(L"d3d12.dll");counts=reinterpret_cast<CountsFn>(GetProcAddress(module,"VRX_DX12_GetCounts"));twin=reinterpret_cast<TwinFn>(GetProcAddress(module,"VRX_DX12_GetTwin"));scope=reinterpret_cast<ScopeFn>(GetProcAddress(module,"VRX_DX12_DiagnosticScope"));Check(counts && twin && scope,"native output-state diagnostics loaded");
-    ComPtr<ID3D12Debug> debug;if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))debug->EnableDebugLayer();
+    const auto module=GetModuleHandleW(L"d3d12.dll");counts=reinterpret_cast<CountsFn>(GetProcAddress(module,"VRX_DX12_GetCounts"));twin=reinterpret_cast<TwinFn>(GetProcAddress(module,"VRX_DX12_GetTwin"));scope=reinterpret_cast<ScopeFn>(GetProcAddress(module,"VRX_DX12_DiagnosticScope"));if(!nullProbe)Check(counts && twin && scope,"native output-state diagnostics loaded");
+    ComPtr<ID3D12Debug> debug;if(std::strcmp(argv[1],"--null-blend-no-debug") && SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))debug->EnableDebugLayer();
     {
         ComPtr<IDXGIAdapter> adapter;if(warp){ComPtr<IDXGIFactory4> factory;Hr(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));Hr(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)));}
         Scene scene;scene.Init(adapter.Get());
+        if(nullProbe){
+            Hr(scene.allocator->Reset());Hr(scene.commands->Reset(scene.allocator.Get(),nullptr));
+            std::puts("Native NULL blend call: begin");std::fflush(stdout);
+            scene.commands->OMSetBlendFactor(nullptr);
+            std::puts("Native NULL blend call: returned");std::fflush(stdout);
+            Hr(scene.commands->Close());scene.DebugCheck();std::puts("PASS: native DX12 NULL blend input accepted");return 0;
+        }
         if(depthBounds){D3D12_FEATURE_DATA_D3D12_OPTIONS2 options{};Hr(scene.device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS2,&options,sizeof(options)));if(!options.DepthBoundsTestSupported){std::puts("SKIP: native DX12 adapter has no depth-bounds test");return 77;}}
         ComPtr<ID3DBlob> vs,ps,error;Hr(D3DCompile(source,sizeof(source),nullptr,nullptr,nullptr,"VS","vs_5_1",0,0,&vs,&error));Hr(D3DCompile(source,sizeof(source),nullptr,nullptr,nullptr,"PS","ps_5_1",0,0,&ps,&error));
         D3D12_GRAPHICS_PIPELINE_STATE_DESC p{};p.pRootSignature=scene.root.Get();p.VS={vs->GetBufferPointer(),vs->GetBufferSize()};p.PS={ps->GetBufferPointer(),ps->GetBufferSize()};p.SampleMask=UINT_MAX;
@@ -31,12 +39,17 @@ int main(int argc,char** argv){try {
         D3D12_DESCRIPTOR_HEAP_DESC hd{};hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_DSV;hd.NumDescriptors=1;ComPtr<ID3D12DescriptorHeap> dsv;Hr(scene.device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&dsv)));scene.device->CreateDepthStencilView(depth.Get(),nullptr,dsv->GetCPUDescriptorHandleForHeapStart());
         for(UINT frame=1;frame<=4;++frame){
             scene.Wait();Hr(scene.allocator->Reset());Hr(scene.commands->Reset(scene.allocator.Get(),scene.pipeline.Get()));scene.commands->SetGraphicsRootSignature(scene.root.Get());
-            const float values[]={2,1,1,1};scene.commands->SetGraphicsRoot32BitConstants(0,4,values,0);
+            const float values[]={2,frame==4?float(frame+1)/32:1.f,frame==4?.5f:1.f,frame==4?.75f:1.f};scene.commands->SetGraphicsRoot32BitConstants(0,4,values,0);
             ComPtr<ID3D12GraphicsCommandList1> extended;if(depthBounds){Hr(scene.commands.As(&extended));extended->OMSetDepthBounds(0,1);}
             D3D12_VIEWPORT viewport{0,0,float(scene.width),float(scene.height),0,1};D3D12_RECT rect{0,0,LONG(scene.width),LONG(scene.height)};scene.commands->RSSetViewports(1,&viewport);scene.commands->RSSetScissorRects(1,&rect);scene.commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             const auto target=scene.rtv->GetCPUDescriptorHandleForHeapStart(),stencilView=dsv->GetCPUDescriptorHandleForHeapStart();const float black[]={0,0,0,1};scene.commands->ClearRenderTargetView(target,black,0,nullptr);scene.commands->ClearDepthStencilView(stencilView,D3D12_CLEAR_FLAG_DEPTH|D3D12_CLEAR_FLAG_STENCIL,depthBounds?.5f:1,UINT8(frame),0,nullptr);scene.commands->OMSetRenderTargets(1,&target,FALSE,&stencilView);
             const float wrong[]={.9f,.1f,.2f,1};scene.commands->OMSetStencilRef(frame+1);scene.commands->OMSetBlendFactor(wrong);scene.commands->DrawInstanced(3,1,0,0);
-            const float factor[]={float(frame+1)/32,.5f,.75f,1};scene.commands->OMSetStencilRef(frame);scene.commands->OMSetBlendFactor(factor);scene.commands->DrawInstanced(3,1,0,0);
+            float factor[]={float(frame+1)/32,.5f,.75f,1};scene.commands->OMSetStencilRef(frame);
+            // NULL resets to ones; the caller may reuse array storage as soon
+            // as the call returns. Both native and replayed pixels must agree.
+            scene.commands->OMSetBlendFactor(frame==4?nullptr:factor);
+            Check(factor[0]==float(frame+1)/32 && factor[1]==.5f && factor[2]==.75f && factor[3]==1,"blend recording never modifies caller memory");
+            std::fill(factor,factor+4,0.f);scene.commands->DrawInstanced(3,1,0,0);
             if(depthBounds){extended->OMSetDepthBounds(frame%2?.75f:0,frame%2?1:.25f);scene.commands->OMSetBlendFactor(wrong);scene.commands->DrawInstanced(3,1,0,0);}
             Hr(scene.commands->Close());ID3D12CommandList* lists[]={scene.commands.Get()};scene.queue->ExecuteCommandLists(1,lists);scene.Wait();Check(Pixels(scene,Capture(scene),frame)>7,"dynamic blend and stencil preserve current-frame geometry stereo");scene.DebugCheck();
         }

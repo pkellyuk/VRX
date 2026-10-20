@@ -225,6 +225,14 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         add_test(NAME native_dx12_record_pipeline_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly -RecordCommands SetPipelineState ${extra})
         set_tests_properties(native_dx12_record_pipeline_${adapter} PROPERTIES TIMEOUT 40)
+        add_test(NAME native_dx12_null_blend_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -NullBlendProbe ${extra})
+        set_tests_properties(native_dx12_null_blend_${adapter} PROPERTIES TIMEOUT 40)
+        add_test(NAME native_dx12_null_blend_observe_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -NullBlendProbe ${extra})
+        set_tests_properties(native_dx12_null_blend_observe_${adapter} PROPERTIES TIMEOUT 40)
+
+
         foreach(filter selected partial first last unfiltered ordinary)
             set(filter_args -RecordOnly -FilterProbe hit)
             if(filter STREQUAL selected)
