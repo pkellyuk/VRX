@@ -15,14 +15,14 @@ public sealed class GeometryLaunchWindow : Window
     public float Convergence { get; private set; }
     public GeometryLaunchWindow(GeometryLaunch.Plan plan,Profile profile)
     {
-        Plan=plan; Title=Loc.Format("GeometryRestartTitle",StereoPaths.Label(plan.Backend));
+        Plan=plan; Title=Loc.Format(plan.App.Pid==0?"GeometryLaunchTitle":"GeometryRestartTitle",StereoPaths.Label(plan.Backend));
         Width=620; SizeToContent=SizeToContent.Height; MaxHeight=Math.Min(900,SystemParameters.WorkArea.Height-40); ResizeMode=ResizeMode.NoResize;
         WindowStartupLocation=WindowStartupLocation.CenterOwner; ShowInTaskbar=false;
         Background=(Brush)Application.Current.FindResource("Page"); Foreground=(Brush)Application.Current.FindResource("Ink");
         var body=new StackPanel{Margin=new Thickness(24)};
         Content=new ScrollViewer{Content=body,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
-        body.Children.Add(new TextBlock{Text=Loc.Format("GeometryRestartIntro",MainWindow.GameDisplayName(plan.App.Windows.FirstOrDefault()?.Title,plan.App.Name),StereoPaths.Label(plan.Backend)),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12),FontSize=16});
-        body.Children.Add(new TextBlock{Text=Loc.Get("GeometryRestartSave")+"\n\n"+Loc.Get("GeometryChooserNotice"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12)});
+        body.Children.Add(new TextBlock{Text=Loc.Format(plan.App.Pid==0?"GeometryLaunchIntro":"GeometryRestartIntro",MainWindow.GameDisplayName(plan.App.Windows.FirstOrDefault()?.Title,plan.App.Name),StereoPaths.Label(plan.Backend)),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12),FontSize=16});
+        body.Children.Add(new TextBlock{Text=Loc.Get(plan.App.Pid==0?"GeometryLaunchInfo":"GeometryRestartSave")+"\n\n"+Loc.Get("GeometryChooserNotice"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12)});
         body.Children.Add(new TextBlock{Text=plan.App.FullPath,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12),FontSize=12});
         TextBox Field(string label,string value,bool multi=false) {
             body.Children.Add(new TextBlock{Text=label,Margin=new Thickness(0,8,0,4)});
@@ -38,7 +38,7 @@ public sealed class GeometryLaunchWindow : Window
         var error=new TextBlock{TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,0)}; body.Children.Add(error);
         var buttons=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right,Margin=new Thickness(0,16,0,0)};
         var cancel=new Button{Content=Loc.Get("GeometryCancel"),IsCancel=true,Padding=new Thickness(14,8,14,8),Margin=new Thickness(0,0,8,0)};
-        var restart=new Button{Content=Loc.Get("GeometryRestartAction"),Padding=new Thickness(14,8,14,8)};
+        var restart=new Button{Content=Loc.Get(plan.App.Pid==0?"GeometryLaunchAction":"GeometryRestartAction"),Padding=new Thickness(14,8,14,8)};
         buttons.Children.Add(cancel); buttons.Children.Add(restart); body.Children.Add(buttons);
         cancel.Click+=(_,_)=>DialogResult=false;
         restart.Click+=(_,_)=>{

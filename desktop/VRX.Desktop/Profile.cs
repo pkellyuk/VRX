@@ -27,6 +27,10 @@ public sealed class Profile
     // Empty migrates legacy profiles from the geometry checkbox. New choices
     // belong to this executable, never the display or base settings.
     public string StereoBackend { get; set; } = "";
+    public string GeometryRenderer { get; set; } = StereoPaths.GeometryAuto;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string SelectedGeometryRenderer => StereoPaths.Renderer(SelectedStereoBackend) ? SelectedStereoBackend :
+        StereoPaths.Renderer(GeometryRenderer) ? GeometryRenderer : StereoPaths.GeometryAuto;
     [System.Text.Json.Serialization.JsonIgnore]
     public string SelectedStereoBackend => StereoPaths.Valid(StereoBackend) ? StereoBackend : legacyGeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
     [System.Text.Json.Serialization.JsonIgnore]
@@ -43,6 +47,7 @@ public sealed class Profile
     public float GeometryConvergence { get; set; }
     public void SelectStereoBackend(string backend) {
         if (!StereoPaths.Valid(backend)) throw new ArgumentException(nameof(backend));
+        GeometryRenderer = StereoPaths.Renderer(backend) ? backend : SelectedGeometryRenderer;
         StereoBackend = backend; GeometryStereo = StereoPaths.Geometry(backend);
     }
     public string GeometrySession { get; set; } = "game";
@@ -165,6 +170,7 @@ public sealed class ProfileStore(string root)
     }
     private static void ClearLaunchChoice(Profile p) {
         p.SelectStereoBackend(StereoPaths.Depth); p.GeometrySession = "game";
+        p.GeometryRenderer = StereoPaths.GeometryAuto;
         p.GeometryLaunchArguments = null; p.GeometryWorkingDirectory = p.GeometrySteamAppId = "";
         p.GeometrySeparation = .032f; p.GeometryConvergence = 0;
         p.GeometryProfileId = "";
@@ -308,6 +314,7 @@ public sealed class ProfileStore(string root)
                 copy.ExecutablePath = saved.ExecutablePath;
                 copy.PreferredWindowTitle = saved.PreferredWindowTitle;
                 copy.StereoBackend = saved.StereoBackend; copy.GeometryStereo = saved.GeometryStereo;
+                copy.GeometryRenderer = saved.SelectedGeometryRenderer;
                 copy.GeometrySession = saved.GeometrySession;
                 copy.GeometryLaunchArguments = saved.GeometryLaunchArguments;
                 copy.GeometryWorkingDirectory = saved.GeometryWorkingDirectory; copy.GeometrySteamAppId = saved.GeometrySteamAppId;

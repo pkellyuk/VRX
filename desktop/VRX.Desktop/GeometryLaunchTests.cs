@@ -39,6 +39,16 @@ internal static class GeometryLaunchTests
             Check(StereoPaths.FromGeometryChoice(false,backend)==StereoPaths.Depth,"unchecking geometry selects depth estimation");
         }
         Check(StereoPaths.FromGeometryChoice(true,StereoPaths.Depth)==StereoPaths.Vulkan,"legacy checkbox still selects Vulkan");
+        var separate=new Profile{ExecutablePath=Path.Combine(root,"separate.exe"),GeometrySeparation=.5f};
+        separate.SelectStereoBackend(StereoPaths.Vkd3d); separate.SelectStereoBackend(StereoPaths.Depth); store.Save(separate);
+        separate=store.Load(separate.ExecutablePath);
+        Check(separate.SelectedStereoBackend==StereoPaths.Depth && separate.SelectedGeometryRenderer==StereoPaths.Vkd3d && separate.GeometrySeparation==.5f,"secondary renderer and stereo tuning survive switching to depth and reloading");
+        separate.SelectStereoBackend(separate.SelectedGeometryRenderer);
+        Check(separate.EffectiveStereoBackend==StereoPaths.Vkd3d,"returning to geometry restores its renderer");
+        store.Save(separate); store.SaveBase(separate);
+        Check(store.BaseSettings().SelectedGeometryRenderer==StereoPaths.GeometryAuto,"base settings never inherit a game's secondary renderer");
+        store.ApplyToAll(settings,out _,out _);
+        Check(store.Load(separate.ExecutablePath).SelectedGeometryRenderer==StereoPaths.Vkd3d,"Apply to all preserves secondary renderer selection");
         Check(GeometryLaunch.ApiArguments(["-dx11","-norhithread"],StereoPaths.Vkd3d,true).SequenceEqual(new[]{"-norhithread","-dx12"}),"vkd3d selects D3D12 and retains the tested thread setting");
         string shockApps=Path.Combine(root,"shock","steamapps"), shockExe=Path.Combine(shockApps,"common","System Shock","SystemShock","Binaries","Win64","SystemReShock-Win64-Shipping.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(shockExe)!);

@@ -42,14 +42,19 @@ internal static class GeometryLaunchIntegrationTests
             var start=new ProcessStartInfo(executable){UseShellExecute=false,WorkingDirectory=root};
             if(translated) start.ArgumentList.Add("--serve-gpu="+StereoPaths.Session(executable));
             const string literal="--fixture-token=space and \"quote\""; start.ArgumentList.Add(literal);
-            using(var original=Process.Start(start) ?? throw new Exception("Fixture failed to start"))
+            var baseline=new GameHistory.Entry(executable,"Native history fixture",start.ArgumentList.ToArray(),root,"",DateTimeOffset.UtcNow);
+            GameHistory.LaunchDepth(baseline);
+            var initial=await GameHistory.WaitForWindow(baseline,null,token);
+            using(var original=Process.GetProcessById(initial.Pid))
                 running=new GeometryLaunch.Run(original.Id,original.StartTime.ToUniversalTime().Ticks,executable,StereoPaths.Session(executable));
             var profile=new Profile{ExecutablePath=executable,GeometrySeparation=.15f}; profile.SelectStereoBackend(translated?StereoPaths.Vkd3d:StereoPaths.Dxvk);
+            string[] capturedArgs=[];
             // Two consecutive restarts exercise old-run observer cleanup racing
             // the next installation, not merely one successful first launch.
             for(int attempt=0;attempt<2;++attempt) {
                 var app=await Window(running);
                 var plan=await GeometryLaunch.Prepare(app,profile,root,log.Add,token);
+                capturedArgs=plan.Arguments;
                 Check(plan.Arguments.Contains(literal),"literal launch argument survives capture");
                 int old=running.Pid;
                 running=await GeometryLaunch.Restart(plan,profile,root,log.Add,token);
@@ -68,6 +73,18 @@ internal static class GeometryLaunchIntegrationTests
                 string result=await Tool(engine,["--geometry-session="+running.Session,"--geometry-pid="+running.Pid,"--check-geometry","--debug","--normal-gpu-priority"]);
                 Check(result.Contains("Geometry check: PASS") && result.Contains("same-frame eyes") && !result.Contains("InitXrInstance:"),"actual VRX GPU eye handoff passes without starting VR");
             }
+            using(var warm=Process.GetProcessById(running.Pid)) {
+                Check(warm.CloseMainWindow(),"close the warm fixture before testing launch from history"); await warm.WaitForExitAsync(token);
+            }
+            GeometryLaunch.RecoverOwned(root);
+            var stopped=new RunningApp(0,fixture,executable,[new GameWindow(0,"History fixture")],null);
+            var coldPlan=await GeometryLaunch.Prepare(stopped,profile,root,log.Add,token,capturedArgs);
+            Check(coldPlan.App.Pid==0 && coldPlan.StartTicks==0 && coldPlan.Arguments.Contains(literal),"cold launch preflight preserves history arguments without starting a baseline game");
+            running=await GeometryLaunch.Launch(coldPlan,profile,root,log.Add,token);
+            await Window(running);
+            string coldPixels=await Tool(Path.Combine(repository,"bench","native","dx12stereo","out","Release","geometry_gpu_snapshot.exe"),[running.Session,Path.Combine(root,"history-eyes.ppm"),running.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+            var coldPair=Regex.Match(coldPixels,@"frame (\d+)/(\d+).*mean eye difference ([0-9.]+)");
+            Check(coldPair.Success && coldPair.Groups[1].Value==coldPair.Groups[2].Value && double.Parse(coldPair.Groups[3].Value,System.Globalization.CultureInfo.InvariantCulture)>.1,"history launches straight into distinct same-frame stereo without an initial game restart");
             using(var final=Process.GetProcessById(running.Pid)) {
                 Check(final.CloseMainWindow(),"close the owned fixture normally"); await final.WaitForExitAsync(token);
             }
@@ -76,7 +93,7 @@ internal static class GeometryLaunchIntegrationTests
                 await Task.Delay(50,token);
             GeometryLaunch.RecoverOwned(root);
             Check(new[]{"d3d11.dll","dxgi.dll","d3d12.dll","d3d12core.dll"}.All(n=>!File.Exists(Path.Combine(root,n))),"all scoped graphics DLLs are removed after fixture exit");
-            File.WriteAllText(Path.Combine(output,translated?"vkd3d-geometry-integration-pass.txt":"geometry-integration-pass.txt"),(translated?"PASS: managed vkd3d-proton D3D12 translation and four-component installation; ":"PASS: ")+"two managed restarts; literal arguments; distinct same-frame geometry; stream reuse; actual VRX GPU handoff; normal exit and scoped DLL cleanup. Logs: "+root);
+            File.WriteAllText(Path.Combine(output,translated?"vkd3d-geometry-integration-pass.txt":"geometry-integration-pass.txt"),(translated?"PASS: managed vkd3d-proton D3D12 translation and four-component installation; ":"PASS: ")+"two managed restarts and a direct cold launch from history; literal arguments; distinct same-frame geometry; stream reuse; actual VRX GPU handoff; normal exit and scoped DLL cleanup. Logs: "+root);
         } finally {
             var owned=new List<GeometryLaunch.Run>(); if(running!=null) owned.Add(running);
             foreach(string file in Directory.GetFiles(root,"run.json",SearchOption.AllDirectories)) {

@@ -86,12 +86,18 @@
        <TextBlock Text="{l:Tr StereoPath}" Style="{StaticResource SubHeader}" Margin="0,10,0,6"/>
        <ComboBox x:Name="StereoPathList" SelectionChanged="StereoPathSelected">
         <ComboBoxItem Tag="auto" Content="{l:Tr PathAuto}"/>
-        <ComboBoxItem Tag="geometry" Content="{l:Tr PathGeometry}"/>
         <ComboBoxItem Tag="depth" Content="{l:Tr PathDepth}"/>
+        <ComboBoxItem Tag="geometry" Content="{l:Tr PathGeometry}"/>
+       </ComboBox>
+       <StackPanel x:Name="GeometryRendererPanel" Visibility="Collapsed">
+       <TextBlock Text="{l:Tr GeometryRenderer}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
+       <ComboBox x:Name="GeometryRendererList" SelectionChanged="GeometryRendererSelected">
+        <ComboBoxItem Tag="geometry" Content="{l:Tr RendererAuto}"/>
         <ComboBoxItem Tag="vulkan" Content="{l:Tr PathVulkan}"/>
         <ComboBoxItem Tag="dxvk" Content="{l:Tr PathDxvk}"/>
         <ComboBoxItem Tag="vkd3d" Content="{l:Tr PathVkd3d}"/>
        </ComboBox>
+       </StackPanel>
        <TextBlock x:Name="PathLabel" Text="{l:Tr PathChoose}" Style="{StaticResource Hint}" Margin="0,8,0,4"/>
        <TextBlock Text="{l:Tr GameHint}" Style="{StaticResource Hint}"/>
        <StackPanel x:Name="AutoAttachPanel" Margin="0,8,0,0" ToolTip="{l:Tr AutoAttachTip}">

@@ -14,6 +14,25 @@ through DXVK, and DirectX 12 through vkd3d-proton. The DXVK installer currently
 supports D3D11, not D3D9/10. Unknown games' automatic geometry renderer tries native
 Vulkan. Native D3D12 command replay remains developer-only.
 
+The main window keeps these levels separate: Stereo method has Auto, Depth
+estimate and Geometry stereo. Geometry stereo reveals a secondary Geometry
+renderer dropdown. The per-game renderer is remembered when switching methods,
+and is shared with the window chooser's advanced geometry selection.
+
+Recent games appears above running windows. A successful attachment records its
+title, executable, launch arguments and Steam identity in `recent-games.json`.
+History keeps 24 entries, deduplicated by executable, and imports an existing
+user's last game on first use. Panels retain their method/renderer settings after
+the game closes; missing executables remain visible with launch controls disabled.
+
+Selecting a stopped history game launches it directly. Geometry's launch review
+prepares the selected backend before the first process starts, so there is no
+baseline launch followed by a restart. Depth uses Steam's launch URI for Steam
+games or the recorded executable/arguments otherwise. Already-running games reuse
+their window. The chooser is also available while VR is playing: cancelling it
+keeps the current session, and choosing a replacement stops that viewer before
+attaching or reviewing a geometry restart.
+
 The System Shock remake Steam profile (482400) uses vkd3d-proton with separation
 0.5, convergence 0, and `-dx12 -norhithread -windowed`. Resolution comes from the
 game's saved settings; the earlier 1280×720 test override is migrated away.

@@ -12,7 +12,7 @@ namespace VRX.Desktop;
 // snapshot of the display taken as the chooser opens. Clicking a tile picks it.
 public sealed partial class ChooserWindow : Window
 {
-    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null);
+    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null, string? Renderer = null, GameHistory.Entry? History = null);
 
     // What was picked; null when the chooser was closed without a pick.
     public Choice? Picked { get; private set; }
@@ -39,7 +39,7 @@ public sealed partial class ChooserWindow : Window
     // The size it was left at, for next time (AppSettings.ChooserWindow); set when it closes.
     public WindowPlace? Place { get; private set; }
 
-    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null, Func<RunningApp, string>? backendFor = null)
+    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null, Func<RunningApp, string>? backendFor = null, Func<RunningApp, string>? rendererFor = null,IReadOnlyList<GameHistory.Entry>? history = null)
     {
         ArgumentNullException.ThrowIfNull(apps);
         ArgumentNullException.ThrowIfNull(screens);
@@ -53,6 +53,13 @@ public sealed partial class ChooserWindow : Window
             Height = Math.Clamp(place.Height, MinHeight, Math.Max(MinHeight, SystemParameters.WorkArea.Height));
         }
         bool maximize = place?.Maximized == true;
+        foreach(var entry in history ?? []) {
+            var app=apps.FirstOrDefault(a=>a.CanAttach && string.Equals(a.FullPath,entry.Executable,StringComparison.OrdinalIgnoreCase)) ??
+                new RunningApp(0,System.IO.Path.GetFileName(entry.Executable),entry.Executable,[],RunningApps.IconFor(entry.Executable));
+            var window=app.Windows.FirstOrDefault(RunningApps.IsChooserWindow) ?? new GameWindow(0,entry.Title);
+            HistoryTiles.Children.Add(MakeTile(new Choice(app,window,backendFor?.Invoke(app) ?? StereoPaths.Auto,rendererFor?.Invoke(app),entry),null,false));
+        }
+        HistoryHeader.Visibility=HistoryTiles.Children.Count>0?Visibility.Visible:Visibility.Collapsed;
 
         // Windows, most recently used first (Windows' z-order), each with its app's icon.
         var order = RunningApps.ZOrder();
@@ -60,8 +67,9 @@ public sealed partial class ChooserWindow : Window
             .SelectMany(a => a.Windows.Where(RunningApps.IsChooserWindow).Select(w => new Choice(a, w)))
             .OrderBy(c => order.GetValueOrDefault(c.Window.Handle, int.MaxValue)).ToList();
         foreach (var choice in windows)
-            WindowTiles.Children.Add(MakeTile(choice with { Backend = backendFor?.Invoke(choice.App) ?? StereoPaths.Depth }, null, choice.Window.Handle == currentWindow));
+            WindowTiles.Children.Add(MakeTile(choice with { Backend = backendFor?.Invoke(choice.App) ?? StereoPaths.Depth, Renderer = rendererFor?.Invoke(choice.App) }, null, choice.Window.Handle == currentWindow));
         NoWindows.Visibility = windows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if(HistoryTiles.Children.Count>0) NoWindows.Text=Loc.Get("ChooserNoWindowsHistory");
 
         if (screenApp != null)
             foreach (var screen in screens)
@@ -71,6 +79,7 @@ public sealed partial class ChooserWindow : Window
                 ScreenTiles.Children.Add(MakeTile(new Choice(screenApp, window), screen, window.Handle == currentWindow));
             }
         ScreensHeader.Visibility = ScreenTiles.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ScreensHint.Visibility=ScreensHeader.Visibility;
 
         // The display pictures are taken now, before the chooser is on screen, so it is not in them.
         RefreshSnapshots();
@@ -86,11 +95,14 @@ public sealed partial class ChooserWindow : Window
 
     // The number of tiles, for the smoke test.
     public int WindowTileCount => WindowTiles.Children.Count;
+    public int HistoryTileCount => HistoryTiles.Children.Count;
     public int ScreenTileCount => ScreenTiles.Children.Count;
 
     private FrameworkElement MakeTile(Choice choice, ScreenSource? screen, bool current)
     {
         ArgumentNullException.ThrowIfNull(choice);
+        string selected=choice.Backend ?? StereoPaths.Auto;
+        string renderer=StereoPaths.Renderer(choice.Renderer)?choice.Renderer!:StereoPaths.Renderer(selected)?selected:StereoPaths.GeometryAuto;
         var picture = new Grid { Width = PictureWidth, Height = PictureHeight, Background = (Brush)FindResource("Well") };
         // Behind the live picture (and in its place when there is none, such as a minimized
         // window): the app's icon, large.
@@ -103,9 +115,11 @@ public sealed partial class ChooserWindow : Window
             RenderOptions.SetBitmapScalingMode(snapshot, BitmapScalingMode.HighQuality);
             picture.Children.Add(snapshot);
         }
-        string title = screen != null ? screen.Title : MainWindow.GameDisplayName(choice.Window.Title, choice.App.Name);
+        string title = screen != null ? screen.Title : choice.History?.Title ?? MainWindow.GameDisplayName(choice.Window.Title, choice.App.Name);
         string detail = screen != null ? (screen.Primary ? Loc.Get("ChooserMainDisplay") : Loc.Get("WholeScreen")) :
             RunningApps.IsMinimized(choice.Window.Handle) ? Loc.Format("ChooserMinimized", choice.App.Name) : choice.App.Name;
+        bool missing=choice.History!=null && !System.IO.File.Exists(choice.App.FullPath);
+        if(choice.History!=null) detail=Loc.Get(missing?"HistoryMissing":choice.App.Pid>0?"HistoryRunning":"HistoryLaunch");
         var caption = new StackPanel { Width = PictureWidth, Margin = new Thickness(0, 8, 0, 0) };
         caption.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = title });
         caption.Children.Add(new TextBlock { Text = detail, FontSize = 12, Foreground = (Brush)FindResource("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
@@ -113,8 +127,9 @@ public sealed partial class ChooserWindow : Window
         content.Children.Add(picture);
         content.Children.Add(caption);
         var button = new Button { Style = (Style)FindResource("Tile"), Content = content, Tag = current ? "Current" : null };
+        if(missing) { button.IsEnabled=false; button.ToolTip=Loc.Get("ErrorHistoryMissing"); }
         System.Windows.Automation.AutomationProperties.SetName(button, title);
-        button.Click += (_, _) => Pick(choice);
+        button.Click += (_, _) => Pick(screen==null?choice with {Backend=StereoPaths.Mode(selected)==StereoPaths.GeometryAuto?renderer:choice.Backend,Renderer=renderer}:choice);
         tiles.Add(new Tile { Choice = choice, Picture = picture, Screen = screen, Snapshot = snapshot });
         if (screen != null) return button;
         // Separate sibling buttons: input controls must never sit inside a tile Button.
@@ -123,20 +138,19 @@ public sealed partial class ChooserWindow : Window
         card.Children.Add(button);
         var routes = new Grid { Margin = new Thickness(2,5,2,0) };
         for(int i=0;i<3;++i) routes.ColumnDefinitions.Add(new ColumnDefinition());
-        string selected=choice.Backend ?? StereoPaths.Auto;
-        string renderer=StereoPaths.Mode(selected)==StereoPaths.GeometryAuto ? selected : StereoPaths.GeometryAuto;
         Button? geometryButton=null;
         int column=0;
         foreach (string mode in new[] { StereoPaths.Auto, StereoPaths.Depth, StereoPaths.GeometryAuto }) {
             var route = new Button {
                 Content = new TextBlock { Text = StereoPaths.Label(mode), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }, Padding = new Thickness(4,6,4,6), Margin = new Thickness(2), FontSize = 12,
                 Tag = mode==StereoPaths.GeometryAuto?renderer:mode,
+                IsEnabled = !missing,
                 ToolTip = Loc.Get(mode==StereoPaths.Auto?"PathAutoTip":mode==StereoPaths.Depth?"PathDepthTip":"PathGeometryTip"),
                 FontWeight = StereoPaths.Mode(selected)==mode ? FontWeights.Bold : FontWeights.Normal
             };
             System.Windows.Automation.AutomationProperties.SetName(route, Loc.Format("PathForWindow", StereoPaths.Label(mode), title));
             Grid.SetColumn(route,column++);
-            route.Click += (_,_) => Pick(choice with { Backend = (string)route.Tag }); routes.Children.Add(route);
+            route.Click += (_,_) => Pick(choice with { Backend = (string)route.Tag, Renderer=renderer }); routes.Children.Add(route);
             if(mode==StereoPaths.GeometryAuto) geometryButton=route;
         }
         card.Children.Add(routes);
@@ -145,13 +159,13 @@ public sealed partial class ChooserWindow : Window
         });
         var advanced=new Expander { Header=Loc.Get("GeometryAdvanced"), Margin=new Thickness(6,5,6,0) };
         var options=new StackPanel();
-        var list=new ComboBox { Margin=new Thickness(0,5,0,5) };
+        var list=new ComboBox { Margin=new Thickness(0,5,0,5),IsEnabled=!missing };
         foreach(string backend in new[]{StereoPaths.GeometryAuto,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Vkd3d}) {
             var item=new ComboBoxItem { Tag=backend, Content=new TextBlock { Text=backend==StereoPaths.GeometryAuto?Loc.Get("RendererAuto"):StereoPaths.Label(backend),TextWrapping=TextWrapping.Wrap,MaxWidth=210 } };
             list.Items.Add(item); if(backend==renderer) list.SelectedItem=item;
         }
         System.Windows.Automation.AutomationProperties.SetName(list,Loc.Get("GeometryRenderer"));
-        list.SelectionChanged+=(_,_)=> { if(list.SelectedItem is ComboBoxItem item) geometryButton!.Tag=(string)item.Tag; };
+        list.SelectionChanged+=(_,_)=> { if(list.SelectedItem is ComboBoxItem item) geometryButton!.Tag=renderer=(string)item.Tag; };
         options.Children.Add(list);
         options.Children.Add(new TextBlock { Text=Loc.Get("GeometryChooserNotice"),TextWrapping=TextWrapping.Wrap,FontSize=12,Foreground=(Brush)FindResource("Muted") });
         advanced.Content=options; card.Children.Add(advanced);
@@ -201,6 +215,7 @@ public sealed partial class ChooserWindow : Window
         System.Diagnostics.Debug.WriteLine($"[Chooser] Attach enter: hwnd {hwnd:X}");
         foreach (var tile in tiles.Where(t => t.Screen == null))
         {
+            if(tile.Choice.Window.Handle==0) continue;
             if (RunningApps.IsMinimized(tile.Choice.Window.Handle)) continue;   // no picture; the icon stays
             if (Native.DwmRegisterThumbnail(hwnd, tile.Choice.Window.Handle, out tile.Thumbnail) != 0) { tile.Thumbnail = 0; continue; }
             if (Native.DwmQueryThumbnailSourceSize(tile.Thumbnail, out var size) != 0 || size.X <= 0 || size.Y <= 0)

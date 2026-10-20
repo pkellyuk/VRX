@@ -248,24 +248,26 @@ public static class GeometryLaunch
     internal static void RecoverOwned(string dataRoot) {
         foreach(var folder in RunFolders(dataRoot,false)) Cleanup(folder);
     }
-    public static Task<Plan> Prepare(RunningApp app,Profile profile,string dataRoot,Action<string> status,CancellationToken token) =>
-        PrepareWithLayer(app,profile,dataRoot,status,token,profile.EffectiveStereoBackend==StereoPaths.Dx12?NativeDirectory():LayerDirectory());
+    public static Task<Plan> Prepare(RunningApp app,Profile profile,string dataRoot,Action<string> status,CancellationToken token,string[]? launchArguments=null) =>
+        PrepareWithLayer(app,profile,dataRoot,status,token,profile.EffectiveStereoBackend==StereoPaths.Dx12?NativeDirectory():LayerDirectory(),launchArguments);
     // Unit preflight does not load the DLL; supply a fixture layer directory so
     // standard desktop smoke checks remain independent of optional native builds.
-    internal static async Task<Plan> PrepareWithLayer(RunningApp app,Profile profile,string dataRoot,Action<string> status,CancellationToken token,string layer) {
+    internal static async Task<Plan> PrepareWithLayer(RunningApp app,Profile profile,string dataRoot,Action<string> status,CancellationToken token,string layer,string[]? launchArguments=null) {
         if(!StereoPaths.Geometry(profile.EffectiveStereoBackend) && profile.EffectiveStereoBackend!=StereoPaths.Dx12) throw new InvalidOperationException(Loc.Get("PathDx12Unavailable"));
         if(!IsX64(app.FullPath)) throw new InvalidOperationException(Loc.Get("ErrorGeometryX64"));
         if(profile.EffectiveStereoBackend==StereoPaths.Dx12) ValidateNativeRuntime(layer);
-        using var original=Process.GetProcessById(app.Pid);
-        long ticks=original.StartTime.ToUniversalTime().Ticks;
-        if(!Same(RunningApps.ProcessPath(app.Pid),app.FullPath)) throw new InvalidOperationException(Loc.Get("ErrorProcessChanged"));
-        var originalArgs=profile.GeometryLaunchArguments!=null ? ParseArguments(profile.GeometryLaunchArguments) : await ProcessArguments(app.Pid,token);
+        using var original=app.Pid>0?Process.GetProcessById(app.Pid):null;
+        long ticks=original?.StartTime.ToUniversalTime().Ticks ?? 0;
+        if(original!=null && !Same(RunningApps.ProcessPath(app.Pid),app.FullPath)) throw new InvalidOperationException(Loc.Get("ErrorProcessChanged"));
+        if(original==null && launchArguments==null) throw new InvalidOperationException(Loc.Get("ErrorHistoryEntry"));
+        var originalArgs=profile.GeometryLaunchArguments!=null ? ParseArguments(profile.GeometryLaunchArguments) : launchArguments ?? await ProcessArguments(app.Pid,token);
         var args=ApiArguments(originalArgs,profile.EffectiveStereoBackend,Path.GetFileName(app.FullPath).EndsWith("-Shipping.exe",StringComparison.OrdinalIgnoreCase));
         string folder=string.IsNullOrEmpty(profile.GeometryWorkingDirectory)?Path.GetDirectoryName(app.FullPath)!:profile.GeometryWorkingDirectory;
         string steam=string.IsNullOrEmpty(profile.GeometrySteamAppId)?FindSteamAppId(app.FullPath):profile.GeometrySteamAppId;
         string? vkd3d=profile.EffectiveStereoBackend==StereoPaths.Vkd3d?Vkd3dDirectory():null;
         string? dxvk=profile.EffectiveStereoBackend is StereoPaths.Dxvk or StereoPaths.Vkd3d?await DxvkDirectory(dataRoot,status,token):null;
-        string[] owned=RunFolders(dataRoot).Where(d=>ReadRun(d) is {} run && run.Pid==app.Pid && run.StartTicks==ticks && Same(run.Executable,app.FullPath)).ToArray();
+        if(original==null) Recover(dataRoot);
+        string[] owned=original==null?[]:RunFolders(dataRoot).Where(d=>ReadRun(d) is {} run && run.Pid==app.Pid && run.StartTicks==ticks && Same(run.Executable,app.FullPath)).ToArray();
         var plan=new Plan(app,ticks,profile.EffectiveStereoBackend,layer,args,folder,steam,StereoPaths.Session(app.FullPath),dxvk,owned,vkd3d);
         ValidateFiles(plan); return plan;
     }
@@ -353,17 +355,26 @@ public static class GeometryLaunch
         if(plan.Backend==StereoPaths.Vkd3d && (plan.Vkd3dDirectory==null || new[]{"d3d12.dll","d3d12core.dll"}.Any(n=>!File.Exists(Vkd3dFile(plan.Vkd3dDirectory,n)) || !IsX64(Vkd3dFile(plan.Vkd3dDirectory,n)))))
             throw new FileNotFoundException(Loc.Get("ErrorVkd3dMissing"));
     }
-    public static async Task<Run> Restart(Plan plan,Profile profile,string dataRoot,Action<string> status,CancellationToken token) {
+    public static Task<Run> Restart(Plan plan,Profile profile,string dataRoot,Action<string> status,CancellationToken token) =>
+        plan.App.Pid>0?Start(plan,profile,dataRoot,status,token):throw new ArgumentException(nameof(plan));
+    public static Task<Run> Launch(Plan plan,Profile profile,string dataRoot,Action<string> status,CancellationToken token) =>
+        plan.App.Pid==0?Start(plan,profile,dataRoot,status,token):throw new ArgumentException(nameof(plan));
+    private static async Task<Run> Start(Plan plan,Profile profile,string dataRoot,Action<string> status,CancellationToken token) {
         // All preflight and the launch-details dialog have completed before this point.
         token.ThrowIfCancellationRequested();
         ValidateRuntime(plan);
         ValidateFiles(plan);
+        if(plan.App.Pid>0) {
         var identity=new Run(plan.App.Pid,plan.StartTicks,plan.App.FullPath,plan.Session);
         if(!IsRunning(identity)) throw new InvalidOperationException(Loc.Get("ErrorProcessChanged"));
         using(var game=Process.GetProcessById(plan.App.Pid)) {
             if(!game.CloseMainWindow()) throw new InvalidOperationException(Loc.Get("ErrorGeometryClose"));
             try { await game.WaitForExitAsync(token).WaitAsync(TimeSpan.FromSeconds(30),token); }
             catch(TimeoutException) { throw new InvalidOperationException(Loc.Get("ErrorGeometryClose")); }
+        }
+        } else {
+            foreach(var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(plan.App.FullPath))) using(process)
+                if(Same(RunningApps.ProcessPath(process.Id),plan.App.FullPath)) throw new InvalidOperationException(Loc.Get("ErrorHistoryAlreadyRunning"));
         }
         foreach(var folder in plan.OwnedRuns) Cleanup(folder);
         string runRoot=Path.Combine(RunsRoot(dataRoot),Guid.NewGuid().ToString("N")); Directory.CreateDirectory(runRoot);

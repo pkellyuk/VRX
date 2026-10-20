@@ -244,7 +244,7 @@ public partial class MainWindow : Window
         HorizontalSlider.Value = p.Horizontal; StrengthSlider.Value = p.Strength;
         FollowCheck.IsChecked = p.Follow; StereoCheck.IsChecked = p.Stereo; DismissCheck.IsChecked = p.AutoDismiss; DesktopAwayCheck.IsChecked = p.DesktopWhenAway;
         GeometryCheck.IsChecked = p.GeometryStereo; GeometrySessionText.Text = p.GeometrySession;
-        foreach (ComboBoxItem item in StereoPathList.Items) if ((string)item.Tag == p.SelectedStereoBackend) StereoPathList.SelectedItem = item;
+        foreach (ComboBoxItem item in StereoPathList.Items) if ((string)item.Tag == StereoPaths.Mode(p.SelectedStereoBackend)) StereoPathList.SelectedItem = item;
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
         FastModelCheck.IsChecked = p.FastDepthModel;
@@ -273,7 +273,7 @@ public partial class MainWindow : Window
             Distance = DistanceSlider.Value, Height = HeightSlider.Value, Horizontal = HorizontalSlider.Value,
             Strength = StrengthSlider.Value, Follow = FollowCheck.IsChecked == true, Stereo = StereoCheck.IsChecked == true,
             GeometryStereo = GeometryCheck.IsChecked == true, GeometrySession = GeometrySessionText.Text,
-            StereoBackend = profile.SelectedStereoBackend, GeometryProfileId = profile.GeometryProfileId,
+            StereoBackend = profile.SelectedStereoBackend, GeometryProfileId = profile.GeometryProfileId, GeometryRenderer = profile.SelectedGeometryRenderer,
             GeometryLaunchArguments = profile.GeometryLaunchArguments, GeometryWorkingDirectory = profile.GeometryWorkingDirectory,
             GeometrySteamAppId = profile.GeometrySteamAppId, GeometrySeparation = profile.GeometrySeparation, GeometryConvergence = profile.GeometryConvergence,
             ForegroundRefinement = ForegroundCheck.IsChecked == true,
@@ -356,9 +356,11 @@ public partial class MainWindow : Window
         if (GeometryCheck == null || GeometryContent == null || AiDepthContent == null || StrengthSlider == null || DesktopAwayCheck == null) return;
         bool geometry = GeometryCheck.IsChecked == true;
         if (profile != null && StereoPathList != null) {
-            string selected = profile.SelectedStereoBackend;
+            string selected = StereoPaths.Mode(profile.SelectedStereoBackend);
             bool wasLoading = loading; loading = true;
             foreach (ComboBoxItem item in StereoPathList.Items) if ((string)item.Tag == selected) StereoPathList.SelectedItem = item;
+            foreach (ComboBoxItem item in GeometryRendererList.Items) if ((string)item.Tag == profile.SelectedGeometryRenderer) GeometryRendererList.SelectedItem = item;
+            GeometryRendererPanel.Visibility = selected == StereoPaths.GeometryAuto ? Visibility.Visible : Visibility.Collapsed;
             loading = wasLoading;
         }
         GeometryContent.Visibility = geometry ? Visibility.Visible : Visibility.Collapsed;
@@ -370,8 +372,17 @@ public partial class MainWindow : Window
     {
         if (!ready || loading || starting || engine.Running || profile == null || StereoPathList.SelectedItem is not ComboBoxItem item) return;
         string backend = (string)item.Tag;
+        if (backend == StereoPaths.GeometryAuto) backend = profile.SelectedGeometryRenderer;
         if (backend == StereoPaths.Dx12) { Status.Text = Loc.Get("PathDx12Unavailable"); return; }
         profile.SelectStereoBackend(backend);
+        loading = true; GeometryCheck.IsChecked = profile.GeometryStereo; loading = false;
+        UpdateGeometryControls(); SaveAndApply();
+    }
+    private void GeometryRendererSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ready || loading || starting || engine.Running || profile == null ||
+            StereoPaths.Mode(profile.SelectedStereoBackend) != StereoPaths.GeometryAuto || GeometryRendererList.SelectedItem is not ComboBoxItem item) return;
+        profile.SelectStereoBackend((string)item.Tag);
         loading = true; GeometryCheck.IsChecked = profile.GeometryStereo; loading = false;
         UpdateGeometryControls(); SaveAndApply();
     }
@@ -379,7 +390,7 @@ public partial class MainWindow : Window
     {
         if (ready && !loading && profile != null && ReferenceEquals(sender,GeometryCheck)) {
             profile=System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(profile))!;
-            profile.SelectStereoBackend(GeometryCheck.IsChecked == true ? StereoPaths.GeometryAuto : StereoPaths.Depth);
+            profile.SelectStereoBackend(GeometryCheck.IsChecked == true ? profile.SelectedGeometryRenderer : StereoPaths.Depth);
         }
         UpdateRoomControls();
         UpdateGeometryControls();
@@ -556,10 +567,10 @@ public partial class MainWindow : Window
         bool running = engine.Running;
         SetSettingsEnabled(profile != null && !stopping && !starting);
         StartButton.IsEnabled = !running && !starting && profile != null && WindowList.SelectedItem is GameWindow;
-        ChooseButton.IsEnabled = !running && !stopping && !starting;
+        ChooseButton.IsEnabled = !stopping && !starting;
         StopButton.IsEnabled = running && !stopping;
         RecenterButton.IsEnabled = EasyRecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
-        AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = StereoPathList.IsEnabled = !running && !starting;
+        AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = StereoPathList.IsEnabled = GeometryRendererList.IsEnabled = !running && !starting;
         // These select startup-only engine arguments, like the method chooser.
         GeometryCheck.IsEnabled = GeometrySessionText.IsEnabled = !running && !starting && profile != null && !stopping;
         UpdateGameCard();
@@ -631,16 +642,21 @@ public partial class MainWindow : Window
     private async void ChooseClick(object sender, RoutedEventArgs e)
     {
         System.Diagnostics.Debug.WriteLine("[Chooser] ChooseClick enter");
-        if (engine.Running || stopping || starting) return;
+        if (stopping || starting) return;
         List<RunningApp> apps;
         List<ScreenSource> screens;
         try { apps = RunningApps.List(false); screens = ScreenSources.List(); }
         catch (Exception ex) { Status.Text = Loc.Format("StatusRefreshFailed", ex.Message); return; }
+        var history=new GameHistory(store.Root); history.ImportLastGame(store);
+        var choices=new Dictionary<string,Profile>(StringComparer.OrdinalIgnoreCase);
+        Profile ChoiceProfile(RunningApp app) {
+            if(choices.TryGetValue(app.FullPath,out var saved)) return saved;
+            try { saved=store.Load(app.FullPath); }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { saved=new Profile(); }
+            choices[app.FullPath]=saved; return saved;
+        }
         var chooser = new ChooserWindow(apps, screens, ScreenSources.App(store.Root, screens), (WindowList.SelectedItem as GameWindow)?.Handle ?? 0,
-            appSettings.ChooserWindow, app => {
-                try { return store.Load(app.FullPath).SelectedStereoBackend; }
-                catch (Exception ex) when(ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { return StereoPaths.Depth; }
-            }) { Owner = this };
+            appSettings.ChooserWindow, app=>ChoiceProfile(app).SelectedStereoBackend, app=>ChoiceProfile(app).SelectedGeometryRenderer,history.Load()) { Owner = this };
         bool chose = chooser.ShowDialog() == true;
         if (chooser.Place != null)
         {
@@ -652,12 +668,71 @@ public partial class MainWindow : Window
             System.Diagnostics.Debug.WriteLine("[Chooser] ChooseClick exit: nothing picked");
             return;
         }
+        if(engine.Running) {
+            await StopSession();
+            for(int i=0;engine.Running && i<20;++i) await Task.Delay(50);
+            if(engine.Running) return;
+        }
+        if(picked.History!=null) { await StartFromHistory(picked); return; }
         if (!SelectChoice(picked)) { Status.Text = Loc.Get("StatusChoiceGone"); return; }
         System.Diagnostics.Debug.WriteLine($"[Chooser] ChooseClick: starting {picked.App.Name} '{picked.Window.Title}'");
         if (profile != null && picked.Backend != null) {
-            profile.SelectStereoBackend(picked.Backend); PutProfile(profile); SaveAndApply();
+            profile.SelectStereoBackend(picked.Backend);
+            if(StereoPaths.Renderer(picked.Renderer)) profile.GeometryRenderer=picked.Renderer!;
+            PutProfile(profile); SaveAndApply();
         }
         await StartSession();
+    }
+
+    private async Task StartFromHistory(ChooserWindow.Choice picked)
+    {
+        var entry=picked.History!;
+        if(starting || stopping || engine.Running) return;
+        if(profile!=null && !SaveAndApply()) return;
+        bool refreshWasRunning=refreshTimer.IsEnabled; refreshTimer.Stop();
+        bool cold=false,launched=false;
+        starting=true; startCancellation=new CancellationTokenSource(); UpdateButtons();
+        try {
+            var token=startCancellation.Token;
+            var saved=store.Load(entry.Executable);
+            if(picked.Backend!=null) saved.SelectStereoBackend(picked.Backend);
+            if(StereoPaths.Renderer(picked.Renderer)) saved.GeometryRenderer=picked.Renderer!;
+            if(string.IsNullOrEmpty(saved.GeometryWorkingDirectory)) saved.GeometryWorkingDirectory=entry.WorkingDirectory;
+            if(string.IsNullOrEmpty(saved.GeometrySteamAppId)) saved.GeometrySteamAppId=entry.SteamAppId;
+            store.Save(saved);
+            await GeometrySessionLifecycle.ReleasePrevious(picked.App,store.Root,token);
+            EngineSession.EnsureAvailable();
+            var running=RunningApps.List(true).FirstOrDefault(a=>string.Equals(a.FullPath,entry.Executable,StringComparison.OrdinalIgnoreCase));
+            int? pid=running?.Pid;
+            cold=running==null;
+            if(cold) {
+                Status.Text=Loc.Format("StatusHistoryLaunching",entry.Title);
+                bool geometry=saved.GeometryStereo && !(saved.SelectedStereoBackend==StereoPaths.Auto && !GeometryLaunch.AutoRuntimeAvailable(store.Root));
+                if(geometry) {
+                    var plan=await GeometryLaunch.Prepare(picked.App with {Pid=0},saved,store.Root,text=>Status.Text=text,token,entry.Arguments);
+                    var dialog=new GeometryLaunchWindow(plan,saved){Owner=this};
+                    if(dialog.ShowDialog()!=true) { Status.Text=Loc.Get("StatusGeometryCancelled"); return; }
+                    plan=dialog.Plan;
+                    saved.GeometryLaunchArguments=string.Join(' ',plan.Arguments.Select(GeometryLaunch.QuoteArgument));
+                    saved.GeometryWorkingDirectory=plan.WorkingDirectory; saved.GeometrySteamAppId=plan.SteamAppId;
+                    saved.GeometrySeparation=dialog.Separation; saved.GeometryConvergence=dialog.Convergence;
+                    saved.GeometrySession=plan.Session; store.Save(saved);
+                    var run=await GeometryLaunch.Launch(plan,saved,store.Root,text=>Status.Text=text,token);
+                    pid=run.Pid;
+                } else GameHistory.LaunchDepth(entry);
+            }
+            var app=await GameHistory.WaitForWindow(entry,pid,token);
+            if(!SelectChoice(new ChooserWindow.Choice(app,app.Windows[0]))) throw new InvalidOperationException(Loc.Get("StatusChoiceGone"));
+            launched=true;
+        } catch(Exception ex) { Status.Text=ex.Message; }
+        finally {
+            starting=false; startCancellation.Dispose(); startCancellation=null;
+            if(refreshWasRunning && IsLoaded && !closing) refreshTimer.Start();
+            UpdateButtons();
+        }
+        // A cold geometry launch already prepared the stream. Never restart it
+        // again simply because its first window took a moment to settle.
+        if(launched) await StartSession(automatic:cold);
     }
 
     // Selects a chooser pick in the game and window lists (as a manual pick would, loading its
@@ -734,6 +809,8 @@ public partial class MainWindow : Window
             engine.Start(app, window, runtimeProfile, store.Root);
             sessionWindow = window.Handle; started = true;
             Status.Text = Loc.Format("StatusStarting", app.Name);
+            try { await new GameHistory(store.Root).Record(app,window,profile!,CancellationToken.None); }
+            catch(Exception ex) { System.Diagnostics.Debug.WriteLine("[Recent games] "+ex.Message); }
         }
         catch (Exception ex)
         {
@@ -1520,6 +1597,29 @@ public partial class MainWindow : Window
         PutProfile(one);
         if (!AiDepthContent.IsEnabled || !StrengthSlider.IsEnabled || !DesktopAwayCheck.IsEnabled || GeometryContent.Visibility != Visibility.Collapsed)
             throw new Exception("Switching back to AI must restore the existing controls");
+        if(!StereoPathList.Items.Cast<ComboBoxItem>().Select(i=>(string)i.Tag).SequenceEqual(new[]{StereoPaths.Auto,StereoPaths.Depth,StereoPaths.GeometryAuto}) ||
+            !GeometryRendererList.Items.Cast<ComboBoxItem>().Select(i=>(string)i.Tag).SequenceEqual(new[]{StereoPaths.GeometryAuto,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Vkd3d}))
+            throw new Exception("Stereo methods and secondary geometry renderers must be separate dropdowns");
+        profile=System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(one))!;
+        profile.GeometrySeparation=.5f; PutProfile(profile);
+        void SelectTag(ComboBox list,string tag)=>list.SelectedItem=list.Items.Cast<ComboBoxItem>().Single(i=>(string)i.Tag==tag);
+        SelectTag(StereoPathList,StereoPaths.GeometryAuto);
+        SelectTag(GeometryRendererList,StereoPaths.Vkd3d);
+        if(ReadProfile().EffectiveStereoBackend!=StereoPaths.Vkd3d || GeometryRendererPanel.Visibility!=Visibility.Visible ||
+            (string)((ComboBoxItem)StereoPathList.SelectedItem).Tag!=StereoPaths.GeometryAuto)
+            throw new Exception("Selecting vkd3d must retain Geometry stereo as the primary method");
+        SelectTag(StereoPathList,StereoPaths.Depth);
+        if(GeometryRendererPanel.Visibility!=Visibility.Collapsed || ReadProfile().SelectedGeometryRenderer!=StereoPaths.Vkd3d)
+            throw new Exception("Depth must hide and remember the secondary geometry renderer");
+        SelectTag(StereoPathList,StereoPaths.GeometryAuto);
+        if(ReadProfile().EffectiveStereoBackend!=StereoPaths.Vkd3d || ReadProfile().GeometrySeparation!=.5f)
+            throw new Exception("Returning to Geometry stereo must restore renderer and calibration");
+        bool gameWasExpanded=GameSection.IsExpanded; GameSection.IsExpanded=true;
+        await Dispatcher.InvokeAsync(()=>{},DispatcherPriority.ApplicationIdle); UpdateLayout();
+        var stereoUi=new RenderTargetBitmap((int)ActualWidth,(int)ActualHeight,96,96,PixelFormats.Pbgra32);
+        stereoUi.Render(this); SavePng(stereoUi,Path.Combine(output,"ui-stereo-methods.png"));
+        GameSection.IsExpanded=gameWasExpanded;
+        profile=one; PutProfile(one); store.Save(one);
         if (ForegroundCheck.IsChecked != true) throw new Exception("Foreground checkbox default is not on");
         if (CurveSlider.Value != 0 || AmbilightCheck.IsChecked == true) throw new Exception("The screen curve and the ambilight glow should default off");
         if (ScreenArc.Visibility != Visibility.Collapsed || ScreenLine.Visibility != Visibility.Visible)
@@ -1720,6 +1820,7 @@ public partial class MainWindow : Window
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
         await GeometryLaunchTests.Run(output);
+        await GameHistoryTests.Run(output,this);
         await GeometrySessionLifecycleTests.Run(output);
         if(Environment.GetCommandLineArgs().Contains("--geometry-launch-integration-test"))
             await GeometryLaunchIntegrationTests.Run(output);
@@ -2128,7 +2229,7 @@ public partial class MainWindow : Window
                 throw new Exception("The chooser must highlight and return the saved per-game DXVK selection");
         }
         if(apps.Any(a=>a.CanAttach && a.Windows.Any(RunningApps.IsChooserWindow))) {
-            var advancedTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Auto) {
+            var advancedTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Depth,_=>StereoPaths.Vulkan) {
                 Owner=this,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
             };
             static IEnumerable<T> Controls<T>(DependencyObject node) where T:DependencyObject {
@@ -2140,6 +2241,7 @@ public partial class MainWindow : Window
                 advancedTest.UpdateLayout();
                 var expander=Controls<Expander>(advancedTest).First(); expander.IsExpanded=true; advancedTest.UpdateLayout();
                 var renderers=Controls<ComboBox>(expander).Single();
+                if(renderers.SelectedItem is not ComboBoxItem rememberedRenderer || (string)rememberedRenderer.Tag!=StereoPaths.Vulkan) { advancedTest.Close(); return; }
                 if(!renderers.Items.Cast<ComboBoxItem>().Select(item=>(string)item.Tag).SequenceEqual(new[]{StereoPaths.GeometryAuto,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Vkd3d})) { advancedTest.Close(); return; }
                 renderers.SelectedItem=renderers.Items.Cast<ComboBoxItem>().Single(item=>(string)item.Tag==StereoPaths.Vkd3d);
                 advancedTest.UpdateLayout();
@@ -2147,7 +2249,7 @@ public partial class MainWindow : Window
                 bitmap.Render(advancedTest); SavePng(bitmap,Path.Combine(output,"ui-chooser-geometry.png"));
                 PathButtons(advancedTest).First(b=>(string)b.Tag==StereoPaths.Vkd3d).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
-            if(advancedTest.ShowDialog()!=true || advancedTest.Picked?.Backend!=StereoPaths.Vkd3d)
+            if(advancedTest.ShowDialog()!=true || advancedTest.Picked?.Backend!=StereoPaths.Vkd3d || advancedTest.Picked?.Renderer!=StereoPaths.Vkd3d)
                 throw new Exception("The chooser must offer the four geometry renderers and return a changed vkd3d selection");
         }
         if (chooser.Place is not { Width: 930, Height: 610, Maximized: false })
