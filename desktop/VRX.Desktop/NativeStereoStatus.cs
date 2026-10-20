@@ -10,7 +10,7 @@ internal sealed record NativeStereoStatus(int Pid, bool Mirroring, ulong AgeMs,
     ulong HookFailures, ulong Replays, ulong Stops, ulong Publications, string Reason)
 {
     internal const int Size = 504;
-    public bool Ready => Mirroring && AgeMs <= 2000 && HookFailures == 0 && Stops == 0 && Replays > 0 && Publications > 0;
+    public bool Ready => Mirroring && AgeMs <= 2000 && HookFailures == 0 && Stops == 0 && Replays >= 2 && Publications >= 2;
 
     internal static NativeStereoStatus? Parse(ReadOnlySpan<byte> bytes, int expectedPid, long now)
     {

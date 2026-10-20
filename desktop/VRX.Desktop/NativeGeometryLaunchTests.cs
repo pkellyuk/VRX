@@ -21,6 +21,7 @@ internal static class NativeGeometryLaunchTests
         Check(NativeStereoStatus.Parse(packet,self.Pid+1,10001)==null && NativeStereoStatus.Parse(packet,self.Pid,9999)==null &&
             NativeStereoStatus.Parse(packet.AsSpan(1),self.Pid,10001)==null,"foreign PID, future clock and malformed size rejected");
         Check(NativeStereoStatus.Parse(packet,self.Pid,13000)?.Ready==false,"stale counters cannot advertise a connection");
+        Q(192,1);Check(NativeStereoStatus.Parse(packet,self.Pid,10001)?.Ready==false,"one transient startup publication is not a ready connection");Q(192,3);
         U(24,0);Check(NativeStereoStatus.Parse(packet,self.Pid,10001)?.Ready==false,"observation mode is never stereo success");U(24,1);
         Q(128,1);Check(NativeStereoStatus.Parse(packet,self.Pid,10001)?.Ready==false,"incomplete hooks cannot advertise stereo");Q(128,0);
         Q(144,1);packet[248]=(byte)'x';packet[249]=0;packet[^1]=(byte)'x';

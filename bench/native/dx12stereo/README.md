@@ -315,8 +315,17 @@ Native replay stops are saved to the run folder and surfaced as an error while
 the game continues natively. Passive desktop smoke checks cover malformed,
 stale, foreign, observation-only and stopped status snapshots, live IPC,
 invariant calibration, cancellation, runtime absence and owned file cleanup.
-The desktop DX12 button remains disabled pending end-to-end managed restart
-and actual game/headset validation.
+The opt-in desktop extension `--smoke-test
+--native-geometry-launch-integration-test` starts an ordinary native DX12 fixture,
+performs two managed restarts, verifies literal arguments, live native diagnostics,
+backend isolation, distinct same-frame GPU pixels and the actual VRX GPU consumer
+without starting OpenXR. A separate restart deliberately stops replay after one
+transient frame and verifies that the error is reported while the native app
+continues. Normal exit and hash-owned DLL cleanup are checked too. Build
+`dx12_present_fixture` and `geometry_gpu_snapshot` in this directory first; use
+`VRX_GEOMETRY_TEST_ENGINE` to select an isolated geometry-capable engine.
+The desktop DX12 button remains disabled pending actual game/headset validation
+and completion of the desktop session integration.
 
 A local System Shock Remake Steam build 22239093 test used native `-dx12` with
 this launcher. Observation recorded pipeline streams, placed resources and

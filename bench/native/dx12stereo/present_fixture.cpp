@@ -6,7 +6,8 @@
 namespace {
 struct Window {
     HWND handle=CreateWindowW(L"STATIC",L"VRX native DX12 presentation fixture",WS_OVERLAPPEDWINDOW,0,0,160,120,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
-    ~Window(){if(handle)DestroyWindow(handle);}
+    ~Window(){if(handle && IsWindow(handle))DestroyWindow(handle);}
+    bool Pump(){MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}return IsWindow(handle)!=FALSE;}
 };
 xg::PairFrame Read(xg::gpu_test::Snapshot& snapshot) {
     Diagnostic diagnostic;xg::PairFrame pair;const auto until=GetTickCount64()+5000;
@@ -20,19 +21,21 @@ int main(int argc,char** argv) {
         const std::string argument=argv[1];const bool resizeServe=argument.rfind("--serve-resize-gpu=",0)==0;
         const bool serve=resizeServe || argument.rfind("--serve-gpu=",0)==0;
         const bool legacy=argument=="--legacy",warp=argc==3 && std::strcmp(argv[2],"--warp")==0;
+        const bool stopReplay=serve && argc==3 && std::strcmp(argv[2],"--stop-replay")==0;
         Check(legacy || serve || argument=="--present","known presentation fixture mode");
-        Check(argc!=3 || warp,"known adapter option");
+        Check(argc!=3 || warp || stopReplay || (serve && std::string(argv[2]).rfind("--fixture-token=",0)==0),"known adapter/fixture option");
         wchar_t formatOption[3]{};const bool bgra=GetEnvironmentVariableW(L"VRX_DX12_TEST_BGRA",formatOption,3)==1 && formatOption[0]==L'1';
         const bool ten=GetEnvironmentVariableW(L"VRX_DX12_TEST_TEN",formatOption,3)==1 && formatOption[0]==L'1';
         auto format=ten?DXGI_FORMAT_R10G10B10A2_UNORM:bgra?DXGI_FORMAT_B8G8R8A8_UNORM:DXGI_FORMAT_R8G8B8A8_UNORM;
         const auto module=GetModuleHandleW(L"d3d12.dll");
         counts=reinterpret_cast<CountsFn>(GetProcAddress(module,"VRX_DX12_GetCounts"));scope=reinterpret_cast<ScopeFn>(GetProcAddress(module,"VRX_DX12_DiagnosticScope"));
-        Check(counts && scope,"native proxy diagnostics loaded");
+        Check((counts && scope) || (serve && !counts && !scope),"native proxy diagnostics loaded outside the ordinary serving mode");
         const auto suffix=serve?argument.substr(resizeServe?19:12):std::string{};
         const auto session=serve?std::wstring(suffix.begin(),suffix.end()):L"dx12-present-"+std::to_wstring(GetCurrentProcessId());
         Check(xg::ValidSession(session) && SetEnvironmentVariableW(L"VRX_XG_SESSION",session.c_str()),"set isolated stream name");
         ComPtr<ID3D12Debug> debug;if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))debug->EnableDebugLayer();
         Window window;Check(window.handle!=nullptr,"create owned test window");
+        if(serve)ShowWindow(window.handle,SW_SHOWNOACTIVATE);
         std::unique_ptr<xg::gpu_test::Snapshot> consumer;
         {
             // Factory creation deliberately predates device interception.
@@ -57,6 +60,7 @@ int main(int argc,char** argv) {
                 if(resizeServe)for(UINT i=0;i<2;++i){const auto name=L"Local\\VRX.geometry."+session+L".resize-check."+std::to_wstring(i);events.ready[i]=CreateEventW(nullptr,FALSE,FALSE,name.c_str());Check(events.ready[i]!=nullptr,"create resize handshake");}
                 UINT step=0;
                 for(UINT frame=1;frame<10000;++frame) {
+                    if(!window.Pump())break;
                     if(WaitForSingleObject(events.stop,0)==WAIT_OBJECT_0)break;
                     if(resizeServe && step<2 && WaitForSingleObject(events.ready[step],0)==WAIT_OBJECT_0) {
                         scene.Wait();scene.eyes.Reset();scene.width=step?97:129;scene.height=step?65:73;
@@ -65,10 +69,10 @@ int main(int argc,char** argv) {
                     }
                     scene.eyes.Reset();Hr(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&scene.eyes)));
                     scene.device->CreateRenderTargetView(scene.eyes.Get(),nullptr,scene.rtv->GetCPUDescriptorHandleForHeapStart());
-                    Frame(scene,frame%24,2,false,frame%3==0,nullptr,true);Hr(chain->Present(0,0));scene.DebugCheck();Sleep(5);
+                    Frame(scene,frame%24,2,stopReplay && frame>=2,frame%3==0,nullptr,true);Hr(chain->Present(0,0));scene.DebugCheck();Sleep(5);
                 }
                 scene.Wait();scene.eyes.Reset();chain.Reset();
-                vrx::dx12::Counts retired;Hr(counts(&retired,sizeof(retired)));
+                if(counts){vrx::dx12::Counts retired;Hr(counts(&retired,sizeof(retired)));}
             }
             else {
             for(UINT frame=1;frame<=18;++frame) {
@@ -103,10 +107,11 @@ int main(int argc,char** argv) {
             Check(consumer->reader.Status(0,closed)==xg::PairRead::Closed,"swapchain destruction closes the shared stream");
             }
         }
+        if(serve && !counts){std::puts("PASS: ordinary native DX12 fixture exited without a stereo bridge");return 0;}
         {Diagnostic diagnostic;consumer.reset();}
         vrx::dx12::Counts result;Hr(counts(&result,sizeof(result)));
         if(serve) {
-            Check(!result.hookFailures && !result.mirrorStops && !result.mirrorLiveObjects,"serving fixture retires native and shadow objects cleanly");
+            Check(!result.hookFailures && result.mirrorStops<=(stopReplay?1u:0u) && !result.mirrorLiveObjects,"serving fixture retires native and shadow objects cleanly");
             std::puts("PASS: serving fixture shut down cleanly");return 0;
         }
         Check(result.version==4 && !result.hookFailures && !result.mirrorStops,"presentation has no hook or replay failures");

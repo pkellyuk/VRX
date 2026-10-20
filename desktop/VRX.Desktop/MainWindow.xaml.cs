@@ -1709,6 +1709,8 @@ public partial class MainWindow : Window
         await GeometryLaunchTests.Run(output);
         if(Environment.GetCommandLineArgs().Contains("--geometry-launch-integration-test"))
             await GeometryLaunchIntegrationTests.Run(output);
+        if(Environment.GetCommandLineArgs().Contains("--native-geometry-launch-integration-test"))
+            await NativeGeometryLaunchIntegrationTests.Run(output);
         SmokeTestStrings(root);
 
         PutProfile(one);

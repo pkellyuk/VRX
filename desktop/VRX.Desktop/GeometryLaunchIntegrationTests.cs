@@ -53,8 +53,8 @@ internal static class GeometryLaunchIntegrationTests
                 running=await GeometryLaunch.Restart(plan,profile,root,log.Add,token);
                 Check(running.Pid!=old && GeometryLaunch.IsRunning(running),"normal close and restart produces a new process");
                 Check(GeometryLaunch.ExistingSession(await Window(running),profile,root)==running.Session,"ready stream is reusable without another restart");
-                string snapshot=Path.Combine(repository,"bench","native","xgstereo","out","Release","gpu_snapshot.exe");
-                string pixels=await Tool(snapshot,[running.Session,Path.Combine(root,$"eyes-{attempt}.ppm")]);
+                string snapshot=Path.Combine(repository,"bench","native","dx12stereo","out","Release","geometry_gpu_snapshot.exe");
+                string pixels=await Tool(snapshot,[running.Session,Path.Combine(root,$"eyes-{attempt}.ppm"),running.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
                 var pair=Regex.Match(pixels,@"frame (\d+)/(\d+).*mean eye difference ([0-9.]+)");
                 Check(pair.Success && pair.Groups[1].Value==pair.Groups[2].Value && double.Parse(pair.Groups[3].Value,System.Globalization.CultureInfo.InvariantCulture)>.1,
                     "DXVK renders distinct same-frame eyes for an ordinary D3D11 app");
@@ -68,7 +68,7 @@ internal static class GeometryLaunchIntegrationTests
             var deadline=Environment.TickCount64+5000;
             while((File.Exists(Path.Combine(root,"d3d11.dll"))||File.Exists(Path.Combine(root,"dxgi.dll"))) && Environment.TickCount64<deadline)
                 await Task.Delay(50,token);
-            GeometryLaunch.Recover(root);
+            GeometryLaunch.RecoverOwned(root);
             Check(!File.Exists(Path.Combine(root,"d3d11.dll"))&&!File.Exists(Path.Combine(root,"dxgi.dll")),"all scoped DXVK DLLs are removed after fixture exit");
             File.WriteAllText(Path.Combine(output,"geometry-integration-pass.txt"),"PASS: two managed DXVK restarts; literal arguments; distinct same-frame geometry; stream reuse; actual VRX GPU handoff; normal exit and scoped DLL cleanup. Logs: "+root);
         } finally {
@@ -81,7 +81,7 @@ internal static class GeometryLaunchIntegrationTests
                 using var own=Process.GetProcessById(run.Pid);
                 if(!own.CloseMainWindow() || !own.WaitForExit(5000)) { own.Kill(); own.WaitForExit(5000); }
             }
-            GeometryLaunch.Recover(root);
+            GeometryLaunch.RecoverOwned(root);
             File.WriteAllLines(Path.Combine(root,"integration.log"),log);
         }
     }

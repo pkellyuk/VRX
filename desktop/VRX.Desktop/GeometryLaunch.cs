@@ -37,9 +37,10 @@ public static class GeometryLaunch
         public void Dispose() { mutex.ReleaseMutex(); mutex.Dispose(); }
     }
     private static bool Same(string a,string b) => string.Equals(Path.GetFullPath(a),Path.GetFullPath(b),StringComparison.OrdinalIgnoreCase);
-    private static IEnumerable<string> RunFolders(string dataRoot) {
+    private static IEnumerable<string> RunFolders(string dataRoot,bool external=true) {
         string own=RunsRoot(dataRoot);
         if (Directory.Exists(own)) foreach(var d in Directory.GetDirectories(own)) yield return d;
+        if(!external) yield break;
         string legacy=Path.Combine(EngineSession.RepositoryRoot(),"bench","native","xgstereo","out");
         if (Directory.Exists(legacy)) foreach(var d in Directory.GetDirectories(legacy,"dx11-*")) yield return d;
         string native=Path.Combine(EngineSession.RepositoryRoot(),"bench","native","dx12stereo","out");
@@ -220,6 +221,9 @@ public static class GeometryLaunch
     }
     public static void Recover(string dataRoot) {
         foreach(var folder in RunFolders(dataRoot)) Cleanup(folder);
+    }
+    internal static void RecoverOwned(string dataRoot) {
+        foreach(var folder in RunFolders(dataRoot,false)) Cleanup(folder);
     }
     public static Task<Plan> Prepare(RunningApp app,Profile profile,string dataRoot,Action<string> status,CancellationToken token) =>
         PrepareWithLayer(app,profile,dataRoot,status,token,profile.EffectiveStereoBackend==StereoPaths.Dx12?NativeDirectory():LayerDirectory());
