@@ -2,7 +2,7 @@
 
 ### [⬇ Download the latest release](https://github.com/pkellyuk/VRX/releases/latest)
 
-**Website: [vrx3d.uk](https://vrx3d.uk)**
+**Website: [vrx3d.uk](https://vrx3d.uk)** · **[Wishlist VRX3D on Steam](https://store.steampowered.com/app/5458290/)** (coming November 2026)
 
 [![Latest release](https://img.shields.io/github/v/release/pkellyuk/VRX?label=latest%20release&color=76DCC6)](https://github.com/pkellyuk/VRX/releases/latest)
 
@@ -26,7 +26,9 @@ series from protected streaming services, such as Netflix and Disney+, show as a
 picture: Windows blanks copy-protected video in every screen capture (the same reason a
 screenshot of them is black), and VRX respects that.
 
-VRX is free and open source.
+VRX is free and open source. It is also coming to Steam as
+[VRX3D](https://store.steampowered.com/app/5458290/) in November 2026: the same program, for
+anyone who wants automatic updates or to support the project.
 
 [<img src="https://storage.ko-fi.com/cdn/kofi3.png?v=6" alt="Buy me a coffee" height="36">](https://ko-fi.com/pkellyuk)
 
