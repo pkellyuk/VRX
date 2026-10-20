@@ -110,3 +110,29 @@ assembly test checks integer, floating-point and stack arguments and returns
 through the opaque export forwarders. Existing games and headset sessions are
 not touched. The desktop DX12 route remains disabled pending actual stereo
 replay, shader coverage, managed launch/cleanup and real-game validation.
+
+### Vertex rewrite implementation notes
+
+A native compiler probe confirmed that `D3DAssemble` in the available Microsoft
+47 runtime rejects `vs_5_0` assembly produced by `D3DDisassemble`. The next step
+is token-level DXBC rewriting, preserving original signature/binding chunks and
+decoding operands so immediate data cannot be mistaken for register references.
+Redirect position writes to new temporary registers, and emit the stereo offset
+at each return. Convergence must have opposite signs for the two eyes. GPU tests
+must distinguish near/far disparity and unchanged HUD positions at W=1.
+
+Microsoft's public DXC source provides the token definitions and retail container
+hash implementation under its included University of Illinois/NCSA license.
+The inspected revision is `194bb75bea2becb42810d72a16195089c1908e10`:
+
+| Upstream path | SHA-256 |
+| --- | --- |
+| `lib/DxilHash/DxilHash.cpp` | `d66b631ea28d4c90a8217fac004f9290eaac07f79115451e0c4e954c0b0c94af` |
+| `include/dxc/Support/d3d12TokenizedProgramFormat.hpp` | `cf808b363406fce9387d7ec8daec19940175af966589c0d3e084a4c41c3f5060` |
+| `LICENSE.TXT` | `27a49e35d1da96eba18fba54bc882667ff0ff8c0254f16f2b6e165d605ba7df8` |
+
+Verify the hash against original compiler output before using it on rewritten
+containers, retain the upstream notices, and validate the result in a native
+pipeline with GPU readback. This has not yet been implemented. DXIL needs a
+separate implementation; unsupported shader formats must preserve native
+forwarding without advertising a stereo stream.
