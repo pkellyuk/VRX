@@ -608,7 +608,7 @@ comparisons also pass in Debug; managed smoke/native restart integration passes.
 This regression evidence does not resolve System Shock's missing right-eye world.
 
 `launch-native.ps1 -ReplayProbes` enables bounded paired pipeline-statistics
-queries (and implies the debug layer). It samples indexed draws on DIRECT lists,
+queries (and implies the debug layer). It samples indexed and non-indexed draws on DIRECT lists,
 at most once per 30 presentations, rotating the draw ordinal using the preceding
 frame's draw count. The first 64 samples report native/right IA, vertex-shader,
 clipping and pixel-shader counters. Results are mapped only after a queue fence
@@ -645,3 +645,26 @@ target: the sampled fullscreen draw has 230,400 pixel-shader invocations in each
 eye, but the right region is all zero while the left is populated. Other sampled
 G-buffer targets match. This narrows the failure to colour inputs/output or later
 compositing, rather than absence of geometry execution.
+
+Each sampled graphics pipeline now identifies its original pixel shader. Local
+assembly files named `native-debug.log.shader-<hash>.ps.asm` are saved only in
+probe runs, deduplicated and bounded to 128 shader files. Captured bytecode is
+limited to 1 MiB per pipeline and 64 MiB per device context; assembly output is
+limited to 8 MiB per file. Stream parsing retains the original pixel-stage
+metadata while stereo rewriting still modifies only the final position stage.
+
+Input traces retain graphics root descriptor-table/VA bindings and follow SRV
+creation and both descriptor-copy APIs. They log bounded descriptor windows,
+resource identities/dimensions and translated root buffer addresses. Register
+mapping still requires the root-signature layout; neighbouring descriptors in a
+window can belong to other bindings. Mesh tests now actually sample a relocated
+SRV from the placed mesh buffer, including indexed/non-indexed and streamed PSO
+comparisons on hardware/WARP. They verify the saved shader and input identities
+alongside the rendered pixels and live rearming.
+
+The divergent `4d5be51d3a4c9ffd` pixel shader is a five-tap texture filter. The
+recorded uniform-buffer VAs for that pass are shared UPLOAD inputs; sampled
+R11G11B10_FLOAT scene/bloom targets remain black on the right while G-buffer
+outputs match. Graphics probes now include non-indexed fullscreen draws so the
+trace can reach earlier lighting/compositing stages. No game shader files are
+included in the repository.

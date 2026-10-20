@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard,[switch]$Vrs,[switch]$DepthBounds,[switch]$NullBlendProbe,[switch]$LatePipeline,[switch]$ZeroShift,[ValidateSet('hit','miss')][string]$FilterProbe,[switch]$ReplayProbes,[switch]$GpuValidation,[switch]$DebugLayer,[switch]$RecordOnly,[switch]$CloneOnly,[ValidatePattern('^[A-Za-z0-9_,]{1,2048}$')][string]$RecordCommands,[switch]$RecordStateOnly,[switch]$SkipRecordingWork,[switch]$SkipCommandRecording)
+param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard,[switch]$Vrs,[switch]$DepthBounds,[switch]$NullBlendProbe,[switch]$LatePipeline,[switch]$ZeroShift,[ValidateSet('hit','miss')][string]$FilterProbe,[switch]$NonIndexed,[switch]$ReplayProbes,[switch]$GpuValidation,[switch]$DebugLayer,[switch]$RecordOnly,[switch]$CloneOnly,[ValidatePattern('^[A-Za-z0-9_,]{1,2048}$')][string]$RecordCommands,[switch]$RecordStateOnly,[switch]$SkipRecordingWork,[switch]$SkipCommandRecording)
 $ErrorActionPreference='Stop'
 if($GpuValidation -or $ReplayProbes){$DebugLayer=$true}
 $temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -29,7 +29,7 @@ try {
     $start.Environment['VRX_DX12_TEST_MODERN']=$(if($Modern){'1'}else{'0'})
     $start.Environment['VRX_DX12_TEST_BGRA']=$(if($Bgra){'1'}else{'0'})
     $start.Environment['VRX_DX12_TEST_TEN']=$(if($Ten){'1'}else{'0'})
-    $start.ArgumentList.Add($(if($LatePipeline){'--late-pipeline'}elseif($NullBlendProbe){'--null-blend'}elseif($FilterProbe){'--filter-'+$FilterProbe}elseif($DepthBounds){'--depth-bounds'}elseif($ExtendedGuard){'--extended-guard='+$ExtendedGuard}elseif($Mirror){if($Modern){'--modern'}elseif($Present){if($Legacy){'--legacy'}else{'--present'}}elseif($Compute){'--compute'}elseif($Bindings){'--bindings'}elseif($Unsupported){'--unsupported'}else{'--mirror'}}elseif($Passthrough){'--passthrough'}else{'--intercept'}))
+    $start.ArgumentList.Add($(if($NonIndexed){'--nonindexed'}elseif($LatePipeline){'--late-pipeline'}elseif($NullBlendProbe){'--null-blend'}elseif($FilterProbe){'--filter-'+$FilterProbe}elseif($DepthBounds){'--depth-bounds'}elseif($ExtendedGuard){'--extended-guard='+$ExtendedGuard}elseif($Mirror){if($Modern){'--modern'}elseif($Present){if($Legacy){'--legacy'}else{'--present'}}elseif($Compute){'--compute'}elseif($Bindings){'--bindings'}elseif($Unsupported){'--unsupported'}else{'--mirror'}}elseif($Passthrough){'--passthrough'}else{'--intercept'}))
     if($Warp) { $start.ArgumentList.Add('--warp') }
     $child=[Diagnostics.Process]::Start($start)
     $stdout=$child.StandardOutput.ReadToEndAsync(); $stderr=$child.StandardError.ReadToEndAsync()
@@ -43,6 +43,8 @@ try {
     if($ReplayProbes -and -not $Unsupported -and $log -notmatch 'VRX replay probe 1: iaV=3/3 iaP=1/1 vs=3/3 clipIn=1/1 clipOut=1/1 ps=([1-9][0-9]*)/\1(?:\r?\n|$)'){throw 'Paired GPU counters did not prove identical native/right geometry'}
     if($ReplayProbes -and -not $Unsupported -and ($log -notmatch 'VRX replay colour 1 target=0 .*hash=([0-9a-f]+)/\1 nonzero=([1-9][0-9]*)/\2(?:\r?\n|$)' -or $log -notmatch 'VRX replay colour 2 target=0 .*hash=([0-9a-f]+)/\1 nonzero=([1-9][0-9]*)/\2(?:\r?\n|$)')){throw ('Colour readback or live probe request did not compare identical populated targets: '+$log)}
     if($ReplayProbes -and $Unsupported -and $log -notmatch 'VRX unpaired replay probe omitted after stereo stop'){throw 'Probe resources were not fenced and retired after native fallback'}
+    if($ReplayProbes){$shader=[regex]::Match($log,'VRX replay shader 1 pixel=([0-9a-f]+)');if(-not $shader.Success){throw 'Sampled pixel shader identity missing'};$assembly=Get-Content -LiteralPath (Join-Path $root ('native-debug.log.shader-'+$shader.Groups[1].Value+'.ps.asm')) -Raw;if($assembly -notmatch 'ps_5_1' -or $assembly -notmatch 'dcl_output o0'){throw 'Sampled pixel shader disassembly missing'}}
+    if($ReplayProbes -and ($log -notmatch 'VRX replay input 1 table=1 entry=0 .*dimension=1 size=1024x1 .*srvDimension=1' -or $log -notmatch 'VRX replay address 1 root=0 address=([0-9a-f]+)/([0-9a-f]+) heap=1')){throw 'Sampled SRV descriptor relocation or root CBV identity missing'}
     if($GpuValidation -and $log -notmatch 'VRX GPU-based validation enabled'){throw 'GPU-based validation was not enabled'}
 } finally {
     if($child) { if(-not $child.HasExited) { $child.Kill(); $child.WaitForExit() }; $child.Dispose() }

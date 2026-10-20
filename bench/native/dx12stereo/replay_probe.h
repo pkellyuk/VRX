@@ -68,7 +68,7 @@ struct ReplayProbe {
             if(SUCCEEDED(colours->Map(0,&readColours,&mapped))){
                 for(size_t i=0;i<targets.size();++i){const auto& target=targets[i];UINT64 hash[]={14695981039346656037ull,14695981039346656037ull},nonzero[2]{};
                     for(UINT eye=0;eye<2;++eye)for(UINT row=0;row<target.rows;++row){const auto* bytes=static_cast<const BYTE*>(mapped)+target.footprint[eye].Offset+UINT64(row)*target.footprint[eye].Footprint.RowPitch;for(UINT64 col=0;col<target.rowBytes;++col){hash[eye]=(hash[eye]^bytes[col])*1099511628211ull;if(bytes[col])++nonzero[eye];}}
-                    sprintf_s(text,"VRX replay colour %llu target=%zu format=%u subresource=%u size=%ux%u hash=%llx/%llx nonzero=%llu/%llu",static_cast<unsigned long long>(sequence),i,UINT(target.format),target.subresource,target.width,target.height,hash[0],hash[1],nonzero[0],nonzero[1]);Write(nullptr,3,0,text);
+                    sprintf_s(text,"VRX replay colour %llu target=%zu format=%u subresource=%u size=%ux%u resource=%p/%p hash=%llx/%llx nonzero=%llu/%llu",static_cast<unsigned long long>(sequence),i,UINT(target.format),target.subresource,target.width,target.height,target.native.Get(),target.right.Get(),hash[0],hash[1],nonzero[0],nonzero[1]);Write(nullptr,3,0,text);
                 }
                 colours->Unmap(0,&noWrite);
             }else Write(nullptr,1,0,"VRX replay colour readback failed");

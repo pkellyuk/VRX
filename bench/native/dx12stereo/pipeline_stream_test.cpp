@@ -11,14 +11,17 @@ int main(){try {
     struct Graphics {
         Subobject<UINT> mask;
         Subobject<D3D12_SHADER_BYTECODE> vs;
+        Subobject<D3D12_SHADER_BYTECODE> ps;
         Subobject<D3D12_CACHED_PIPELINE_STATE> cache;
         Subobject<D3D12_PRIMITIVE_TOPOLOGY_TYPE> topology;
-    } graphics{{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK,UINT_MAX},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS,shader},
+    } graphics{{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK,UINT_MAX},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS,shader},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS,shader},
         {D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO,{code,sizeof(code)}},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY,D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE}};
     auto parsed=ParseObject(graphics);Check(parsed.kind==Kind::Graphics && parsed.vs.pShaderBytecode==code,"mixed scalar and pointer ABI parsed");
+    Check(parsed.ps.pShaderBytecode==code && parsed.ps.BytecodeLength==sizeof(code),"pixel shader metadata retained");
     auto copy=parsed.Desc();Check(copy.SizeInBytes==sizeof(graphics) && !std::memcmp(copy.pPipelineStateSubobjectStream,&graphics,sizeof(graphics)),"all untouched pipeline settings preserved");
     char replacement[8]{};parsed.Shader({replacement,sizeof(replacement)});parsed.ClearCache();copy=parsed.Desc();auto patched=Parse(&copy);
     Check(patched.kind==Kind::Graphics && patched.vs.pShaderBytecode==replacement && patched.vs.BytecodeLength==sizeof(replacement),"vertex replacement lives only in copied stream");
+    Check(patched.ps.pShaderBytecode==code && patched.ps.BytecodeLength==sizeof(code),"vertex replacement leaves pixel bytecode unchanged");
     D3D12_CACHED_PIPELINE_STATE cache{};std::memcpy(&cache,static_cast<uint8_t*>(copy.pPipelineStateSubobjectStream)+patched.cache,sizeof(cache));
     Check(!cache.pCachedBlob && !cache.CachedBlobSizeInBytes && graphics.vs.value.pShaderBytecode==code && graphics.cache.value.pCachedBlob==code,"rewritten pipeline clears old cache without touching caller memory");
     auto malformed=D3D12_PIPELINE_STATE_STREAM_DESC{sizeof(graphics)-1,&graphics};Check(Parse(&malformed).kind==Kind::Invalid,"partial word rejected");

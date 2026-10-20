@@ -108,10 +108,12 @@ HRESULT STDMETHODCALLTYPE Reset(ID3D12GraphicsCommandList* object,ID3D12CommandA
 }
 void STDMETHODCALLTYPE Draw(ID3D12GraphicsCommandList* object,UINT vertices,UINT instances,UINT firstVertex,UINT firstInstance) {
     Call call;
+    auto probe=call.outer?mirror::BeginProbe(object):std::shared_ptr<void>{};
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,UINT);
     if(call.outer) ++State().draws;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawInstanced)(object,vertices,instances,firstVertex,firstInstance);
     if(call.outer) mirror::Record(object,"DrawInstanced",[&](auto* q,auto&){ q->DrawInstanced(vertices,instances,firstVertex,firstInstance); },mirror::RecordKind::Work);
+    mirror::EndProbe(object,probe);
 }
 void STDMETHODCALLTYPE DrawIndexed(ID3D12GraphicsCommandList* object,UINT indices,UINT instances,UINT firstIndex,INT baseVertex,UINT firstInstance) {
     Call call;
@@ -139,13 +141,16 @@ SIMPLE(RSSetViewports,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_
 SIMPLE(RSSetScissorRects,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_RECT* values),(object,count,values),(count,values))
 SIMPLE(IASetPrimitiveTopology,(ID3D12GraphicsCommandList* object,D3D12_PRIMITIVE_TOPOLOGY value),(object,value),(value))
 SIMPLE(OMSetStencilRef,(ID3D12GraphicsCommandList* object,UINT value),(object,value),(value))
-SIMPLE(SetGraphicsRootSignature,(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value),(object,value),(value))
 SIMPLE(SetGraphicsRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
 SIMPLE(SetGraphicsRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT index,UINT count,const void* data,UINT offset),(object,index,count,data,offset),(index,count,data,offset))
 SIMPLE(SetComputeRootSignature,(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value),(object,value),(value))
 SIMPLE(SetComputeRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
 SIMPLE(SetComputeRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT index,UINT count,const void* data,UINT offset),(object,index,count,data,offset),(index,count,data,offset))
 #undef SIMPLE
+void STDMETHODCALLTYPE SetGraphicsRootSignature(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value) {
+    Call call;Original<decltype(&SetGraphicsRootSignature)>(object,slot::ID3D12GraphicsCommandList_SetGraphicsRootSignature)(object,value);
+    if(call.outer){mirror::Record(object,__func__,[&](auto* q,auto&){q->SetGraphicsRootSignature(value);});mirror::BindRoot(object,value);}
+}
 // NULL is the documented {1,1,1,1} default. The installed native runtime
 // dereferences NULL even without interception (hardware and WARP), so pass its
 // equivalent explicit value to both native and replay recording paths.
@@ -160,11 +165,14 @@ void STDMETHODCALLTYPE OMSetBlendFactor(ID3D12GraphicsCommandList* object,const 
 void STDMETHODCALLTYPE SetPipelineState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
     Call call; Original<decltype(&SetPipelineState)>(object,slot::ID3D12GraphicsCommandList_SetPipelineState)(object,value);
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->SetPipelineState(right);});
+    if(call.outer)mirror::BindPipeline(object,value);
 }
 void STDMETHODCALLTYPE ClearState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
     Call call; Original<decltype(&ClearState)>(object,slot::ID3D12GraphicsCommandList_ClearState)(object,value);
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->ClearState(right);});
     if(call.outer)mirror::BindTargets(object,0,nullptr,FALSE);
+    if(call.outer)mirror::BindPipeline(object,value);
+    if(call.outer)mirror::BindRoot(object,nullptr);
 }
 void STDMETHODCALLTYPE OMSetRenderTargets(ID3D12GraphicsCommandList* object,UINT count,const D3D12_CPU_DESCRIPTOR_HANDLE* values,BOOL contiguous,const D3D12_CPU_DESCRIPTOR_HANDLE* depth) {
     Call call; Original<decltype(&OMSetRenderTargets)>(object,slot::ID3D12GraphicsCommandList_OMSetRenderTargets)(object,count,values,contiguous,depth);
@@ -236,22 +244,24 @@ void STDMETHODCALLTYPE ClearDepthStencilView(ID3D12GraphicsCommandList* object,D
 void STDMETHODCALLTYPE SetGraphicsRootDescriptorTable(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&SetGraphicsRootDescriptorTable)>(object,slot::ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable)(object,index,handle);
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Gpu(handle); if(map.Valid()) q->SetGraphicsRootDescriptorTable(index,right);});
+    if(call.outer)mirror::BindInput(object,index,handle.ptr,false);
 }
 void STDMETHODCALLTYPE SetComputeRootDescriptorTable(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&SetComputeRootDescriptorTable)>(object,slot::ID3D12GraphicsCommandList_SetComputeRootDescriptorTable)(object,index,handle);
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Gpu(handle); if(map.Valid()) q->SetComputeRootDescriptorTable(index,right);});
 }
-#define ROOT_ADDRESS(Name) \
+#define ROOT_ADDRESS(Name,Graphics) \
 void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_VIRTUAL_ADDRESS address) { \
     Call call; Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name)(object,index,address); \
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Address(address);if(map.Valid()) q->Name(index,right);}); \
+    if constexpr(Graphics){if(call.outer)mirror::BindInput(object,index,address,true);} \
 }
-ROOT_ADDRESS(SetGraphicsRootConstantBufferView)
-ROOT_ADDRESS(SetGraphicsRootShaderResourceView)
-ROOT_ADDRESS(SetGraphicsRootUnorderedAccessView)
-ROOT_ADDRESS(SetComputeRootConstantBufferView)
-ROOT_ADDRESS(SetComputeRootShaderResourceView)
-ROOT_ADDRESS(SetComputeRootUnorderedAccessView)
+ROOT_ADDRESS(SetGraphicsRootConstantBufferView,true)
+ROOT_ADDRESS(SetGraphicsRootShaderResourceView,true)
+ROOT_ADDRESS(SetGraphicsRootUnorderedAccessView,true)
+ROOT_ADDRESS(SetComputeRootConstantBufferView,false)
+ROOT_ADDRESS(SetComputeRootShaderResourceView,false)
+ROOT_ADDRESS(SetComputeRootUnorderedAccessView,false)
 #undef ROOT_ADDRESS
 void STDMETHODCALLTYPE SetPredication(ID3D12GraphicsCommandList* object,ID3D12Resource* resource,UINT64 offset,D3D12_PREDICATION_OP operation) {
     Call call; Original<decltype(&SetPredication)>(object,slot::ID3D12GraphicsCommandList_SetPredication)(object,resource,offset,operation);
@@ -572,6 +582,7 @@ void STDMETHODCALLTYPE CreateConstantBufferView(ID3D12Device* object,const D3D12
         D3D12_CONSTANT_BUFFER_VIEW_DESC right{}; if(desc){right=*desc;right.BufferLocation=map.Address(desc->BufferLocation);}
         auto h=map.Cpu(handle);if(map.Valid())d->CreateConstantBufferView(desc?&right:nullptr,h);
     });
+    if(call.outer)mirror::Srv(object,nullptr,nullptr,handle);
 }
 void STDMETHODCALLTYPE CreateShaderResourceView(ID3D12Device* object,ID3D12Resource* resource,const D3D12_SHADER_RESOURCE_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&CreateShaderResourceView)>(object,slot::ID3D12Device_CreateShaderResourceView)(object,resource,desc,handle);
@@ -579,10 +590,12 @@ void STDMETHODCALLTYPE CreateShaderResourceView(ID3D12Device* object,ID3D12Resou
         if(desc && desc->ViewDimension==D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE) {mirror::Unsupported(object,"raytracing SRV is unsupported");return;}
         auto r=map.Resource(resource);auto h=map.Cpu(handle);if(map.Valid())d->CreateShaderResourceView(r,desc,h);
     });
+    if(call.outer)mirror::Srv(object,resource,desc,handle);
 }
 void STDMETHODCALLTYPE CreateUnorderedAccessView(ID3D12Device* object,ID3D12Resource* resource,ID3D12Resource* counter,const D3D12_UNORDERED_ACCESS_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&CreateUnorderedAccessView)>(object,slot::ID3D12Device_CreateUnorderedAccessView)(object,resource,counter,desc,handle);
     if(call.outer) mirror::Observe(object,[&](auto* d,auto& map){auto r=map.Resource(resource),c=map.Resource(counter);auto h=map.Cpu(handle);if(map.Valid())d->CreateUnorderedAccessView(r,c,desc,h);});
+    if(call.outer)mirror::Srv(object,nullptr,nullptr,handle);
 }
 void STDMETHODCALLTYPE CreateSampler(ID3D12Device* object,const D3D12_SAMPLER_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&CreateSampler)>(object,slot::ID3D12Device_CreateSampler)(object,desc,handle);
@@ -595,6 +608,7 @@ void STDMETHODCALLTYPE CopyDescriptorsSimple(ID3D12Device* object,UINT count,D3D
         map.Cpu({dst.ptr+SIZE_T(count-1)*stride});map.Cpu({src.ptr+SIZE_T(count-1)*stride});
         if(map.Valid())d->CopyDescriptorsSimple(count,target,source,type);
     });
+    if(call.outer && count)mirror::CopyInputs(object,1,&dst,&count,1,&src,&count,type);
 }
 void STDMETHODCALLTYPE CopyDescriptors(ID3D12Device* object,UINT dstCount,const D3D12_CPU_DESCRIPTOR_HANDLE* dst,const UINT* dstSizes,UINT srcCount,const D3D12_CPU_DESCRIPTOR_HANDLE* src,const UINT* srcSizes,D3D12_DESCRIPTOR_HEAP_TYPE type) {
     Call call; Original<decltype(&CopyDescriptors)>(object,slot::ID3D12Device_CopyDescriptors)(object,dstCount,dst,dstSizes,srcCount,src,srcSizes,type);
@@ -606,6 +620,7 @@ void STDMETHODCALLTYPE CopyDescriptors(ID3D12Device* object,UINT dstCount,const 
         ranges(dstCount,dst,dstSizes,target);ranges(srcCount,src,srcSizes,source);
         if(map.Valid())d->CopyDescriptors(dstCount,target.data(),dstSizes,srcCount,source.data(),srcSizes,type);
     });
+    if(call.outer)mirror::CopyInputs(object,dstCount,dst,dstSizes,srcCount,src,srcSizes,type);
 }
 HRESULT STDMETHODCALLTYPE SetColorSpace1(IDXGISwapChain3* object,DXGI_COLOR_SPACE_TYPE color) {
     Call call;const auto result=Original<decltype(&SetColorSpace1)>(object,slot::IDXGISwapChain3_SetColorSpace1)(object,color);

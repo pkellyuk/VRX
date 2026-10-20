@@ -63,6 +63,11 @@ void List(ID3D12Device*,ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D1
 void Reset(ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineState*) noexcept;
 void Close(ID3D12GraphicsCommandList*) noexcept;
 void BindTargets(ID3D12GraphicsCommandList*,UINT,const D3D12_CPU_DESCRIPTOR_HANDLE*,BOOL) noexcept;
+void BindPipeline(ID3D12GraphicsCommandList*,ID3D12PipelineState*) noexcept;
+void BindInput(ID3D12GraphicsCommandList*,UINT,UINT64,bool address) noexcept;
+void BindRoot(ID3D12GraphicsCommandList*,ID3D12RootSignature*) noexcept;
+void Srv(ID3D12Device*,ID3D12Resource*,const D3D12_SHADER_RESOURCE_VIEW_DESC*,D3D12_CPU_DESCRIPTOR_HANDLE) noexcept;
+void CopyInputs(ID3D12Device*,UINT,const D3D12_CPU_DESCRIPTOR_HANDLE*,const UINT*,UINT,const D3D12_CPU_DESCRIPTOR_HANDLE*,const UINT*,D3D12_DESCRIPTOR_HEAP_TYPE) noexcept;
 std::shared_ptr<void> BeginProbe(ID3D12GraphicsCommandList*) noexcept;
 void EndProbe(ID3D12GraphicsCommandList*,const std::shared_ptr<void>&) noexcept;
 enum class RecordKind { State,Transfer,Work };

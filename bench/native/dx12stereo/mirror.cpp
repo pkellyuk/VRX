@@ -2,6 +2,7 @@
 #include "mirror.h"
 #include "native_debug.h"
 #include "replay_probe.h"
+#include "pixel_trace.h"
 #include "dxbc_patch.h"
 #include "publisher.h"
 #include "pipeline_stream.h"
@@ -34,8 +35,9 @@ struct Context {
     dxbc::Options calibration{.25f,0,true}; // native left, shifted right
     std::string recordCommands; // diagnostic comma-delimited allowlist
     std::string reason;
-    uint64_t probeCount=0,nextProbePresentation=0,probeOrdinal=0,previousIndexed=1;
+    uint64_t probeCount=0,nextProbePresentation=0,probeOrdinal=0,previousDraws=1;
     uint64_t probeBudget=0,lastProbeCheck=0,lastProbeRequest=0;
+    size_t pixelTraceBytes=0;
 };
 namespace {
 enum class Kind { Device,Queue,Allocator,Resource,Pipeline,Heap,List,Swapchain,MemoryHeap,QueryHeap,Signature };
@@ -46,6 +48,11 @@ struct TargetView {
     UINT subresource=0,width=0,height=0;
     DXGI_FORMAT format=DXGI_FORMAT_UNKNOWN;
 };
+struct InputView {
+    std::weak_ptr<Item> resource;
+    ID3D12Resource* native=nullptr;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+};
 struct Item {
     Kind kind;
     std::shared_ptr<Context> context;
@@ -55,6 +62,8 @@ struct Item {
     ComPtr<ID3D12PipelineState> pipeline;
     ID3D12PipelineState* pipelineAlias=nullptr;
     std::string pipelineReason;
+    diagnostic::PixelTrace pixelTrace;
+    std::weak_ptr<Item> boundPipeline;
     ComPtr<ID3D12Heap> memory;
     ID3D12Heap* memoryAlias=nullptr; // app-owned upload allocation
     ComPtr<ID3D12QueryHeap> queries;
@@ -68,6 +77,9 @@ struct Item {
     std::vector<TargetView> targets;
     std::unordered_map<UINT,TargetView> rtvs;
     D3D12_DESCRIPTOR_HEAP_TYPE descriptorType=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    std::unordered_map<UINT,InputView> srvs;
+    std::unordered_map<UINT,UINT64> graphicsTables,graphicsAddresses;
+    ID3D12RootSignature* graphicsRoot=nullptr;
     D3D12_HEAP_TYPE heapType=D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC description{};
     uint64_t leftAddress=0,rightAddress=0;
@@ -184,6 +196,21 @@ bool HeapSupported(const D3D12_HEAP_PROPERTIES& heap,D3D12_HEAP_FLAGS flags) {
 std::shared_ptr<Item> TargetHeap(const std::shared_ptr<Context>& context,D3D12_CPU_DESCRIPTOR_HANDLE handle,UINT& index){
     for(const auto& entry:Registry().objects){const auto& heap=entry.second;if(heap->kind!=Kind::Heap || heap->context!=context || heap->descriptorType!=D3D12_DESCRIPTOR_HEAP_TYPE_RTV || handle.ptr<heap->leftCpu.ptr)continue;const auto delta=handle.ptr-heap->leftCpu.ptr;if(heap->stride && delta%heap->stride==0 && delta/heap->stride<heap->descriptors){index=UINT(delta/heap->stride);return heap;}}
     return {};
+}
+std::shared_ptr<Item> InputHeap(const std::shared_ptr<Context>& context,D3D12_CPU_DESCRIPTOR_HANDLE handle,UINT& index){
+    for(const auto& entry:Registry().objects){const auto& heap=entry.second;if(heap->kind!=Kind::Heap || heap->context!=context || heap->descriptorType!=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV || handle.ptr<heap->leftCpu.ptr)continue;const auto delta=handle.ptr-heap->leftCpu.ptr;if(heap->stride && delta%heap->stride==0 && delta/heap->stride<heap->descriptors){index=UINT(delta/heap->stride);return heap;}}
+    return {};
+}
+void TraceInputs(const std::shared_ptr<Item>& list,uint64_t sequence){
+    char text[512]{};UINT logged=0;
+    for(const auto& table:list->graphicsTables)for(const auto& entry:Registry().objects){const auto& heap=entry.second;if(heap->kind!=Kind::Heap || heap->context!=list->context || heap->descriptorType!=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV || !heap->leftGpu.ptr || table.second<heap->leftGpu.ptr)continue;const auto delta=table.second-heap->leftGpu.ptr;if(!heap->stride || delta%heap->stride || delta/heap->stride>=heap->descriptors)continue;const auto first=UINT(delta/heap->stride);
+        for(UINT i=0;i<8 && first+i<heap->descriptors && logged<16;++i){const auto found=heap->srvs.find(first+i);if(found==heap->srvs.end())continue;const auto& view=found->second;if(auto resource=view.resource.lock()){
+            sprintf_s(text,"VRX replay input %llu table=%u entry=%u resource=%p/%p dimension=%u size=%llux%u format=%u srvDimension=%u",static_cast<unsigned long long>(sequence),table.first,i,view.native,resource->RightResource(),UINT(resource->description.Dimension),resource->description.Width,resource->description.Height,UINT(resource->description.Format),UINT(view.srv.ViewDimension));diagnostic::Write(nullptr,3,0,text);++logged;
+        }}break;
+    }
+    for(const auto& address:list->graphicsAddresses)for(const auto& entry:Registry().objects){const auto& resource=entry.second;if(resource->kind!=Kind::Resource || resource->context!=list->context || !resource->leftAddress || address.second<resource->leftAddress || address.second-resource->leftAddress>=resource->description.Width)continue;
+        sprintf_s(text,"VRX replay address %llu root=%u address=%llx/%llx heap=%u",static_cast<unsigned long long>(sequence),address.first,address.second,resource->rightAddress+(address.second-resource->leftAddress),UINT(resource->heapType));diagnostic::Write(nullptr,3,0,text);break;
+    }
 }
 } // namespace
 bool Mapper::Valid() const { return context_ && context_->active; }
@@ -309,7 +336,7 @@ void Present(IDXGISwapChain* original,UINT flags) noexcept {
     try {
         Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || item->kind!=Kind::Swapchain || !item->context->active)return;
         if(item->context->recordOnly)return;
-        item->context->previousIndexed=std::max(uint64_t(1),item->context->probeOrdinal);item->context->probeOrdinal=0;
+        item->context->previousDraws=std::max(uint64_t(1),item->context->probeOrdinal);item->context->probeOrdinal=0;
         if(flags&DXGI_PRESENT_DO_NOT_WAIT) {Stop(item->context,"nonblocking presentation needs a publication transaction");return;}
         wchar_t session[66]{};const auto length=GetEnvironmentVariableW(L"VRX_XG_SESSION",session,66);
         // Offscreen interception tests need no named stream. A launcher supplies
@@ -428,7 +455,7 @@ void ReservedResource(ID3D12Device* device,ID3D12Resource* original,const D3D12_
 void Pipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D12_GRAPHICS_PIPELINE_STATE_DESC* desc) noexcept {
     try {
         Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(!context || !context->active) return;
-        auto item=New(Kind::Pipeline,context);
+        auto item=New(Kind::Pipeline,context);item->pixelTrace.Capture(desc->PS,context->pixelTraceBytes);
         item->pipelineReason=desc->HS.BytecodeLength || desc->DS.BytecodeLength?"tessellation requires final domain-stage stereo transformation":"stream output requires additional stereo handling";
         if(!desc->HS.BytecodeLength && !desc->DS.BytecodeLength && !desc->StreamOutput.NumEntries && !desc->StreamOutput.NumStrides) {
             const auto final=desc->GS.BytecodeLength?desc->GS:desc->VS;auto shader=dxbc::Rewrite(final.pShaderBytecode,final.BytecodeLength,context->calibration);
@@ -456,7 +483,7 @@ void StreamPipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D
         Lock lock(Registry().mutex);Drain();auto context=Owner(device);if(!context || !context->active)return;
         auto parsed=stream::Parse(desc);
         if(parsed.kind==stream::Kind::Compute){ComputePipeline(device,original);return;}
-        auto item=New(Kind::Pipeline,context);item->pipelineReason=parsed.reason;
+        auto item=New(Kind::Pipeline,context);item->pipelineReason=parsed.reason;item->pixelTrace.Capture(parsed.ps,context->pixelTraceBytes);
         if(parsed.kind==stream::Kind::Graphics) {
             const auto final=parsed.FinalShader();auto shader=dxbc::Rewrite(final.pShaderBytecode,final.BytecodeLength,context->calibration);item->pipelineReason=shader.reason;
             if(shader.status==dxbc::Status::Patched) {
@@ -515,7 +542,7 @@ void Rtv(ID3D12Device* device,ID3D12Resource* resource,const D3D12_RENDER_TARGET
 void List(ID3D12Device* device,ID3D12GraphicsCommandList* original,ID3D12CommandAllocator* allocator,ID3D12PipelineState* pipeline,UINT node,D3D12_COMMAND_LIST_TYPE type,bool closed) noexcept {
     try {
         Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(!context || !context->active) return;
-        auto item=New(Kind::List,context); item->closed=closed;item->listType=type;
+        auto item=New(Kind::List,context); item->closed=closed;item->listType=type;if(pipeline)item->boundPipeline=Find(pipeline);
         if(!closed) {
             auto allocation=Mapped(allocator,Kind::Allocator,context); Mapper map(context); auto pso=map.Pipeline(pipeline);
             if(!allocation || !map.Valid()) return;
@@ -535,7 +562,7 @@ void Reset(ID3D12GraphicsCommandList* original,ID3D12CommandAllocator* allocator
         auto allocation=Mapped(allocator,Kind::Allocator,item->context); Mapper map(item->context); auto pso=map.Pipeline(pipeline);
         if(!allocation || !map.Valid()) return;
         if(FAILED(item->list->Reset(allocation->allocator.Get(),pso))) { Stop(item->context,"command list reset failed"); return; }
-        item->listAllocator=allocation->allocator; item->closed=false;item->probes.clear();item->targets.clear();
+        item->listAllocator=allocation->allocator; item->closed=false;item->probes.clear();item->targets.clear();item->boundPipeline=pipeline?Find(pipeline):nullptr;item->graphicsTables.clear();item->graphicsAddresses.clear();item->graphicsRoot=nullptr;
     } catch(...) { }
 }
 void Close(ID3D12GraphicsCommandList* original) noexcept {
@@ -549,6 +576,33 @@ void BindTargets(ID3D12GraphicsCommandList* original,UINT count,const D3D12_CPU_
         for(UINT i=0;i<count;++i){const D3D12_CPU_DESCRIPTOR_HANDLE handle=contiguous?D3D12_CPU_DESCRIPTOR_HANDLE{handles[0].ptr+SIZE_T(i)*stride}:handles[i];UINT index=0;auto heap=TargetHeap(item->context,handle,index);if(!heap)continue;auto target=heap->rtvs.find(index);if(target!=heap->rtvs.end())item->targets.push_back(target->second);}
     }catch(...){diagnostic::Write(nullptr,1,0,"VRX replay target tracking failed");}
 }
+void BindPipeline(ID3D12GraphicsCommandList* original,ID3D12PipelineState* pipeline) noexcept {
+    static const bool requested=diagnostic::ProbesRequested();if(!requested)return;
+    try {Lock lock(Registry().mutex);auto item=Find(original);if(item && item->kind==Kind::List)item->boundPipeline=pipeline?Find(pipeline):nullptr;}catch(...){diagnostic::Write(nullptr,1,0,"VRX replay pipeline tracking failed");}
+}
+void BindInput(ID3D12GraphicsCommandList* original,UINT index,UINT64 value,bool address) noexcept {
+    static const bool requested=diagnostic::ProbesRequested();if(!requested || index>=64)return;
+    try {Lock lock(Registry().mutex);auto item=Find(original);if(item && item->kind==Kind::List){auto& bindings=address?item->graphicsAddresses:item->graphicsTables;bindings[index]=value;}}catch(...){diagnostic::Write(nullptr,1,0,"VRX replay input tracking failed");}
+}
+void BindRoot(ID3D12GraphicsCommandList* original,ID3D12RootSignature* root) noexcept {
+    static const bool requested=diagnostic::ProbesRequested();if(!requested)return;
+    try {Lock lock(Registry().mutex);auto item=Find(original);if(item && item->kind==Kind::List && item->graphicsRoot!=root){item->graphicsRoot=root;item->graphicsTables.clear();item->graphicsAddresses.clear();}}catch(...){diagnostic::Write(nullptr,1,0,"VRX replay root tracking failed");}
+}
+void Srv(ID3D12Device* device,ID3D12Resource* resource,const D3D12_SHADER_RESOURCE_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) noexcept {
+    static const bool requested=diagnostic::ProbesRequested();if(!requested)return;
+    try {Lock lock(Registry().mutex);auto context=Owner(device);UINT index=0;auto heap=InputHeap(context,handle,index);if(!heap)return;heap->srvs.erase(index);auto source=resource?Find(resource):nullptr;if(source){InputView view;view.resource=source;view.native=resource;if(desc)view.srv=*desc;heap->srvs[index]=view;}}catch(...){diagnostic::Write(nullptr,1,0,"VRX replay SRV tracking failed");}
+}
+void CopyInputs(ID3D12Device* device,UINT dstCount,const D3D12_CPU_DESCRIPTOR_HANDLE* dst,const UINT* dstSizes,UINT srcCount,const D3D12_CPU_DESCRIPTOR_HANDLE* src,const UINT* srcSizes,D3D12_DESCRIPTOR_HEAP_TYPE type) noexcept {
+    static const bool requested=diagnostic::ProbesRequested();if(!requested || type!=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)return;
+    try {
+        Lock lock(Registry().mutex);auto context=Owner(device);const auto stride=device->GetDescriptorHandleIncrementSize(type);UINT di=0,si=0,doff=0,soff=0,copied=0;
+        while(di<dstCount && si<srcCount && copied<65536){const auto dn=dstSizes?dstSizes[di]:1,sn=srcSizes?srcSizes[si]:1;if(doff>=dn){++di;doff=0;continue;}if(soff>=sn){++si;soff=0;continue;}
+            UINT dindex=0,sindex=0;auto dh=InputHeap(context,{dst[di].ptr+SIZE_T(doff)*stride},dindex),sh=InputHeap(context,{src[si].ptr+SIZE_T(soff)*stride},sindex);
+            if(dh){if(sh){auto found=sh->srvs.find(sindex);if(found!=sh->srvs.end())dh->srvs[dindex]=found->second;else dh->srvs.erase(dindex);}else dh->srvs.erase(dindex);}++doff;++soff;++copied;
+        }
+        if(copied>=65536)for(UINT i=0;i<dstCount;++i){UINT index=0;if(auto heap=InputHeap(context,dst[i],index))heap->srvs.clear();}
+    }catch(...){diagnostic::Write(nullptr,1,0,"VRX replay descriptor tracking failed");}
+}
 std::shared_ptr<void> BeginProbe(ID3D12GraphicsCommandList* original) noexcept {
     static const bool requested=diagnostic::ProbesRequested();if(!requested)return {};
     try {
@@ -557,12 +611,16 @@ std::shared_ptr<void> BeginProbe(ID3D12GraphicsCommandList* original) noexcept {
         const auto now=GetTickCount64();if(now-context->lastProbeCheck>=1000){context->lastProbeCheck=now;const auto request=diagnostic::ProbeRequest();if(request>context->lastProbeRequest){context->lastProbeRequest=request;context->probeBudget=0;context->nextProbePresentation=Registry().counts.presentations;context->probeOrdinal=0;}}
         const auto ordinal=++context->probeOrdinal;
         if(!context->active || context->recordOnly || context->probeBudget>=64 || context->probeCount>=256 || Registry().counts.presentations<context->nextProbePresentation)return {};
-        if(ordinal!=1+(context->probeCount*37)%context->previousIndexed)return {};
+        if(ordinal!=1+(context->probeCount*37)%context->previousDraws)return {};
         context->nextProbePresentation=Registry().counts.presentations+30;
         ++context->probeBudget;
         std::vector<diagnostic::ColourTarget> targets;
         for(const auto& view:item->targets)if(auto source=view.resource.lock()){diagnostic::ColourTarget target;target.native=view.native;target.right=source->RightResource();target.subresource=view.subresource;target.width=view.width;target.height=view.height;target.format=view.format;targets.push_back(std::move(target));}
         auto probe=diagnostic::ReplayProbe::Create(context->device,++context->probeCount,std::move(targets));if(!probe)return {};
+        if(auto pipeline=item->boundPipeline.lock()){
+            pipeline->pixelTrace.Dump();char text[160]{};sprintf_s(text,"VRX replay shader %llu pixel=%llx",static_cast<unsigned long long>(context->probeCount),static_cast<unsigned long long>(pipeline->pixelTrace.hash));diagnostic::Write(nullptr,3,0,text);
+        }
+        TraceInputs(item,context->probeCount);
         item->probes.push_back(probe);probe->Begin(original,item->list.Get());return probe;
     }catch(...){diagnostic::Write(nullptr,1,0,"VRX replay probe begin failed");return {};}
 }

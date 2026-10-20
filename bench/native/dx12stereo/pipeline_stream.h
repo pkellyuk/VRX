@@ -23,6 +23,7 @@ struct Parsed {
     size_t vertex=SIZE_MAX,cache=SIZE_MAX;
     size_t geometry=SIZE_MAX;
     D3D12_SHADER_BYTECODE vs{};
+    D3D12_SHADER_BYTECODE ps{};
     D3D12_SHADER_BYTECODE gs{};
     std::string reason;
     std::vector<uint64_t> storage;
@@ -64,6 +65,7 @@ inline Parsed Parse(const D3D12_PIPELINE_STATE_STREAM_DESC* desc) {
         switch(type) {
             case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS:
                 out.vertex=at;std::memcpy(&out.vs,bytes+at,sizeof(out.vs));vertex=out.vs.pShaderBytecode && out.vs.BytecodeLength;break;
+            case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS:std::memcpy(&out.ps,bytes+at,sizeof(out.ps));break;
             case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS:
             case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS:
             case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_AS:
