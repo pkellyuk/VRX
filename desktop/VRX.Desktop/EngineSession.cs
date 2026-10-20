@@ -53,13 +53,16 @@ public sealed class EngineSession
     }
     public static void EnsureAvailable()
     {
-        foreach (string name in new[] { "xrapp5", "xrplayer" })
-        {
-            var existing = Process.GetProcessesByName(name);
-            bool found = existing.Length > 0;
-            foreach (var item in existing) item.Dispose();
-            if (found) throw new InvalidOperationException(Loc.Get("ErrorAnotherSession"));
+        bool found = false;
+        // A running engine can be renamed aside during a rebuild. Windows then
+        // reports its backup name; it still owns the headset until it exits.
+        foreach (var item in Process.GetProcesses()) using (item) {
+            try {
+                string name = item.ProcessName;
+                if (name is "xrapp5" or "xrplayer" || name.StartsWith("xrplayer.",StringComparison.OrdinalIgnoreCase) || name.StartsWith("xrapp5.",StringComparison.OrdinalIgnoreCase)) found = true;
+            } catch (InvalidOperationException) { }
         }
+        if (found) throw new InvalidOperationException(Loc.Get("ErrorAnotherSession"));
     }
     public void Start(RunningApp app, GameWindow window, Profile profile, string dataRoot)
     {
