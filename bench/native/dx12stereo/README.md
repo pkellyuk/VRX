@@ -600,3 +600,9 @@ upload dependency, and alternating camera depth/frame colors. Hardware/WARP,
 legacy/streamed PSOs and zero separation verify actual native/right pixels over
 12 frames and complete resource retirement. These comparisons pass, narrowing
 the game failure beyond this basic mesh-upload and camera-binding sequence.
+
+A fresh archive of commit `2607c87` builds without the untracked Vulkan
+prototype and completes the Release suite: 129 passed, one unsupported WARP VRS
+skip, zero failures (298.74 seconds). The new mesh and debug/GPU-validation
+comparisons also pass in Debug; managed smoke/native restart integration passes.
+This regression evidence does not resolve System Shock's missing right-eye world.
