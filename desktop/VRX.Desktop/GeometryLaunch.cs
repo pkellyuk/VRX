@@ -20,7 +20,7 @@ public static class GeometryLaunch
     public sealed record InstalledFile(string Path, string SHA256);
     public sealed record Run(int Pid, long StartTicks, string Executable, string Session, string Stereo = "mirror", string Backend = "");
     public sealed record Plan(RunningApp App, long StartTicks, string Backend, string LayerDirectory,
-        string[] Arguments, string WorkingDirectory, string SteamAppId, string Session, string? DxvkDirectory, string[] OwnedRuns);
+        string[] Arguments, string WorkingDirectory, string SteamAppId, string Session, string? DxvkDirectory, string[] OwnedRuns, string? Vkd3dDirectory = null);
     private const string DxvkVersion = "2.7.1";
     private const string ArchiveHash = "D85CE7C79F57ECD765AAA1B9E7007CB875E6FDE9F6D331DF799BCE73D513CE87";
     private static string RunsRoot(string dataRoot) => Path.Combine(dataRoot,"geometry","runs");
@@ -44,10 +44,14 @@ public static class GeometryLaunch
         string legacy=Path.Combine(EngineSession.RepositoryRoot(),"bench","native","xgstereo","out");
         if (Directory.Exists(legacy)) foreach(var d in Directory.GetDirectories(legacy,"dx11-*")) yield return d;
         string native=Path.Combine(EngineSession.RepositoryRoot(),"bench","native","dx12stereo","out");
-        if (Directory.Exists(native)) foreach(var d in Directory.GetDirectories(native,"native-*")) yield return d;
+        if (Directory.Exists(native)) foreach(var d in Directory.GetDirectories(native).Where(d => Path.GetFileName(d).StartsWith("native-") || Path.GetFileName(d).StartsWith("vkd3d-"))) yield return d;
     }
     private static Run? ReadRun(string folder) {
-        try { return JsonSerializer.Deserialize<Run>(File.ReadAllText(Path.Combine(folder,"run.json"))); }
+        try {
+            var run = JsonSerializer.Deserialize<Run>(File.ReadAllText(Path.Combine(folder,"run.json")));
+            if (run is { Backend: "" } && Path.GetFileName(folder).StartsWith("vkd3d-",StringComparison.OrdinalIgnoreCase)) run = run with { Backend = StereoPaths.Vkd3d };
+            return run;
+        }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return null; }
     }
     public static bool IsRunning(Run run) {
@@ -90,7 +94,7 @@ public static class GeometryLaunch
         var candidates=new List<string>{profile.GeometrySession,StereoPaths.Session(app.FullPath)};
         foreach(var folder in RunFolders(dataRoot)) {
             var run=ReadRun(folder);
-            if(run!=null && run.Pid==app.Pid && Same(run.Executable,app.FullPath) && IsRunning(run)) {
+            if(run!=null && run.Stereo=="mirror" && run.Pid==app.Pid && Same(run.Executable,app.FullPath) && IsRunning(run)) {
                 // A ready DXVK stream must not silently satisfy a native Vulkan choice.
                 string backend=string.IsNullOrEmpty(run.Backend) && Path.GetFileName(folder).StartsWith("dx11-",StringComparison.OrdinalIgnoreCase) ? StereoPaths.Dxvk : run.Backend;
                 if(StereoPaths.Valid(backend) && backend!=profile.EffectiveStereoBackend) return null;
@@ -121,7 +125,7 @@ public static class GeometryLaunch
         var result=args.Where(a=>!new[]{"-vulkan","-dx11","-d3d11","-dx12","-d3d12"}.Contains(a,StringComparer.OrdinalIgnoreCase)).ToList();
         // Unreal's documented switches are also the path verified with System Shock.
         // Other engines keep their command line; the review dialog can edit it.
-        if(unreal) result.Add(backend switch {StereoPaths.Vulkan=>"-vulkan",StereoPaths.Dx12=>"-dx12",_=>"-dx11"});
+        if(unreal) result.Add(backend switch {StereoPaths.Vulkan=>"-vulkan",StereoPaths.Dx12 or StereoPaths.Vkd3d=>"-dx12",_=>"-dx11"});
         return result.ToArray();
     }
     private static async Task<string[]> ProcessArguments(int pid,CancellationToken token) {
@@ -168,6 +172,25 @@ public static class GeometryLaunch
             if(File.Exists(Path.Combine(folder,"d3d12.dll")) && IsX64(Path.Combine(folder,"d3d12.dll"))) return folder;
         throw new FileNotFoundException(Loc.Get("ErrorGeometryNativeMissing"));
     }
+    internal static string Vkd3dFile(string folder,string name) {
+        string flat=Path.Combine(folder,name);
+        return File.Exists(flat)?flat:Path.Combine(folder,Path.GetFileNameWithoutExtension(name),name);
+    }
+    private static string Vkd3dDirectory() {
+        string root=EngineSession.RepositoryRoot();
+        foreach(string folder in new[]{Environment.GetEnvironmentVariable("VRX_VKD3D_DIRECTORY") ?? "",Path.Combine(root,"geometry","vkd3d"),Path.GetFullPath(Path.Combine(root,"..","vkd3d-proton","build-win-local","libs"))})
+            if(folder.Length>0 && new[]{"d3d12.dll","d3d12core.dll"}.All(n=>File.Exists(Vkd3dFile(folder,n)) && IsX64(Vkd3dFile(folder,n)))) return folder;
+        throw new FileNotFoundException(Loc.Get("ErrorVkd3dMissing"));
+    }
+    // Auto never downloads components. A manual geometry choice can prepare them
+    // and then present the concrete restart review.
+    internal static bool AutoRuntimeAvailable(string dataRoot) {
+        try {
+            _=LayerDirectory(); _=Vkd3dDirectory(); string root=EngineSession.RepositoryRoot();
+            return new[]{Path.Combine(root,"geometry","dxvk","x64"),Path.Combine(root,"bench","native","xgstereo","out","dxvk-"+DxvkVersion,"x64"),Path.Combine(dataRoot,"geometry","dxvk-"+DxvkVersion,"x64")}
+                .Any(d=>new[]{"d3d11.dll","dxgi.dll"}.All(n=>File.Exists(Path.Combine(d,n)) && IsX64(Path.Combine(d,n))));
+        } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException) { return false; }
+    }
     private static async Task<string> DxvkDirectory(string dataRoot,Action<string> status,CancellationToken token) {
         string root=EngineSession.RepositoryRoot();
         string cache=Path.Combine(dataRoot,"geometry","dxvk-"+DxvkVersion,"x64");
@@ -200,7 +223,7 @@ public static class GeometryLaunch
     private static InstalledFile[] Files(string folder,Run run) {
         var files=JsonSerializer.Deserialize<InstalledFile[]>(File.ReadAllText(Path.Combine(folder,"installed.json"))) ?? [];
         string parent=Path.GetDirectoryName(Path.GetFullPath(run.Executable))!;
-        var names=run.Backend==StereoPaths.Dx12?new[]{"d3d12.dll"}:run.Backend is "" or StereoPaths.Dxvk?new[]{"d3d11.dll","dxgi.dll"}:Array.Empty<string>();
+        var names=run.Backend==StereoPaths.Vkd3d?new[]{"d3d12.dll","d3d12core.dll","d3d11.dll","dxgi.dll"}:run.Backend==StereoPaths.Dx12?new[]{"d3d12.dll"}:run.Backend is "" or StereoPaths.Dxvk?new[]{"d3d11.dll","dxgi.dll"}:Array.Empty<string>();
         if(files.Any(f=>!Same(Path.GetDirectoryName(f.Path)!,parent) || !names.Contains(Path.GetFileName(f.Path),StringComparer.OrdinalIgnoreCase))) throw new InvalidDataException(Loc.Get("ErrorGeometryManifest"));
         return files;
     }
@@ -240,26 +263,27 @@ public static class GeometryLaunch
         var args=ApiArguments(originalArgs,profile.EffectiveStereoBackend,Path.GetFileName(app.FullPath).EndsWith("-Shipping.exe",StringComparison.OrdinalIgnoreCase));
         string folder=string.IsNullOrEmpty(profile.GeometryWorkingDirectory)?Path.GetDirectoryName(app.FullPath)!:profile.GeometryWorkingDirectory;
         string steam=string.IsNullOrEmpty(profile.GeometrySteamAppId)?FindSteamAppId(app.FullPath):profile.GeometrySteamAppId;
-        string? dxvk=profile.EffectiveStereoBackend==StereoPaths.Dxvk?await DxvkDirectory(dataRoot,status,token):null;
+        string? vkd3d=profile.EffectiveStereoBackend==StereoPaths.Vkd3d?Vkd3dDirectory():null;
+        string? dxvk=profile.EffectiveStereoBackend is StereoPaths.Dxvk or StereoPaths.Vkd3d?await DxvkDirectory(dataRoot,status,token):null;
         string[] owned=RunFolders(dataRoot).Where(d=>ReadRun(d) is {} run && run.Pid==app.Pid && run.StartTicks==ticks && Same(run.Executable,app.FullPath)).ToArray();
-        var plan=new Plan(app,ticks,profile.EffectiveStereoBackend,layer,args,folder,steam,StereoPaths.Session(app.FullPath),dxvk,owned);
+        var plan=new Plan(app,ticks,profile.EffectiveStereoBackend,layer,args,folder,steam,StereoPaths.Session(app.FullPath),dxvk,owned,vkd3d);
         ValidateFiles(plan); return plan;
     }
     private static void ValidateFiles(Plan plan) {
         var owned=new List<InstalledFile>();
         foreach(var folder in plan.OwnedRuns) { var run=ReadRun(folder); if(run!=null) owned.AddRange(Files(folder,run)); }
-        foreach(string name in new[]{"d3d11.dll","dxgi.dll","d3d12.dll"}) {
+        foreach(string name in new[]{"d3d11.dll","dxgi.dll","d3d12.dll","d3d12core.dll"}) {
             string file=Path.Combine(Path.GetDirectoryName(plan.App.FullPath)!,name);
             if(File.Exists(file) && !owned.Any(o=>Same(o.Path,file) && Hash(file).Equals(o.SHA256,StringComparison.OrdinalIgnoreCase)))
                 throw new IOException(Loc.Format("ErrorGeometryExistingDll",file));
         }
     }
-    internal static List<InstalledFile> InstallFiles(string? sourceFolder,string executable,string runRoot,string backend=StereoPaths.Dxvk) {
+    internal static List<InstalledFile> InstallFiles(string? sourceFolder,string executable,string runRoot,string backend=StereoPaths.Dxvk,string? vkd3dFolder=null) {
         using var gate=new FileGate(executable);
         var installed=new List<InstalledFile>();
         try {
-            if(sourceFolder!=null) foreach(string name in backend==StereoPaths.Dx12?new[]{"d3d12.dll"}:new[]{"d3d11.dll","dxgi.dll"}) {
-                string target=Path.Combine(Path.GetDirectoryName(executable)!,name), source=Path.Combine(sourceFolder,name);
+            if(sourceFolder!=null) foreach(string name in backend==StereoPaths.Vkd3d?new[]{"d3d12.dll","d3d12core.dll","d3d11.dll","dxgi.dll"}:backend==StereoPaths.Dx12?new[]{"d3d12.dll"}:new[]{"d3d11.dll","dxgi.dll"}) {
+                string target=Path.Combine(Path.GetDirectoryName(executable)!,name), source=backend==StereoPaths.Vkd3d && name is "d3d12.dll" or "d3d12core.dll" ? Vkd3dFile(vkd3dFolder ?? throw new InvalidDataException(Loc.Get("ErrorVkd3dMissing")),name) : Path.Combine(sourceFolder,name);
                 string temporary=target+".vrx-"+Guid.NewGuid().ToString("N")+".tmp";
                 string hash=Hash(source);
                 try { File.Copy(source,temporary,false); if(!Hash(temporary).Equals(hash,StringComparison.Ordinal)) throw new IOException(Loc.Get("ErrorGeometrySourceChanged")); File.Move(temporary,target,false); }
@@ -305,6 +329,15 @@ public static class GeometryLaunch
             start.Environment["VRX_XG_TUNING"]=Path.Combine(runRoot,"stereo.txt");start.Environment["VRX_XG_LOG"]=Path.Combine(runRoot,"layer.log");
             start.Environment["DXVK_LOG_PATH"]=runRoot;start.Environment["DXVK_CONFIG_FILE"]=Path.Combine(runRoot,"dxvk.conf");start.Environment["DXVK_STATE_CACHE_PATH"]=runRoot;
         }
+        if(plan.Backend==StereoPaths.Vkd3d) {
+            string config=start.Environment.TryGetValue("VKD3D_CONFIG",out var inheritedConfig) ? inheritedConfig ?? "" : "";
+            start.Environment["VKD3D_CONFIG"]=string.Join(',',config.Split(',',StringSplitOptions.RemoveEmptyEntries).Append("single_queue").Distinct());
+            string disabled=start.Environment.TryGetValue("VKD3D_DISABLE_EXTENSIONS",out var inheritedDisabled) ? inheritedDisabled ?? "" : "";
+            start.Environment["VKD3D_DISABLE_EXTENSIONS"]=string.Join(',',disabled.Split(',',StringSplitOptions.RemoveEmptyEntries).Concat(new[]{"VK_EXT_descriptor_buffer","VK_EXT_descriptor_heap","VK_NV_low_latency2","VK_EXT_shader_module_identifier","VK_KHR_pipeline_binary","VK_EXT_graphics_pipeline_library"}).Distinct());
+            start.Environment["VKD3D_LOG_FILE"]=Path.Combine(runRoot,"vkd3d.log");
+            start.Environment["VKD3D_DEBUG"]="info";
+            start.Environment["VKD3D_SHADER_CACHE_PATH"]=runRoot;
+        }
         if(plan.SteamAppId.Length>0)start.Environment["SteamAppId"]=start.Environment["SteamGameId"]=plan.SteamAppId;
     }
     private static void ValidateNativeRuntime(string folder) {
@@ -315,8 +348,10 @@ public static class GeometryLaunch
         if(plan.Backend==StereoPaths.Dx12){ValidateNativeRuntime(plan.LayerDirectory);return;}
         if(!StereoPaths.Geometry(plan.Backend) || !File.Exists(Path.Combine(plan.LayerDirectory,"vrx_xgstereo.dll")) || !File.Exists(Path.Combine(plan.LayerDirectory,"VkLayer_vrx_xgstereo.json")))
             throw new FileNotFoundException(Loc.Get("ErrorGeometryLayerMissing"));
-        if(plan.Backend==StereoPaths.Dxvk && (plan.DxvkDirectory==null || new[]{"d3d11.dll","dxgi.dll"}.Any(n=>!File.Exists(Path.Combine(plan.DxvkDirectory,n)) || !IsX64(Path.Combine(plan.DxvkDirectory,n)))))
+        if((plan.Backend is StereoPaths.Dxvk or StereoPaths.Vkd3d) && (plan.DxvkDirectory==null || new[]{"d3d11.dll","dxgi.dll"}.Any(n=>!File.Exists(Path.Combine(plan.DxvkDirectory,n)) || !IsX64(Path.Combine(plan.DxvkDirectory,n)))))
             throw new FileNotFoundException(Loc.Get("ErrorGeometryLayerMissing"));
+        if(plan.Backend==StereoPaths.Vkd3d && (plan.Vkd3dDirectory==null || new[]{"d3d12.dll","d3d12core.dll"}.Any(n=>!File.Exists(Vkd3dFile(plan.Vkd3dDirectory,n)) || !IsX64(Vkd3dFile(plan.Vkd3dDirectory,n)))))
+            throw new FileNotFoundException(Loc.Get("ErrorVkd3dMissing"));
     }
     public static async Task<Run> Restart(Plan plan,Profile profile,string dataRoot,Action<string> status,CancellationToken token) {
         // All preflight and the launch-details dialog have completed before this point.
@@ -339,7 +374,7 @@ public static class GeometryLaunch
         try {
             using(new FileGate(plan.App.FullPath)) {
             ValidateFiles(plan);
-            installed = InstallFiles(plan.Backend==StereoPaths.Dx12?plan.LayerDirectory:plan.DxvkDirectory,plan.App.FullPath,runRoot,plan.Backend);
+            installed = InstallFiles(plan.Backend==StereoPaths.Dx12?plan.LayerDirectory:plan.DxvkDirectory,plan.App.FullPath,runRoot,plan.Backend,plan.Vkd3dDirectory);
             if(plan.Backend!=StereoPaths.Dx12) {
                 ProfileStore.AtomicWrite(Path.Combine(runRoot,"stereo.txt"),FormattableString.Invariant($"{profile.GeometrySeparation:R} {profile.GeometryConvergence:R}\n"));
                 ProfileStore.AtomicWrite(Path.Combine(runRoot,"dxvk.conf"),"dxvk.enableGraphicsPipelineLibrary = False\ndxvk.enableDescriptorBuffer = False\ndxvk.disableNvLowLatency2 = True\n");

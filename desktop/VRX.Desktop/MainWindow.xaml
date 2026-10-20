@@ -85,10 +85,12 @@
        <ComboBox x:Name="WindowList" SelectionChanged="WindowSelected"/>
        <TextBlock Text="{l:Tr StereoPath}" Style="{StaticResource SubHeader}" Margin="0,10,0,6"/>
        <ComboBox x:Name="StereoPathList" SelectionChanged="StereoPathSelected">
+        <ComboBoxItem Tag="auto" Content="{l:Tr PathAuto}"/>
+        <ComboBoxItem Tag="geometry" Content="{l:Tr PathGeometry}"/>
         <ComboBoxItem Tag="depth" Content="{l:Tr PathDepth}"/>
         <ComboBoxItem Tag="vulkan" Content="{l:Tr PathVulkan}"/>
         <ComboBoxItem Tag="dxvk" Content="{l:Tr PathDxvk}"/>
-        <ComboBoxItem Tag="dx12" Content="{l:Tr PathDx12}" IsEnabled="False" ToolTip="{l:Tr PathDx12Unavailable}"/>
+        <ComboBoxItem Tag="vkd3d" Content="{l:Tr PathVkd3d}"/>
        </ComboBox>
        <TextBlock x:Name="PathLabel" Text="{l:Tr PathChoose}" Style="{StaticResource Hint}" Margin="0,8,0,4"/>
        <TextBlock Text="{l:Tr GameHint}" Style="{StaticResource Hint}"/>
@@ -195,8 +197,12 @@
       <CheckBox x:Name="GeometryCheck" Content="{l:Tr GeometryStereo}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr GeometryTip}"/>
       <StackPanel x:Name="GeometryContent" Visibility="Collapsed">
        <TextBlock Text="{l:Tr GeometryHint}" Style="{StaticResource Hint}"/>
+       <Expander Header="{l:Tr GeometryAdvanced}" Margin="0,6,0,0">
+        <StackPanel>
        <TextBlock Text="{l:Tr GeometrySession}" Style="{StaticResource Label}" Margin="0,4,0,4"/>
        <TextBox x:Name="GeometrySessionText" MaxLength="64" TextChanged="SettingsChanged" ToolTip="{l:Tr GeometrySessionTip}"/>
+        </StackPanel>
+       </Expander>
       </StackPanel>
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueNumber, Element=StrengthSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Strength3D}"/></DockPanel>
       <Slider x:Name="StrengthSlider" Minimum="0" Maximum="2" Value="1" ValueChanged="SettingsChanged"/>

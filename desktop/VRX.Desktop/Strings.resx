@@ -287,15 +287,15 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="GeometryTip" xml:space="preserve"><value>Use stereo frames rendered by the game instead of AI depth. Applies at the next Attach / Play using the selected geometry method.</value></data>
   <data name="GeometryHint" xml:space="preserve"><value>Both eyes use the same game frame. Attach / Play can connect to an existing VRX stream or review a game restart. Use games that permit graphics layers. AI depth, strength and desktop switching are unused.</value></data>
   <data name="GeometrySession" xml:space="preserve"><value>Geometry session</value></data>
-  <data name="GeometrySessionTip" xml:space="preserve"><value>The session name used by the geometry launcher, such as game.</value></data>
+  <data name="GeometrySessionTip" xml:space="preserve"><value>Managed automatically by VRX. Change only when connecting to a stereo stream launched manually.</value></data>
   <data name="ErrorGeometrySession" xml:space="preserve"><value>Geometry session must contain 1–64 letters, numbers, hyphens or underscores.</value></data>
   <data name="ErrorGeometryNeedsGame" xml:space="preserve"><value>Geometry stereo needs a compatible game and geometry stream. Select its game window instead of a whole display.</value></data>
   <data name="StereoPath" xml:space="preserve"><value>Stereo method</value></data>
   <data name="PathDepth" xml:space="preserve"><value>Depth estimate</value></data>
-  <data name="PathVulkan" xml:space="preserve"><value>Vulkan</value></data>
-  <data name="PathDxvk" xml:space="preserve"><value>DXVK</value></data>
+  <data name="PathVulkan" xml:space="preserve"><value>Native Vulkan</value></data>
+  <data name="PathDxvk" xml:space="preserve"><value>DirectX 11 → Vulkan (DXVK)</value></data>
   <data name="PathDx12" xml:space="preserve"><value>DX12 · unavailable</value></data>
-  <data name="PathDx12Unavailable" xml:space="preserve"><value>Native DirectX 12 geometry stereo is under development and is not available in this chooser yet. Choose depth estimate for a DX12 game.</value></data>
+  <data name="PathDx12Unavailable" xml:space="preserve"><value>Native DirectX 12 geometry stereo is under development and is not available in this chooser yet. Choose depth estimation or DirectX 12 → Vulkan for a DX12 game.</value></data>
   <data name="PathDepthTip" xml:space="preserve"><value>Attach to this window using VRX depth estimation. No game restart needed.</value></data>
   <data name="PathGeometryTip" xml:space="preserve"><value>Try geometry stereo. Attach to an existing VRX stream, or review a game restart first.</value></data>
   <data name="PathForWindow" xml:space="preserve"><value>{0} for {1}</value></data>
@@ -334,4 +334,14 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorGeometryNativeStopped" xml:space="preserve"><value>Native DX12 stereo stopped: {0}
 You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="ErrorGeometryNativeCoverage" xml:space="preserve"><value>The bridge could not establish complete native stereo interception.</value></data>
+  <data name="PathAuto" xml:space="preserve"><value>Auto · recommended</value></data>
+  <data name="PathGeometry" xml:space="preserve"><value>Geometry stereo</value></data>
+  <data name="PathVkd3d" xml:space="preserve"><value>DirectX 12 → Vulkan (vkd3d-proton)</value></data>
+  <data name="PathAutoTip" xml:space="preserve"><value>Use a tested game profile when available; otherwise use depth estimation. Automatic attachment never restarts a game or installs graphics components.</value></data>
+  <data name="GeometryAdvanced" xml:space="preserve"><value>Advanced geometry settings</value></data>
+  <data name="RendererAuto" xml:space="preserve"><value>Automatic renderer</value></data>
+  <data name="GeometryRenderer" xml:space="preserve"><value>Geometry renderer</value></data>
+  <data name="TestedSystemShock" xml:space="preserve"><value>Tested: System Shock · D3D12 → Vulkan</value></data>
+  <data name="GeometryChooserNotice" xml:space="preserve"><value>Geometry stereo is experimental and may need a game restart and temporary graphics DLLs. Use only games that permit graphics layers; anti-cheat may block them. Review the restart details before proceeding.</value></data>
+  <data name="ErrorVkd3dMissing" xml:space="preserve"><value>The x64 vkd3d-proton runtime is missing. Install d3d12.dll and d3d12core.dll in geometry/vkd3d, or set VRX_VKD3D_DIRECTORY to the local build folder.</value></data>
 </root>

@@ -122,21 +122,40 @@ public sealed partial class ChooserWindow : Window
         var card = new StackPanel { Width = PictureWidth + 24, Margin = new Thickness(0,0,14,14) };
         card.Children.Add(button);
         var routes = new Grid { Margin = new Thickness(2,5,2,0) };
-        routes.ColumnDefinitions.Add(new ColumnDefinition()); routes.ColumnDefinitions.Add(new ColumnDefinition());
-        routes.RowDefinitions.Add(new RowDefinition()); routes.RowDefinitions.Add(new RowDefinition());
-        int i = 0;
-        foreach (string backend in new[] { StereoPaths.Depth, StereoPaths.Vulkan, StereoPaths.Dxvk, StereoPaths.Dx12 }) {
-            bool available = backend != StereoPaths.Dx12;
+        for(int i=0;i<3;++i) routes.ColumnDefinitions.Add(new ColumnDefinition());
+        string selected=choice.Backend ?? StereoPaths.Auto;
+        string renderer=StereoPaths.Mode(selected)==StereoPaths.GeometryAuto ? selected : StereoPaths.GeometryAuto;
+        Button? geometryButton=null;
+        int column=0;
+        foreach (string mode in new[] { StereoPaths.Auto, StereoPaths.Depth, StereoPaths.GeometryAuto }) {
             var route = new Button {
-                Content = new TextBlock { Text = StereoPaths.Label(backend), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }, Padding = new Thickness(5,6,5,6), Margin = new Thickness(2), FontSize = 12,
-                Tag = backend, IsEnabled = available, ToolTip = Loc.Get(!available ? "PathDx12Unavailable" : backend == StereoPaths.Depth ? "PathDepthTip" : "PathGeometryTip"),
-                FontWeight = choice.Backend == backend ? FontWeights.Bold : FontWeights.Normal
+                Content = new TextBlock { Text = StereoPaths.Label(mode), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }, Padding = new Thickness(4,6,4,6), Margin = new Thickness(2), FontSize = 12,
+                Tag = mode==StereoPaths.GeometryAuto?renderer:mode,
+                ToolTip = Loc.Get(mode==StereoPaths.Auto?"PathAutoTip":mode==StereoPaths.Depth?"PathDepthTip":"PathGeometryTip"),
+                FontWeight = StereoPaths.Mode(selected)==mode ? FontWeights.Bold : FontWeights.Normal
             };
-            System.Windows.Automation.AutomationProperties.SetName(route, Loc.Format("PathForWindow", StereoPaths.Label(backend), title));
-            Grid.SetRow(route,i/2); Grid.SetColumn(route,i%2); ++i;
-            route.Click += (_,_) => Pick(choice with { Backend = backend }); routes.Children.Add(route);
+            System.Windows.Automation.AutomationProperties.SetName(route, Loc.Format("PathForWindow", StereoPaths.Label(mode), title));
+            Grid.SetColumn(route,column++);
+            route.Click += (_,_) => Pick(choice with { Backend = (string)route.Tag }); routes.Children.Add(route);
+            if(mode==StereoPaths.GeometryAuto) geometryButton=route;
         }
-        card.Children.Add(routes); return card;
+        card.Children.Add(routes);
+        if(TestedStereoProfiles.Matches(choice.App.FullPath)) card.Children.Add(new TextBlock {
+            Text=Loc.Get("TestedSystemShock"), FontSize=12, Foreground=(Brush)FindResource("Muted"), TextWrapping=TextWrapping.Wrap, Margin=new Thickness(6,4,6,0)
+        });
+        var advanced=new Expander { Header=Loc.Get("GeometryAdvanced"), Margin=new Thickness(6,5,6,0) };
+        var options=new StackPanel();
+        var list=new ComboBox { Margin=new Thickness(0,5,0,5) };
+        foreach(string backend in new[]{StereoPaths.GeometryAuto,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Vkd3d}) {
+            var item=new ComboBoxItem { Tag=backend, Content=new TextBlock { Text=backend==StereoPaths.GeometryAuto?Loc.Get("RendererAuto"):StereoPaths.Label(backend),TextWrapping=TextWrapping.Wrap,MaxWidth=210 } };
+            list.Items.Add(item); if(backend==renderer) list.SelectedItem=item;
+        }
+        System.Windows.Automation.AutomationProperties.SetName(list,Loc.Get("GeometryRenderer"));
+        list.SelectionChanged+=(_,_)=> { if(list.SelectedItem is ComboBoxItem item) geometryButton!.Tag=(string)item.Tag; };
+        options.Children.Add(list);
+        options.Children.Add(new TextBlock { Text=Loc.Get("GeometryChooserNotice"),TextWrapping=TextWrapping.Wrap,FontSize=12,Foreground=(Brush)FindResource("Muted") });
+        advanced.Content=options; card.Children.Add(advanced);
+        return card;
     }
 
     private void Pick(Choice choice)

@@ -39,6 +39,25 @@ internal static class GeometryLaunchTests
             Check(StereoPaths.FromGeometryChoice(false,backend)==StereoPaths.Depth,"unchecking geometry selects depth estimation");
         }
         Check(StereoPaths.FromGeometryChoice(true,StereoPaths.Depth)==StereoPaths.Vulkan,"legacy checkbox still selects Vulkan");
+        Check(GeometryLaunch.ApiArguments(["-dx11","-norhithread"],StereoPaths.Vkd3d,true).SequenceEqual(new[]{"-norhithread","-dx12"}),"vkd3d selects D3D12 and retains the tested thread setting");
+        string shockApps=Path.Combine(root,"shock","steamapps"), shockExe=Path.Combine(shockApps,"common","System Shock","SystemShock","Binaries","Win64","SystemReShock-Win64-Shipping.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(shockExe)!);
+        File.WriteAllText(Path.Combine(shockApps,"appmanifest_482400.acf"),"\"appid\" \"482400\"\n\"installdir\" \"System Shock\"");
+        var tested=store.Load(shockExe);
+        Check(tested.SelectedStereoBackend==StereoPaths.Auto && tested.EffectiveStereoBackend==StereoPaths.Vkd3d && tested.GeometrySeparation==.5f && tested.GeometryConvergence==0 && tested.GeometryLaunchArguments!.Contains("-norhithread"),"Auto seeds the tested System Shock route and calibration");
+        tested.GeometrySeparation=.35f; tested.GeometryConvergence=.02f; store.Save(tested);
+        var remembered=store.Load(shockExe);
+        Check(remembered.GeometrySeparation==.35f && remembered.GeometryConvergence==.02f && remembered.SelectedStereoBackend==StereoPaths.Auto,"reloading Auto preserves user calibration");
+        remembered.SelectStereoBackend(StereoPaths.Depth); store.Save(remembered);
+        Check(store.Load(shockExe).EffectiveStereoBackend==StereoPaths.Depth,"an explicit depth choice overrides the built-in profile");
+        var unknown=store.Load(Path.Combine(root,"unknown.exe"));
+        Check(unknown.SelectedStereoBackend==StereoPaths.Auto && unknown.EffectiveStereoBackend==StereoPaths.Depth,"unknown games default to external depth capture");
+        var translated=new GeometryLaunch.Plan(new RunningApp(1,"fixture",exe,[],null),0,StereoPaths.Vkd3d,root,[],root,"482400","fixture",root,[],root);
+        var start=new ProcessStartInfo(exe); start.Environment["VKD3D_CONFIG"]="existing";
+        GeometryLaunch.ConfigureEnvironment(start,translated,tested,root);
+        Check(start.Environment["VKD3D_CONFIG"]!.Contains("single_queue") && start.Environment["VKD3D_CONFIG"]!.Contains("existing") &&
+            start.Environment["VKD3D_DISABLE_EXTENSIONS"]!.Contains("VK_EXT_shader_module_identifier") && start.Environment["VKD3D_DISABLE_EXTENSIONS"]!.Contains("VK_KHR_pipeline_binary") &&
+            start.Environment["VRX_XG_EYE"]=="mirror" && start.Environment["VRX_XG_TRANSPORT"]=="gpu" && start.Environment["SteamAppId"]=="482400", "translated launch preserves the tested same-frame GPU and shader-cache environment");
         byte[] h=new byte[176];
         void U(int at,uint v)=>BinaryPrimitives.WriteUInt32LittleEndian(h.AsSpan(at,4),v);
         void Q(int at,ulong v)=>BinaryPrimitives.WriteUInt64LittleEndian(h.AsSpan(at,8),v);
@@ -66,6 +85,14 @@ internal static class GeometryLaunchTests
         GeometryLaunch.Cleanup(runRoot);
         Check(File.Exists(Path.Combine(Path.GetDirectoryName(exe)!,"d3d11.dll")) && File.Exists(Path.Combine(Path.GetDirectoryName(exe)!,"dxgi.dll")),"a delayed old cleanup cannot remove the next run's identical DLLs");
         GeometryLaunch.Cleanup(nextRun);
+        string translator=Path.Combine(root,"translator"); Directory.CreateDirectory(translator);
+        foreach(string name in new[]{"d3d12.dll","d3d12core.dll"}) File.WriteAllText(Path.Combine(translator,name),"translator fixture; never loaded");
+        string translatedRun=Path.Combine(root,"translated-run"); Directory.CreateDirectory(translatedRun);
+        File.WriteAllText(Path.Combine(translatedRun,"run.json"),JsonSerializer.Serialize(run with {Backend=StereoPaths.Vkd3d}));
+        var installed=GeometryLaunch.InstallFiles(sources,exe,translatedRun,StereoPaths.Vkd3d,translator);
+        Check(installed.Count==4 && installed.All(f=>File.Exists(f.Path)),"translated D3D12 installs both translator and matching D3D11/DXGI components");
+        GeometryLaunch.Cleanup(translatedRun);
+        Check(installed.All(f=>!File.Exists(f.Path)),"translated cleanup retires all four owned DLLs");
         string steamapps=Path.Combine(root,"SteamLibrary","steamapps"), steamExe=Path.Combine(steamapps,"common","TestGame","bin","game.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(steamExe)!);File.WriteAllText(Path.Combine(steamapps,"appmanifest_999.acf"),"\"appid\" \"999\"\n\"installdir\" \"TestGame\"");
         Check(GeometryLaunch.FindSteamAppId(steamExe)=="999","resolve a Steam installation by its manifest, not its game title");

@@ -22,7 +22,7 @@ public sealed class GeometryLaunchWindow : Window
         var body=new StackPanel{Margin=new Thickness(24)};
         Content=new ScrollViewer{Content=body,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
         body.Children.Add(new TextBlock{Text=Loc.Format("GeometryRestartIntro",MainWindow.GameDisplayName(plan.App.Windows.FirstOrDefault()?.Title,plan.App.Name),StereoPaths.Label(plan.Backend)),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12),FontSize=16});
-        body.Children.Add(new TextBlock{Text=Loc.Get("GeometryRestartSave"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12)});
+        body.Children.Add(new TextBlock{Text=Loc.Get("GeometryRestartSave")+"\n\n"+Loc.Get("GeometryChooserNotice"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12)});
         body.Children.Add(new TextBlock{Text=plan.App.FullPath,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12),FontSize=12});
         TextBox Field(string label,string value,bool multi=false) {
             body.Children.Add(new TextBlock{Text=label,Margin=new Thickness(0,8,0,4)});

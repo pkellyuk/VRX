@@ -21,14 +21,21 @@ public sealed class Profile
     // as a migration fallback for profiles without a method choice.
     private bool legacyGeometryStereo;
     public bool GeometryStereo {
-        get => StereoPaths.Valid(StereoBackend) ? StereoPaths.Geometry(StereoBackend) : legacyGeometryStereo;
+        get => StereoPaths.Geometry(EffectiveStereoBackend);
         set => legacyGeometryStereo=value;
     }
     // Empty migrates legacy profiles from the geometry checkbox. New choices
     // belong to this executable, never the display or base settings.
     public string StereoBackend { get; set; } = "";
     [System.Text.Json.Serialization.JsonIgnore]
-    public string EffectiveStereoBackend => StereoPaths.Valid(StereoBackend) ? StereoBackend : GeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
+    public string SelectedStereoBackend => StereoPaths.Valid(StereoBackend) ? StereoBackend : legacyGeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string EffectiveStereoBackend => SelectedStereoBackend switch {
+        StereoPaths.Auto => GeometryProfileId == TestedStereoProfiles.SystemShock ? StereoPaths.Vkd3d : StereoPaths.Depth,
+        StereoPaths.GeometryAuto => GeometryProfileId == TestedStereoProfiles.SystemShock ? StereoPaths.Vkd3d : StereoPaths.Vulkan,
+        var backend => backend
+    };
+    public string GeometryProfileId { get; set; } = "";
     public string? GeometryLaunchArguments { get; set; }
     public string GeometryWorkingDirectory { get; set; } = "";
     public string GeometrySteamAppId { get; set; } = "";
@@ -160,6 +167,7 @@ public sealed class ProfileStore(string root)
         p.SelectStereoBackend(StereoPaths.Depth); p.GeometrySession = "game";
         p.GeometryLaunchArguments = null; p.GeometryWorkingDirectory = p.GeometrySteamAppId = "";
         p.GeometrySeparation = .032f; p.GeometryConvergence = 0;
+        p.GeometryProfileId = "";
     }
     // The saved base, or VRX's own defaults if there is none (or it is unreadable).
     public Profile BaseSettings()
@@ -304,6 +312,7 @@ public sealed class ProfileStore(string root)
                 copy.GeometryLaunchArguments = saved.GeometryLaunchArguments;
                 copy.GeometryWorkingDirectory = saved.GeometryWorkingDirectory; copy.GeometrySteamAppId = saved.GeometrySteamAppId;
                 copy.GeometrySeparation = saved.GeometrySeparation; copy.GeometryConvergence = saved.GeometryConvergence;
+                copy.GeometryProfileId = saved.GeometryProfileId;
                 Save(copy);
                 applied++;
             }
@@ -321,6 +330,8 @@ public sealed class ProfileStore(string root)
         {
             var start = BaseSettings();
             start.ExecutablePath = executable;
+            start.SelectStereoBackend(StereoPaths.Auto);
+            TestedStereoProfiles.Apply(start);
             return start;
         }
         var profile = JsonSerializer.Deserialize<Profile>(File.ReadAllText(file));
@@ -335,6 +346,7 @@ public sealed class ProfileStore(string root)
         }
         if (profile == null || !profile.Valid() || !string.Equals(profile.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException(Loc.Get("ErrorProfileInvalid"));
+        TestedStereoProfiles.Apply(profile);
         return profile;
     }
     public void Save(Profile profile)
