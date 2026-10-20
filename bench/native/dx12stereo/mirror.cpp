@@ -2,6 +2,7 @@
 #include "mirror.h"
 #include "dxbc_patch.h"
 #include "publisher.h"
+#include "pipeline_stream.h"
 #include <wrl/client.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -25,7 +26,7 @@ struct Context {
     std::string reason;
 };
 namespace {
-enum class Kind { Device,Queue,Allocator,Resource,Pipeline,Heap,List,Swapchain };
+enum class Kind { Device,Queue,Allocator,Resource,Pipeline,Heap,List,Swapchain,MemoryHeap };
 struct Item {
     Kind kind;
     std::shared_ptr<Context> context;
@@ -33,6 +34,8 @@ struct Item {
     ComPtr<ID3D12Resource> resource;
     ComPtr<ID3D12PipelineState> pipeline;
     ID3D12PipelineState* pipelineAlias=nullptr;
+    std::string pipelineReason;
+    ComPtr<ID3D12Heap> memory;
     ComPtr<ID3D12DescriptorHeap> heap;
     ComPtr<ID3D12CommandAllocator> allocator;
     ComPtr<ID3D12GraphicsCommandList> list;
@@ -102,6 +105,7 @@ std::shared_ptr<Context> Owner(void* p) { auto object=Find(p); return object?obj
 void Stop(const std::shared_ptr<Context>& context,const char* reason) {
     if(context && context->active) {
         context->active=false; context->reason=reason; ++Registry().counts.stops;
+        strncpy_s(Registry().counts.reason,sizeof(Registry().counts.reason),reason,_TRUNCATE);
         for(const auto& entry:Registry().objects)
             if(entry.second->context==context && entry.second->publisher) entry.second->publisher->Close();
     }
@@ -133,6 +137,14 @@ std::shared_ptr<Item> Mapped(void* original,Kind kind,const std::shared_ptr<Cont
     if(!item || item->kind!=kind || item->context!=context) { Stop(context,"untracked or foreign resource/state"); return nullptr; }
     return item;
 }
+void TrackResource(ID3D12Resource* original,const std::shared_ptr<Item>& item) {
+    if(item->description.Dimension==D3D12_RESOURCE_DIMENSION_BUFFER){item->leftAddress=original->GetGPUVirtualAddress();item->rightAddress=item->resource->GetGPUVirtualAddress();}
+    Remember(original,item);++Registry().counts.resources;
+}
+bool HeapSupported(const D3D12_HEAP_PROPERTIES& heap,D3D12_HEAP_FLAGS flags) {
+    return !(flags&(D3D12_HEAP_FLAG_SHARED|D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER|D3D12_HEAP_FLAG_HARDWARE_PROTECTED)) &&
+        (heap.Type==D3D12_HEAP_TYPE_DEFAULT || heap.Type==D3D12_HEAP_TYPE_UPLOAD || heap.Type==D3D12_HEAP_TYPE_READBACK);
+}
 } // namespace
 bool Mapper::Valid() const { return context_ && context_->active; }
 ID3D12Resource* Mapper::Resource(ID3D12Resource* original) {
@@ -142,7 +154,7 @@ ID3D12Resource* Mapper::Resource(ID3D12Resource* original) {
 ID3D12PipelineState* Mapper::Pipeline(ID3D12PipelineState* original) {
     if(!original) return nullptr;
     auto item=Mapped(original,Kind::Pipeline,context_);
-    if(item && !item->pipeline && !item->pipelineAlias) Stop(context_,"unsupported vertex pipeline");
+    if(item && !item->pipeline && !item->pipelineAlias)Stop(context_,item->pipelineReason.empty()?"unsupported vertex pipeline":item->pipelineReason.c_str());
     return item?(item->pipelineAlias?item->pipelineAlias:item->pipeline.Get()):nullptr;
 }
 ID3D12GraphicsCommandList* Mapper::Bundle(ID3D12GraphicsCommandList* original) {
@@ -193,6 +205,13 @@ void Device(ID3D12Device* device) noexcept {
         if(context->calibration.shift<0 || context->calibration.convergence<0) Stop(context,"invalid calibration");
         Remember(device,New(Kind::Device,context));
     } catch(...) { }
+}
+void Alias(IUnknown* original,IUnknown* alias) noexcept {
+    if(!alias || alias==original)return;
+    try {
+        Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || Find(alias)==item)return;
+        item->identities.push_back(alias);Registry().objects[alias]=item;Index(alias,item);
+    } catch(...) {Failure(original,"COM interface alias observation failed");}
 }
 void Queue(ID3D12Device* device,ID3D12CommandQueue* queue) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(context) Remember(queue,New(Kind::Queue,context)); } catch(...) { }
@@ -273,21 +292,40 @@ void Resource(ID3D12Device* device,ID3D12Resource* original,const D3D12_HEAP_PRO
     try {
         Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(!context || !context->active) return;
         auto item=New(Kind::Resource,context); item->description=*desc; item->heapType=heap->Type;
-        if(flags&D3D12_HEAP_FLAG_SHARED || flags&D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER || (heap->Type!=D3D12_HEAP_TYPE_DEFAULT && heap->Type!=D3D12_HEAP_TYPE_UPLOAD && heap->Type!=D3D12_HEAP_TYPE_READBACK) ||
+        if(!HeapSupported(*heap,flags) ||
             FAILED(device->CreateCommittedResource(heap,flags,desc,initial,clear,IID_PPV_ARGS(&item->resource)))) { Stop(context,"resource cannot be mirrored"); return; }
         if(item->resource.Get()==original) { Stop(context,"resource clone aliases original"); return; }
-        if(desc->Dimension==D3D12_RESOURCE_DIMENSION_BUFFER) { item->leftAddress=original->GetGPUVirtualAddress(); item->rightAddress=item->resource->GetGPUVirtualAddress(); }
-        Remember(original,item); ++Registry().counts.resources;
+        TrackResource(original,item);
     } catch(...) { Failure(device,"resource observation failed"); }
+}
+void MemoryHeap(ID3D12Device* device,ID3D12Heap* original,const D3D12_HEAP_DESC* desc) noexcept {
+    try {
+        Lock lock(Registry().mutex);Drain();auto context=Owner(device);if(!context || !context->active)return;
+        auto item=New(Kind::MemoryHeap,context);item->heapType=desc->Properties.Type;
+        if(!HeapSupported(desc->Properties,desc->Flags) || FAILED(device->CreateHeap(desc,IID_PPV_ARGS(&item->memory)))){Stop(context,"memory heap cannot be mirrored");return;}
+        Remember(original,item);
+    }catch(...){Failure(device,"memory heap observation failed");}
+}
+void PlacedResource(ID3D12Device* device,ID3D12Resource* original,ID3D12Heap* heap,UINT64 offset,const D3D12_RESOURCE_DESC* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear) noexcept {
+    try {
+        Lock lock(Registry().mutex);Drain();auto context=Owner(device);if(!context || !context->active)return;
+        auto allocation=Mapped(heap,Kind::MemoryHeap,context);if(!allocation)return;
+        auto item=New(Kind::Resource,context);item->description=*desc;item->heapType=allocation->heapType;item->memory=allocation->memory;
+        if(FAILED(device->CreatePlacedResource(item->memory.Get(),offset,desc,initial,clear,IID_PPV_ARGS(&item->resource)))){Stop(context,"placed resource creation failed");return;}
+        TrackResource(original,item);
+    }catch(...){Failure(device,"placed resource observation failed");}
 }
 void Pipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D12_GRAPHICS_PIPELINE_STATE_DESC* desc) noexcept {
     try {
         Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(!context || !context->active) return;
         auto item=New(Kind::Pipeline,context);
+        item->pipelineReason="geometry/tessellation shaders or stream output require additional stereo handling";
         if(!desc->GS.BytecodeLength && !desc->HS.BytecodeLength && !desc->DS.BytecodeLength && !desc->StreamOutput.NumEntries) {
             auto shader=dxbc::Rewrite(desc->VS.pShaderBytecode,desc->VS.BytecodeLength,context->calibration);
+            item->pipelineReason=shader.reason;
             if(shader.status==dxbc::Status::Patched) {
                 auto clone=*desc; clone.VS={shader.bytes.data(),shader.bytes.size()}; clone.CachedPSO={};
+                item->pipelineReason="rewritten graphics pipeline creation failed";
                 if(SUCCEEDED(device->CreateGraphicsPipelineState(&clone,IID_PPV_ARGS(&item->pipeline)))) {
                     if(item->pipeline.Get()==original) { item->pipelineAlias=original; item->pipeline.Reset(); }
                     ++Registry().counts.pipelines;
@@ -297,6 +335,26 @@ void Pipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D12_GRA
         // An unsupported pipeline is harmless until a mirrored list uses it.
         Remember(original,item);
     } catch(...) { Failure(device,"pipeline observation failed"); }
+}
+void StreamPipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D12_PIPELINE_STATE_STREAM_DESC* desc) noexcept {
+    try {
+        Lock lock(Registry().mutex);Drain();auto context=Owner(device);if(!context || !context->active)return;
+        auto parsed=stream::Parse(desc);
+        if(parsed.kind==stream::Kind::Compute){ComputePipeline(device,original);return;}
+        auto item=New(Kind::Pipeline,context);item->pipelineReason=parsed.reason;
+        if(parsed.kind==stream::Kind::Graphics) {
+            auto shader=dxbc::Rewrite(parsed.vs.pShaderBytecode,parsed.vs.BytecodeLength,context->calibration);item->pipelineReason=shader.reason;
+            if(shader.status==dxbc::Status::Patched) {
+                parsed.Shader({shader.bytes.data(),shader.bytes.size()});parsed.ClearCache();auto clone=parsed.Desc();ComPtr<ID3D12Device2> newer;
+                item->pipelineReason="rewritten pipeline stream creation failed";
+                if(SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&newer))) && SUCCEEDED(newer->CreatePipelineState(&clone,IID_PPV_ARGS(&item->pipeline)))) {
+                    if(item->pipeline.Get()==original){item->pipelineAlias=original;item->pipeline.Reset();}
+                    ++Registry().counts.pipelines;
+                }
+            }
+        }
+        Remember(original,item);
+    }catch(...){Failure(device,"pipeline stream observation failed");}
 }
 void Heap(ID3D12Device* device,ID3D12DescriptorHeap* original,const D3D12_DESCRIPTOR_HEAP_DESC* desc) noexcept {
     try {

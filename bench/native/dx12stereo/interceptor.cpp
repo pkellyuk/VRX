@@ -22,6 +22,7 @@ struct Registry {
     std::unordered_map<void*, Hook> hooks;
     std::atomic<uint64_t> devices{0}, queues{0}, lists{0}, resources{0}, pipelines{0};
     std::atomic<uint64_t> closes{0}, resets{0}, draws{0}, indexed{0}, bundles{0}, submits{0}, failures{0};
+    std::atomic<uint64_t> streams{0},memory{0},placed{0},modern{0};
     bool initialized = false;
     bool dxgi = false;
 };
@@ -71,6 +72,24 @@ void Lifetime(IUnknown* object) noexcept {
         if(identity) Add(state,identity.Get(),2,reinterpret_cast<void*>(&Release));
         if(MH_ApplyQueued()!=MH_OK) ++state.failures;
     } catch(...) { ++State().failures; }
+}
+template<class Observe> void ResourceCreated(ID3D12Device*,void* returned,Observe observe) {
+    ++State().resources;ComPtr<ID3D12Resource> resource;auto* original=static_cast<IUnknown*>(returned);
+    if(SUCCEEDED(original->QueryInterface(IID_PPV_ARGS(&resource)))) {
+        Lifetime(resource.Get());Lifetime(original);observe(resource.Get());mirror::Alias(resource.Get(),original);
+    }
+}
+template<class Observe> void PipelineCreated(ID3D12Device*,void* returned,Observe observe) {
+    ++State().pipelines;ComPtr<ID3D12PipelineState> pipeline;auto* original=static_cast<IUnknown*>(returned);
+    if(SUCCEEDED(original->QueryInterface(IID_PPV_ARGS(&pipeline)))) {
+        Lifetime(pipeline.Get());Lifetime(original);observe(pipeline.Get());mirror::Alias(pipeline.Get(),original);
+    }
+}
+void MemoryCreated(ID3D12Device* device,void* returned,const D3D12_HEAP_DESC* desc) {
+    ++State().memory;ComPtr<ID3D12Heap> heap;auto* original=static_cast<IUnknown*>(returned);
+    if(SUCCEEDED(original->QueryInterface(IID_PPV_ARGS(&heap)))) {
+        Lifetime(heap.Get());Lifetime(original);mirror::MemoryHeap(device,heap.Get(),desc);mirror::Alias(heap.Get(),original);
+    }
 }
 HRESULT STDMETHODCALLTYPE Close(ID3D12GraphicsCommandList* object) {
     Call call;
@@ -301,8 +320,7 @@ HRESULT STDMETHODCALLTYPE CreatePipeline(ID3D12Device* object,const D3D12_GRAPHI
     using Fn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*,const D3D12_GRAPHICS_PIPELINE_STATE_DESC*,REFIID,void**);
     const auto result = Original<Fn>(object,slot::ID3D12Device_CreateGraphicsPipelineState)(object,desc,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output) {
-        ++State().pipelines; ComPtr<ID3D12PipelineState> pipeline;
-        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&pipeline)))) { Lifetime(pipeline.Get()); mirror::Pipeline(object,pipeline.Get(),desc); }
+        PipelineCreated(object,*output,[&](auto* pipeline){mirror::Pipeline(object,pipeline,desc);});
     } return result;
 }
 HRESULT STDMETHODCALLTYPE CreateResource(ID3D12Device* object,const D3D12_HEAP_PROPERTIES* heap,D3D12_HEAP_FLAGS flags,const D3D12_RESOURCE_DESC* desc,
@@ -311,9 +329,51 @@ HRESULT STDMETHODCALLTYPE CreateResource(ID3D12Device* object,const D3D12_HEAP_P
     using Fn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*,const D3D12_HEAP_PROPERTIES*,D3D12_HEAP_FLAGS,const D3D12_RESOURCE_DESC*,D3D12_RESOURCE_STATES,const D3D12_CLEAR_VALUE*,REFIID,void**);
     const auto result = Original<Fn>(object,slot::ID3D12Device_CreateCommittedResource)(object,heap,flags,desc,initial,clear,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output) {
-        ++State().resources; ComPtr<ID3D12Resource> resource;
-        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&resource)))) { Lifetime(resource.Get()); mirror::Resource(object,resource.Get(),heap,flags,desc,initial,clear); }
+        ResourceCreated(object,*output,[&](auto* resource){mirror::Resource(object,resource,heap,flags,desc,initial,clear);});
     } return result;
+}
+HRESULT STDMETHODCALLTYPE CreateStream(ID3D12Device2* object,const D3D12_PIPELINE_STATE_STREAM_DESC* desc,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreateStream)>(object,slot::ID3D12Device2_CreatePipelineState)(object,desc,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){++State().streams;PipelineCreated(object,*output,[&](auto* pipeline){mirror::StreamPipeline(object,pipeline,desc);});}
+    return result;
+}
+HRESULT STDMETHODCALLTYPE CreateMemory(ID3D12Device* object,const D3D12_HEAP_DESC* desc,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreateMemory)>(object,slot::ID3D12Device_CreateHeap)(object,desc,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output)MemoryCreated(object,*output,desc);return result;
+}
+HRESULT STDMETHODCALLTYPE CreatePlaced(ID3D12Device* object,ID3D12Heap* heap,UINT64 offset,const D3D12_RESOURCE_DESC* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreatePlaced)>(object,slot::ID3D12Device_CreatePlacedResource)(object,heap,offset,desc,initial,clear,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){++State().placed;ResourceCreated(object,*output,[&](auto* resource){mirror::PlacedResource(object,resource,heap,offset,desc,initial,clear);});}return result;
+}
+HRESULT STDMETHODCALLTYPE CreateMemory1(ID3D12Device4* object,const D3D12_HEAP_DESC* desc,ID3D12ProtectedResourceSession* protectedSession,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreateMemory1)>(object,slot::ID3D12Device4_CreateHeap1)(object,desc,protectedSession,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){if(protectedSession)mirror::Unsupported(object,"protected memory heaps are unsupported");MemoryCreated(object,*output,desc);}return result;
+}
+HRESULT STDMETHODCALLTYPE CreateResource1(ID3D12Device4* object,const D3D12_HEAP_PROPERTIES* heap,D3D12_HEAP_FLAGS flags,const D3D12_RESOURCE_DESC* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,ID3D12ProtectedResourceSession* protectedSession,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreateResource1)>(object,slot::ID3D12Device4_CreateCommittedResource1)(object,heap,flags,desc,initial,clear,protectedSession,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){++State().modern;if(protectedSession)mirror::Unsupported(object,"protected resources are unsupported");ResourceCreated(object,*output,[&](auto* resource){mirror::Resource(object,resource,heap,flags,desc,initial,clear);});}return result;
+}
+D3D12_RESOURCE_DESC Legacy(const D3D12_RESOURCE_DESC1& desc) {
+    return {desc.Dimension,desc.Alignment,desc.Width,desc.Height,desc.DepthOrArraySize,desc.MipLevels,desc.Format,desc.SampleDesc,desc.Layout,desc.Flags};
+}
+bool Feedback(const D3D12_RESOURCE_DESC1& desc){return desc.SamplerFeedbackMipRegion.Width || desc.SamplerFeedbackMipRegion.Height || desc.SamplerFeedbackMipRegion.Depth;}
+HRESULT STDMETHODCALLTYPE CreateResource2(ID3D12Device8* object,const D3D12_HEAP_PROPERTIES* heap,D3D12_HEAP_FLAGS flags,const D3D12_RESOURCE_DESC1* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,ID3D12ProtectedResourceSession* protectedSession,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreateResource2)>(object,slot::ID3D12Device8_CreateCommittedResource2)(object,heap,flags,desc,initial,clear,protectedSession,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){
+        ++State().modern;if(protectedSession || Feedback(*desc))mirror::Unsupported(object,"protected resources or sampler feedback require additional handling");
+        const auto base=Legacy(*desc);ResourceCreated(object,*output,[&](auto* resource){mirror::Resource(object,resource,heap,flags,&base,initial,clear);});
+    }return result;
+}
+HRESULT STDMETHODCALLTYPE CreatePlaced1(ID3D12Device8* object,ID3D12Heap* heap,UINT64 offset,const D3D12_RESOURCE_DESC1* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreatePlaced1)>(object,slot::ID3D12Device8_CreatePlacedResource1)(object,heap,offset,desc,initial,clear,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){
+        ++State().placed;++State().modern;if(Feedback(*desc))mirror::Unsupported(object,"sampler feedback resources require additional handling");
+        const auto base=Legacy(*desc);ResourceCreated(object,*output,[&](auto* resource){mirror::PlacedResource(object,resource,heap,offset,&base,initial,clear);});
+    }return result;
+}
+HRESULT STDMETHODCALLTYPE CreateReserved(ID3D12Device* object,const D3D12_RESOURCE_DESC* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreateReserved)>(object,slot::ID3D12Device_CreateReservedResource)(object,desc,initial,clear,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){++State().resources;mirror::Unsupported(object,"reserved/tiled resources require mapping translation");}return result;
 }
 HRESULT STDMETHODCALLTYPE AllocatorReset(ID3D12CommandAllocator* object) {
     Call call; auto result=Original<decltype(&AllocatorReset)>(object,slot::ID3D12CommandAllocator_Reset)(object);
@@ -347,8 +407,7 @@ void STDMETHODCALLTYPE CreateDepthStencilView(ID3D12Device* object,ID3D12Resourc
 HRESULT STDMETHODCALLTYPE CreateComputePipelineState(ID3D12Device* object,const D3D12_COMPUTE_PIPELINE_STATE_DESC* desc,REFIID iid,void** output) {
     Call call;const auto result=Original<decltype(&CreateComputePipelineState)>(object,slot::ID3D12Device_CreateComputePipelineState)(object,desc,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output) {
-        ComPtr<ID3D12PipelineState> pipeline;
-        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&pipeline)))) {Lifetime(pipeline.Get());mirror::ComputePipeline(object,pipeline.Get());}
+        PipelineCreated(object,*output,[&](auto* pipeline){mirror::ComputePipeline(object,pipeline);});
     } return result;
 }
 void STDMETHODCALLTYPE CreateConstantBufferView(ID3D12Device* object,const D3D12_CONSTANT_BUFFER_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
@@ -486,12 +545,25 @@ void Attach(ID3D12Device* device) noexcept {
         Add(state,device,slot::ID3D12Device_CreateCommandList,reinterpret_cast<void*>(&CreateList));
         Add(state,device,slot::ID3D12Device_CreateGraphicsPipelineState,reinterpret_cast<void*>(&CreatePipeline));
         Add(state,device,slot::ID3D12Device_CreateCommittedResource,reinterpret_cast<void*>(&CreateResource));
-        ComPtr<ID3D12Device4> newer;
-        if(SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&newer))))
+        Add(state,device,slot::ID3D12Device_CreateHeap,reinterpret_cast<void*>(&CreateMemory));
+        Add(state,device,slot::ID3D12Device_CreatePlacedResource,reinterpret_cast<void*>(&CreatePlaced));
+        Add(state,device,slot::ID3D12Device_CreateReservedResource,reinterpret_cast<void*>(&CreateReserved));
+        ComPtr<ID3D12Device2> streams;ComPtr<ID3D12Device4> newer;ComPtr<ID3D12Device8> newest;
+        if(SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&streams))))Add(state,streams.Get(),slot::ID3D12Device2_CreatePipelineState,reinterpret_cast<void*>(&CreateStream));
+        if(SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&newer)))) {
             Add(state,newer.Get(),slot::ID3D12Device4_CreateCommandList1,reinterpret_cast<void*>(&CreateList1));
+            Add(state,newer.Get(),slot::ID3D12Device4_CreateCommittedResource1,reinterpret_cast<void*>(&CreateResource1));
+            Add(state,newer.Get(),slot::ID3D12Device4_CreateHeap1,reinterpret_cast<void*>(&CreateMemory1));
+        }
+        if(SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&newest)))) {
+            Add(state,newest.Get(),slot::ID3D12Device8_CreateCommittedResource2,reinterpret_cast<void*>(&CreateResource2));
+            Add(state,newest.Get(),slot::ID3D12Device8_CreatePlacedResource1,reinterpret_cast<void*>(&CreatePlaced1));
+        }
         if(MH_ApplyQueued() != MH_OK) ++state.failures;
         ++state.devices;
-        lock.unlock(); Lifetime(device); mirror::Device(device);PresentationHooks();
+        lock.unlock();Lifetime(device);mirror::Device(device);
+        for(auto* alias:{static_cast<IUnknown*>(streams.Get()),static_cast<IUnknown*>(newer.Get()),static_cast<IUnknown*>(newest.Get())})if(alias){Lifetime(alias);mirror::Alias(device,alias);}
+        PresentationHooks();
     } catch(...) { ++State().failures; }
 }
 void Snapshot(Counts& output) noexcept {
@@ -502,6 +574,7 @@ void Snapshot(Counts& output) noexcept {
     mirror::Counts replay; mirror::Snapshot(replay);
     output.mirrorReplays=replay.replays; output.mirrorStops=replay.stops; output.mirrorResources=replay.resources; output.mirrorPipelines=replay.pipelines; output.mirrorLiveObjects=replay.liveObjects;
     output.swapchains=replay.swapchains;output.presentations=replay.presentations;output.publications=replay.publications;output.presentDrops=replay.presentDrops;output.resizes=replay.resizes;
+    output.streamPipelines=s.streams;output.memoryHeaps=s.memory;output.placedResources=s.placed;output.modernResources=s.modern;std::memcpy(output.reason,replay.reason,sizeof(output.reason));
 }
 void DiagnosticScope(bool enter) noexcept { if(enter) ++callDepth; else if(callDepth) --callDepth; }
 bool ApiOuter() noexcept {return callDepth==0;}

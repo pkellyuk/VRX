@@ -132,7 +132,7 @@ int wmain(int argc,wchar_t** argv) {
         for(auto& worker:workers) worker.join(); if(failure) std::rethrow_exception(failure);
         vrx::dx12::Counts after; Hr(counts(&after,sizeof(after)));
         Check(counts(nullptr,sizeof(after))==E_INVALIDARG && counts(&after,1)==E_INVALIDARG,"diagnostic ABI rejects invalid buffers");
-        Check(after.bytes==sizeof(after) && after.version==3 && !after.hookFailures,"native hooks installed without collisions or errors");
+        Check(after.bytes==sizeof(after) && after.version==4 && !after.hookFailures,"native hooks installed without collisions or errors");
         if(intercepted) Check(after.devices>=4 && after.queues>=4 && after.commandLists>=4 && after.resources>=8 && after.pipelines>=4 &&
             after.draws==30 && after.indexedDraws==2 && after.bundles==2 && after.resets>=30 && after.closes>=30 && after.submissions==32,"native graphics calls were intercepted once at the app boundary");
         else Check(!after.devices && !after.queues && !after.commandLists && !after.resources && !after.draws && !after.submissions,"disabled proxy never installs hooks");

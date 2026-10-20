@@ -97,7 +97,7 @@ int main(int argc,char** argv) {
         }
         {Diagnostic diagnostic;consumer.reset();}
         vrx::dx12::Counts result;Hr(counts(&result,sizeof(result)));
-        Check(result.version==3 && !result.hookFailures && !result.mirrorStops,"presentation has no hook or replay failures");
+        Check(result.version==4 && !result.hookFailures && !result.mirrorStops,"presentation has no hook or replay failures");
         Check(result.swapchains==1 && result.presentations==18 && result.publications==18 && !result.presentDrops && result.resizes==2,"one publication per real Present and two resize transactions");
         Check(result.devices==1 && result.mirrorReplays==18 && result.draws==12 && result.indexedDraws==6,"the app renders once; internal publisher and consumer are excluded from interception");
         Check(!result.mirrorLiveObjects,"swapchain and all shadow objects retire after app teardown");

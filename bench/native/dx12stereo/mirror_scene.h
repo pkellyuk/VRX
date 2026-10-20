@@ -2,6 +2,7 @@
 // The scene records ONE native view. Only diagnostics know about the replay.
 #pragma once
 #include "test_scene.h"
+#include "modern_fixture.h"
 #include "interceptor.h"
 #include <dxgi1_6.h>
 #include <cstdio>
@@ -61,10 +62,10 @@ struct Bindings {
         D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;desc.Width=1024;
         desc.Height=desc.DepthOrArraySize=desc.MipLevels=1;desc.SampleDesc.Count=1;desc.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_UPLOAD;
-        Hr(scene.device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&buffer)));
+        Committed(scene.device.Get(),heap,desc,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,buffer,false);
         if(compute) {
             heap.Type=D3D12_HEAP_TYPE_DEFAULT;desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-            Hr(scene.device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,nullptr,IID_PPV_ARGS(&generated)));
+            Committed(scene.device.Get(),heap,desc,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,nullptr,generated);
         }
         D3D12_DESCRIPTOR_HEAP_DESC hd{};hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;hd.NumDescriptors=5;
         Hr(scene.device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&staging)));
@@ -77,7 +78,7 @@ struct Bindings {
         heap.Type=D3D12_HEAP_TYPE_DEFAULT;desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=scene.width;desc.Height=scene.height;
         desc.Format=DXGI_FORMAT_D32_FLOAT;desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;desc.Layout=D3D12_TEXTURE_LAYOUT_UNKNOWN;
         D3D12_CLEAR_VALUE clear{};clear.Format=desc.Format;clear.DepthStencil.Depth=1;
-        Hr(scene.device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_DEPTH_WRITE,&clear,IID_PPV_ARGS(&depth)));
+        Committed(scene.device.Get(),heap,desc,D3D12_RESOURCE_STATE_DEPTH_WRITE,&clear,depth);
         hd={};hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_DSV;hd.NumDescriptors=1;Hr(scene.device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&dsv)));
         scene.device->CreateDepthStencilView(depth.Get(),nullptr,dsv->GetCPUDescriptorHandleForHeapStart());
         if(compute) {
@@ -106,7 +107,7 @@ RWStructuredBuffer<float4> rootOutput:register(u1);
 )";
             ComPtr<ID3DBlob> shader;Hr(D3DCompile(cs,sizeof(cs),nullptr,nullptr,nullptr,"CS","cs_5_1",0,0,&shader,&error));
             D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};pipeline.pRootSignature=computeRoot.Get();pipeline.CS={shader->GetBufferPointer(),shader->GetBufferSize()};
-            Hr(scene.device->CreateComputePipelineState(&pipeline,IID_PPV_ARGS(&computePipeline)));
+            if(ModernMode())ComputeStream(scene.device.Get(),pipeline,computePipeline);else Hr(scene.device->CreateComputePipelineState(&pipeline,IID_PPV_ARGS(&computePipeline)));
         }
     }
     D3D12_CPU_DESCRIPTOR_HANDLE Cpu(ID3D12DescriptorHeap* heap,UINT index) const {
@@ -158,7 +159,7 @@ inline void Pipeline(Scene& scene,bool bindings=false,DXGI_FORMAT format=DXGI_FO
     p.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID; p.RasterizerState.CullMode=D3D12_CULL_MODE_NONE; p.RasterizerState.DepthClipEnable=TRUE;
     p.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE; p.NumRenderTargets=1; p.RTVFormats[0]=format; p.SampleDesc.Count=1;
     if(bindings) {p.DSVFormat=DXGI_FORMAT_D32_FLOAT;p.DepthStencilState.DepthEnable=TRUE;p.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ALL;p.DepthStencilState.DepthFunc=D3D12_COMPARISON_FUNC_LESS;}
-    Hr(scene.device->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&scene.pipeline)));
+    if(ModernMode())GraphicsStream(scene.device.Get(),p,scene.pipeline);else Hr(scene.device->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&scene.pipeline)));
 }
 inline void Frame(Scene& scene,UINT number,float w,bool stop=false,bool indexed=false,Bindings* bindings=nullptr,bool presentation=false) {
     scene.Wait(); Hr(scene.allocator->Reset()); Hr(scene.commands->Reset(scene.allocator.Get(),scene.pipeline.Get()));
@@ -179,11 +180,13 @@ inline void Frame(Scene& scene,UINT number,float w,bool stop=false,bool indexed=
     }
     const float values[]={w,float(number+1)/32,.5f,.75f}; scene.commands->SetGraphicsRoot32BitConstants(0,4,values,0);
     if(bindings) {bindings->Bind(scene,number);const float front[]={w,1,0,.5f};scene.commands->SetGraphicsRoot32BitConstants(0,4,front,0);}
+    ComPtr<ID3D12Heap> allocation;
     ComPtr<ID3D12Resource> indices;
     if(indexed) {
         D3D12_HEAP_PROPERTIES upload{}; upload.Type=D3D12_HEAP_TYPE_UPLOAD;
         D3D12_RESOURCE_DESC d{}; d.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER; d.Width=16; d.Height=d.DepthOrArraySize=d.MipLevels=1; d.SampleDesc.Count=1; d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        Hr(scene.device->CreateCommittedResource(&upload,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&indices)));
+        if(ModernMode())PlacedUpload(scene.device.Get(),d,allocation,indices,number%2!=0);
+        else Hr(scene.device->CreateCommittedResource(&upload,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&indices)));
         void* mapped=nullptr; Hr(indices->Map(0,nullptr,&mapped)); const UINT data[]={99,0,1,2}; std::memcpy(mapped,data,sizeof(data)); indices->Unmap(0,nullptr);
         D3D12_INDEX_BUFFER_VIEW view{indices->GetGPUVirtualAddress()+4,12,DXGI_FORMAT_R32_UINT}; scene.commands->IASetIndexBuffer(&view);
         scene.commands->DrawIndexedInstanced(3,1,0,0,0);

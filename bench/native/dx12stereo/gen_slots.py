@@ -35,9 +35,11 @@ def main():
     shared = args.header.parent.parent / "shared"
     source += "\n".join(p.read_text(encoding="utf-8-sig") for p in sorted(shared.glob("dxgi*.h")))
     selected = {
-        "ID3D12Device": ["CreateCommandQueue", "CreateCommandAllocator", "CreateCommandList", "CreateGraphicsPipelineState", "CreateCommittedResource", "CreateDescriptorHeap", "CreateRenderTargetView", "CreateDepthStencilView", "CreateConstantBufferView", "CreateShaderResourceView", "CreateUnorderedAccessView", "CreateSampler", "CopyDescriptors", "CopyDescriptorsSimple", "CreateComputePipelineState"],
+        "ID3D12Device": ["CreateCommandQueue", "CreateCommandAllocator", "CreateCommandList", "CreateGraphicsPipelineState", "CreateCommittedResource", "CreateDescriptorHeap", "CreateRenderTargetView", "CreateDepthStencilView", "CreateConstantBufferView", "CreateShaderResourceView", "CreateUnorderedAccessView", "CreateSampler", "CopyDescriptors", "CopyDescriptorsSimple", "CreateComputePipelineState", "CreateHeap", "CreatePlacedResource", "CreateReservedResource"],
         "ID3D12CommandAllocator": ["Reset"],
-        "ID3D12Device4": ["CreateCommandList1"],
+        "ID3D12Device2": ["CreatePipelineState"],
+        "ID3D12Device4": ["CreateCommandList1", "CreateCommittedResource1", "CreateHeap1"],
+        "ID3D12Device8": ["CreateCommittedResource2", "CreatePlacedResource1"],
         "ID3D12CommandQueue": ["ExecuteCommandLists"],
         "IDXGIFactory": ["CreateSwapChain"],
         "IDXGIFactory2": ["CreateSwapChainForHwnd", "CreateSwapChainForCoreWindow", "CreateSwapChainForComposition"],

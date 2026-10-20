@@ -31,11 +31,12 @@ public:
     D3D12_GPU_VIRTUAL_ADDRESS Address(D3D12_GPU_VIRTUAL_ADDRESS original);
     bool Valid() const;
 };
-struct Counts { uint64_t replays=0,stops=0,resources=0,pipelines=0,liveObjects=0,swapchains=0,presentations=0,publications=0,presentDrops=0,resizes=0; };
+struct Counts { uint64_t replays=0,stops=0,resources=0,pipelines=0,liveObjects=0,swapchains=0,presentations=0,publications=0,presentDrops=0,resizes=0;char reason[256]{}; };
 void Snapshot(Counts& output) noexcept;
 void Unsupported(void*,const char*) noexcept;
 // Observers run only at the outer API boundary, with internal calls suppressed.
 void Device(ID3D12Device*) noexcept;
+void Alias(IUnknown*,IUnknown*) noexcept;
 void Queue(ID3D12Device*,ID3D12CommandQueue*) noexcept;
 bool Swapchain(ID3D12CommandQueue*,IDXGISwapChain*) noexcept;
 void BackBuffer(IDXGISwapChain*,ID3D12Resource*) noexcept;
@@ -44,7 +45,10 @@ void Resize(IDXGISwapChain*,UINT count=0,const UINT* nodes=nullptr,IUnknown* con
 void Allocator(ID3D12Device*,ID3D12CommandAllocator*,D3D12_COMMAND_LIST_TYPE) noexcept;
 void AllocatorReset(ID3D12CommandAllocator*) noexcept;
 void Resource(ID3D12Device*,ID3D12Resource*,const D3D12_HEAP_PROPERTIES*,D3D12_HEAP_FLAGS,const D3D12_RESOURCE_DESC*,D3D12_RESOURCE_STATES,const D3D12_CLEAR_VALUE*) noexcept;
+void MemoryHeap(ID3D12Device*,ID3D12Heap*,const D3D12_HEAP_DESC*) noexcept;
+void PlacedResource(ID3D12Device*,ID3D12Resource*,ID3D12Heap*,UINT64,const D3D12_RESOURCE_DESC*,D3D12_RESOURCE_STATES,const D3D12_CLEAR_VALUE*) noexcept;
 void Pipeline(ID3D12Device*,ID3D12PipelineState*,const D3D12_GRAPHICS_PIPELINE_STATE_DESC*) noexcept;
+void StreamPipeline(ID3D12Device*,ID3D12PipelineState*,const D3D12_PIPELINE_STATE_STREAM_DESC*) noexcept;
 void ComputePipeline(ID3D12Device*,ID3D12PipelineState*) noexcept;
 void Heap(ID3D12Device*,ID3D12DescriptorHeap*,const D3D12_DESCRIPTOR_HEAP_DESC*) noexcept;
 void Rtv(ID3D12Device*,ID3D12Resource*,const D3D12_RENDER_TARGET_VIEW_DESC*,D3D12_CPU_DESCRIPTOR_HANDLE) noexcept;

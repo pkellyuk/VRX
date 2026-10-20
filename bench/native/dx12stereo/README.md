@@ -142,6 +142,24 @@ pass. Both eyes must contain the current frame's exact colour and valid geometry
 disparity, and all shadows must retire after teardown. Compute pipelines share
 immutable native bytecode; bindings, resources and dispatches are replayed.
 
+Device2 pipeline streams are parsed using independently pointer-aligned
+enum/value subobjects, as specified by Microsoft's
+[pipeline-stream ABI](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_pipeline_state_stream_desc).
+Graphics streams retain their original settings while the right-eye vertex
+shader and cached-PSO entry are replaced. Compute streams share immutable code.
+Bounds, duplicate definitions and unsupported shader stages are checked before
+rewriting. Native GPU/WARP fixtures use real cached pipeline streams.
+
+Memory heaps and placed resources retain their original offsets and overlaps
+in a separate right-eye heap. The GPU test writes through one placed buffer and
+reads the overlapping bytes through another after an aliasing barrier.
+CreateHeap1, CreateCommittedResource1/2 and CreatePlacedResource1 are also
+observed; ordinary descriptor-1 resources use their equivalent base description.
+Returned COM interface aliases are tracked without replacing app objects.
+Protected sessions and sampler-feedback regions currently stop replay with an
+explicit reason. The private diagnostic counts ABI is version 4 and includes
+modern-factory counts and the last stop reason.
+
 ### Swapchain publication
 
 Native DXGI factory methods are hooked after device creation, including factories
@@ -150,7 +168,7 @@ backbuffers, and publishes the native left/replayed right view before ordinary
 `Present` or `Present1` through the same GPU texture stream consumed by VRX.
 Set `VRX_XG_SESSION` to an isolated valid session name to enable publication;
 offscreen tests need no session. Internal publisher/consumer device creation is
-excluded from app interception. The diagnostic counts ABI is version 3.
+excluded from app interception. The diagnostic counts ABI is version 4.
 
 HWND hardware/WARP and legacy factory fixtures verify 18 current-frame pairs,
 both Present APIs, test-only Present suppression, two resizes (including explicit
