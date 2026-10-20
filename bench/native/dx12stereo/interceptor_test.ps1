@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard,[switch]$Vrs,[switch]$DepthBounds,[switch]$RecordOnly,[switch]$CloneOnly,[ValidatePattern('^[A-Za-z0-9_,]{1,2048}$')][string]$RecordCommands,[switch]$RecordStateOnly,[switch]$SkipRecordingWork,[switch]$SkipCommandRecording)
+param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard,[switch]$Vrs,[switch]$DepthBounds,[ValidateSet('hit','miss')][string]$FilterProbe,[switch]$RecordOnly,[switch]$CloneOnly,[ValidatePattern('^[A-Za-z0-9_,]{1,2048}$')][string]$RecordCommands,[switch]$RecordStateOnly,[switch]$SkipRecordingWork,[switch]$SkipCommandRecording)
 $ErrorActionPreference='Stop'
 $temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $root=Join-Path $temporary ('VRX-DX12-interception-'+[Guid]::NewGuid().ToString('N'))
@@ -24,7 +24,7 @@ try {
     $start.Environment['VRX_DX12_TEST_MODERN']=$(if($Modern){'1'}else{'0'})
     $start.Environment['VRX_DX12_TEST_BGRA']=$(if($Bgra){'1'}else{'0'})
     $start.Environment['VRX_DX12_TEST_TEN']=$(if($Ten){'1'}else{'0'})
-    $start.ArgumentList.Add($(if($DepthBounds){'--depth-bounds'}elseif($ExtendedGuard){'--extended-guard='+$ExtendedGuard}elseif($Mirror){if($Modern){'--modern'}elseif($Present){if($Legacy){'--legacy'}else{'--present'}}elseif($Compute){'--compute'}elseif($Bindings){'--bindings'}elseif($Unsupported){'--unsupported'}else{'--mirror'}}elseif($Passthrough){'--passthrough'}else{'--intercept'}))
+    $start.ArgumentList.Add($(if($FilterProbe){'--filter-'+$FilterProbe}elseif($DepthBounds){'--depth-bounds'}elseif($ExtendedGuard){'--extended-guard='+$ExtendedGuard}elseif($Mirror){if($Modern){'--modern'}elseif($Present){if($Legacy){'--legacy'}else{'--present'}}elseif($Compute){'--compute'}elseif($Bindings){'--bindings'}elseif($Unsupported){'--unsupported'}else{'--mirror'}}elseif($Passthrough){'--passthrough'}else{'--intercept'}))
     if($Warp) { $start.ArgumentList.Add('--warp') }
     $child=[Diagnostics.Process]::Start($start)
     $stdout=$child.StandardOutput.ReadToEndAsync(); $stderr=$child.StandardError.ReadToEndAsync()

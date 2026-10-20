@@ -503,9 +503,9 @@ API name; a comma-separated list permits further bisection without rebuilding.
 The allowlist is accepted only in record-only diagnostics and is removed from
 normal managed launches. Original game commands are always forwarded.
 
-Recording only `SetPipelineState` preserves the full System Shock scene. The
-next live comparison retains root parameters and descriptor-heap bindings only;
-its gameplay result is pending. Native DX12 remains unavailable in the chooser
+Recording only `SetPipelineState` preserves the full System Shock scene. Root parameters and descriptor-heap bindings also preserve the scene, as do
+render-target/input-buffer bindings, predication and ClearState. Shading-rate
+and depth-bounds calls are the next live comparison. Native DX12 remains unavailable in the chooser
 until actual gameplay rendering passes, regardless of fixture results.
 
 A clean archive of commit `5fd1b32` builds without local prototype sources. Its
@@ -513,3 +513,10 @@ Release suite passed 79 checks with zero failures; one WARP shading-rate check
 was skipped because that adapter lacks the required feature. Managed native
 launch integration also passed with all diagnostic environment settings inherited,
 including two restarts, distinct same-frame GPU pixels and consumer handoff.
+
+Additional hardware/WARP probes verify exact diagnostic call selection, including
+comma-separated names at either end and rejection of partial matches. A valid
+native PSO created outside mirror tracking must reach the mapper only when its
+binding is selected. Native pixels still render after that deliberate stop,
+and an inherited allowlist cannot filter an ordinary stereo launch. All twelve
+cases pass in both Release and Debug.
