@@ -284,11 +284,11 @@ void Reset(ID3D12GraphicsCommandList* original,ID3D12CommandAllocator* allocator
 void Close(ID3D12GraphicsCommandList* original) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(item && item->context->active) { if(FAILED(item->list->Close())) Stop(item->context,"command list close failed"); else item->closed=true; } } catch(...) { }
 }
-void Record(ID3D12GraphicsCommandList* original,const std::function<void(ID3D12GraphicsCommandList*,Mapper&)>& command) noexcept {
+void Record(ID3D12GraphicsCommandList* original,Callback<ID3D12GraphicsCommandList*,Mapper&> command) noexcept {
     if(!FastFind(original)) return;
     try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(item && item->context->active) { Mapper map(item->context); command(item->list.Get(),map); } } catch(...) { Failure(original,"command translation failed"); }
 }
-void Observe(ID3D12Device* device,const std::function<void(ID3D12Device*,Mapper&)>& command) noexcept {
+void Observe(ID3D12Device* device,Callback<ID3D12Device*,Mapper&> command) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(context && context->active) { Mapper map(context); command(device,map); } }
     catch(...) { Failure(device,"descriptor translation failed"); }
 }

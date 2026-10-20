@@ -2,10 +2,21 @@
 #pragma once
 #include <d3d12.h>
 #include <memory>
-#include <functional>
 #include <cstdint>
 namespace vrx::dx12::mirror {
 struct Context;
+// A synchronous, non-owning callback: lambdas live through the API call and
+// are never stored. Avoid std::function allocation at every intercepted draw.
+template<class... Args> class Callback {
+    const void* object_;
+    void (*invoke_)(const void*,Args...);
+public:
+    template<class Function> Callback(const Function& function) noexcept
+        : object_(std::addressof(function)), invoke_([](const void* object,Args... args) {
+            (*static_cast<const Function*>(object))(args...);
+        }) {}
+    void operator()(Args... args) const { invoke_(object_,args...); }
+};
 class Mapper {
     std::shared_ptr<Context> context_;
 public:
@@ -35,8 +46,8 @@ void Rtv(ID3D12Device*,ID3D12Resource*,const D3D12_RENDER_TARGET_VIEW_DESC*,D3D1
 void List(ID3D12Device*,ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineState*,UINT,D3D12_COMMAND_LIST_TYPE,bool closed) noexcept;
 void Reset(ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineState*) noexcept;
 void Close(ID3D12GraphicsCommandList*) noexcept;
-void Record(ID3D12GraphicsCommandList*,const std::function<void(ID3D12GraphicsCommandList*,Mapper&)>&) noexcept;
-void Observe(ID3D12Device*,const std::function<void(ID3D12Device*,Mapper&)>&) noexcept;
+void Record(ID3D12GraphicsCommandList*,Callback<ID3D12GraphicsCommandList*,Mapper&>) noexcept;
+void Observe(ID3D12Device*,Callback<ID3D12Device*,Mapper&>) noexcept;
 // Executes originals and replays in one batch. Caller supplies the trampoline.
 using ExecuteFn=void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*,UINT,ID3D12CommandList* const*);
 void Execute(ID3D12CommandQueue*,UINT,ID3D12CommandList* const*,ExecuteFn) noexcept;
