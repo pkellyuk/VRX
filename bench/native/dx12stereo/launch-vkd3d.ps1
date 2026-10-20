@@ -20,7 +20,8 @@ param(
     [ValidateRange(0,0.25)][float]$Convergence = 0,
     [ValidatePattern('^[0-9]+$')][string]$SteamAppId,
     [string]$LayerDirectory = (Join-Path $PSScriptRoot '../xgstereo/out/Release'),
-    [string[]]$GameArguments = @('-dx12','-norhithread','-windowed','-ResX=1280','-ResY=720'),
+    [string[]]$GameArguments = @('-dx12','-norhithread'),
+    [switch]$HighDpiAware,
     [switch]$Preview
 )
 $ErrorActionPreference = 'Stop'
@@ -74,6 +75,10 @@ try {
     }
     $start = [Diagnostics.ProcessStartInfo]::new($application)
     $start.UseShellExecute = $false
+    if ($HighDpiAware) {
+        $compatibility = @($start.Environment['__COMPAT_LAYER'] -split '\s+' | Where-Object { $_ -and $_ -notin @('DPIUNAWARE','GDIDPISCALING') })
+        $start.Environment['__COMPAT_LAYER'] = (@($compatibility + 'HIGHDPIAWARE') | Select-Object -Unique) -join ' '
+    }
     $start.WorkingDirectory = $gameRoot
     foreach ($argument in $GameArguments) { $start.ArgumentList.Add($argument) }
     # Do not combine the native D3D12 interceptor with the translation test.

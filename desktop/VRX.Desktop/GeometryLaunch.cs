@@ -302,6 +302,12 @@ public static class GeometryLaunch
         }
     }
     internal static void ConfigureEnvironment(ProcessStartInfo start,Plan plan,Profile profile,string runRoot) {
+        if(profile.GeometryProfileId==TestedStereoProfiles.SystemShock) {
+            var compatibility=(start.Environment.TryGetValue("__COMPAT_LAYER",out var previous)?previous ?? "":"")
+                .Split(' ',StringSplitOptions.RemoveEmptyEntries)
+                .Where(flag=>!new[]{"DPIUNAWARE","GDIDPISCALING"}.Contains(flag,StringComparer.OrdinalIgnoreCase));
+            start.Environment["__COMPAT_LAYER"]=string.Join(' ',compatibility.Append("HIGHDPIAWARE").Distinct(StringComparer.OrdinalIgnoreCase));
+        }
         start.Environment["VRX_XG_SESSION"]=plan.Session;
         start.Environment.Remove("VRX_DX12_GPU_VALIDATION");
         start.Environment.Remove("VRX_DX12_REPLAY_PROBES");

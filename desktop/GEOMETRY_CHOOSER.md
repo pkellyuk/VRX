@@ -34,8 +34,13 @@ keeps the current session, and choosing a replacement stops that viewer before
 attaching or reviewing a geometry restart.
 
 The System Shock remake Steam profile (482400) uses vkd3d-proton with separation
-0.5, convergence 0, and `-dx12 -norhithread -windowed`. Resolution comes from the
-game's saved settings; the earlier 1280×720 test override is migrated away.
+0.5, convergence 0, and `-dx12 -norhithread`. Resolution and display mode come from
+the game's saved settings; the earlier 1280×720 and forced-windowed test defaults
+are migrated away without changing custom launch arguments.
+The System Shock child process also uses `HIGHDPIAWARE` compatibility so a scaled
+desktop does not turn a 4K borderless window into a stretched 1440p swapchain.
+This environment setting affects that launch only; desktop scaling and registry
+compatibility settings are not changed.
 The Steam manifest and shipping executable identify it; a matching window title
 alone does not. Calibration is seeded once and later user edits are preserved.
 Base settings and Apply to all never copy another game's renderer or calibration.

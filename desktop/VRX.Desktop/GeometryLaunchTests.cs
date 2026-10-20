@@ -58,18 +58,27 @@ internal static class GeometryLaunchTests
         tested.GeometrySeparation=.35f; tested.GeometryConvergence=.02f; store.Save(tested);
         var remembered=store.Load(shockExe);
         Check(remembered.GeometrySeparation==.35f && remembered.GeometryConvergence==.02f && remembered.SelectedStereoBackend==StereoPaths.Auto,"reloading Auto preserves user calibration");
-        Check(!remembered.GeometryLaunchArguments!.Contains("-Res"),"the game controls its saved resolution");
+        Check(!remembered.GeometryLaunchArguments!.Contains("-Res") && !remembered.GeometryLaunchArguments.Contains("-windowed"),"the game controls its saved resolution and display mode");
         remembered.GeometryProfileId="system-shock-vkd3d-v1";
         remembered.GeometryLaunchArguments="-norhithread -windowed -ResX=1280 -ResY=720 -dx12";
         store.Save(remembered); remembered=store.Load(shockExe);
-        Check(remembered.GeometryProfileId==TestedStereoProfiles.SystemShock && remembered.GeometrySeparation==.35f && remembered.GeometryLaunchArguments=="-dx12 -norhithread -windowed","migrate the old test resolution without changing stereo tuning");
+        Check(remembered.GeometryProfileId==TestedStereoProfiles.SystemShock && remembered.GeometrySeparation==.35f && remembered.GeometryLaunchArguments=="-dx12 -norhithread","migrate the old test resolution without changing stereo tuning");
+        remembered.GeometryProfileId="system-shock-vkd3d-v2"; remembered.GeometryLaunchArguments="-norhithread -windowed -dx12";
+        store.Save(remembered); remembered=store.Load(shockExe);
+        Check(remembered.GeometryLaunchArguments=="-dx12 -norhithread" && remembered.GeometryConvergence==.02f,"remove the v2 forced window mode while preserving calibration");
+        remembered.GeometryProfileId="system-shock-vkd3d-v2"; remembered.GeometryLaunchArguments="-dx12 -norhithread -windowed -ResX=2560 -ResY=1440";
+        store.Save(remembered); remembered=store.Load(shockExe);
+        Check(remembered.GeometryLaunchArguments!.Contains("-ResX=2560"),"explicit custom launch settings survive the default-profile migration");
         remembered.SelectStereoBackend(StereoPaths.Depth); store.Save(remembered);
         Check(store.Load(shockExe).EffectiveStereoBackend==StereoPaths.Depth,"an explicit depth choice overrides the built-in profile");
         var unknown=store.Load(Path.Combine(root,"unknown.exe"));
         Check(unknown.SelectedStereoBackend==StereoPaths.Auto && unknown.EffectiveStereoBackend==StereoPaths.Depth,"unknown games default to external depth capture");
         var translated=new GeometryLaunch.Plan(new RunningApp(1,"fixture",exe,[],null),0,StereoPaths.Vkd3d,root,[],root,"482400","fixture",root,[],root);
         var start=new ProcessStartInfo(exe); start.Environment["VKD3D_CONFIG"]="existing";
+        start.Environment["__COMPAT_LAYER"]="RUNASINVOKER DPIUNAWARE";
         GeometryLaunch.ConfigureEnvironment(start,translated,tested,root);
+        Check(start.Environment["__COMPAT_LAYER"]!.Contains("HIGHDPIAWARE") && start.Environment["__COMPAT_LAYER"]!.Contains("RUNASINVOKER") &&
+            !start.Environment["__COMPAT_LAYER"]!.Contains("DPIUNAWARE"),"the tested game uses native pixels on a scaled desktop while preserving other compatibility options");
         Check(start.Environment["VKD3D_CONFIG"]!.Contains("single_queue") && start.Environment["VKD3D_CONFIG"]!.Contains("existing") &&
             start.Environment["VKD3D_DISABLE_EXTENSIONS"]!.Contains("VK_EXT_shader_module_identifier") && start.Environment["VKD3D_DISABLE_EXTENSIONS"]!.Contains("VK_KHR_pipeline_binary") &&
             start.Environment["VRX_XG_EYE"]=="mirror" && start.Environment["VRX_XG_TRANSPORT"]=="gpu" && start.Environment["SteamAppId"]=="482400", "translated launch preserves the tested same-frame GPU and shader-cache environment");
