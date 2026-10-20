@@ -6,7 +6,7 @@ simulation frame and submits GPU copies on their rendering queue. The shared
 transport is also used by the local experimental Vulkan backend.
 
 **Status:** GPU transport, native command/resource replay, swapchain publication
-and a GPU-tested shader-model-5 vertex rewrite library are implemented for the
+and a GPU-tested shader-model-5 vertex/geometry rewrite library are implemented for the
 subset described below. DXIL rewriting remains unsupported. Ordinary native
 fixtures render one view; the bridge creates the second eye from those commands.
 These checks do not establish compatibility with arbitrary games and do not
@@ -147,8 +147,9 @@ immutable native bytecode; bindings, resources and dispatches are replayed.
 Device2 pipeline streams are parsed using independently pointer-aligned
 enum/value subobjects, as specified by Microsoft's
 [pipeline-stream ABI](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_pipeline_state_stream_desc).
-Graphics streams retain their original settings while the right-eye vertex
-shader and cached-PSO entry are replaced. Compute streams share immutable code.
+Graphics streams retain their original settings while the right-eye final
+position-producing shader (vertex or geometry) and cached-PSO entry are replaced.
+Compute streams share immutable code.
 Bounds, duplicate definitions and unsupported shader stages are checked before
 rewriting. Native GPU/WARP fixtures use real cached pipeline streams.
 
@@ -315,6 +316,17 @@ complete retirement. Mapping changes retain the application's synchronization
 requirements; the bridge does not add cross-queue dependency management.
 
 ### Vertex rewrite implementation notes
+
+For a pipeline with a geometry shader, the bridge rewrites that final stage
+instead of its vertex shader. The position offset is emitted before each
+geometry emit/emit-and-cut operation, using a saved unmodified position, so
+repeated emissions do not accumulate stereo offsets. Non-position varyings,
+early returns and strip cuts are preserved. Only stream zero is supported;
+stream-output pipelines, tessellation and mesh stages remain unsupported.
+Hardware/WARP tests deliberately scale positions in the geometry stage to
+distinguish the final-stage offset from an incorrectly applied vertex offset.
+They cover both native/cached-stream factories, depth-dependent disparity,
+indexed input, conditional emissions, varyings and the W=1 HUD heuristic.
 
 A native compiler probe confirmed that `D3DAssemble` in the available Microsoft
 47 runtime rejects `vs_5_0` assembly produced by `D3DDisassemble`. `dxbc_patch.cpp`

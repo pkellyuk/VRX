@@ -25,7 +25,7 @@ inline void GraphicsStream(ID3D12Device* device,const D3D12_GRAPHICS_PIPELINE_ST
     using namespace vrx::dx12::stream;
     struct Stream {
         Subobject<ID3D12RootSignature*> root;
-        Subobject<D3D12_SHADER_BYTECODE> vs,ps,emptyCs;
+        Subobject<D3D12_SHADER_BYTECODE> vs,ps,emptyCs,gs;
         Subobject<D3D12_BLEND_DESC> blend;
         Subobject<UINT> mask;
         Subobject<D3D12_RASTERIZER_DESC> raster;
@@ -39,7 +39,7 @@ inline void GraphicsStream(ID3D12Device* device,const D3D12_GRAPHICS_PIPELINE_ST
     ComPtr<ID3D12PipelineState> native;Hr(device->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&native)));ComPtr<ID3DBlob> cached;Hr(native->GetCachedBlob(&cached));
     D3D12_RT_FORMAT_ARRAY formats{};formats.NumRenderTargets=p.NumRenderTargets;std::memcpy(formats.RTFormats,p.RTVFormats,sizeof(formats.RTFormats));
     Stream stream{{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE,p.pRootSignature},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS,p.VS},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS,p.PS},
-        {D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS,{}},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND,p.BlendState},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK,p.SampleMask},
+        {D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS,{}},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS,p.GS},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND,p.BlendState},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK,p.SampleMask},
         {D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER,p.RasterizerState},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL,p.DepthStencilState},
         {D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY,p.PrimitiveTopologyType},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS,formats},
         {D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT,p.DSVFormat},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC,p.SampleDesc},

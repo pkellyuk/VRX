@@ -124,9 +124,10 @@ Result Rewrite(const void* input,size_t size,Options options) {
     if(!ValidChecksum(input,size)) return Fail(Status::Invalid,"invalid DXBC checksum");
     if(!shader || shader->size<8 || (shader->size&3)) return Fail(Status::Invalid,"missing or invalid shader program");
     std::vector<uint32_t> code(shader->size/4); std::memcpy(code.data(),p+shader->offset+8,shader->size);
-    if(DECODE_D3D10_SB_TOKENIZED_PROGRAM_TYPE(code[0])!=D3D10_SB_VERTEX_SHADER ||
+    const auto stage=DECODE_D3D10_SB_TOKENIZED_PROGRAM_TYPE(code[0]);const bool geometry=stage==D3D10_SB_GEOMETRY_SHADER;
+    if((stage!=D3D10_SB_VERTEX_SHADER && !geometry) ||
         DECODE_D3D10_SB_TOKENIZED_PROGRAM_MAJOR_VERSION(code[0])!=5 || DECODE_D3D10_SB_TOKENIZED_PROGRAM_MINOR_VERSION(code[0])>1)
-        return Fail(Status::Unsupported,"only shader-model-5 vertex programs are supported");
+        return Fail(Status::Unsupported,"only shader-model-5 vertex/geometry programs are supported");
     std::vector<Instruction> instructions; if(!Instructions(code,instructions)) return Fail(Status::Invalid,"invalid instruction bounds");
     uint32_t position=UINT32_MAX,temps=0; bool hasTemps=false;
     for(const auto& instruction:instructions) {
@@ -137,6 +138,11 @@ Result Rewrite(const void* input,size_t size,Options options) {
         if(op==D3D10_SB_OPCODE_DCL_TEMPS) {
             if(hasTemps || instruction.end-instruction.operands!=1) return Fail(Status::Invalid,"invalid temporary declaration");
             temps=code[instruction.operands]; hasTemps=true;
+        }
+        if(geometry && op==D3D11_SB_OPCODE_DCL_STREAM) {
+            size_t at=instruction.operands;Operand stream{};
+            if(!ParseOperand(code,at,instruction.end,&stream) || at!=instruction.end || stream.type!=D3D11_SB_OPERAND_TYPE_STREAM || stream.dimensions!=1 || stream.representation!=0 || code[stream.index]!=0)
+                return Fail(Status::Unsupported,"geometry output streams other than stream zero require separate handling");
         }
         if(op==D3D10_SB_OPCODE_DCL_OUTPUT_SIV) {
             size_t at=instruction.operands; Operand output{};
@@ -155,7 +161,9 @@ Result Rewrite(const void* input,size_t size,Options options) {
         if(!inserted && !Decl(instruction.op) && instruction.op!=D3D10_SB_OPCODE_CUSTOMDATA) {
             Emit(rewritten,D3D10_SB_OPCODE_DCL_TEMPS,{temps+2}); inserted=true;
         }
-        if(instruction.op==D3D10_SB_OPCODE_RET || instruction.op==D3D10_SB_OPCODE_RETC) { Finish(rewritten,position,temps,temps+1,options); ++returns; }
+        const auto op=instruction.op;
+        const bool emit=op==D3D10_SB_OPCODE_EMIT || op==D3D10_SB_OPCODE_EMITTHENCUT || op==D3D11_SB_OPCODE_EMIT_STREAM || op==D3D11_SB_OPCODE_EMITTHENCUT_STREAM;
+        if(geometry?emit:op==D3D10_SB_OPCODE_RET || op==D3D10_SB_OPCODE_RETC) { Finish(rewritten,position,temps,temps+1,options); ++returns; }
         const size_t base=rewritten.size(); rewritten.insert(rewritten.end(),code.begin()+instruction.at,code.begin()+instruction.end);
         if(instruction.op==D3D10_SB_OPCODE_DCL_TEMPS) rewritten[base+instruction.operands-instruction.at]=temps+2;
         if(!Decl(instruction.op) && instruction.op!=D3D10_SB_OPCODE_CUSTOMDATA) {
@@ -173,7 +181,7 @@ Result Rewrite(const void* input,size_t size,Options options) {
             }
         }
     }
-    if(!returns || !inserted) return Fail(Status::Invalid,"vertex program has no return");
+    if(!returns || !inserted) return Fail(Status::Invalid,geometry?"geometry program has no supported emission":"vertex program has no return");
     rewritten[1]=uint32_t(rewritten.size());
     std::vector<Chunk> kept;
     for(const auto& chunk:chunks) if(chunk.tag!=Tag('S','D','B','G') && chunk.tag!=Tag('S','P','D','B') && chunk.tag!=Tag('I','L','D','B') &&

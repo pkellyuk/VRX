@@ -21,11 +21,14 @@ enum class Kind {Invalid,Unsupported,Graphics,Compute};
 struct Parsed {
     Kind kind=Kind::Invalid;
     size_t vertex=SIZE_MAX,cache=SIZE_MAX;
+    size_t geometry=SIZE_MAX;
     D3D12_SHADER_BYTECODE vs{};
+    D3D12_SHADER_BYTECODE gs{};
     std::string reason;
     std::vector<uint64_t> storage;
     D3D12_PIPELINE_STATE_STREAM_DESC Desc(){return {storage.size()*sizeof(uint64_t),storage.data()};}
-    void Shader(const D3D12_SHADER_BYTECODE& value){std::memcpy(reinterpret_cast<uint8_t*>(storage.data())+vertex,&value,sizeof(value));}
+    D3D12_SHADER_BYTECODE FinalShader() const{return gs.BytecodeLength?gs:vs;}
+    void Shader(const D3D12_SHADER_BYTECODE& value){std::memcpy(reinterpret_cast<uint8_t*>(storage.data())+(gs.BytecodeLength?geometry:vertex),&value,sizeof(value));}
     void ClearCache(){if(cache!=SIZE_MAX){const D3D12_CACHED_PIPELINE_STATE empty{};std::memcpy(reinterpret_cast<uint8_t*>(storage.data())+cache,&empty,sizeof(empty));}}
 };
 inline Parsed Parse(const D3D12_PIPELINE_STATE_STREAM_DESC* desc) {
@@ -70,15 +73,16 @@ inline Parsed Parse(const D3D12_PIPELINE_STATE_STREAM_DESC* desc) {
                 D3D12_SHADER_BYTECODE shader{};std::memcpy(&shader,bytes+at,sizeof(shader));const bool active=shader.pShaderBytecode && shader.BytecodeLength;
                 if(type==D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS)compute=active;
                 else if(type==D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS)mesh=active;
-                else if(active)unsupported=true;
+                else if(type==D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS){out.geometry=at;out.gs=shader;}
+                else if(active){unsupported=true;if(out.reason.empty())out.reason="tessellation requires final domain-stage stereo transformation";}
                 break;
             }
             case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO:out.cache=at;break;
             case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_STREAM_OUTPUT: {
-                D3D12_STREAM_OUTPUT_DESC so{};std::memcpy(&so,bytes+at,sizeof(so));if(so.NumEntries || so.NumStrides)unsupported=true;break;
+                D3D12_STREAM_OUTPUT_DESC so{};std::memcpy(&so,bytes+at,sizeof(so));if(so.NumEntries || so.NumStrides){unsupported=true;if(out.reason.empty())out.reason="stream output requires additional stereo handling";}break;
             }
             case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VIEW_INSTANCING: {
-                D3D12_VIEW_INSTANCING_DESC view{};std::memcpy(&view,bytes+at,sizeof(view));if(view.ViewInstanceCount)unsupported=true;break;
+                D3D12_VIEW_INSTANCING_DESC view{};std::memcpy(&view,bytes+at,sizeof(view));if(view.ViewInstanceCount){unsupported=true;out.reason="view instancing requires stereo view mapping; count="+std::to_string(view.ViewInstanceCount);}break;
             }
             default:break;
         }
@@ -89,7 +93,7 @@ inline Parsed Parse(const D3D12_PIPELINE_STATE_STREAM_DESC* desc) {
     if(depthCount>1 || rasterCount>1 || UINT(vertex)+UINT(compute)+UINT(mesh)!=1)return fail("conflicting pipeline definitions");
     // Other graphics fields in a compute stream are ignored by the runtime.
     if(compute){out.kind=Kind::Compute;return out;}
-    if(mesh || unsupported){out.kind=Kind::Unsupported;out.reason="tessellation, geometry/mesh shaders, stream output or view instancing require additional stereo handling";return out;}
+    if(mesh || unsupported){out.kind=Kind::Unsupported;if(mesh)out.reason="mesh shaders require final-stage stereo transformation";return out;}
     out.kind=Kind::Graphics;out.storage.resize(desc->SizeInBytes/sizeof(uint64_t));std::memcpy(out.storage.data(),bytes,desc->SizeInBytes);return out;
 }
 } // namespace vrx::dx12::stream

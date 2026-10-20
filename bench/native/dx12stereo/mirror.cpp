@@ -359,12 +359,12 @@ void Pipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D12_GRA
     try {
         Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(!context || !context->active) return;
         auto item=New(Kind::Pipeline,context);
-        item->pipelineReason="geometry/tessellation shaders or stream output require additional stereo handling";
-        if(!desc->GS.BytecodeLength && !desc->HS.BytecodeLength && !desc->DS.BytecodeLength && !desc->StreamOutput.NumEntries) {
-            auto shader=dxbc::Rewrite(desc->VS.pShaderBytecode,desc->VS.BytecodeLength,context->calibration);
+        item->pipelineReason=desc->HS.BytecodeLength || desc->DS.BytecodeLength?"tessellation requires final domain-stage stereo transformation":"stream output requires additional stereo handling";
+        if(!desc->HS.BytecodeLength && !desc->DS.BytecodeLength && !desc->StreamOutput.NumEntries && !desc->StreamOutput.NumStrides) {
+            const auto final=desc->GS.BytecodeLength?desc->GS:desc->VS;auto shader=dxbc::Rewrite(final.pShaderBytecode,final.BytecodeLength,context->calibration);
             item->pipelineReason=shader.reason;
             if(shader.status==dxbc::Status::Patched) {
-                auto clone=*desc; clone.VS={shader.bytes.data(),shader.bytes.size()}; clone.CachedPSO={};
+                auto clone=*desc;if(desc->GS.BytecodeLength)clone.GS={shader.bytes.data(),shader.bytes.size()};else clone.VS={shader.bytes.data(),shader.bytes.size()};clone.CachedPSO={};
                 item->pipelineReason="rewritten graphics pipeline creation failed";
                 if(SUCCEEDED(device->CreateGraphicsPipelineState(&clone,IID_PPV_ARGS(&item->pipeline)))) {
                     if(item->pipeline.Get()==original) { item->pipelineAlias=original; item->pipeline.Reset(); }
@@ -383,7 +383,7 @@ void StreamPipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D
         if(parsed.kind==stream::Kind::Compute){ComputePipeline(device,original);return;}
         auto item=New(Kind::Pipeline,context);item->pipelineReason=parsed.reason;
         if(parsed.kind==stream::Kind::Graphics) {
-            auto shader=dxbc::Rewrite(parsed.vs.pShaderBytecode,parsed.vs.BytecodeLength,context->calibration);item->pipelineReason=shader.reason;
+            const auto final=parsed.FinalShader();auto shader=dxbc::Rewrite(final.pShaderBytecode,final.BytecodeLength,context->calibration);item->pipelineReason=shader.reason;
             if(shader.status==dxbc::Status::Patched) {
                 parsed.Shader({shader.bytes.data(),shader.bytes.size()});parsed.ClearCache();auto clone=parsed.Desc();ComPtr<ID3D12Device2> newer;
                 item->pipelineReason="rewritten pipeline stream creation failed";
