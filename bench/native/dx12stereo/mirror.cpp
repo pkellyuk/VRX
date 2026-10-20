@@ -24,6 +24,9 @@ using Microsoft::WRL::ComPtr;
 struct Context {
     ID3D12Device* device=nullptr; // app/child objects own its native lifetime
     bool active=true;
+    bool recordOnly=false; // diagnostic: clone/record, never submit or publish
+    bool cloneOnly=false; // diagnostic: no shadow recording/queue operations
+    bool skipCommands=false; // diagnostic: retain queue mappings, omit recording
     dxbc::Options calibration{.25f,0,true}; // native left, shifted right
     std::string reason;
 };
@@ -221,6 +224,9 @@ void Device(ID3D12Device* device) noexcept {
     try {
         auto& s=Registry(); Lock lock(s.mutex); Drain(); if(Find(device)) return;
         auto context=std::make_shared<Context>(); context->device=device;
+        wchar_t diagnostic[3]{};context->recordOnly=GetEnvironmentVariableW(L"VRX_DX12_RECORD_ONLY",diagnostic,3)==1 && diagnostic[0]==L'1';
+        context->cloneOnly=GetEnvironmentVariableW(L"VRX_DX12_CLONE_ONLY",diagnostic,3)==1 && diagnostic[0]==L'1';context->recordOnly=context->recordOnly || context->cloneOnly;
+        context->skipCommands=context->cloneOnly || (context->recordOnly && GetEnvironmentVariableW(L"VRX_DX12_SKIP_COMMANDS",diagnostic,3)==1 && diagnostic[0]==L'1');
         if(device->GetNodeCount()!=1) Stop(context,"multiple GPU nodes are unsupported");
         context->calibration.shift=Calibration(L"VRX_DX12_SHIFT",.25f,64);
         context->calibration.convergence=Calibration(L"VRX_DX12_CONVERGENCE",0,.25f);
@@ -268,6 +274,7 @@ void Present(IDXGISwapChain* original,UINT flags) noexcept {
     if(flags&DXGI_PRESENT_TEST)return;
     try {
         Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || item->kind!=Kind::Swapchain || !item->context->active)return;
+        if(item->context->recordOnly)return;
         if(flags&DXGI_PRESENT_DO_NOT_WAIT) {Stop(item->context,"nonblocking presentation needs a publication transaction");return;}
         wchar_t session[66]{};const auto length=GetEnvironmentVariableW(L"VRX_XG_SESSION",session,66);
         // Offscreen interception tests need no named stream. A launcher supplies
@@ -482,14 +489,14 @@ void Close(ID3D12GraphicsCommandList* original) noexcept {
 }
 void Record(ID3D12GraphicsCommandList* original,Callback<ID3D12GraphicsCommandList*,Mapper&> command) noexcept {
     if(!FastFind(original)) return;
-    try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(item && item->context->active) { Mapper map(item->context); command(item->list.Get(),map); } } catch(...) { Failure(original,"command translation failed"); }
+    try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(item && item->context->active && !item->context->skipCommands) { Mapper map(item->context); command(item->list.Get(),map); } } catch(...) { Failure(original,"command translation failed"); }
 }
 void Observe(ID3D12Device* device,Callback<ID3D12Device*,Mapper&> command) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(context && context->active) { Mapper map(context); command(device,map); } }
     catch(...) { Failure(device,"descriptor translation failed"); }
 }
 void QueueCommand(ID3D12CommandQueue* queue,Callback<ID3D12CommandQueue*,Mapper&> command) noexcept {
-    try { Lock lock(Registry().mutex);Drain();auto context=Owner(queue);if(context && context->active){Mapper map(context);command(queue,map);} }
+    try { Lock lock(Registry().mutex);Drain();auto context=Owner(queue);if(context && context->active && !context->cloneOnly){Mapper map(context);command(queue,map);} }
     catch(...){Failure(queue,"queue mapping translation failed");}
 }
 void Execute(ID3D12CommandQueue* queue,UINT count,ID3D12CommandList* const* lists,ExecuteFn execute) noexcept {
@@ -504,7 +511,7 @@ void Execute(ID3D12CommandQueue* queue,UINT count,ID3D12CommandList* const* list
         }
         // GPU-read-only upload inputs are shared. No CPU reads or whole-buffer
         // copies at submission; app fences follow both lists before CPU reuse.
-        if(context->active) { execute(queue,UINT(paired.size()),paired.data()); Registry().counts.replays+=count; }
+        if(context->active && !context->recordOnly) { execute(queue,UINT(paired.size()),paired.data()); Registry().counts.replays+=count; }
         else execute(queue,count,lists);
     } catch(...) { Failure(queue,"submission translation failed"); execute(queue,count,lists); }
 }

@@ -337,6 +337,21 @@ The launcher integration test runs an ordinary native application from a path
 containing spaces/brackets, verifies live status in another process in both
 modes, stops it normally, and checks owned cleanup and existing-DLL preservation.
 
+For rendering regressions, `-RecordOnly` keeps resource cloning and shadow
+command recording enabled but submits only native lists and publishes no stereo
+stream. It is mutually exclusive with `-ObserveOnly`, which does not clone or
+record. This diagnostic can be compared using ordinary window capture/depth
+estimation. GPU tests initialize shadow storage with a sentinel and verify it
+remains unchanged across 18 native frames; presentation tests verify no stereo
+metadata or replay/publication counters are advertised, including at resize.
+`-CloneOnly` additionally omits shadow recording and shadow queue operations,
+retaining allocation, descriptor and pipeline cloning. The three diagnostic
+modes are mutually exclusive. Ordinary CLI and managed launches clear inherited
+diagnostic flags.
+`-RecordOnly -SkipCommandRecording` retains mirrored queue tile mappings while
+omitting shadow command-list recording, allowing those two effects to be tested
+separately. The modifier is refused outside recording-only diagnostics.
+
 The managed launch coordinator now has a native backend path independent of
 Vulkan/DXVK: x64 runtime preflight, literal arguments, scoped child environment,
 atomic non-overwriting installation, backend-specific ownership and cleanup,
@@ -392,7 +407,17 @@ hook/replay failures, and passed the isolated VRX GPU consumer check at
 1280x720 per eye. However, gameplay showed a HUD over a black scene in the
 published native-left and right-eye images. Matching frame numbers and successful
 API replay therefore do not establish correct game rendering. A native-only
-gameplay comparison is still needed; this route remains experimental and gated.
+gameplay control subsequently rendered the full scene correctly on desktop and
+in the headset through depth estimation, with no local graphics DLLs installed
+and Windows System32 DirectX modules verified. This narrows the scene loss to
+the bridge-enabled run. A command-recording-only comparison also showed the HUD
+over a black scene despite zero shadow submissions/publications. GPU execution
+of the second eye is therefore not required to reproduce the scene loss. A
+clone-only comparison separates resource/pipeline cloning from shadow recording.
+A clone-only gameplay comparison restored the full scene. This leaves command
+recording or mirrored queue mappings as the next suspects; a queue-mapping-only
+comparison separates them. No diagnosis is inferred solely from success counters.
+This route remains experimental and gated.
 This establishes concrete compatibility gaps, not native DX12 game compatibility.
 
 Reserved resources created through Device/Device4 now have independent right-eye

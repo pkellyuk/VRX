@@ -72,6 +72,13 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
     add_executable(dx12_indirect_fixture indirect_fixture.cpp)
     add_executable(dx12_upload_fixture upload_fixture.cpp)
     add_executable(dx12_vrs_fixture vrs_fixture.cpp)
+    add_executable(dx12_record_fixture record_fixture.cpp)
+    target_compile_definitions(dx12_record_fixture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(dx12_record_fixture PRIVATE d3d12 dxgi dxguid d3dcompiler)
+    set_property(TARGET dx12_record_fixture PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    if(MSVC)
+        target_compile_options(dx12_record_fixture PRIVATE /W4 /WX /EHsc)
+    endif()
     target_compile_definitions(dx12_vrs_fixture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_link_libraries(dx12_vrs_fixture PRIVATE d3d12 dxgi dxguid d3dcompiler)
     set_property(TARGET dx12_vrs_fixture PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -196,6 +203,19 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         add_test(NAME native_dx12_depth_bounds_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -DepthBounds ${extra})
         set_tests_properties(native_dx12_depth_bounds_${adapter} PROPERTIES TIMEOUT 40 SKIP_RETURN_CODE 77)
+        add_test(NAME native_dx12_record_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly ${extra})
+        add_test(NAME native_dx12_present_record_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_present_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -Present -RecordOnly ${extra})
+        set_tests_properties(native_dx12_record_only_${adapter} native_dx12_present_record_only_${adapter} PROPERTIES TIMEOUT 40)
+        add_test(NAME native_dx12_clone_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -CloneOnly ${extra})
+        add_test(NAME native_dx12_present_clone_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_present_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -Present -CloneOnly ${extra})
+        set_tests_properties(native_dx12_clone_only_${adapter} native_dx12_present_clone_only_${adapter} PROPERTIES TIMEOUT 40)
+        add_test(NAME native_dx12_queue_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly -SkipCommandRecording ${extra})
+        set_tests_properties(native_dx12_queue_only_${adapter} PROPERTIES TIMEOUT 40)
     endforeach()
     foreach(mode write protected)
         foreach(adapter hw warp)

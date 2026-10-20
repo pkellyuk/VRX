@@ -277,6 +277,9 @@ public static class GeometryLaunch
     }
     internal static void ConfigureEnvironment(ProcessStartInfo start,Plan plan,Profile profile,string runRoot) {
         start.Environment["VRX_XG_SESSION"]=plan.Session;
+        start.Environment.Remove("VRX_DX12_RECORD_ONLY");
+        start.Environment.Remove("VRX_DX12_CLONE_ONLY");
+        start.Environment.Remove("VRX_DX12_SKIP_COMMANDS");
         if(plan.Backend==StereoPaths.Dx12) {
             start.Environment["VRX_DX12_INTERCEPT"]="1";start.Environment["VRX_DX12_MIRROR"]="1";
             start.Environment["VRX_DX12_SHIFT"]=profile.GeometrySeparation.ToString("R",CultureInfo.InvariantCulture);

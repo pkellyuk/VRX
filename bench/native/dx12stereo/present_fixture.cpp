@@ -22,6 +22,7 @@ int main(int argc,char** argv) {
         const bool serve=resizeServe || argument.rfind("--serve-gpu=",0)==0;
         const bool legacy=argument=="--legacy",warp=argc==3 && std::strcmp(argv[2],"--warp")==0;
         const bool stopReplay=serve && argc==3 && std::strcmp(argv[2],"--stop-replay")==0;
+        wchar_t diagnosticMode[3]{};const bool recordOnly=GetEnvironmentVariableW(L"VRX_DX12_RECORD_ONLY",diagnosticMode,3)==1 && diagnosticMode[0]==L'1';
         Check(legacy || serve || argument=="--present","known presentation fixture mode");
         Check(argc!=3 || warp || stopReplay || (serve && std::string(argv[2]).rfind("--fixture-token=",0)==0),"known adapter/fixture option");
         wchar_t formatOption[3]{};const bool bgra=GetEnvironmentVariableW(L"VRX_DX12_TEST_BGRA",formatOption,3)==1 && formatOption[0]==L'1';
@@ -90,6 +91,7 @@ int main(int argc,char** argv) {
                 vrx::dx12::Counts tested;Hr(counts(&tested,sizeof(tested)));Check(before.presentations==tested.presentations,"test-only Present never publishes");
                 const float w=frame>=17?1.0f:frame%2?2.0f:4.0f;Frame(scene,frame,w,false,frame%3==0,nullptr,true);
                 if(frame%2)Hr(chain->Present(0,0));else {DXGI_PRESENT_PARAMETERS p{};Hr(chain->Present1(0,0,&p));}
+                if(recordOnly){HANDLE metadata=OpenFileMappingW(FILE_MAP_READ,FALSE,xg::GpuName(session,L".frames").c_str());const bool exists=metadata!=nullptr;if(metadata)CloseHandle(metadata);Check(!exists,"record-only presentation never advertises a stereo stream");scene.Wait();scene.DebugCheck();continue;}
                 if(frame==1 || frame==7 || frame==13) {
                     Diagnostic diagnostic;
                     if(consumer) {xg::GpuSlotInfo old;Check(consumer->reader.Status(0,old)==xg::PairRead::Invalid,"old reader detects replaced swapchain generation");}
@@ -102,9 +104,9 @@ int main(int argc,char** argv) {
                 scene.Wait();scene.DebugCheck();
             }
             scene.eyes.Reset();scene.Wait();chain.Reset();
-            vrx::dx12::Counts retired;xg::GpuSlotInfo closed;const auto until=GetTickCount64()+5000;
+            if(consumer){vrx::dx12::Counts retired;xg::GpuSlotInfo closed;const auto until=GetTickCount64()+5000;
             while(GetTickCount64()<until) {Hr(counts(&retired,sizeof(retired)));if(consumer->reader.Status(0,closed)==xg::PairRead::Closed)break;Sleep(1);}
-            Check(consumer->reader.Status(0,closed)==xg::PairRead::Closed,"swapchain destruction closes the shared stream");
+            Check(consumer->reader.Status(0,closed)==xg::PairRead::Closed,"swapchain destruction closes the shared stream");}
             }
         }
         if(serve && !counts){std::puts("PASS: ordinary native DX12 fixture exited without a stereo bridge");return 0;}
@@ -115,8 +117,8 @@ int main(int argc,char** argv) {
             std::puts("PASS: serving fixture shut down cleanly");return 0;
         }
         Check(result.version==4 && !result.hookFailures && !result.mirrorStops,"presentation has no hook or replay failures");
-        Check(result.swapchains==1 && result.presentations==18 && result.publications==18 && !result.presentDrops && result.resizes==2,"one publication per real Present and two resize transactions");
-        Check(result.devices==1 && result.mirrorReplays==18 && result.draws==12 && result.indexedDraws==6,"the app renders once; internal publisher and consumer are excluded from interception");
+        Check(result.swapchains==1 && result.presentations==(recordOnly?0u:18u) && result.publications==(recordOnly?0u:18u) && !result.presentDrops && result.resizes==2,"real presentation publishes only with GPU replay, with two resize transactions");
+        Check(result.devices==1 && result.mirrorReplays==(recordOnly?0u:18u) && result.draws==12 && result.indexedDraws==6,"the app renders once; internal publisher and consumer are excluded from interception");
         Check(!result.mirrorLiveObjects,"swapchain and all shadow objects retire after app teardown");
         std::puts("PASS: native DX12 swapchain Present/Present1, GPU same-frame stereo, two resizes, odd extents, HUD, original view and cleanup");return 0;
     } catch(const std::exception& e) {std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
