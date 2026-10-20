@@ -283,4 +283,50 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorRendererMissing" xml:space="preserve"><value>VRX renderer is missing. Reinstall VRX or build the project.</value></data>
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
   <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
+  <data name="GeometryStereo" xml:space="preserve"><value>Geometry stereo — experimental Vulkan</value></data>
+  <data name="GeometryTip" xml:space="preserve"><value>Use stereo frames rendered by the game instead of AI depth. Requires the experimental Vulkan launcher and applies at the next Attach / Play.</value></data>
+  <data name="GeometryHint" xml:space="preserve"><value>Start the game with the experimental Vulkan launcher first, using the session name below. Use games that permit graphics layers. Each eye updates at half the game rate; AI depth, strength and desktop switching are unused.</value></data>
+  <data name="GeometrySession" xml:space="preserve"><value>Geometry session</value></data>
+  <data name="GeometrySessionTip" xml:space="preserve"><value>The session name used by the geometry launcher, such as game.</value></data>
+  <data name="ErrorGeometrySession" xml:space="preserve"><value>Geometry session must contain 1–64 letters, numbers, hyphens or underscores.</value></data>
+  <data name="ErrorGeometryNeedsGame" xml:space="preserve"><value>Geometry stereo needs a game started with the Vulkan launcher. Select its game window instead of a whole display.</value></data>
+  <data name="StereoPath" xml:space="preserve"><value>Stereo method</value></data>
+  <data name="PathDepth" xml:space="preserve"><value>Depth estimate</value></data>
+  <data name="PathVulkan" xml:space="preserve"><value>Vulkan</value></data>
+  <data name="PathDxvk" xml:space="preserve"><value>DXVK</value></data>
+  <data name="PathDx12" xml:space="preserve"><value>DX12 · unavailable</value></data>
+  <data name="PathDx12Unavailable" xml:space="preserve"><value>Native DirectX 12 geometry stereo is not implemented yet. Choose depth estimate for a DX12 game.</value></data>
+  <data name="PathDepthTip" xml:space="preserve"><value>Attach to this window using VRX depth estimation. No game restart needed.</value></data>
+  <data name="PathGeometryTip" xml:space="preserve"><value>Try geometry stereo. Attach to an existing VRX stream, or review a game restart first.</value></data>
+  <data name="PathForWindow" xml:space="preserve"><value>{0} for {1}</value></data>
+  <data name="GeometryRestartTitle" xml:space="preserve"><value>Try {0} stereo</value></data>
+  <data name="GeometryRestartIntro" xml:space="preserve"><value>Restart {0} to try {1} geometry stereo?</value></data>
+  <data name="GeometryRestartSave" xml:space="preserve"><value>Save your progress first. VRX will close this game normally and restart it with the selected stereo path. Other games keep running.</value></data>
+  <data name="GeometryArguments" xml:space="preserve"><value>Game arguments</value></data>
+  <data name="GeometryArgumentsHint" xml:space="preserve"><value>Your current arguments are preserved. Check the rendering option for this game; non-Unreal games may need a different Vulkan or DirectX 11 setting.</value></data>
+  <data name="GeometryWorkingFolder" xml:space="preserve"><value>Working folder</value></data>
+  <data name="GeometrySteamId" xml:space="preserve"><value>Steam App ID (optional)</value></data>
+  <data name="GeometrySeparation" xml:space="preserve"><value>Geometry separation (clip units)</value></data>
+  <data name="GeometryConvergence" xml:space="preserve"><value>Geometry convergence</value></data>
+  <data name="GeometryCancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="GeometryRestartAction" xml:space="preserve"><value>Restart game and try</value></data>
+  <data name="ErrorLaunchArguments" xml:space="preserve"><value>VRX could not read the original game command line. Leave the game running and try again.</value></data>
+  <data name="ErrorGeometryLayerMissing" xml:space="preserve"><value>The geometry stereo files are missing. Build or install the optional VRX geometry backend before trying Vulkan or DXVK.</value></data>
+  <data name="StatusDxvkDownload" xml:space="preserve"><value>Downloading and checking the DXVK 2.7.1 bridge…</value></data>
+  <data name="ErrorDxvkHash" xml:space="preserve"><value>The DXVK download failed its integrity or contents check. The game has not been restarted.</value></data>
+  <data name="ErrorGeometryManifest" xml:space="preserve"><value>VRX could not verify ownership of the temporary game files. The files were left untouched.</value></data>
+  <data name="ErrorGeometryX64" xml:space="preserve"><value>Geometry stereo currently supports 64-bit x86 games only. Depth estimate is available for this window.</value></data>
+  <data name="ErrorGeometryExistingDll" xml:space="preserve"><value>VRX will not replace an existing game file: {0}. Choose depth estimate, or remove the conflicting wrapper yourself before trying geometry stereo.</value></data>
+  <data name="ErrorGeometryClose" xml:space="preserve"><value>The game did not close normally. Finish saving or dismiss its quit dialog, then try again. VRX will not force it to close.</value></data>
+  <data name="ErrorGeometryLaunch" xml:space="preserve"><value>The geometry game process could not be started.</value></data>
+  <data name="StatusGeometryWaiting" xml:space="preserve"><value>Waiting for the game to produce same-frame stereo…</value></data>
+  <data name="ErrorGeometryNoStream" xml:space="preserve"><value>The game did not produce a matching geometry stream. You can choose depth estimate for its window. Diagnostic logs: {0}</value></data>
+  <data name="ErrorGeometryFolder" xml:space="preserve"><value>Choose an existing working folder.</value></data>
+  <data name="ErrorGeometrySteamId" xml:space="preserve"><value>The Steam App ID must be empty or contain digits only.</value></data>
+  <data name="ErrorGeometryTuning" xml:space="preserve"><value>Separation must be greater than 0 and at most 64; convergence must be between 0 and 0.25.</value></data>
+  <data name="StatusGeometryManualRestart" xml:space="preserve"><value>This saved stereo method needs a game restart. Use Choose or Attach / Play to review it; auto-attach will not restart your game.</value></data>
+  <data name="StatusGeometryPreparing" xml:space="preserve"><value>Preparing the geometry stereo attempt…</value></data>
+  <data name="StatusGeometryCancelled" xml:space="preserve"><value>Game restart cancelled. The game was left running.</value></data>
+  <data name="StatusGeometryRestarting" xml:space="preserve"><value>Restarting the selected game with geometry stereo…</value></data>
+  <data name="ErrorGeometryFilesBusy" xml:space="preserve"><value>Another VRX operation is changing this game's launch files. Try again.</value></data>
 </root>

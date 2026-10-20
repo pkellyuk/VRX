@@ -17,6 +17,26 @@ public sealed class Profile
     public double Strength { get; set; } = 1;
     public bool Follow { get; set; }
     public bool Stereo { get; set; } = true;
+    // Geometry input is selected at Attach / Play. The game must already be
+    // running with the explicit Vulkan launcher using this session name.
+    public bool GeometryStereo { get; set; }
+    // Empty migrates legacy profiles from the geometry checkbox. New choices
+    // belong to this executable, never the display or base settings.
+    public string StereoBackend { get; set; } = "";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string EffectiveStereoBackend => StereoPaths.Valid(StereoBackend) ? StereoBackend : GeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
+    public string? GeometryLaunchArguments { get; set; }
+    public string GeometryWorkingDirectory { get; set; } = "";
+    public string GeometrySteamAppId { get; set; } = "";
+    public float GeometrySeparation { get; set; } = 0.032f;
+    public float GeometryConvergence { get; set; }
+    public void SelectStereoBackend(string backend) {
+        if (!StereoPaths.Valid(backend)) throw new ArgumentException(nameof(backend));
+        StereoBackend = backend; GeometryStereo = StereoPaths.Geometry(backend);
+    }
+    public string GeometrySession { get; set; } = "game";
+    public static bool ValidGeometrySession(string? session) => session is { Length: > 0 and <= 64 } &&
+        session.All(c => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '-' or '_');
     public bool ForegroundRefinement { get; set; } = true;
     // Game frame timing (frame_timing.h): latest frame (both false), delayed to depth
     // (DelayToDepth, v6 snapshot) or matched to depth (MatchFrameToDepth, which wins if
@@ -103,7 +123,10 @@ public sealed class Profile
     public int RecenterKey { get; set; } = 0xBB;
     public int MenuKey { get; set; } = 0x77;
 
-    public bool Valid() => Version == 1 && Range(Width, 1, 10) && Range(Distance, 1, 8) &&
+    public bool Valid() => Version == 1 && (string.IsNullOrEmpty(StereoBackend) || StereoPaths.Valid(StereoBackend)) &&
+        float.IsFinite(GeometrySeparation) && GeometrySeparation is > 0 and <= 64 && float.IsFinite(GeometryConvergence) && GeometryConvergence is >= 0 and <= 0.25f &&
+        (string.IsNullOrEmpty(GeometrySteamAppId) || GeometrySteamAppId.All(char.IsAsciiDigit)) && Range(Width, 1, 10) && Range(Distance, 1, 8) &&
+        (!GeometryStereo || ValidGeometrySession(GeometrySession)) &&
         Range(Height, -2, 2) && Range(Horizontal, -3, 3) && Range(Strength, 0, 2) &&
         ScreenCurve is >= 0 and <= 100 && AmbilightStrength is >= 0 and <= 100 && TryParseColor(WorldColor, out _) && Room is >= 0 and <= 100 &&
         RoomGlass is >= 0 and <= 100 && RoomReflections is >= 0 and <= 100 && RoomLight is >= 0 and <= 100 && TryParseColor(RoomLightColor, out _) &&
@@ -126,7 +149,13 @@ public sealed class ProfileStore(string root)
         var copy = JsonSerializer.Deserialize<Profile>(JsonSerializer.Serialize(profile))!;
         copy.ExecutablePath = "";
         copy.PreferredWindowTitle = "";
+        ClearLaunchChoice(copy);
         AtomicWrite(BaseFile, JsonSerializer.Serialize(copy, new JsonSerializerOptions { WriteIndented = true }));
+    }
+    private static void ClearLaunchChoice(Profile p) {
+        p.SelectStereoBackend(StereoPaths.Depth); p.GeometrySession = "game";
+        p.GeometryLaunchArguments = null; p.GeometryWorkingDirectory = p.GeometrySteamAppId = "";
+        p.GeometrySeparation = .032f; p.GeometryConvergence = 0;
     }
     // The saved base, or VRX's own defaults if there is none (or it is unreadable).
     public Profile BaseSettings()
@@ -140,6 +169,7 @@ public sealed class ProfileStore(string root)
                 {
                     saved.ExecutablePath = "";
                     saved.PreferredWindowTitle = "";
+                    ClearLaunchChoice(saved);
                     saved.DepthGpu ??= Gpus.Same;
                     saved.WorldColor ??= "#000000";
                     saved.RoomLightColor ??= Profile.DefaultRoomLightColor;
@@ -265,6 +295,11 @@ public sealed class ProfileStore(string root)
                 var copy = JsonSerializer.Deserialize<Profile>(JsonSerializer.Serialize(settings))!;
                 copy.ExecutablePath = saved.ExecutablePath;
                 copy.PreferredWindowTitle = saved.PreferredWindowTitle;
+                copy.StereoBackend = saved.StereoBackend; copy.GeometryStereo = saved.GeometryStereo;
+                copy.GeometrySession = saved.GeometrySession;
+                copy.GeometryLaunchArguments = saved.GeometryLaunchArguments;
+                copy.GeometryWorkingDirectory = saved.GeometryWorkingDirectory; copy.GeometrySteamAppId = saved.GeometrySteamAppId;
+                copy.GeometrySeparation = saved.GeometrySeparation; copy.GeometryConvergence = saved.GeometryConvergence;
                 Save(copy);
                 applied++;
             }

@@ -42,6 +42,8 @@
 //            --image=PATH         still image
 //            --synthetic          the moving test scene (with --truth: ground-truth depth)
 //   options: --scale=N --no-warp --paired --no-smooth --tau=SECONDS
+//            --geometry-session=NAME  consume complete left/right pairs, without AI depth
+//            --check-geometry         check pair upload/copy without starting OpenXR
 //            --no-foreground       disable experimental foreground crop passes
 //            --fill=mirror|stretch  disocclusion fill (default mirror, see FillHole)
 //            --dilate=N             widen foreground depth by N depth px (default 2)
@@ -136,6 +138,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -156,6 +159,9 @@ using Microsoft::WRL::ComPtr;
 #include "ambilight.h"
 #include "screen_curve.h"
 #include "room.h"
+#include "geometry_copy.h"
+#include "../xgstereo/gpu_transport.h"
+#include "../xgstereo/pair_transport.h"
 
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wdx = winrt::Windows::Graphics::DirectX;
@@ -240,7 +246,7 @@ static void Log(const char* fmt, ...)
 }
 
 // ------------------------------------------------------------------ types
-enum class SourceKind { Capture, Image, Synthetic };
+enum class SourceKind { Capture, Image, Synthetic, Geometry };
 
 struct Options
 {
@@ -256,6 +262,9 @@ struct Options
     HWND captureHwnd = nullptr;
     bool desktopWhenAway = false;       // --desktop-when-away: show the game's display while the game is not in front
     std::wstring imagePath;
+    std::wstring geometrySession;        // --geometry-session: complete stereo pairs, no depth inference
+    DWORD geometryPid = 0;               // optional stream owner check when attaching from the desktop UI
+    bool checkGeometry = false;          // verify real source upload/copy offline, without OpenXR
     bool doWarp = true;
     float warpScale = 1.0f;
     bool useTruth = false;
@@ -439,6 +448,14 @@ struct App
     // source
     int srcW = 0, srcH = 0;                              // source texture size
     int colorW = 0, colorH = 0;                          // presented size
+    xg::PairReader geometryReader;
+    xg::GpuReader geometryGpuReader;
+    xg::GpuSlotInfo geometryGpuFrame{};
+    bool geometryGpu = false;
+    xg::PairFrame geometryFrame;
+    uint64_t geometrySequence = 0;
+    bool geometryUsable = false;
+    ComPtr<ID3D12Resource> geometryLight;                // left eye for ambilight and room lighting
     DXGI_FORMAT srcFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     ComPtr<ID3D12Resource> srcTex[SRC_RING];
     ComPtr<ID3D12Resource> srcUp[RING];                  // CPU sources only
@@ -655,7 +672,8 @@ static const UINT DESC_CURVE_MAIN = SRC_RING + 12;       // 5: warped pictures, 
 static const UINT DESC_CURVE_TEST = SRC_RING + 17;       // 5: the same for the self-test
 static const UINT DESC_ROOM = SRC_RING + 22;             // 5: decode table, glow, emitters (UAV), lightmap (UAV), mirror picture (UAV)
 static const UINT DESC_CURVE_BENCH = SRC_RING + 27;      // 5: the same as DESC_CURVE_MAIN for the room benchmark (--bench-room)
-static const UINT DESC_COUNT = SRC_RING + 32;
+static const UINT DESC_GEOMETRY_LIGHT = SRC_RING + 32;   // mono reference for lighting a geometry pair
+static const UINT DESC_COUNT = SRC_RING + 33;
 static const int WORLD_W = 8;                            // the world colour layer: one colour needs few pixels
 static const int TEST_EYE_W = 256, TEST_EYE_H = 192;     // self-test eye buffers
 
@@ -690,6 +708,8 @@ static UINT64 SubmitAndSignal(App& app)
 {
     ID3D12CommandList* lists[] = { app.cmdList.Get() };
     app.gfxQueue->ExecuteCommandLists(1, lists);
+    if (app.geometryGpu && !app.geometryGpuReader.Submitted(app.gfxQueue.Get()))
+        Log("Geometry GPU source: release fence signal failed");
     app.gfxQueue->Signal(app.fence.Get(), ++app.fenceVal);
     return app.fenceVal;
 }
@@ -817,17 +837,18 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
     if (!argv || !opt) return false;
 
     auto widen = [](const char* s) { return std::wstring(winrt::to_hstring(s)); };
+    bool explicitOtherSource = false;
     for (int i = 1; i < argc; i++)
     {
         const char* a = argv[i];
         if (!a || !a[0]) continue;
-        if (!strcmp(a, "--capture")) { opt->source = SourceKind::Capture; continue; }
-        if (!strncmp(a, "--monitor=", 10)) { opt->source = SourceKind::Capture; opt->monitorIndex = atoi(a + 10); continue; }
-        if (!strncmp(a, "--window=", 9)) { opt->source = SourceKind::Capture; opt->windowTitle = widen(a + 9); continue; }
+        if (!strcmp(a, "--capture")) { explicitOtherSource = true; opt->source = SourceKind::Capture; continue; }
+        if (!strncmp(a, "--monitor=", 10)) { explicitOtherSource = true; opt->source = SourceKind::Capture; opt->monitorIndex = atoi(a + 10); continue; }
+        if (!strncmp(a, "--window=", 9)) { explicitOtherSource = true; opt->source = SourceKind::Capture; opt->windowTitle = widen(a + 9); continue; }
         if (!strncmp(a, "--exe=", 6))
         {
             if (!a[6]) { Log("ParseArgs: --exe requires an executable filename"); return false; }
-            opt->source = SourceKind::Capture; opt->executable = widen(a + 6); continue;
+            explicitOtherSource = true; opt->source = SourceKind::Capture; opt->executable = widen(a + 6); continue;
         }
         if (!strcmp(a, "--check-source")) { opt->checkSource = true; continue; }
         if (!strncmp(a, "--control=", 10)) { opt->controlPath = widen(a + 10); continue; }
@@ -835,8 +856,21 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strncmp(a, "--pid=", 6)) { opt->capturePid = strtoul(a + 6, nullptr, 10); if (!opt->capturePid) return false; continue; }
         if (!strcmp(a, "--desktop-when-away")) { opt->desktopWhenAway = true; continue; }
         if (!strncmp(a, "--hwnd=", 7)) { opt->captureHwnd = (HWND)(uintptr_t)strtoull(a + 7, nullptr, 0); if (!opt->captureHwnd) return false; continue; }
-        if (!strncmp(a, "--image=", 8)) { opt->source = SourceKind::Image; opt->imagePath = widen(a + 8); continue; }
-        if (!strcmp(a, "--synthetic")) { opt->source = SourceKind::Synthetic; continue; }
+        if (!strncmp(a, "--image=", 8)) { explicitOtherSource = true; opt->source = SourceKind::Image; opt->imagePath = widen(a + 8); continue; }
+        if (!strcmp(a, "--synthetic")) { explicitOtherSource = true; opt->source = SourceKind::Synthetic; continue; }
+        if (!strncmp(a, "--geometry-session=", 19))
+        {
+            opt->geometrySession = widen(a + 19);
+            if (!xg::ValidSession(opt->geometrySession)) { Log("ParseArgs: invalid geometry session name"); return false; }
+            opt->source = SourceKind::Geometry; continue;
+        }
+        if (!strcmp(a, "--check-geometry")) { opt->checkGeometry = true; continue; }
+        if (!strncmp(a, "--geometry-pid=", 15))
+        {
+            char* end = nullptr; const auto pid = strtoull(a + 15, &end, 10);
+            if (end == a + 15 || *end || !pid || pid > UINT32_MAX) { Log("ParseArgs: invalid geometry producer PID"); return false; }
+            opt->geometryPid = (DWORD)pid; continue;
+        }
         if (!strcmp(a, "--no-warp")) { opt->doWarp = false; continue; }
         if (!strncmp(a, "--scale=", 8)) { opt->warpScale = (float)atof(a + 8); continue; }
         if (!strncmp(a, "--curve=", 8))
@@ -963,6 +997,17 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
     if (opt->checkSource && (opt->source != SourceKind::Capture || (opt->windowTitle.empty() && opt->executable.empty())))
     { Log("ParseArgs: --check-source requires --exe or --window"); return false; }
     if (opt->testDepthFailures < 0 || opt->testDepthFailures > 10) { Log("ParseArgs: --test-depth-failures must be 0..10"); return false; }
+    if (opt->checkGeometry && opt->geometrySession.empty()) { Log("ParseArgs: --check-geometry requires --geometry-session"); return false; }
+    if (opt->geometryPid && opt->geometrySession.empty()) { Log("ParseArgs: --geometry-pid requires --geometry-session"); return false; }
+    if (!opt->geometrySession.empty())
+    {
+        if (explicitOtherSource || opt->source != SourceKind::Geometry || opt->submitDepth || opt->freezePose || opt->depthLie || opt->abSeconds > 0 ||
+            opt->selfTestOnly || opt->doDump || opt->useTruth || opt->desktopWhenAway)
+        { Log("ParseArgs: geometry sessions cannot be combined with other sources, depth diagnostics, selftest, dump, or desktop switching"); return false; }
+        opt->paired = opt->delayed = opt->steady = opt->fuse = opt->foreground = false;
+        opt->depthGpu = GpuRequest{};
+        Log("ParseArgs: geometry stereo session '%ls' (no AI depth or stereo warp)", opt->geometrySession.c_str());
+    }
     if (opt->abSeconds < 0.0 || opt->smoothTau <= 0.0) { Log("ParseArgs: --ab must be >= 0 and --tau > 0"); return false; }
     if ((opt->abSeconds > 0.0 || opt->depthLie) && !opt->submitDepth) { Log("ParseArgs: --ab / --depth-lie imply --submit-depth"); opt->submitDepth = true; }
     if (opt->submitDepth || opt->freezePose)
@@ -990,10 +1035,10 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
             opt->room > 0 ? "" : " (it needs the room: --room above 0)");
 
     Log("ParseArgs: source %s (monitor %d, window '%ls', image '%ls') seconds %.0f",
-        opt->source == SourceKind::Capture ? "capture" : opt->source == SourceKind::Image ? "image" : "synthetic",
+        opt->source == SourceKind::Capture ? "capture" : opt->source == SourceKind::Image ? "image" : opt->source == SourceKind::Geometry ? "geometry pairs" : "synthetic",
         opt->monitorIndex, opt->windowTitle.c_str(), opt->imagePath.c_str(), opt->runSeconds);
     Log("ParseArgs: fill %s dilate %d vertical %d (-1 = per model)", opt->fillMode == FILL_MIRROR ? "mirror" : "stretch", opt->dilate, opt->dilateV);
-    Log("ParseArgs: depth model %s (%dx%d)", opt->model->name, opt->model->inW, opt->model->inH);
+    if (opt->source != SourceKind::Geometry) Log("ParseArgs: depth model %s (%dx%d)", opt->model->name, opt->model->inW, opt->model->inH);
     Log("ParseArgs: steady depth %s, model fusion %s, warp %s", opt->steady ? "on" : "off", opt->fuse ? "on" : "off",
         opt->subpixel ? "sub-pixel" : "whole pixels");
     const auto& g = opt->depthGpu;
@@ -1792,7 +1837,51 @@ static bool InitSource(App& app)
 {
     Log("InitSource: enter");
 
-    if (app.opt.source == SourceKind::Capture)
+    if (app.opt.source == SourceKind::Geometry)
+    {
+        HANDLE gpuMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, xg::GpuName(app.opt.geometrySession, L".frames").c_str());
+        if (gpuMapping)
+        {
+            CloseHandle(gpuMapping);
+            if (!app.geometryGpuReader.Open(app.device.Get(), app.opt.geometrySession))
+            { Log("InitSource: FAIL shared GPU geometry unavailable (adapter, consumer or resource mismatch)"); return false; }
+            const auto& header = app.geometryGpuReader.Header();
+            if (app.opt.geometryPid && header.pid != app.opt.geometryPid)
+            { Log("InitSource: FAIL geometry session belongs to another process"); return false; }
+            const auto deadline = GetTickCount64() + 5000;
+            xg::PairRead status;
+            do {
+                status = app.geometryGpuReader.Status(0, app.geometryGpuFrame);
+                if (status == xg::PairRead::NewPair || status == xg::PairRead::Invalid || status == xg::PairRead::Closed) break;
+                Sleep(5);
+            } while (GetTickCount64() < deadline);
+            if (status != xg::PairRead::NewPair) { Log("InitSource: FAIL no completed GPU geometry pair (%d)", int(status)); return false; }
+            app.geometryGpu = true; app.srcW = int(header.width) * 2; app.srcH = int(header.height);
+            app.srcFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+            Log("InitSource: GPU texture sharing, %s eyes, no CPU pixel upload", header.kind == uint32_t(xg::GpuFrameKind::SameFrame) ? "same-frame" : "alternating-frame");
+        }
+        else
+        {
+        if (!app.geometryReader.Open(app.opt.geometrySession))
+        { Log("InitSource: FAIL geometry producer unavailable; start it before VRX"); return false; }
+        xg::PairRead status = xg::PairRead::Empty;
+        const ULONGLONG deadline = GetTickCount64() + 5000;
+        do
+        {
+            status = app.geometryReader.Read(app.geometryFrame);
+            if (status == xg::PairRead::NewPair) break;
+            if (status == xg::PairRead::Invalid || status == xg::PairRead::Closed || status == xg::PairRead::Stale) break;
+            Sleep(5);
+        } while (GetTickCount64() < deadline);
+        if (status != xg::PairRead::NewPair) { Log("InitSource: FAIL no valid geometry pair within 5 s (%d)", (int)status); return false; }
+        if (app.opt.geometryPid && app.geometryFrame.header.producerPid != app.opt.geometryPid)
+        { Log("InitSource: FAIL geometry session belongs to another process"); return false; }
+        app.srcW = (int)app.geometryFrame.header.eyeWidth * 2;
+        app.srcH = (int)app.geometryFrame.header.eyeHeight;
+        app.srcFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+        }
+    }
+    else if (app.opt.source == SourceKind::Capture)
     {
         if (!InitCaptureItem(app)) return false;
     }
@@ -1812,6 +1901,14 @@ static bool InitSource(App& app)
     double k = app.srcW > MAX_COLOR_W ? (double)MAX_COLOR_W / app.srcW : 1.0;
     app.colorW = std::max(2, (int)(app.srcW * k + 0.5) & ~1);
     app.colorH = std::max(2, (int)(app.srcH * k + 0.5) & ~1);
+    if (app.opt.source == SourceKind::Geometry)
+    {
+        // The reference transport uses exact per-eye dimensions. A resize is
+        // rejected during playback and requires restarting this VRX session.
+        app.colorW = app.srcW / 2; app.colorH = app.srcH;
+        if (!MakeSourceTexture(app, app.colorW, app.colorH, app.srcFormat, false, app.geometryLight)) return false;
+        MakeTextureSrv(app, app.geometryLight.Get(), app.srcFormat, DESC_GEOMETRY_LIGHT);
+    }
 
     const bool shared = app.opt.source == SourceKind::Capture;
     for (int i = 0; i < SRC_RING; i++)
@@ -1821,7 +1918,7 @@ static bool InitSource(App& app)
         MakeTextureSrv(app, app.srcTex[i].Get(), app.srcFormat, DESC_SRC0 + i);
     }
 
-    if (!shared)
+    if (!shared && !app.geometryGpu)
     {
         D3D12_RESOURCE_DESC td = app.srcTex[0]->GetDesc();
         UINT64 total = 0;
@@ -1832,7 +1929,7 @@ static bool InitSource(App& app)
                             D3D12_RESOURCE_STATE_GENERIC_READ, app.srcUp[i], (void**)&app.srcUpMapped[i])) return false;
         }
     }
-    else if (!StartCapture(app)) return false;
+    else if (shared && !StartCapture(app)) return false;
 
     Log("InitSource: exit ok, source %dx%d (format %d) presented at %dx%d, depth at %dx%d",
         app.srcW, app.srcH, (int)app.srcFormat, app.colorW, app.colorH, W, H);
@@ -1858,6 +1955,48 @@ static SourceFrames::WriteRef RecordCpuSource(App& app, const std::vector<unsign
     src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     src.PlacedFootprint = app.srcFootprint;
     app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);   // simultaneous-access: no barriers
+    return frame;
+}
+
+// A producer can disappear while OpenXR is compiling shaders. Always validate
+// freshness again before using the cached first pair, and on every render tick.
+static SourceFrames::WriteRef RecordGeometrySource(App& app, int ringSlot)
+{
+    if (app.geometryGpu)
+    {
+        const auto status = app.geometryGpuReader.Status(app.geometrySequence, app.geometryGpuFrame);
+        const auto now = GetTickCount64();
+        const bool usable = (status == xg::PairRead::NewPair || status == xg::PairRead::Unchanged || status == xg::PairRead::Empty || status == xg::PairRead::Busy) &&
+            app.geometryGpuFrame.publishedMs <= now && now - app.geometryGpuFrame.publishedMs <= xg::PairMaxAgeMs;
+        if (usable != app.geometryUsable) Log("Geometry GPU source: %s", usable ? "paired textures available" : "unavailable");
+        app.geometryUsable = usable;
+        if (!usable || status != xg::PairRead::NewPair) return {};
+        auto frame = ReserveSource(app);
+        if (!frame || !app.geometryGpuReader.Record(app.gfxQueue.Get(), app.cmdList.Get(), app.srcTex[frame->index].Get(), app.geometrySequence, app.geometryGpuFrame)) return {};
+        app.geometrySequence = app.geometryGpuFrame.sequence;
+        return frame;
+    }
+    const auto status = app.geometryReader.Read(app.geometryFrame, app.geometrySequence);
+    const uint64_t now = GetTickCount64();
+    bool usable = (status == xg::PairRead::NewPair || status == xg::PairRead::Unchanged || status == xg::PairRead::Busy) &&
+        app.geometryFrame.header.publishedMs <= now && now - app.geometryFrame.header.publishedMs <= xg::PairMaxAgeMs &&
+        app.geometryFrame.header.eyeWidth * 2 == (uint32_t)app.srcW && app.geometryFrame.header.eyeHeight == (uint32_t)app.srcH;
+    usable = usable && (!app.opt.geometryPid || app.geometryFrame.header.producerPid == app.opt.geometryPid);
+    if (usable != app.geometryUsable)
+        Log("Geometry source: %s (status %d; resize requires restarting VRX)", usable ? "paired frames available" : "unavailable", (int)status);
+    app.geometryUsable = usable;
+    if (!usable || app.geometryFrame.header.sequence == app.geometrySequence) return {};
+    auto frame = ReserveSource(app);
+    if (!frame) return {};
+    const auto* pixels = app.geometryFrame.rgba.data();
+    for (int y = 0; y < app.srcH; ++y)
+        memcpy(app.srcUpMapped[ringSlot] + app.srcFootprint.Offset + (size_t)y * app.srcFootprint.Footprint.RowPitch,
+            pixels + (size_t)y * app.geometryFrame.header.stride, app.geometryFrame.header.stride);
+    D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+    dst.pResource = app.srcTex[frame->index].Get(); dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.pResource = app.srcUp[ringSlot].Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; src.PlacedFootprint = app.srcFootprint;
+    app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    app.geometrySequence = app.geometryFrame.header.sequence;
     return frame;
 }
 
@@ -7921,6 +8060,7 @@ static bool BenchRoom(App& app)
 // -------------------------------------------------------------- frame loop
 static void RunFrameLoop(App& app)
 {
+    const bool geometry = app.opt.source == SourceKind::Geometry;
     Log("RunFrameLoop: enter (%.0fs)%s%s", app.opt.runSeconds, app.opt.doWarp ? "" : " [warp disabled]",
         app.opt.paired ? " [paired colour+depth]" : " [latest colour + latest completed depth]");
 
@@ -8009,11 +8149,11 @@ static void RunFrameLoop(App& app)
                 app.opt.keepDashboard = next.autoDismiss == 0;
                 if (app.opt.paired != (next.paired != 0))
                     Log("Frame matching: %s", next.paired ? "enabled (matching colour and depth; added delay)" : "disabled (latest colour)");
-                app.opt.paired = next.paired != 0;
-                const bool foreground = next.foreground != 0 && next.stereo != 0;
+                app.opt.paired = !geometry && next.paired != 0;
+                const bool foreground = app.opt.source != SourceKind::Geometry && next.foreground != 0 && next.stereo != 0;
                 if (app.foregroundEnabled.exchange(foreground) != foreground)
                     Log("Foreground refinement: %s", foreground ? "enabled" : "disabled");
-                if (next.version >= 4)
+                if (next.version >= 4 && app.opt.source != SourceKind::Geometry)
                 {
                     const ModelSpec* model = next.fastModel ? &kZipDepth : &kDepthAnythingV2;
                     if (app.requestedModel.exchange(model) != model)
@@ -8024,7 +8164,7 @@ static void RunFrameLoop(App& app)
                     app.opt.subpixel = next.subpixel != 0;
                     Log("Stereo warp: %s", app.opt.subpixel ? "sub-pixel (smooth depth)" : "whole pixels");
                 }
-                if (next.version >= 6 && app.opt.delayed != (next.delayed != 0))
+                if (!geometry && next.version >= 6 && app.opt.delayed != (next.delayed != 0))
                 {
                     app.opt.delayed = next.delayed != 0;
                     Log("Game frame timing: %s", FrameTimingName(app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest));
@@ -8446,6 +8586,12 @@ static void RunFrameLoop(App& app)
                     if (newSrc) newSrc->time = t;
                 }
                 SourceRef source = newSrc ? SourceRef(newSrc) : app.sources.Latest();
+                if (geometry)
+                {
+                    newSrc = RecordGeometrySource(app, ring);
+                    source = newSrc ? SourceRef(newSrc) : app.sources.Latest();
+                    if (!app.geometryUsable) source.reset();
+                }
 
                 // --- latest COMPLETED depth
                 bool tookSlot = false;
@@ -8461,7 +8607,7 @@ static void RunFrameLoop(App& app)
                 }
 
                 // --- game frame timing (frame_timing.h)
-                const FrameTiming timing = app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest;
+                const FrameTiming timing = geometry ? FrameTiming::Latest : app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest;
                 if (timing == FrameTiming::Delayed && source && !newSrc)
                 {
                     if (!history.empty() && history.back()->layout != source->layout) history.clear();
@@ -8487,10 +8633,12 @@ static void RunFrameLoop(App& app)
                     source->layout == cur->source->layout &&
                     UsableDepth(app.depthHealthy.load(), source->seq, source->time,
                         cur->source->seq, cur->source->time);
+                if (geometry) stereo = app.opt.doWarp && source;
                 if (stereo != wasStereo)
-                    Log("RunFrameLoop: %s", stereo ? "stereo depth available" : "flat viewing (depth unavailable or stale)");
+                    Log("RunFrameLoop: %s", geometry ? (stereo ? "geometry stereo available" : "geometry stereo disabled or unavailable") :
+                        (stereo ? "stereo depth available" : "flat viewing (depth unavailable or stale)"));
                 wasStereo = stereo;
-                if (app.opt.paired && stereo) source = cur->source;
+                if (!geometry && app.opt.paired && stereo) source = cur->source;
 
                 if (source)
                 {
@@ -8522,17 +8670,27 @@ static void RunFrameLoop(App& app)
                     c.exactLoad = (app.srcW == target.cw && app.srcH == target.ch) ? 1u : 0u;
                     c.fillMode = (uint32_t)app.opt.fillMode;
                     c.mirrorTol = MIRROR_TOL;
-                    RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c);
+                    if (geometry)
+                    {
+                        if (!RecordGeometryCopy(app.cmdList.Get(), app.srcTex[source->index].Get(), target.colorOut.Get(),
+                            app.geometryLight.Get(), (UINT)target.cw, (UINT)target.ch, stereo, bool(newSrc)))
+                            throw std::runtime_error("geometry picture resources do not match the producer");
+                    }
+                    else RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c);
                     if (!curvedScreen)
                         RecordCopyToSwapchain(app, target, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
                     drewSource = true;
 
+                    const UINT lightingSource = geometry ? DESC_GEOMETRY_LIGHT : DESC_SRC0 + (UINT)source->index;
+                    const int lightingW = geometry ? app.colorW : app.srcW;
+                    const int lightingH = geometry ? app.colorH : app.srcH;
+
                     if (glowWanted)
                     {
-                        const AmbiConstants a = MakeAmbiConstants(app, app.srcW, app.srcH, screen.size.width, screen.size.height,
+                        const AmbiConstants a = MakeAmbiConstants(app, lightingW, lightingH, screen.size.width, screen.size.height,
                                                                   app.opt.ambiStrength / 100.0f, !app.ambiHistory, LinearBlend(app));
                         const bool toLayer = glowLayer && glowImage.ready;
-                        RecordAmbilight(app, DESC_SRC0 + (UINT)source->index, a, toLayer ? app.aimgs[glowImage.index].texture : nullptr);
+                        RecordAmbilight(app, lightingSource, a, toLayer ? app.aimgs[glowImage.index].texture : nullptr);
                         app.ambiHistory = true;
                         drewGlow = toLayer;
                         glowRectW = a.rectW; glowRectH = a.rectH;
@@ -8569,17 +8727,17 @@ static void RunFrameLoop(App& app)
                         look.glass = app.opt.roomGlass; look.reflect = app.opt.roomReflect; look.light = app.opt.roomLight;
                         look.lightRgb = app.opt.roomLightColor;
                         const RoomShading shading = MakeRoomShading(room, app.opt.room, app.opt.worldColor, screen.size.width * screen.size.height, look);
-                        const RoomConstants rc = MakeRoomConstants(room, shading, roomLayout, view, app.srcW, app.srcH, alpha);
+                        const RoomConstants rc = MakeRoomConstants(room, shading, roomLayout, view, lightingW, lightingH, alpha);
                         memcpy(app.roomCbMapped + (size_t)ring * sizeof(RoomConstants), &rc, sizeof(rc));
                         roomCb = app.roomCbUp->GetGPUVirtualAddress() + (UINT64)ring * sizeof(RoomConstants);
-                        ID3D12Resource* geometry = nullptr;
+                        ID3D12Resource* roomGeometryUpload = nullptr;
                         if (roomGeometryDirty)
                         {
                             memcpy(app.roomGeomMapped[ring], roomGeometry.data(), roomGeometry.size() * sizeof(RoomEmitter));
-                            geometry = app.roomGeomUp[ring].Get();
+                            roomGeometryUpload = app.roomGeomUp[ring].Get();
                             roomGeometryDirty = false;
                         }
-                        if (!RecordRoomLight(app, DESC_SRC0 + (UINT)source->index, roomCb, geometry, (UINT)roomLayout.count(), rc.mirrorH,
+                        if (!RecordRoomLight(app, lightingSource, roomCb, roomGeometryUpload, (UINT)roomLayout.count(), rc.mirrorH,
                                              splitTimes ? timeBase : UINT_MAX))
                             splitDone = false;
                         roomEyePso = RoomEyePso(app, rc);
@@ -8606,7 +8764,12 @@ static void RunFrameLoop(App& app)
                                                       (UINT64)timeBase * sizeof(UINT64));
                         app.timeCount[ring] = count;
                     }
-                    RecordWarpOutputsBackToUav(app, target);
+                    if (geometry)
+                    {
+                        GeometryBarrier(app.cmdList.Get(), target.colorOut.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                        GeometryBarrier(app.cmdList.Get(), app.geometryLight.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
+                    }
+                    else RecordWarpOutputsBackToUav(app, target);
                 }
                 app.cmdList->Close();
                 UINT64 fv = SubmitAndSignal(app);
@@ -8950,6 +9113,29 @@ static bool FirstSourceFrame(App& app)
 {
     Log("FirstSourceFrame: enter");
 
+    if (app.opt.source == SourceKind::Geometry)
+    {
+        if (FAILED(app.cmdAlloc[0]->Reset()) || FAILED(app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr))) return false;
+        SourceFrames::WriteRef source;
+        const auto deadline = GetTickCount64() + 5000;
+        do {
+            source = RecordGeometrySource(app, 0);
+            if (source || !app.geometryGpu) break;
+            // The producer can recycle an unclaimed texture between the
+            // metadata peek and claim. Retry a completed slot, never queue a
+            // GPU wait on an unfinished producer at headset startup.
+            Sleep(1);
+        } while (GetTickCount64() < deadline);
+        if (source) GeometryBarrier(app.cmdList.Get(), app.srcTex[source->index].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
+        if (FAILED(app.cmdList->Close())) return false;
+        if (!source) { Log("FirstSourceFrame: FAIL geometry pair unavailable after startup"); return false; }
+        const UINT64 fv = SubmitAndSignal(app);
+        WaitFence(app, fv);
+        app.sources.Publish(source, fv, NowSeconds());
+        app.frameFence[0] = fv;
+        return true;
+    }
+
     if (app.opt.source == SourceKind::Capture)
     {
         app.cap.thread = std::thread(CaptureMain, &app);
@@ -8972,6 +9158,92 @@ static bool FirstSourceFrame(App& app)
     app.sources.Publish(source, fv, 0.0);
     Log("FirstSourceFrame: exit ok (source texture %d)", source->index);
     return true;
+}
+
+// Exercise the actual geometry-source startup and upload path without a headset
+// or an OpenXR runtime. Read back each eye and the lighting reference exactly.
+static bool CheckGeometrySource(App& app)
+{
+    ComPtr<IDXGIFactory1> factory;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return false;
+    bool found = false;
+    for (UINT i = 0; ; ++i)
+    {
+        ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+        DXGI_ADAPTER_DESC1 desc{};
+        if (!adapter || FAILED(adapter->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) continue;
+        if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+        { app.adapterLuid = desc.AdapterLuid; app.minFeatureLevel = D3D_FEATURE_LEVEL_11_0; found = true; break; }
+    }
+    if (!found || !InitD3D(app) || !InitSource(app) || !FirstSourceFrame(app)) return false;
+    WarpTarget target;
+    if (!MakeWarpTarget(app, app.colorW, app.colorH, DESC_MAIN_TABLE, target)) return false;
+    auto source = app.sources.Latest();
+    if (!source) return false;
+    const auto desc = target.colorOut->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2]{};
+    UINT64 bytes = 0;
+    app.device->GetCopyableFootprints(&desc, 0, 2, 0, footprints, nullptr, nullptr, &bytes);
+    const UINT64 lightBase = (bytes + 511) & ~UINT64(511);
+    const auto lightDesc = app.geometryLight->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT lightFootprint{};
+    UINT64 lightBytes = 0;
+    app.device->GetCopyableFootprints(&lightDesc, 0, 1, lightBase, &lightFootprint, nullptr, nullptr, &lightBytes);
+    const UINT64 sourceBase = (lightBase + lightBytes + 511) & ~UINT64(511);
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT sourceFootprint{};
+    UINT64 sourceBytes = 0;
+    if (app.geometryGpu)
+    {
+        const auto sourceDesc = app.srcTex[source->index]->GetDesc();
+        app.device->GetCopyableFootprints(&sourceDesc, 0, 1, sourceBase, &sourceFootprint, nullptr, nullptr, &sourceBytes);
+    }
+    ComPtr<ID3D12Resource> readback;
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, app.geometryGpu ? sourceBase + sourceBytes : lightBase + lightBytes, D3D12_RESOURCE_FLAG_NONE,
+        D3D12_RESOURCE_STATE_COPY_DEST, readback, nullptr)) return false;
+    if (FAILED(app.cmdAlloc[0]->Reset()) || FAILED(app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr))) return false;
+    if (!RecordGeometryCopy(app.cmdList.Get(), app.srcTex[source->index].Get(), target.colorOut.Get(), app.geometryLight.Get(),
+        (UINT)app.colorW, (UINT)app.colorH, app.opt.doWarp, false)) return false;
+    for (UINT eye = 0; eye < 2; ++eye)
+    {
+        D3D12_TEXTURE_COPY_LOCATION src{}, dst{};
+        src.pResource = target.colorOut.Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; src.SubresourceIndex = eye;
+        dst.pResource = readback.Get(); dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dst.PlacedFootprint = footprints[eye];
+        app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+    GeometryBarrier(app.cmdList.Get(), app.geometryLight.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION src{}, dst{};
+    src.pResource = app.geometryLight.Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.pResource = readback.Get(); dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dst.PlacedFootprint = lightFootprint;
+    app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    if (app.geometryGpu)
+    {
+        GeometryBarrier(app.cmdList.Get(), app.srcTex[source->index].Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        src.pResource = app.srcTex[source->index].Get();
+        dst.PlacedFootprint = sourceFootprint;
+        app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        GeometryBarrier(app.cmdList.Get(), app.srcTex[source->index].Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+    }
+    if (FAILED(app.cmdList->Close())) return false;
+    WaitFence(app, SubmitAndSignal(app));
+    const uint8_t* got = nullptr;
+    if (FAILED(readback->Map(0, nullptr, (void**)&got))) return false;
+    bool ok = true;
+    for (UINT image = 0; image < 3; ++image)
+    {
+        const auto& footprint = image == 2 ? lightFootprint : footprints[image];
+        const size_t offset = image == 1 && app.opt.doWarp ? (size_t)app.colorW * 4 : 0;
+        for (int y = 0; y < app.colorH; ++y)
+            ok = !memcmp(got + footprint.Offset + (size_t)y * footprint.Footprint.RowPitch,
+                app.geometryGpu ? got + sourceFootprint.Offset + (size_t)y * sourceFootprint.Footprint.RowPitch + offset :
+                app.geometryFrame.rgba.data() + (size_t)y * app.geometryFrame.header.stride + offset, (size_t)app.colorW * 4) && ok;
+    }
+    readback->Unmap(0, nullptr);
+    Log("Geometry check: %s - %dx%d per eye, pair %llu, left/right frame %llu/%llu, mono lighting; no OpenXR or AI depth",
+        ok ? "PASS" : "FAIL", app.colorW, app.colorH, (unsigned long long)(app.geometryGpu ? app.geometrySequence : app.geometryFrame.header.sequence),
+        (unsigned long long)(app.geometryGpu ? app.geometryGpuFrame.leftFrame : app.geometryFrame.header.leftFrame),
+        (unsigned long long)(app.geometryGpu ? app.geometryGpuFrame.rightFrame : app.geometryFrame.header.rightFrame));
+    return ok;
 }
 
 static void Shutdown(App& app)
@@ -9039,6 +9311,12 @@ int wmain(int argc, wchar_t** wideArgv)
     int rc = 1;
     try
     {
+    if (app.opt.checkGeometry)
+    {
+        const bool ok = CheckGeometrySource(app);
+        Shutdown(app);
+        return ok ? 0 : 1;
+    }
     if (app.opt.checkPackage)
     {
         Log("Package check: model %s", winrt::to_string(ModelPath(app.opt.model->file).wstring()).c_str());
@@ -9099,7 +9377,7 @@ int wmain(int argc, wchar_t** wideArgv)
         if (app.opt.source == SourceKind::Capture && !SelectCaptureItem(app)) break;
         if (!InitXrInstance(app)) break;
         if (!InitD3D(app)) break;
-        if (!InitModel(app)) break;
+        if (app.opt.source != SourceKind::Geometry && !InitModel(app)) break;
         if (!InitSlots(app)) break;
         if (!InitSource(app)) break;
         // The self-test needs the headset's GPU (from the runtime) but not a VR
@@ -9112,7 +9390,7 @@ int wmain(int argc, wchar_t** wideArgv)
         if (!app.opt.selfTestOnly) Log("main: shaders ready - creating the OpenXR session");
         if (!app.opt.selfTestOnly && !InitXrSession(app)) break;
 
-        if (!SelfTest(app)) { Log("main: GPU shaders do not match the CPU reference - not presenting"); break; }
+        if (app.opt.source != SourceKind::Geometry && !SelfTest(app)) { Log("main: GPU shaders do not match the CPU reference - not presenting"); break; }
         if (app.opt.selfTestOnly)
         {
             const bool fg = SelfTestForegroundModel(app);
@@ -9124,6 +9402,14 @@ int wmain(int argc, wchar_t** wideArgv)
         }
 
         if (!FirstSourceFrame(app)) break;
+
+        if (app.opt.source == SourceKind::Geometry)
+        {
+            Log("main: geometry stereo ready (no depth model or inference worker)");
+            RunFrameLoop(app);
+            rc = app.stop.load() ? 1 : 0;
+            break;
+        }
 
         // First depth result synchronously, so the render thread has depth from
         // its first frame and the log shows the model's numbers even if the HMD

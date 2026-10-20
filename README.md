@@ -100,6 +100,17 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 
 ## Build locally
 
+An experimental second stereo backend is being developed on `xgstereo`:
+[geometry stereo prototype](docs/XGSTEREO.md). It includes a Windows Vulkan shader
+layer with alternate-frame and same-frame command/resource mirroring, shared GPU
+textures, paired input in the renderer, and per-window stereo method buttons in
+the chooser (Depth estimate, Vulkan, DXVK; DX12 is unavailable). The choice is
+remembered per game and is also available in Expert. Geometry methods reuse a
+ready stream or show a restart dialog with the captured arguments and Steam ID;
+auto-attach never restarts games. System
+Shock through the scoped DXVK launcher has passed same-frame gameplay checks at
+2560x1440 per eye. Headset comfort and full-game compatibility need validation.
+
 You need Visual Studio with the C++ tools and a Windows SDK (the newest one is found
 with `vswhere`), the .NET 10 SDK, Python 3.12 and Git. The OpenXR loader and the HLSL
 shader compiler VRX ships are pinned in `release/vendor`, so SteamVR is not needed to

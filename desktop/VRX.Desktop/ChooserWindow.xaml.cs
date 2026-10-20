@@ -12,7 +12,7 @@ namespace VRX.Desktop;
 // snapshot of the display taken as the chooser opens. Clicking a tile picks it.
 public sealed partial class ChooserWindow : Window
 {
-    public sealed record Choice(RunningApp App, GameWindow Window);
+    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null);
 
     // What was picked; null when the chooser was closed without a pick.
     public Choice? Picked { get; private set; }
@@ -39,7 +39,7 @@ public sealed partial class ChooserWindow : Window
     // The size it was left at, for next time (AppSettings.ChooserWindow); set when it closes.
     public WindowPlace? Place { get; private set; }
 
-    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null)
+    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null, Func<RunningApp, string>? backendFor = null)
     {
         ArgumentNullException.ThrowIfNull(apps);
         ArgumentNullException.ThrowIfNull(screens);
@@ -60,7 +60,7 @@ public sealed partial class ChooserWindow : Window
             .SelectMany(a => a.Windows.Where(RunningApps.IsChooserWindow).Select(w => new Choice(a, w)))
             .OrderBy(c => order.GetValueOrDefault(c.Window.Handle, int.MaxValue)).ToList();
         foreach (var choice in windows)
-            WindowTiles.Children.Add(MakeTile(choice, null, choice.Window.Handle == currentWindow));
+            WindowTiles.Children.Add(MakeTile(choice with { Backend = backendFor?.Invoke(choice.App) ?? StereoPaths.Depth }, null, choice.Window.Handle == currentWindow));
         NoWindows.Visibility = windows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         if (screenApp != null)
@@ -88,7 +88,7 @@ public sealed partial class ChooserWindow : Window
     public int WindowTileCount => WindowTiles.Children.Count;
     public int ScreenTileCount => ScreenTiles.Children.Count;
 
-    private Button MakeTile(Choice choice, ScreenSource? screen, bool current)
+    private FrameworkElement MakeTile(Choice choice, ScreenSource? screen, bool current)
     {
         ArgumentNullException.ThrowIfNull(choice);
         var picture = new Grid { Width = PictureWidth, Height = PictureHeight, Background = (Brush)FindResource("Well") };
@@ -116,7 +116,27 @@ public sealed partial class ChooserWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(button, title);
         button.Click += (_, _) => Pick(choice);
         tiles.Add(new Tile { Choice = choice, Picture = picture, Screen = screen, Snapshot = snapshot });
-        return button;
+        if (screen != null) return button;
+        // Separate sibling buttons: input controls must never sit inside a tile Button.
+        button.Margin = new Thickness(0);
+        var card = new StackPanel { Width = PictureWidth + 24, Margin = new Thickness(0,0,14,14) };
+        card.Children.Add(button);
+        var routes = new Grid { Margin = new Thickness(2,5,2,0) };
+        routes.ColumnDefinitions.Add(new ColumnDefinition()); routes.ColumnDefinitions.Add(new ColumnDefinition());
+        routes.RowDefinitions.Add(new RowDefinition()); routes.RowDefinitions.Add(new RowDefinition());
+        int i = 0;
+        foreach (string backend in new[] { StereoPaths.Depth, StereoPaths.Vulkan, StereoPaths.Dxvk, StereoPaths.Dx12 }) {
+            bool available = backend != StereoPaths.Dx12;
+            var route = new Button {
+                Content = new TextBlock { Text = StereoPaths.Label(backend), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }, Padding = new Thickness(5,6,5,6), Margin = new Thickness(2), FontSize = 12,
+                Tag = backend, IsEnabled = available, ToolTip = Loc.Get(!available ? "PathDx12Unavailable" : backend == StereoPaths.Depth ? "PathDepthTip" : "PathGeometryTip"),
+                FontWeight = choice.Backend == backend ? FontWeights.Bold : FontWeights.Normal
+            };
+            System.Windows.Automation.AutomationProperties.SetName(route, Loc.Format("PathForWindow", StereoPaths.Label(backend), title));
+            Grid.SetRow(route,i/2); Grid.SetColumn(route,i%2); ++i;
+            route.Click += (_,_) => Pick(choice with { Backend = backend }); routes.Children.Add(route);
+        }
+        card.Children.Add(routes); return card;
     }
 
     private void Pick(Choice choice)

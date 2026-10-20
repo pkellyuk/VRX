@@ -51,9 +51,8 @@ public sealed class EngineSession
         if (dismiss) menu++;
         if (control.Length > 0) ProfileStore.AtomicWrite(control, profile.Control(recenter, menu, stop));
     }
-    public void Start(RunningApp app, GameWindow window, Profile profile, string dataRoot)
+    public static void EnsureAvailable()
     {
-        if (Running) throw new InvalidOperationException(Loc.Get("ErrorStopFirst"));
         foreach (string name in new[] { "xrapp5", "xrplayer" })
         {
             var existing = Process.GetProcessesByName(name);
@@ -61,6 +60,11 @@ public sealed class EngineSession
             foreach (var item in existing) item.Dispose();
             if (found) throw new InvalidOperationException(Loc.Get("ErrorAnotherSession"));
         }
+    }
+    public void Start(RunningApp app, GameWindow window, Profile profile, string dataRoot)
+    {
+        if (Running) throw new InvalidOperationException(Loc.Get("ErrorStopFirst"));
+        EnsureAvailable();
         bool screen = window.Monitor >= 0;
         if (screen)
         {
@@ -108,12 +112,19 @@ public sealed class EngineSession
         // Culture-invariant numbers: the engine parses these whatever the Windows language.
         var invariant = System.Globalization.CultureInfo.InvariantCulture;
         var args = new List<string> { "0" };
-        if (window.Monitor >= 0) args.Add("--monitor=" + window.Monitor.ToString(invariant));
+        if (profile.EffectiveStereoBackend == StereoPaths.Dx12) throw new InvalidOperationException(Loc.Get("PathDx12Unavailable"));
+        if (profile.GeometryStereo)
+        {
+            if (window.Monitor >= 0) throw new InvalidOperationException(Loc.Get("ErrorGeometryNeedsGame"));
+            if (!Profile.ValidGeometrySession(profile.GeometrySession)) throw new InvalidOperationException(Loc.Get("ErrorGeometrySession"));
+            args.AddRange(["--geometry-session=" + profile.GeometrySession, "--geometry-pid=" + app.Pid.ToString(invariant)]);
+        }
+        else if (window.Monitor >= 0) args.Add("--monitor=" + window.Monitor.ToString(invariant));
         else args.AddRange(["--exe=" + Path.GetFileName(app.FullPath), "--exe-path=" + app.FullPath,
             "--pid=" + app.Pid.ToString(invariant), "--hwnd=" + window.Handle.ToInt64().ToString(invariant)]);
-        if (window.Monitor < 0 && profile.DesktopWhenAway) args.Add("--desktop-when-away");
+        if (!profile.GeometryStereo && window.Monitor < 0 && profile.DesktopWhenAway) args.Add("--desktop-when-away");
         args.Add("--control=" + controlFile);
-        if (profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) args.Add("--depth-gpu=" + profile.DepthGpu);
+        if (!profile.GeometryStereo && profile.DepthGpu != Gpus.Same && Gpus.ValidId(profile.DepthGpu)) args.Add("--depth-gpu=" + profile.DepthGpu);
         return args;
     }
     // Windows refusing to run the engine, in plain words: Smart App Control or App Control for
