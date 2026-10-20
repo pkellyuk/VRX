@@ -17,14 +17,15 @@ xg::PairFrame Read(xg::gpu_test::Snapshot& snapshot) {
 int main(int argc,char** argv) {
     try {
         Check(argc>=2 && argc<=3,"presentation fixture mode supplied");
-        const std::string argument=argv[1];const bool serve=argument.rfind("--serve-gpu=",0)==0;
+        const std::string argument=argv[1];const bool resizeServe=argument.rfind("--serve-resize-gpu=",0)==0;
+        const bool serve=resizeServe || argument.rfind("--serve-gpu=",0)==0;
         const bool legacy=argument=="--legacy",warp=argc==3 && std::strcmp(argv[2],"--warp")==0;
         Check(legacy || serve || argument=="--present","known presentation fixture mode");
         Check(argc!=3 || warp,"known adapter option");
         const auto module=GetModuleHandleW(L"d3d12.dll");
         counts=reinterpret_cast<CountsFn>(GetProcAddress(module,"VRX_DX12_GetCounts"));scope=reinterpret_cast<ScopeFn>(GetProcAddress(module,"VRX_DX12_DiagnosticScope"));
         Check(counts && scope,"native proxy diagnostics loaded");
-        const auto suffix=serve?argument.substr(12):std::string{};
+        const auto suffix=serve?argument.substr(resizeServe?19:12):std::string{};
         const auto session=serve?std::wstring(suffix.begin(),suffix.end()):L"dx12-present-"+std::to_wstring(GetCurrentProcessId());
         Check(xg::ValidSession(session) && SetEnvironmentVariableW(L"VRX_XG_SESSION",session.c_str()),"set isolated stream name");
         ComPtr<ID3D12Debug> debug;if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))debug->EnableDebugLayer();
@@ -46,7 +47,14 @@ int main(int argc,char** argv) {
                 ComPtr<IDXGISwapChain1> base;Hr(factory->CreateSwapChainForHwnd(scene.queue.Get(),window.handle,&d,nullptr,nullptr,&base));Hr(base.As(&chain));
             }
             if(serve) {
+                struct Events {HANDLE ready[2]{};~Events(){for(auto event:ready)if(event)CloseHandle(event);}} events;
+                if(resizeServe)for(UINT i=0;i<2;++i){const auto name=L"Local\\VRX.geometry."+session+L".resize-check."+std::to_wstring(i);events.ready[i]=CreateEventW(nullptr,FALSE,FALSE,name.c_str());Check(events.ready[i]!=nullptr,"create resize handshake");}
+                UINT step=0;
                 for(UINT frame=1;frame<10000;++frame) {
+                    if(resizeServe && step<2 && WaitForSingleObject(events.ready[step],0)==WAIT_OBJECT_0) {
+                        scene.Wait();scene.eyes.Reset();scene.width=step?97:129;scene.height=step?65:73;
+                        Hr(chain->ResizeBuffers(2,scene.width,scene.height,DXGI_FORMAT_UNKNOWN,0));++step;
+                    }
                     scene.eyes.Reset();Hr(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&scene.eyes)));
                     scene.device->CreateRenderTargetView(scene.eyes.Get(),nullptr,scene.rtv->GetCPUDescriptorHandleForHeapStart());
                     Frame(scene,frame%24,2,false,frame%3==0,nullptr,true);Hr(chain->Present(0,0));scene.DebugCheck();Sleep(5);

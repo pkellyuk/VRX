@@ -111,6 +111,18 @@ int main()
             {xg::GpuWriter duplicate;Check(!duplicate.Create(resizedSession,device->GetAdapterLuid(),23,13,xg::GpuFrameKind::SameFrame),"live resized producer remains exclusive");}
             Check(newConsumer.Status(0,frame)==xg::PairRead::Empty,"failed replacement leaves active stream unchanged");
         }
+        {
+            const auto detachSession=session+L"-detach";xg::GpuWriter producer;
+            Check(producer.Create(detachSession,device->GetAdapterLuid(),18,10,xg::GpuFrameKind::SameFrame),"create detach fixture");
+            auto consumer=std::make_unique<xg::GpuReader>();Check(consumer->Open(device.Get(),detachSession),"register disconnecting reader");
+            HANDLE held=OpenMutexW(SYNCHRONIZE|MUTEX_MODIFY_STATE,FALSE,xg::GpuName(detachSession,L".lock").c_str());Check(held!=nullptr,"open detach mutex");
+            std::promise<void> detachLocked,detachRelease,detachBegun;auto detachUnlocked=detachRelease.get_future();
+            std::thread owner([&]{xg::PairLock lock(held,1000);Check(lock.Ready(),"hold metadata during detach");detachLocked.set_value();detachUnlocked.wait();});
+            detachLocked.get_future().wait();auto detached=std::async(std::launch::async,[&]{detachBegun.set_value();consumer.reset();});detachBegun.get_future().wait();
+            const auto waited=detached.wait_for(std::chrono::milliseconds(20))==std::future_status::timeout;
+            detachRelease.set_value();owner.join();detached.get();CloseHandle(held);
+            xg::GpuReader next;Check(waited && next.Open(device.Get(),detachSession),"contended cleanup releases registration for the next reader");
+        }
         std::puts("PASS: shared texture leases, GPU completion, nonblocking full ring, strict same-frame metadata, closure, stale/size/adapter rejection");
         return 0;
     }

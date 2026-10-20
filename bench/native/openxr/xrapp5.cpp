@@ -160,6 +160,7 @@ using Microsoft::WRL::ComPtr;
 #include "screen_curve.h"
 #include "room.h"
 #include "geometry_copy.h"
+#include "geometry_fit.h"
 #include "../xgstereo/gpu_transport.h"
 #include "../xgstereo/pair_transport.h"
 
@@ -264,6 +265,7 @@ struct Options
     std::wstring imagePath;
     std::wstring geometrySession;        // --geometry-session: complete stereo pairs, no depth inference
     DWORD geometryPid = 0;               // optional stream owner check when attaching from the desktop UI
+    int checkGeometryResizes = 0;
     bool checkGeometry = false;          // verify real source upload/copy offline, without OpenXR
     bool doWarp = true;
     float warpScale = 1.0f;
@@ -449,7 +451,9 @@ struct App
     int srcW = 0, srcH = 0;                              // source texture size
     int colorW = 0, colorH = 0;                          // presented size
     xg::PairReader geometryReader;
-    xg::GpuReader geometryGpuReader;
+    std::unique_ptr<xg::GpuReader> geometryGpuReader=std::make_unique<xg::GpuReader>();
+    std::unique_ptr<GeometryFit> geometryFit;
+    uint64_t geometryProbeMs=0;
     xg::GpuSlotInfo geometryGpuFrame{};
     bool geometryGpu = false;
     xg::PairFrame geometryFrame;
@@ -708,7 +712,7 @@ static UINT64 SubmitAndSignal(App& app)
 {
     ID3D12CommandList* lists[] = { app.cmdList.Get() };
     app.gfxQueue->ExecuteCommandLists(1, lists);
-    if (app.geometryGpu && !app.geometryGpuReader.Submitted(app.gfxQueue.Get()))
+    if (app.geometryGpu && !app.geometryGpuReader->Submitted(app.gfxQueue.Get()))
         Log("Geometry GPU source: release fence signal failed");
     app.gfxQueue->Signal(app.fence.Get(), ++app.fenceVal);
     return app.fenceVal;
@@ -863,6 +867,10 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
             opt->geometrySession = widen(a + 19);
             if (!xg::ValidSession(opt->geometrySession)) { Log("ParseArgs: invalid geometry session name"); return false; }
             opt->source = SourceKind::Geometry; continue;
+        }
+        if (!strncmp(a,"--check-geometry-resizes=",25)) {
+            char* end=nullptr;const auto count=strtol(a+25,&end,10);if(count<1 || count>8 || !end || *end){Log("ParseArgs: geometry resize check count must be 1..8");return false;}
+            opt->checkGeometryResizes=int(count);opt->checkGeometry=true;continue;
         }
         if (!strcmp(a, "--check-geometry")) { opt->checkGeometry = true; continue; }
         if (!strncmp(a, "--geometry-pid=", 15))
@@ -1843,15 +1851,15 @@ static bool InitSource(App& app)
         if (gpuMapping)
         {
             CloseHandle(gpuMapping);
-            if (!app.geometryGpuReader.Open(app.device.Get(), app.opt.geometrySession))
+            if (!app.geometryGpuReader->Open(app.device.Get(), app.opt.geometrySession))
             { Log("InitSource: FAIL shared GPU geometry unavailable (adapter, consumer or resource mismatch)"); return false; }
-            const auto& header = app.geometryGpuReader.Header();
+            const auto& header = app.geometryGpuReader->Header();
             if (app.opt.geometryPid && header.pid != app.opt.geometryPid)
             { Log("InitSource: FAIL geometry session belongs to another process"); return false; }
             const auto deadline = GetTickCount64() + 5000;
             xg::PairRead status;
             do {
-                status = app.geometryGpuReader.Status(0, app.geometryGpuFrame);
+                status = app.geometryGpuReader->Status(0, app.geometryGpuFrame);
                 if (status == xg::PairRead::NewPair || status == xg::PairRead::Invalid || status == xg::PairRead::Closed) break;
                 Sleep(5);
             } while (GetTickCount64() < deadline);
@@ -1903,8 +1911,8 @@ static bool InitSource(App& app)
     app.colorH = std::max(2, (int)(app.srcH * k + 0.5) & ~1);
     if (app.opt.source == SourceKind::Geometry)
     {
-        // The reference transport uses exact per-eye dimensions. A resize is
-        // rejected during playback and requires restarting this VRX session.
+        // Keep the headset presentation size stable, as window capture does.
+        // New GPU source generations are fitted per eye after a resize.
         app.colorW = app.srcW / 2; app.colorH = app.srcH;
         if (!MakeSourceTexture(app, app.colorW, app.colorH, app.srcFormat, false, app.geometryLight)) return false;
         MakeTextureSrv(app, app.geometryLight.Get(), app.srcFormat, DESC_GEOMETRY_LIGHT);
@@ -1936,6 +1944,47 @@ static bool InitSource(App& app)
     return true;
 }
 
+// Called between submissions, before any frame's command list is opened.
+// Only the pinned producer/adapter may replace its own closed generation.
+static bool RefreshGeometrySource(App& app)
+{
+    if(!app.geometryGpu || GetTickCount64()<app.geometryProbeMs)return true;
+    app.geometryProbeMs=GetTickCount64()+100;
+    if(!app.geometryGpuReader->ReplacementAvailable())return true;
+    const auto owner=app.opt.geometryPid?app.opt.geometryPid:app.geometryGpuReader->Header().pid;
+    auto next=std::make_unique<xg::GpuReader>();
+    if(!next->Open(app.device.Get(),app.opt.geometrySession,owner))return true;
+    xg::GpuSlotInfo ready{};if(next->Status(0,ready)!=xg::PairRead::NewPair)return true;
+    const auto header=next->Header();
+    ComPtr<ID3D12Resource> textures[SRC_RING];ID3D12Resource* inputs[SRC_RING]{};
+    for(int i=0;i<SRC_RING;++i){
+        if(!MakeSourceTexture(app,int(header.width)*2,int(header.height),app.srcFormat,false,textures[i]))return false;
+        inputs[i]=textures[i].Get();
+    }
+    std::unique_ptr<GeometryFit> fit;
+    if(header.width!=UINT(app.colorW) || header.height!=UINT(app.colorH)){
+        fit=std::make_unique<GeometryFit>();
+        if(!fit->Create(app.device.Get(),inputs,SRC_RING,UINT(app.colorW),UINT(app.colorH)))return false;
+    }
+    WaitFence(app,app.fenceVal);
+    if(!app.sources.Reset(app.fence->GetCompletedValue(),app.fence->GetCompletedValue(),app.mlFence->GetCompletedValue(),app.xferFence?app.xferFence->GetCompletedValue():0))return true;
+    for(int i=0;i<SRC_RING;++i){app.srcTex[i]=std::move(textures[i]);MakeTextureSrv(app,app.srcTex[i].Get(),app.srcFormat,DESC_SRC0+i);}
+    app.geometryGpuReader=std::move(next);app.geometryFit=std::move(fit);app.srcW=int(header.width)*2;app.srcH=int(header.height);
+    app.geometrySequence=0;app.geometryGpuFrame={};app.geometryUsable=false;app.ambiHistory=false;
+    Log("Geometry GPU source: reconnected generation %llu, %ux%u per eye fitted into %dx%d; same producer, no CPU pixel upload",
+        (unsigned long long)header.generation,header.width,header.height,app.colorW,app.colorH);
+    return true;
+}
+static bool RecordGeometryPresentation(App& app,int index,ID3D12Resource* pictures,UINT width,UINT height,bool stereo,bool uploaded)
+{
+    auto* source=app.srcTex[index].Get();
+    if(app.geometryFit){
+        if(!app.geometryFit->Record(app.cmdList.Get(),UINT(index),uploaded))return false;
+        source=app.geometryFit->Output();uploaded=false;
+    }
+    return RecordGeometryCopy(app.cmdList.Get(),source,pictures,app.geometryLight.Get(),width,height,stereo,uploaded);
+}
+
 // CPU picture -> the next source-ring texture, on the gfx queue. Records only;
 // the caller submits, then calls sources.Publish with the resulting fence value.
 static SourceFrames::WriteRef RecordCpuSource(App& app, const std::vector<unsigned char>& rgb, int ringSlot)
@@ -1964,7 +2013,7 @@ static SourceFrames::WriteRef RecordGeometrySource(App& app, int ringSlot)
 {
     if (app.geometryGpu)
     {
-        const auto status = app.geometryGpuReader.Status(app.geometrySequence, app.geometryGpuFrame);
+        const auto status = app.geometryGpuReader->Status(app.geometrySequence, app.geometryGpuFrame);
         const auto now = GetTickCount64();
         const bool usable = (status == xg::PairRead::NewPair || status == xg::PairRead::Unchanged || status == xg::PairRead::Empty || status == xg::PairRead::Busy) &&
             app.geometryGpuFrame.publishedMs <= now && now - app.geometryGpuFrame.publishedMs <= xg::PairMaxAgeMs;
@@ -1972,8 +2021,9 @@ static SourceFrames::WriteRef RecordGeometrySource(App& app, int ringSlot)
         app.geometryUsable = usable;
         if (!usable || status != xg::PairRead::NewPair) return {};
         auto frame = ReserveSource(app);
-        if (!frame || !app.geometryGpuReader.Record(app.gfxQueue.Get(), app.cmdList.Get(), app.srcTex[frame->index].Get(), app.geometrySequence, app.geometryGpuFrame)) return {};
+        if (!frame || !app.geometryGpuReader->Record(app.gfxQueue.Get(), app.cmdList.Get(), app.srcTex[frame->index].Get(), app.geometrySequence, app.geometryGpuFrame)) return {};
         app.geometrySequence = app.geometryGpuFrame.sequence;
+        frame->layout=app.geometryGpuReader->Header().generation;
         return frame;
     }
     const auto status = app.geometryReader.Read(app.geometryFrame, app.geometrySequence);
@@ -8234,6 +8284,7 @@ static void RunFrameLoop(App& app)
                 }
             }
         }
+        if(!RefreshGeometrySource(app)){Log("Geometry GPU source: reconnect resource creation failed");app.stop=true;break;}
         screen.Key((GetAsyncKeyState(recenterKey) & 0x8000) != 0);
         const bool dashboardKeyDown = (GetAsyncKeyState(menuKey) & 0x8000) != 0;
         if (dashboardKeyDown && !dashboardKeyWasDown) dashboardCloseRequested = true;
@@ -8672,8 +8723,7 @@ static void RunFrameLoop(App& app)
                     c.mirrorTol = MIRROR_TOL;
                     if (geometry)
                     {
-                        if (!RecordGeometryCopy(app.cmdList.Get(), app.srcTex[source->index].Get(), target.colorOut.Get(),
-                            app.geometryLight.Get(), (UINT)target.cw, (UINT)target.ch, stereo, bool(newSrc)))
+                        if (!RecordGeometryPresentation(app,source->index,target.colorOut.Get(),(UINT)target.cw,(UINT)target.ch,stereo,bool(newSrc)))
                             throw std::runtime_error("geometry picture resources do not match the producer");
                     }
                     else RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c);
@@ -9115,20 +9165,18 @@ static bool FirstSourceFrame(App& app)
 
     if (app.opt.source == SourceKind::Geometry)
     {
-        if (FAILED(app.cmdAlloc[0]->Reset()) || FAILED(app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr))) return false;
         SourceFrames::WriteRef source;
         const auto deadline = GetTickCount64() + 5000;
         do {
-            source = RecordGeometrySource(app, 0);
-            if (source || !app.geometryGpu) break;
-            // The producer can recycle an unclaimed texture between the
-            // metadata peek and claim. Retry a completed slot, never queue a
-            // GPU wait on an unfinished producer at headset startup.
+            if(!RefreshGeometrySource(app))return false;
+            if(FAILED(app.cmdAlloc[0]->Reset()) || FAILED(app.cmdList->Reset(app.cmdAlloc[0].Get(),nullptr)))return false;
+            source=RecordGeometrySource(app,0);
+            if(source)GeometryBarrier(app.cmdList.Get(),app.srcTex[source->index].Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_COMMON);
+            if(FAILED(app.cmdList->Close()))return false;
+            if(source || !app.geometryGpu)break;
             Sleep(1);
-        } while (GetTickCount64() < deadline);
-        if (source) GeometryBarrier(app.cmdList.Get(), app.srcTex[source->index].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
-        if (FAILED(app.cmdList->Close())) return false;
-        if (!source) { Log("FirstSourceFrame: FAIL geometry pair unavailable after startup"); return false; }
+        }while(GetTickCount64()<deadline);
+        if(!source){Log("FirstSourceFrame: FAIL geometry pair unavailable after startup");return false;}
         const UINT64 fv = SubmitAndSignal(app);
         WaitFence(app, fv);
         app.sources.Publish(source, fv, NowSeconds());
@@ -9162,21 +9210,8 @@ static bool FirstSourceFrame(App& app)
 
 // Exercise the actual geometry-source startup and upload path without a headset
 // or an OpenXR runtime. Read back each eye and the lighting reference exactly.
-static bool CheckGeometrySource(App& app)
+static bool CheckGeometryFrame(App& app)
 {
-    ComPtr<IDXGIFactory1> factory;
-    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return false;
-    bool found = false;
-    for (UINT i = 0; ; ++i)
-    {
-        ComPtr<IDXGIAdapter1> adapter;
-        if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
-        DXGI_ADAPTER_DESC1 desc{};
-        if (!adapter || FAILED(adapter->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) continue;
-        if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
-        { app.adapterLuid = desc.AdapterLuid; app.minFeatureLevel = D3D_FEATURE_LEVEL_11_0; found = true; break; }
-    }
-    if (!found || !InitD3D(app) || !InitSource(app) || !FirstSourceFrame(app)) return false;
     WarpTarget target;
     if (!MakeWarpTarget(app, app.colorW, app.colorH, DESC_MAIN_TABLE, target)) return false;
     auto source = app.sources.Latest();
@@ -9195,15 +9230,14 @@ static bool CheckGeometrySource(App& app)
     UINT64 sourceBytes = 0;
     if (app.geometryGpu)
     {
-        const auto sourceDesc = app.srcTex[source->index]->GetDesc();
+        const auto sourceDesc = (app.geometryFit?app.geometryFit->Output():app.srcTex[source->index].Get())->GetDesc();
         app.device->GetCopyableFootprints(&sourceDesc, 0, 1, sourceBase, &sourceFootprint, nullptr, nullptr, &sourceBytes);
     }
     ComPtr<ID3D12Resource> readback;
     if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, app.geometryGpu ? sourceBase + sourceBytes : lightBase + lightBytes, D3D12_RESOURCE_FLAG_NONE,
         D3D12_RESOURCE_STATE_COPY_DEST, readback, nullptr)) return false;
     if (FAILED(app.cmdAlloc[0]->Reset()) || FAILED(app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr))) return false;
-    if (!RecordGeometryCopy(app.cmdList.Get(), app.srcTex[source->index].Get(), target.colorOut.Get(), app.geometryLight.Get(),
-        (UINT)app.colorW, (UINT)app.colorH, app.opt.doWarp, false)) return false;
+    if (!RecordGeometryPresentation(app,source->index,target.colorOut.Get(),(UINT)app.colorW,(UINT)app.colorH,app.opt.doWarp,false)) return false;
     for (UINT eye = 0; eye < 2; ++eye)
     {
         D3D12_TEXTURE_COPY_LOCATION src{}, dst{};
@@ -9218,12 +9252,13 @@ static bool CheckGeometrySource(App& app)
     app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
     if (app.geometryGpu)
     {
-        GeometryBarrier(app.cmdList.Get(), app.srcTex[source->index].Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        src.pResource = app.srcTex[source->index].Get();
+        GeometryBarrier(app.cmdList.Get(), (app.geometryFit?app.geometryFit->Output():app.srcTex[source->index].Get()), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        src.pResource = app.geometryFit?app.geometryFit->Output():app.srcTex[source->index].Get();
         dst.PlacedFootprint = sourceFootprint;
         app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-        GeometryBarrier(app.cmdList.Get(), app.srcTex[source->index].Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+        GeometryBarrier(app.cmdList.Get(), (app.geometryFit?app.geometryFit->Output():app.srcTex[source->index].Get()), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
     }
+    GeometryBarrier(app.cmdList.Get(),app.geometryLight.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_COMMON);
     if (FAILED(app.cmdList->Close())) return false;
     WaitFence(app, SubmitAndSignal(app));
     const uint8_t* got = nullptr;
@@ -9244,6 +9279,39 @@ static bool CheckGeometrySource(App& app)
         (unsigned long long)(app.geometryGpu ? app.geometryGpuFrame.leftFrame : app.geometryFrame.header.leftFrame),
         (unsigned long long)(app.geometryGpu ? app.geometryGpuFrame.rightFrame : app.geometryFrame.header.rightFrame));
     return ok;
+}
+
+static bool CheckGeometrySource(App& app)
+{
+    ComPtr<IDXGIFactory1> factory;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return false;
+    bool found = false;
+    for (UINT i = 0; ; ++i)
+    {
+        ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+        DXGI_ADAPTER_DESC1 desc{};
+        if (!adapter || FAILED(adapter->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) continue;
+        if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+        { app.adapterLuid = desc.AdapterLuid; app.minFeatureLevel = D3D_FEATURE_LEVEL_11_0; found = true; break; }
+    }
+    if (!found || !InitD3D(app) || !InitSource(app) || !FirstSourceFrame(app)) return false;
+    if(!CheckGeometryFrame(app))return false;
+    for(int step=0;step<app.opt.checkGeometryResizes;++step) {
+        if(!app.geometryGpu)return false;
+        const auto name=L"Local\\VRX.geometry."+app.opt.geometrySession+L".resize-check."+std::to_wstring(step);
+        HANDLE ready=OpenEventW(EVENT_MODIFY_STATE,FALSE,name.c_str());
+        if(!ready){Log("Geometry resize check: FAIL no fixture event");return false;}
+        const bool signalled=SetEvent(ready)!=0;CloseHandle(ready);if(!signalled)return false;
+        const auto previous=app.geometryGpuReader->Header().generation;const auto until=GetTickCount64()+10000;
+        while(app.geometryGpuReader->Header().generation==previous && GetTickCount64()<until) {
+            if(!RefreshGeometrySource(app))return false;Sleep(5);
+        }
+        if(app.geometryGpuReader->Header().generation==previous){Log("Geometry resize check: FAIL no replacement generation");return false;}
+        if(!FirstSourceFrame(app) || !CheckGeometryFrame(app))return false;
+    }
+    if(app.opt.checkGeometryResizes)Log("Geometry resize check: PASS - %d automatic reconnects in one consumer process",app.opt.checkGeometryResizes);
+    return true;
 }
 
 static void Shutdown(App& app)

@@ -1,8 +1,10 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Engine, [Parameter(Mandatory)][string]$Producer, [switch]$Gpu, [switch]$SameFrame, [switch]$Mirror, [string]$Proxy)
+param([Parameter(Mandatory)][string]$Engine, [Parameter(Mandatory)][string]$Producer, [switch]$Gpu, [switch]$SameFrame, [switch]$Mirror, [string]$Proxy, [switch]$Resize, [switch]$Mono)
 $ErrorActionPreference = 'Stop'
 if ($Mirror) { $Gpu = $true; $SameFrame = $true; }
 if ($Proxy) {if($Mirror){throw 'Native DX12 proxy and Vulkan mirror modes are mutually exclusive'};$Gpu=$true;$SameFrame=$true}
+if($Resize -and -not $Proxy){throw 'Resize handshake requires the native DX12 presentation fixture'}
+if($Mono -and -not $Resize){throw 'Explicit mono mode is for the resize handshake; ordinary checks already test stereo and mono'}
 $session = 'check-' + [Guid]::NewGuid().ToString('N')
 $producerPath = (Resolve-Path -LiteralPath $Producer).Path
 $enginePath = (Resolve-Path -LiteralPath $Engine).Path
@@ -12,7 +14,7 @@ $start.CreateNoWindow = $true
 $start.RedirectStandardOutput = $true
 $start.RedirectStandardError = $true
 $start.Environment['VK_LAYER_PATH'] = [IO.Path]::GetDirectoryName($producerPath)
-$start.ArgumentList.Add($(if ($Mirror) { '--serve-mirror-gpu=' } elseif ($Gpu) { '--serve-gpu=' } else { '--serve=' }) + $session)
+$start.ArgumentList.Add($(if($Resize){'--serve-resize-gpu='}elseif ($Mirror) { '--serve-mirror-gpu=' } elseif ($Gpu) { '--serve-gpu=' } else { '--serve=' }) + $session)
 $child = [Diagnostics.Process]::new()
 $child.StartInfo = $start
 $fixtureRoot=$null
@@ -51,7 +53,7 @@ try {
         if(-not $ready){Start-Sleep -Milliseconds 10}
     } while (-not $ready -and [Environment]::TickCount64 -lt $deadline)
     if (-not $ready) { throw 'Producer mapping unavailable.' }
-    foreach ($mode in @('stereo', 'mono', 'wrong-owner')) {
+    foreach ($mode in $(if($Resize){@('resize','wrong-owner')}else{@('stereo','mono','wrong-owner')})) {
         $check = [Diagnostics.ProcessStartInfo]::new($enginePath)
         $check.UseShellExecute = $false
         $check.CreateNoWindow = $true
@@ -61,14 +63,15 @@ try {
             $check.ArgumentList.Add($argument)
         }
         $check.ArgumentList.Add('--geometry-pid=' + $(if ($mode -eq 'wrong-owner') { '4294967295' } else { $child.Id }))
-        if ($mode -eq 'mono') { $check.ArgumentList.Add('--no-warp') }
+        if ($mode -eq 'mono' -or ($mode -eq 'resize' -and $Mono)) { $check.ArgumentList.Add('--no-warp') }
+        if($mode -eq 'resize'){$check.ArgumentList.Add('--check-geometry-resizes=2')}
         $process = [Diagnostics.Process]::new()
         $process.StartInfo = $check
         try {
             if (-not $process.Start()) { throw 'Engine check did not start.' }
             $stdout = $process.StandardOutput.ReadToEndAsync()
             $stderr = $process.StandardError.ReadToEndAsync()
-            if (-not $process.WaitForExit(15000)) { $process.Kill(); $process.WaitForExit(); throw 'Engine check timed out.' }
+            if (-not $process.WaitForExit($(if($Resize){30000}else{15000}))) { $process.Kill(); $process.WaitForExit(); throw 'Engine check timed out.' }
             $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
             Write-Output $output
             if ($mode -eq 'wrong-owner') {
@@ -84,6 +87,7 @@ try {
                 ($SameFrame -and $output -notmatch 'same-frame eyes'))) {
                 throw 'GPU handoff must explicitly select shared textures and the declared same-frame rendering mode.'
             }
+            elseif($mode -eq 'resize' -and $output -notmatch 'Geometry resize check: PASS - 2 automatic reconnects') {throw 'One VRX process must consume and verify both replacement generations'}
         }
         finally { $process.Dispose() }
     }

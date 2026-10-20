@@ -166,6 +166,14 @@ if(VRX_DX12_ENGINE)
             "${CMAKE_CURRENT_SOURCE_DIR}/../xgstereo/engine_geometry_test.ps1"
             -Engine "${VRX_DX12_ENGINE}" -Producer "$<TARGET_FILE:dx12_present_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Gpu -SameFrame)
         set_tests_properties(native_dx12_present_engine_handoff PROPERTIES TIMEOUT 45)
+        add_test(NAME native_dx12_present_engine_resize COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/../xgstereo/engine_geometry_test.ps1"
+            -Engine "${VRX_DX12_ENGINE}" -Producer "$<TARGET_FILE:dx12_present_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Gpu -SameFrame -Resize)
+        set_tests_properties(native_dx12_present_engine_resize PROPERTIES TIMEOUT 45)
+        add_test(NAME native_dx12_present_engine_resize_mono COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/../xgstereo/engine_geometry_test.ps1"
+            -Engine "${VRX_DX12_ENGINE}" -Producer "$<TARGET_FILE:dx12_present_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Gpu -SameFrame -Resize -Mono)
+        set_tests_properties(native_dx12_present_engine_resize_mono PROPERTIES TIMEOUT 45)
     endif()
 endif()
 # Independently authored fixtures can also check an externally built Vulkan

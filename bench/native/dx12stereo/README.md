@@ -168,6 +168,17 @@ rejection. The process and copied DLLs are scoped to that fixture; no game or
 headset session is started. Readiness requires initialized metadata owned by the
 launched process, rather than only the existence of a named mapping.
 
+VRX now reconnects automatically when that same producer/adapter publishes a new
+GPU generation. It waits for its previous queue work and source-ring readers
+before replacing textures. The headset presentation size remains stable, as
+with ordinary window capture. A resized source is fitted on the GPU with aspect
+bars and eye-local bilinear filtering; unchanged dimensions retain the exact
+copy path. No filtering crosses the stereo seam and no CPU pixel upload occurs.
+Hardware/WARP fitting tests compare pixels against an independent reference.
+The resize/mono engine checks use a handshake to make one consumer process
+verify the original pair and two real native-swapchain replacement generations.
+These exercise the production reconnect and presentation functions without XR.
+
 This remains a limited graphics/compute/presentation subset, not a game-ready DX12 route.
 Predication and raytracing acceleration-structure views currently stop replay.
 Many commands and newer resource/pipeline creation APIs still need interception
@@ -175,8 +186,8 @@ and translation; unobserved commands are not yet comprehensively rejected.
 Upload buffers are copied in full at submission and need a scalable update
 strategy. Presentation currently requires RGBA8, a single direct queue/node and
 blocking Present semantics; `DO_NOT_WAIT` stops the stream rather than reporting
-an unaccepted Present as a successful publication. BGRA/HDR conversion, automatic
-VRX consumer reconnection after resize, managed launch/cleanup and real-game
+an unaccepted Present as a successful publication. BGRA/HDR conversion,
+managed launch/cleanup and real-game
 validation remain necessary. Multi-node devices and non-default command-list
 flags are rejected. Existing games are not launched with this backend by the chooser.
 

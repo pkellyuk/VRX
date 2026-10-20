@@ -425,9 +425,17 @@ per name. Every publication contains a complete RGBA SBS pair, sequence,
 per-eye frame IDs and monotonic timestamp. Pixel storage is bounded at 32 MiB
 plus a fixed header. A busy consumer causes a whole-pair drop. VRX hides invalid,
 closed or more-than-one-second-old streams. An abandoned mutex invalidates its
-reader. The transport accepts dimension changes; the renderer rejects dimensions
-other than its startup size, and the current swapchain exporter stops on recreation.
+reader. The CPU reference renderer rejects dimensions other than its startup size.
 No mismatched eyes are combined silently.
+
+The shared GPU consumer supports replacement generations from the same game PID
+and adapter. It retires old queue work and source references, opens the new
+textures and resumes in the same VRX process. Resized eyes are fitted into the
+stable headset screen on the GPU, with aspect bars and filtering constrained to
+each eye. An unchanged size retains pixel-exact copies. This follows the normal
+window-capture behaviour; a game resize does not move or resize the headset screen.
+Native DX12 fixtures verify two consecutive real swapchain resizes in both
+stereo and mono modes. Vulkan/DXVK exporter recreation coverage is still required.
 
 The separate GPU metadata ABI (`GpuHeader`, version 1, 176 bytes) uses
 `Local\\VRX.xgstereo.<session>.gpu.frames` and a mutex. Texture/ready/released

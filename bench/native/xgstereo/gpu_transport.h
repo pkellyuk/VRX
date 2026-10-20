@@ -178,7 +178,9 @@ public:
     }
     ~GpuReader()
     {
-        PairLock lock(mutex_);
+        // Dropping a candidate after a Busy status must not strand its consumer
+        // registration. Cleanup is rare; allow a bounded metadata-lock wait.
+        PairLock lock(mutex_,1000);
         if (registered_ && lock.Ready() && view_ && view_->generation == header_.generation && view_->pid == header_.pid && view_->consumer == GetCurrentProcessId()) view_->consumer = 0;
         // Leases deliberately survive disconnect. Only completed GPU signals
         // permit reuse, including when a reader dies during a submission.
