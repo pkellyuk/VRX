@@ -1,6 +1,7 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard,[switch]$Vrs,[switch]$DepthBounds,[switch]$NullBlendProbe,[switch]$LatePipeline,[switch]$ZeroShift,[ValidateSet('hit','miss')][string]$FilterProbe,[switch]$DebugLayer,[switch]$RecordOnly,[switch]$CloneOnly,[ValidatePattern('^[A-Za-z0-9_,]{1,2048}$')][string]$RecordCommands,[switch]$RecordStateOnly,[switch]$SkipRecordingWork,[switch]$SkipCommandRecording)
+param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard,[switch]$Vrs,[switch]$DepthBounds,[switch]$NullBlendProbe,[switch]$LatePipeline,[switch]$ZeroShift,[ValidateSet('hit','miss')][string]$FilterProbe,[switch]$GpuValidation,[switch]$DebugLayer,[switch]$RecordOnly,[switch]$CloneOnly,[ValidatePattern('^[A-Za-z0-9_,]{1,2048}$')][string]$RecordCommands,[switch]$RecordStateOnly,[switch]$SkipRecordingWork,[switch]$SkipCommandRecording)
 $ErrorActionPreference='Stop'
+if($GpuValidation){$DebugLayer=$true}
 $temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $root=Join-Path $temporary ('VRX-DX12-interception-'+[Guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $root
@@ -14,6 +15,7 @@ try {
     $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
     $start.Environment['VRX_DX12_INTERCEPT']=$(if($Passthrough){'0'}else{'1'})
     $start.Environment['VRX_DX12_MIRROR']=$(if($Mirror){'1'}else{'0'})
+    $start.Environment['VRX_DX12_GPU_VALIDATION']=$(if($GpuValidation){'1'}else{'0'})
     $start.Environment['VRX_DX12_DEBUG_LAYER']=$(if($DebugLayer){'1'}else{'0'})
     $start.Environment['VRX_DX12_DEBUG_LOG']=$(if($DebugLayer){Join-Path $root 'native-debug.log'}else{''})
     $start.Environment['VRX_DX12_RECORD_ONLY']=$(if($RecordOnly -or $CloneOnly){'1'}else{'0'})
@@ -36,6 +38,8 @@ try {
     if(($Vrs -or $DepthBounds) -and $child.ExitCode -eq 77 -and $output -match '^SKIP: native DX12'){exit 77}
     if($child.ExitCode -ne 0 -or $output -notmatch 'PASS: native DX12') { throw ('Native interceptor fixture failed with exit '+$child.ExitCode) }
     if($DebugLayer){$log=Get-Content -LiteralPath (Join-Path $root 'native-debug.log') -Raw;if($log -notmatch 'debug layer enabled before device creation' -or $log -notmatch 'info-queue callback ready' -or ($NullBlendProbe -and $log -notmatch 'VRX diagnostic application-message probe')){throw 'Native debug logging did not observe the requested callback'}}
+    if($DebugLayer -and ($log -notmatch 'VRX diagnostic error after warning flood' -or [regex]::Matches($log,'VRX diagnostic application-message probe').Count -ne 1)){throw 'Warnings hid an error or a device callback was duplicated'}
+    if($GpuValidation -and $log -notmatch 'VRX GPU-based validation enabled'){throw 'GPU-based validation was not enabled'}
 } finally {
     if($child) { if(-not $child.HasExited) { $child.Kill(); $child.WaitForExit() }; $child.Dispose() }
     # Resolve and check this exact, freshly created temporary scope before removal.

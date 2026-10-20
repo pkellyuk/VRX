@@ -16,6 +16,7 @@ param(
     [ValidateRange(0,64)][float]$Shift=0.032,
     [ValidateRange(0,0.25)][float]$Convergence=0,
     [switch]$ObserveOnly,
+    [switch]$GpuValidation,
     [switch]$DebugLayer,
     [switch]$RecordOnly,
     [switch]$CloneOnly,
@@ -26,6 +27,7 @@ param(
     [switch]$Preview
 )
 $ErrorActionPreference='Stop'
+if($GpuValidation){$DebugLayer=$true}
 if([int]$ObserveOnly.IsPresent+[int]$RecordOnly.IsPresent+[int]$CloneOnly.IsPresent -gt 1){throw 'Choose only one native diagnostic mode'}
 if($RecordCommands -and -not $RecordOnly){throw 'A shadow command allowlist requires -RecordOnly'}
 if($RecordStateOnly -and -not $RecordOnly){throw 'State-only shadow recording requires -RecordOnly'}
@@ -59,9 +61,9 @@ try {
     foreach($running in @(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($application)) -ErrorAction SilentlyContinue)) {
         if([string]::Equals($running.Path,$application,[StringComparison]::OrdinalIgnoreCase)){throw 'The selected game is already running'}
     }
-    if($Preview){[pscustomobject]@{Executable=$application;Proxy=$bridge;Session=$Session;Arguments=$GameArguments;ObserveOnly=$ObserveOnly.IsPresent;DebugLayer=$DebugLayer.IsPresent;RecordOnly=$RecordOnly.IsPresent;CloneOnly=$CloneOnly.IsPresent;RecordCommands=$RecordCommands;RecordStateOnly=$RecordStateOnly.IsPresent;SkipRecordingWork=$SkipRecordingWork.IsPresent;SkipCommandRecording=$SkipCommandRecording.IsPresent};return}
+    if($Preview){[pscustomobject]@{Executable=$application;Proxy=$bridge;Session=$Session;Arguments=$GameArguments;ObserveOnly=$ObserveOnly.IsPresent;GpuValidation=$GpuValidation.IsPresent;DebugLayer=$DebugLayer.IsPresent;RecordOnly=$RecordOnly.IsPresent;CloneOnly=$CloneOnly.IsPresent;RecordCommands=$RecordCommands;RecordStateOnly=$RecordStateOnly.IsPresent;SkipRecordingWork=$SkipRecordingWork.IsPresent;SkipCommandRecording=$SkipCommandRecording.IsPresent};return}
     $runRoot=Join-Path $PSScriptRoot ('out/native-'+[Guid]::NewGuid().ToString('N'));$null=New-Item -ItemType Directory -Path $runRoot
-    $runRecord=[pscustomobject]@{Pid=0;StartTicks=0L;Executable=$application;Session=$Session;Backend='dx12';ObserveOnly=$ObserveOnly.IsPresent;DebugLayer=$DebugLayer.IsPresent;RecordOnly=$RecordOnly.IsPresent;CloneOnly=$CloneOnly.IsPresent;RecordCommands=$RecordCommands;RecordStateOnly=$RecordStateOnly.IsPresent;SkipRecordingWork=$SkipRecordingWork.IsPresent;SkipCommandRecording=$SkipCommandRecording.IsPresent;Arguments=$GameArguments}
+    $runRecord=[pscustomobject]@{Pid=0;StartTicks=0L;Executable=$application;Session=$Session;Backend='dx12';ObserveOnly=$ObserveOnly.IsPresent;GpuValidation=$GpuValidation.IsPresent;DebugLayer=$DebugLayer.IsPresent;RecordOnly=$RecordOnly.IsPresent;CloneOnly=$CloneOnly.IsPresent;RecordCommands=$RecordCommands;RecordStateOnly=$RecordStateOnly.IsPresent;SkipRecordingWork=$SkipRecordingWork.IsPresent;SkipCommandRecording=$SkipCommandRecording.IsPresent;Arguments=$GameArguments}
     $runRecord | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runRoot 'run.json')
     $hash=(Get-FileHash -LiteralPath $bridge -Algorithm SHA256).Hash
     $record=[pscustomobject]@{Path=$target;SHA256=$hash}
@@ -80,6 +82,7 @@ try {
     $start=[Diagnostics.ProcessStartInfo]::new($application);$start.UseShellExecute=$false;$start.WorkingDirectory=$gameRoot
     foreach($argument in $GameArguments){$start.ArgumentList.Add($argument)}
     $start.Environment['VRX_DX12_INTERCEPT']='1';$start.Environment['VRX_DX12_MIRROR']=$(if($ObserveOnly){'0'}else{'1'})
+    $start.Environment['VRX_DX12_GPU_VALIDATION']=$(if($GpuValidation){'1'}else{'0'})
     $start.Environment['VRX_DX12_DEBUG_LAYER']=$(if($DebugLayer){'1'}else{'0'})
     $start.Environment['VRX_DX12_DEBUG_LOG']=$(if($DebugLayer){Join-Path $runRoot 'native-debug.log'}else{''})
     $start.Environment['VRX_DX12_RECORD_ONLY']=$(if($RecordOnly -or $CloneOnly){'1'}else{'0'})

@@ -14,7 +14,11 @@ int main(int argc,char** argv){try {
         Scene scene;scene.Init(adapter.Get());
         wchar_t debugMode[3]{};
         if(GetEnvironmentVariableW(L"VRX_DX12_DEBUG_LAYER",debugMode,3)==1 && debugMode[0]==L'1' && scene.messages){
-            Hr(scene.messages->AddApplicationMessage(D3D12_MESSAGE_SEVERITY_WARNING,"VRX diagnostic application-message probe"));scene.messages->ClearStoredMessages();
+            ComPtr<ID3D12Device> repeated;Hr(D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&repeated)));
+            Check(repeated.Get()==scene.device.Get(),"debug fixture recreates the same singleton device");
+            Hr(scene.messages->AddApplicationMessage(D3D12_MESSAGE_SEVERITY_WARNING,"VRX diagnostic application-message probe"));
+            for(UINT i=0;i<4200;++i)Hr(scene.messages->AddApplicationMessage(D3D12_MESSAGE_SEVERITY_WARNING,"VRX diagnostic warning flood"));
+            Hr(scene.messages->AddApplicationMessage(D3D12_MESSAGE_SEVERITY_ERROR,"VRX diagnostic error after warning flood"));scene.messages->ClearStoredMessages();
         }
         if(nullProbe){
             Hr(scene.allocator->Reset());Hr(scene.commands->Reset(scene.allocator.Get(),nullptr));

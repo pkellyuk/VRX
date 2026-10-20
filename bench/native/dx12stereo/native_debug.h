@@ -7,22 +7,27 @@
 #include <mutex>
 #include <string>
 #include <cstdio>
+#include <unordered_map>
 namespace vrx::dx12::diagnostic {
 inline bool Requested() noexcept {wchar_t text[3]{};return GetEnvironmentVariableW(L"VRX_DX12_DEBUG_LAYER",text,3)==1 && text[0]==L'1';}
 struct State {
     std::once_flag enabled;
     std::mutex setup,output;
     std::wstring path;
-    unsigned messages=0;
+    unsigned messages=0,warnings=0;
+    std::unordered_map<unsigned,unsigned> warningIds;
     State(){const auto n=GetEnvironmentVariableW(L"VRX_DX12_DEBUG_LOG",nullptr,0);if(n && n<=32768){path.resize(n);const auto got=GetEnvironmentVariableW(L"VRX_DX12_DEBUG_LOG",path.data(),n);if(got && got<n)path.resize(got);else path.clear();}}
 };
 inline State& Settings(){static auto* state=new State;return *state;}
 inline void Write(const void* device,unsigned severity,unsigned id,const char* text) noexcept {
     try {
         auto& state=Settings();if(state.path.empty())return;std::lock_guard<std::mutex> lock(state.output);
-        if(state.messages>=4097)return;++state.messages;
+        bool limit=false;
+        if(severity==unsigned(D3D12_MESSAGE_SEVERITY_WARNING)){
+            if(state.warnings>=512)return;auto& n=state.warningIds[id];if(n>=8)return;++n;++state.warnings;
+        }else {if(state.messages>=4097)return;limit=++state.messages==4097;}
         FILE* file=nullptr;if(_wfopen_s(&file,state.path.c_str(),L"ab") || !file)return;
-        if(state.messages==4097)std::fputs("VRX debug log limit reached; further messages omitted\n",file);
+        if(limit)std::fputs("VRX debug error log limit reached; further errors omitted\n",file);
         else std::fprintf(file,"%llu device=%p severity=%u id=%u %.*s\n",static_cast<unsigned long long>(GetTickCount64()),device,severity,id,8192,text?text:"");
         std::fclose(file);
     }catch(...){}
@@ -31,7 +36,16 @@ inline void Enable(PFN_D3D12_GET_DEBUG_INTERFACE get) noexcept {
     if(!Requested())return;
     try {std::call_once(Settings().enabled,[&]{
         Microsoft::WRL::ComPtr<ID3D12Debug> debug;
-        if(get && SUCCEEDED(get(IID_PPV_ARGS(&debug)))){debug->EnableDebugLayer();Write(nullptr,3,0,"VRX debug layer enabled before device creation");}
+        if(get && SUCCEEDED(get(IID_PPV_ARGS(&debug)))){
+            debug->EnableDebugLayer();Write(nullptr,3,0,"VRX debug layer enabled before device creation");
+            Write(nullptr,3,0,"VRX warnings sampled separately from errors: 8 per ID, 512 total");
+            wchar_t gpu[3]{};
+            if(GetEnvironmentVariableW(L"VRX_DX12_GPU_VALIDATION",gpu,3)==1 && gpu[0]==L'1'){
+                Microsoft::WRL::ComPtr<ID3D12Debug3> advanced;
+                if(SUCCEEDED(debug.As(&advanced))){advanced->SetEnableGPUBasedValidation(TRUE);advanced->SetEnableSynchronizedCommandQueueValidation(TRUE);Write(nullptr,3,0,"VRX GPU-based validation enabled");}
+                else Write(nullptr,1,0,"VRX GPU-based validation unavailable");
+            }
+        }
         else Write(nullptr,1,0,"VRX debug layer unavailable");
     });}catch(...){}
 }

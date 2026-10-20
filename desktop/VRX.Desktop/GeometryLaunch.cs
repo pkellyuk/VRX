@@ -277,6 +277,7 @@ public static class GeometryLaunch
     }
     internal static void ConfigureEnvironment(ProcessStartInfo start,Plan plan,Profile profile,string runRoot) {
         start.Environment["VRX_XG_SESSION"]=plan.Session;
+        start.Environment.Remove("VRX_DX12_GPU_VALIDATION");
         start.Environment.Remove("VRX_DX12_DEBUG_LAYER");
         start.Environment.Remove("VRX_DX12_DEBUG_LOG");
         start.Environment.Remove("VRX_DX12_RECORD_ONLY");

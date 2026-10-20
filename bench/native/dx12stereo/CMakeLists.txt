@@ -234,6 +234,10 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         add_test(NAME native_dx12_debug_log_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -DebugLayer -NullBlendProbe ${extra})
         set_tests_properties(native_dx12_debug_log_${adapter} PROPERTIES TIMEOUT 40)
+        add_test(NAME native_dx12_debug_gpu_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -GpuValidation ${extra})
+        set_tests_properties(native_dx12_debug_gpu_${adapter} PROPERTIES TIMEOUT 60)
+
 
         foreach(output_state late record_blend record_stencil record_both record_initial)
             set(state_args -LatePipeline)

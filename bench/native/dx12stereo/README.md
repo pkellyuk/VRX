@@ -579,6 +579,14 @@ without extending the device's lifetime. Normal CLI and managed launches clear
 inherited debug options and log paths. Hardware/WARP probes, launcher ownership
 checks and managed native restart integration verify the scoped behavior.
 
+`-GpuValidation` additionally enables GPU-based and synchronized queue validation
+before device creation (and implies `-DebugLayer`). This diagnostic can make game
+startup and rendering substantially slower. Warning output is sampled separately
+(eight messages per ID, 512 total), preserving the independent error quota even
+when an application repeats warnings. Hardware/WARP tests verify the GPU mode,
+single callback registration and error capture after a 4,200-warning flood.
+Normal CLI and managed launches also clear inherited GPU-validation settings.
+
 Unmodified graphics pipelines also lose the right-eye title-screen 3D scene
 (frame 41560/41560). This rules out the shader stereo offset as the source of
 that failure. Native validation is now being used to inspect command/resource
