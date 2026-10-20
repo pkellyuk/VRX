@@ -384,6 +384,15 @@ exited normally; a bridge run with the same option continued rendering beyond
 the earlier failure window but stopped replay at indirect execution. This is a
 promising diagnostic observation, not gameplay/comfort validation or a default
 argument. The game controls were left to the user.
+After indirect execution, extended-command guards exposed shading-rate image
+and depth-bounds state calls; both now have tested replay. Sharing read-only
+upload inputs removed the per-submission CPU buffer snapshots. A subsequent
+System Shock run sustained thousands of native publications with no reported
+hook/replay failures, and passed the isolated VRX GPU consumer check at
+1280x720 per eye. However, gameplay showed a HUD over a black scene in the
+published native-left and right-eye images. Matching frame numbers and successful
+API replay therefore do not establish correct game rendering. A native-only
+gameplay comparison is still needed; this route remains experimental and gated.
 This establishes concrete compatibility gaps, not native DX12 game compatibility.
 
 Reserved resources created through Device/Device4 now have independent right-eye
