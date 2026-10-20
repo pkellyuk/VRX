@@ -22,6 +22,8 @@ int main(int argc,char** argv) {
         const bool legacy=argument=="--legacy",warp=argc==3 && std::strcmp(argv[2],"--warp")==0;
         Check(legacy || serve || argument=="--present","known presentation fixture mode");
         Check(argc!=3 || warp,"known adapter option");
+        wchar_t formatOption[3]{};const bool bgra=GetEnvironmentVariableW(L"VRX_DX12_TEST_BGRA",formatOption,3)==1 && formatOption[0]==L'1';
+        auto format=bgra?DXGI_FORMAT_B8G8R8A8_UNORM:DXGI_FORMAT_R8G8B8A8_UNORM;
         const auto module=GetModuleHandleW(L"d3d12.dll");
         counts=reinterpret_cast<CountsFn>(GetProcAddress(module,"VRX_DX12_GetCounts"));scope=reinterpret_cast<ScopeFn>(GetProcAddress(module,"VRX_DX12_DiagnosticScope"));
         Check(counts && scope,"native proxy diagnostics loaded");
@@ -35,14 +37,14 @@ int main(int argc,char** argv) {
             // Factory creation deliberately predates device interception.
             ComPtr<IDXGIFactory4> factory;Hr(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
             ComPtr<IDXGIAdapter> adapter;if(warp)Hr(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)));
-            Scene scene;scene.Init(adapter.Get());Pipeline(scene);
+            Scene scene;scene.Init(adapter.Get());Pipeline(scene,false,format);
             ComPtr<IDXGISwapChain3> chain;
             if(legacy) {
-                DXGI_SWAP_CHAIN_DESC d{};d.BufferDesc.Width=scene.width;d.BufferDesc.Height=scene.height;d.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+                DXGI_SWAP_CHAIN_DESC d{};d.BufferDesc.Width=scene.width;d.BufferDesc.Height=scene.height;d.BufferDesc.Format=format;
                 d.SampleDesc.Count=1;d.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;d.BufferCount=2;d.OutputWindow=window.handle;d.Windowed=TRUE;d.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
                 ComPtr<IDXGISwapChain> base;Hr(factory->CreateSwapChain(scene.queue.Get(),&d,&base));Hr(base.As(&chain));
             } else {
-                DXGI_SWAP_CHAIN_DESC1 d{};d.Width=scene.width;d.Height=scene.height;d.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+                DXGI_SWAP_CHAIN_DESC1 d{};d.Width=scene.width;d.Height=scene.height;d.Format=format;
                 d.SampleDesc.Count=1;d.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;d.BufferCount=2;d.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
                 ComPtr<IDXGISwapChain1> base;Hr(factory->CreateSwapChainForHwnd(scene.queue.Get(),window.handle,&d,nullptr,nullptr,&base));Hr(base.As(&chain));
             }
@@ -53,7 +55,8 @@ int main(int argc,char** argv) {
                 for(UINT frame=1;frame<10000;++frame) {
                     if(resizeServe && step<2 && WaitForSingleObject(events.ready[step],0)==WAIT_OBJECT_0) {
                         scene.Wait();scene.eyes.Reset();scene.width=step?97:129;scene.height=step?65:73;
-                        Hr(chain->ResizeBuffers(2,scene.width,scene.height,DXGI_FORMAT_UNKNOWN,0));++step;
+                        if(bgra && step==1)format=DXGI_FORMAT_R8G8B8A8_UNORM;
+                        Hr(chain->ResizeBuffers(2,scene.width,scene.height,format,0));if(bgra && step==1)Pipeline(scene,false,format);++step;
                     }
                     scene.eyes.Reset();Hr(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&scene.eyes)));
                     scene.device->CreateRenderTargetView(scene.eyes.Get(),nullptr,scene.rtv->GetCPUDescriptorHandleForHeapStart());
@@ -64,10 +67,13 @@ int main(int argc,char** argv) {
             for(UINT frame=1;frame<=18;++frame) {
                 if(frame==7 || frame==13) {
                     scene.Wait();scene.eyes.Reset();scene.width=frame==7?129:97;scene.height=frame==7?73:65;
+                    if(bgra && frame==13)format=DXGI_FORMAT_R8G8B8A8_UNORM;
                     if(frame==7)Hr(chain->ResizeBuffers(2,scene.width,scene.height,DXGI_FORMAT_UNKNOWN,0));
-                    else {const UINT nodes[]={1,1};IUnknown* queues[]={scene.queue.Get(),scene.queue.Get()};Hr(chain->ResizeBuffers1(2,scene.width,scene.height,DXGI_FORMAT_UNKNOWN,0,nodes,queues));}
+                    else {const UINT nodes[]={1,1};IUnknown* queues[]={scene.queue.Get(),scene.queue.Get()};Hr(chain->ResizeBuffers1(2,scene.width,scene.height,format,0,nodes,queues));}
+                    if(bgra && frame==13)Pipeline(scene,false,format);
                 }
                 scene.eyes.Reset();Hr(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&scene.eyes)));
+                Check(scene.eyes->GetDesc().Format==format,"native swapchain uses the requested source format");
                 scene.device->CreateRenderTargetView(scene.eyes.Get(),nullptr,scene.rtv->GetCPUDescriptorHandleForHeapStart());
                 vrx::dx12::Counts before;Hr(counts(&before,sizeof(before)));Hr(chain->Present(0,DXGI_PRESENT_TEST));
                 vrx::dx12::Counts tested;Hr(counts(&tested,sizeof(tested)));Check(before.presentations==tested.presentations,"test-only Present never publishes");

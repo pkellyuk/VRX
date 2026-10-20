@@ -1,9 +1,10 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Engine, [Parameter(Mandatory)][string]$Producer, [switch]$Gpu, [switch]$SameFrame, [switch]$Mirror, [string]$Proxy, [switch]$Resize, [switch]$Mono)
+param([Parameter(Mandatory)][string]$Engine, [Parameter(Mandatory)][string]$Producer, [switch]$Gpu, [switch]$SameFrame, [switch]$Mirror, [string]$Proxy, [switch]$Resize, [switch]$Mono, [switch]$Bgra)
 $ErrorActionPreference = 'Stop'
 if ($Mirror) { $Gpu = $true; $SameFrame = $true; }
 if ($Proxy) {if($Mirror){throw 'Native DX12 proxy and Vulkan mirror modes are mutually exclusive'};$Gpu=$true;$SameFrame=$true}
 if($Resize -and -not $Proxy){throw 'Resize handshake requires the native DX12 presentation fixture'}
+if($Bgra -and -not $Proxy){throw 'BGRA mode requires the native DX12 presentation fixture'}
 if($Mono -and -not $Resize){throw 'Explicit mono mode is for the resize handshake; ordinary checks already test stereo and mono'}
 $session = 'check-' + [Guid]::NewGuid().ToString('N')
 $producerPath = (Resolve-Path -LiteralPath $Producer).Path
@@ -29,6 +30,7 @@ try {
         $child.StartInfo.FileName=$fixture
         $child.StartInfo.Environment['VRX_DX12_INTERCEPT']='1';$child.StartInfo.Environment['VRX_DX12_MIRROR']='1'
         $child.StartInfo.Environment['VRX_DX12_SHIFT']='0.4';$child.StartInfo.Environment['VRX_DX12_CONVERGENCE']='0'
+        $child.StartInfo.Environment['VRX_DX12_TEST_BGRA']=$(if($Bgra){'1'}else{'0'})
     }
     if (-not $child.Start()) { throw 'Geometry test producer did not start.' }
     $started=$true

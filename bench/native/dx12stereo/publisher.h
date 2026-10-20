@@ -2,6 +2,7 @@
 // Native D3D12 same-frame output. No Vulkan translation or CPU pixel transfer.
 #pragma once
 #include "../xgstereo/gpu_transport.h"
+#include "format_convert.h"
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -27,12 +28,15 @@ class Publisher {
         // D3D12 command lists do not retain resources used by recorded commands.
         ComPtr<ID3D12Resource> left, right;
         uint64_t pending = 0;
+        FormatConvert::Slot conversion;
     };
     std::unique_ptr<GpuWriter> writer_;
+    std::unique_ptr<FormatConvert> converter_;
     ComPtr<ID3D12Device> device_;
     ComPtr<ID3D12CommandQueue> queue_;
     std::array<Slot, GpuSlots> slots_;
     uint32_t width_ = 0, height_ = 0;
+    DXGI_FORMAT format_=DXGI_FORMAT_R8G8B8A8_UNORM;
     uint64_t lastFrame_ = 0;
     bool failed_ = false;
     std::mutex mutex_;
@@ -55,10 +59,9 @@ class Publisher {
     bool Matches(const Eye& eye) const {
         if (!eye.texture) return false;
         const auto d = eye.texture->GetDesc();
-        // Typed RGBA8 only in this first producer. HDR, typeless, MSAA and mip
-        // conversion need explicit resolve/conversion rather than unsafe copies.
+        // HDR, typeless, MSAA and mip inputs need explicit interpretation.
         if (d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.Width != width_ || d.Height != height_ ||
-            d.Format != DXGI_FORMAT_R8G8B8A8_UNORM || d.SampleDesc.Count != 1 || d.MipLevels != 1 ||
+            d.Format != format_ || d.SampleDesc.Count != 1 || d.MipLevels != 1 ||
             eye.subresource >= d.DepthOrArraySize) return false;
         ComPtr<ID3D12Device> owner;
         ComPtr<IUnknown> a, b;
@@ -96,13 +99,15 @@ public:
         }
         if(retiredEvent_)CloseHandle(retiredEvent_);
     }
-    bool Create(ID3D12CommandQueue* queue, const std::wstring& session, uint32_t width, uint32_t height) {
+    bool Create(ID3D12CommandQueue* queue, const std::wstring& session, uint32_t width, uint32_t height,DXGI_FORMAT format=DXGI_FORMAT_R8G8B8A8_UNORM) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (writer_ || !queue || queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT || !GpuShape(width, height)) return false;
+        if (writer_ || !queue || queue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT || !GpuShape(width, height) || !FormatConvert::Supported(format)) return false;
         ComPtr<ID3D12Device> device;
         if (FAILED(queue->GetDevice(IID_PPV_ARGS(&device))) || device->GetNodeCount() != 1) return false;
+        std::unique_ptr<FormatConvert> converter;
+        if(FormatConvert::Needed(format)){converter=std::make_unique<FormatConvert>();if(!converter->Create(device.Get(),format))return false;}
         auto writer = std::make_unique<GpuWriter>();
-        if (!writer->Create(session, device->GetAdapterLuid(), width, height, GpuFrameKind::SameFrame)) return false;
+        if (!writer->Create(session, device->GetAdapterLuid(), width, height, GpuFrameKind::SameFrame,bool(converter))) return false;
         // GpuWriter owns shared allocations on its own D3D12 device. Open them
         // on the game's device before recording the native game's queue work.
         std::array<Slot, GpuSlots> slots;
@@ -114,8 +119,9 @@ public:
                 FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&s.allocator))) ||
                 FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, s.allocator.Get(), nullptr, IID_PPV_ARGS(&s.commands))) ||
                 FAILED(s.commands->Close())) return false;
+            if(converter && !converter->CreateSlot(device.Get(),s.texture.Get(),s.conversion))return false;
         }
-        writer_ = std::move(writer); slots_ = std::move(slots); device_ = std::move(device); queue_ = queue; width_ = width; height_ = height;
+        writer_ = std::move(writer); converter_=std::move(converter);slots_ = std::move(slots); device_ = std::move(device); queue_ = queue; width_ = width; height_ = height;format_=format;
         retiredEvent_=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!retiredEvent_)return false;
         try {retirement_=std::thread([this]{Retire();});}catch(...){return false;}
         return true;
@@ -132,7 +138,8 @@ public:
         auto fail = [&] { failed_ = true; writer_->Close(); return PublishResult::Failed; };
         if (FAILED(s.allocator->Reset()) || FAILED(s.commands->Reset(s.allocator.Get(), nullptr))) return fail();
         s.left = left.texture; s.right = right.texture;
-        auto target = Transition(s.texture.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        auto* destination=converter_?s.conversion.source.Get():s.texture.Get();
+        auto target = Transition(destination, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
             D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
         s.commands->ResourceBarrier(1, &target);
         const Eye eyes[] = {left, right};
@@ -142,13 +149,14 @@ public:
             if (eye.state != D3D12_RESOURCE_STATE_COPY_SOURCE) s.commands->ResourceBarrier(1, &b);
             D3D12_TEXTURE_COPY_LOCATION src{}, dst{};
             src.pResource = eye.texture; src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; src.SubresourceIndex = eye.subresource;
-            dst.pResource = s.texture.Get(); dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dst.SubresourceIndex = i;
+            dst.pResource = destination; dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dst.SubresourceIndex = i;
             s.commands->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
             if (eye.state != D3D12_RESOURCE_STATE_COPY_SOURCE) {
                 std::swap(b.Transition.StateBefore, b.Transition.StateAfter); s.commands->ResourceBarrier(1, &b);
             }
         }
-        std::swap(target.Transition.StateBefore, target.Transition.StateAfter); s.commands->ResourceBarrier(1, &target);
+        if(converter_)converter_->Record(s.commands.Get(),s.conversion,s.texture.Get());
+        else {std::swap(target.Transition.StateBefore, target.Transition.StateAfter);s.commands->ResourceBarrier(1,&target);}
         if (FAILED(s.commands->Close()) || FAILED(queue_->Wait(s.released.Get(), release))) return fail();
         ID3D12CommandList* lists[] = {s.commands.Get()}; queue_->ExecuteCommandLists(1, lists);
         if (FAILED(queue_->Signal(s.ready.Get(), sequence))) {

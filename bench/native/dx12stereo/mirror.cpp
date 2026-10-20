@@ -229,9 +229,9 @@ void Present(IDXGISwapChain* original,UINT flags) noexcept {
         auto resource=Mapped(left.Get(),Kind::Resource,item->context);if(!resource)return;
         if(!item->publisher) {
             const auto desc=left->GetDesc();
-            if(desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM || desc.Width>4096 || desc.Height>4096 || desc.SampleDesc.Count!=1) {Stop(item->context,"unsupported presentation format or extent");return;}
+            if(!xg::dx12::FormatConvert::Supported(desc.Format) || desc.Width>4096 || desc.Height>4096 || desc.SampleDesc.Count!=1) {Stop(item->context,"unsupported presentation format or extent");return;}
             auto publisher=std::make_unique<xg::dx12::Publisher>();
-            if(!publisher->Create(item->queue.Get(),session,UINT(desc.Width),desc.Height)) {Stop(item->context,"shared presentation stream creation failed");return;}
+            if(!publisher->Create(item->queue.Get(),session,UINT(desc.Width),desc.Height,desc.Format)) {Stop(item->context,"shared presentation stream creation failed");return;}
             item->publisher=std::move(publisher);
         }
         ++Registry().counts.presentations;

@@ -58,7 +58,7 @@ public:
     ID3D12Device* Device() const { return device_.Get(); }
     const GpuObjects& Objects(uint32_t slot) const { return objects_[slot]; }
     HANDLE Handle(uint32_t slot, uint32_t object) const { return handles_[slot * 3 + object]; }
-    bool Create(const std::wstring& session, LUID adapter, uint32_t w, uint32_t h, GpuFrameKind kind)
+    bool Create(const std::wstring& session, LUID adapter, uint32_t w, uint32_t h, GpuFrameKind kind, bool unorderedAccess=false)
     {
         if (!ValidSession(session) || !GpuShape(w, h)) return false;
         ComPtr<IDXGIFactory4> factory; ComPtr<IDXGIAdapter> gpu;
@@ -81,6 +81,7 @@ public:
         D3D12_HEAP_PROPERTIES heap{}; heap.Type = D3D12_HEAP_TYPE_DEFAULT;
         D3D12_RESOURCE_DESC desc{}; desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; desc.Width = w; desc.Height = h;
         desc.DepthOrArraySize = 2; desc.MipLevels = 1; desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; desc.SampleDesc.Count = 1;
+        if(unorderedAccess)desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
         for (uint32_t i = 0; i < GpuSlots; ++i)
         {
             auto& o = objects_[i];
@@ -178,6 +179,7 @@ public:
     }
     ~GpuReader()
     {
+        if(!registered_)return;
         // Dropping a candidate after a Busy status must not strand its consumer
         // registration. Cleanup is rare; allow a bounded metadata-lock wait.
         PairLock lock(mutex_,1000);

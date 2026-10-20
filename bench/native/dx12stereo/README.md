@@ -179,14 +179,34 @@ The resize/mono engine checks use a handshake to make one consumer process
 verify the original pair and two real native-swapchain replacement generations.
 These exercise the production reconnect and presentation functions without XR.
 
+### Native 8-bit formats
+
+The publisher accepts typed RGBA8, BGRA8 and BGRX8, including their sRGB variants.
+RGBA uses a byte-preserving compatible-format copy. BGRA/BGRX first copy the two
+game views into a private typeless array, then a compute pass writes canonical
+RGBA8 directly into a UAV-capable shared texture. Thus the game backbuffer needs
+no shader view. UNORM views of the typeless staging resource preserve encoded
+sRGB values; the pass changes channel storage, not the transfer function.
+BGRX output is opaque; BGRA and RGBA preserve the source alpha.
+
+The intermediate array and descriptor heap belong to each bounded ring slot;
+no descriptor or texture is recycled before the previous producer/consumer GPU
+work retires. The original input bytes and resource states are restored. Native
+hardware/WARP tests cover all six formats, every 8-bit channel value, odd extents,
+nonzero array slices, alpha, untouched original resources, and pressure on all
+three in-flight slots. BGRA swapchain tests also change back to RGBA at resize;
+VRX handoff and automatic stereo/mono reconnect tests cover that format change.
+Only compatible format families are copied, following Microsoft's
+[CopyTextureRegion requirements](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytextureregion).
+
 This remains a limited graphics/compute/presentation subset, not a game-ready DX12 route.
 Predication and raytracing acceleration-structure views currently stop replay.
 Many commands and newer resource/pipeline creation APIs still need interception
 and translation; unobserved commands are not yet comprehensively rejected.
 Upload buffers are copied in full at submission and need a scalable update
-strategy. Presentation currently requires RGBA8, a single direct queue/node and
+strategy. Presentation currently requires one of those typed 8-bit formats, a single direct queue/node and
 blocking Present semantics; `DO_NOT_WAIT` stops the stream rather than reporting
-an unaccepted Present as a successful publication. BGRA/HDR conversion,
+an unaccepted Present as a successful publication. HDR colour-space interpretation/conversion,
 managed launch/cleanup and real-game
 validation remain necessary. Multi-node devices and non-default command-list
 flags are rejected. Existing games are not launched with this backend by the chooser.

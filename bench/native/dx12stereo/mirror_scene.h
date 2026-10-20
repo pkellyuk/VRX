@@ -148,7 +148,7 @@ RWStructuredBuffer<float4> rootOutput:register(u1);
         scene.commands->ResourceBarrier(1,&barrier);
     }
 };
-inline void Pipeline(Scene& scene,bool bindings=false) {
+inline void Pipeline(Scene& scene,bool bindings=false,DXGI_FORMAT format=DXGI_FORMAT_R8G8B8A8_UNORM) {
     ComPtr<ID3DBlob> vs,ps,error;
     const D3D_SHADER_MACRO defines[]={{"BINDINGS","1"},{nullptr,nullptr}};
     Hr(D3DCompile(source,sizeof(source),nullptr,bindings?defines:nullptr,nullptr,"VS","vs_5_1",0,0,&vs,&error));
@@ -156,7 +156,7 @@ inline void Pipeline(Scene& scene,bool bindings=false) {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC p{}; p.pRootSignature=scene.root.Get(); p.VS={vs->GetBufferPointer(),vs->GetBufferSize()}; p.PS={ps->GetBufferPointer(),ps->GetBufferSize()};
     p.SampleMask=UINT_MAX; p.BlendState.RenderTarget[0].RenderTargetWriteMask=15;
     p.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID; p.RasterizerState.CullMode=D3D12_CULL_MODE_NONE; p.RasterizerState.DepthClipEnable=TRUE;
-    p.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE; p.NumRenderTargets=1; p.RTVFormats[0]=DXGI_FORMAT_R8G8B8A8_UNORM; p.SampleDesc.Count=1;
+    p.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE; p.NumRenderTargets=1; p.RTVFormats[0]=format; p.SampleDesc.Count=1;
     if(bindings) {p.DSVFormat=DXGI_FORMAT_D32_FLOAT;p.DepthStencilState.DepthEnable=TRUE;p.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ALL;p.DepthStencilState.DepthFunc=D3D12_COMPARISON_FUNC_LESS;}
     Hr(scene.device->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&scene.pipeline)));
 }
