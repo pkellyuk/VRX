@@ -506,7 +506,9 @@ following each restart. A visible menu does not count as a successful comparison
 | Viewports and scissor rectangles only | Full scene |
 | Blend factor, stencil reference and primitive topology only | HUD over black world |
 | Primitive topology only | Full scene |
-| Blend factor only | Pending visual result |
+| Blend factor only, original native-first sequence | HUD over black world |
+| Blend factor only, private input snapshot and native call last | Full scene |
+| Full mirroring with revised blend wrapper | GPU stream ready; gameplay/headset observation pending |
 
 `-RecordOnly` never submits shadow lists or publishes a stereo stream.
 `-SkipRecordingWork` omits draw, dispatch, bundle and indirect work;
@@ -537,7 +539,7 @@ in a standalone application using System32 D3D12, with both hardware and WARP,
 with the debug layer enabled or disabled. This reproduces without the VRX DLL.
 Microsoft [documents null as the default `{1,1,1,1}`](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-omsetblendfactor).
 The interceptor supplies that equivalent explicit array to native and shadow
-calls. Non-null input is forwarded unchanged. This is a separate runtime edge
+calls. Non-null values are preserved in a private snapshot. This is a separate runtime edge
 case; it does not establish the cause of System Shock's missing world scene.
 
 Native/replayed pixel tests exercise the null default under blending and stencil
@@ -546,3 +548,14 @@ reused, and check depth-bounds rejection. A focused null-call probe also covers
 interception with mirroring disabled. `dx12_state_fixture --null-blend --warp`
 and `--null-blend-no-debug --warp` reproduce the native runtime issue when run
 without the bridge; they are diagnostic reproductions, not passing test cases.
+
+The missing-world regression is isolated to blend-factor recording. The
+private-snapshot, shadow-first/native-last sequence restores the scene in the
+isolated saved-game comparison. That comparison does not distinguish storage
+aliasing from call-order effects, so it is not proof of the driver's mechanism.
+Full command/resource replay is the next gameplay and headset validation.
+
+Output-state pixel tests additionally cover initial versus delayed pipeline
+binding, legacy and streamed PSOs, and record-only blend/stencil calls both
+separately and together. They validate native pixels while unsubmitted shadow
+lists remain unbound, plus full same-frame replay with late PSO binding.

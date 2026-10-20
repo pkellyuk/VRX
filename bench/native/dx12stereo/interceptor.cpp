@@ -12,6 +12,7 @@
 #include <atomic>
 #include <vector>
 #include <type_traits>
+#include <algorithm>
 
 namespace vrx::dx12 {
 using Microsoft::WRL::ComPtr;
@@ -147,9 +148,12 @@ SIMPLE(SetComputeRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT inde
 // dereferences NULL even without interception (hardware and WARP), so pass its
 // equivalent explicit value to both native and replay recording paths.
 void STDMETHODCALLTYPE OMSetBlendFactor(ID3D12GraphicsCommandList* object,const FLOAT values[4]) {
-    Call call;const FLOAT defaults[]={1,1,1,1};const auto* normalized=values?values:defaults;
-    Original<decltype(&OMSetBlendFactor)>(object,slot::ID3D12GraphicsCommandList_OMSetBlendFactor)(object,normalized);
-    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto&){q->OMSetBlendFactor(normalized);});
+    Call call;FLOAT snapshot[]={1,1,1,1};if(values)std::copy_n(values,4,snapshot);
+    // Each list consumes its own call synchronously. Snapshot caller storage
+    // before either call and leave the native state update last; the game can
+    // reuse its input array immediately after this method returns.
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto&){q->OMSetBlendFactor(snapshot);});
+    Original<decltype(&OMSetBlendFactor)>(object,slot::ID3D12GraphicsCommandList_OMSetBlendFactor)(object,snapshot);
 }
 void STDMETHODCALLTYPE SetPipelineState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
     Call call; Original<decltype(&SetPipelineState)>(object,slot::ID3D12GraphicsCommandList_SetPipelineState)(object,value);
