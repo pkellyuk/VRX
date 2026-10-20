@@ -34,10 +34,12 @@ struct Item {
     std::shared_ptr<Context> context;
     std::vector<void*> identities;
     ComPtr<ID3D12Resource> resource;
+    ID3D12Resource* resourceAlias=nullptr; // app-owned, GPU-read-only upload input
     ComPtr<ID3D12PipelineState> pipeline;
     ID3D12PipelineState* pipelineAlias=nullptr;
     std::string pipelineReason;
     ComPtr<ID3D12Heap> memory;
+    ID3D12Heap* memoryAlias=nullptr; // app-owned upload allocation
     ComPtr<ID3D12QueryHeap> queries;
     ID3D12CommandSignature* signature=nullptr; // immutable native object, app-owned
     ComPtr<ID3D12DescriptorHeap> heap;
@@ -55,6 +57,8 @@ struct Item {
     std::unique_ptr<xg::dx12::Publisher> publisher;
     uint64_t frame=0;
     DXGI_COLOR_SPACE_TYPE colorSpace=DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    ID3D12Resource* RightResource() const {return resourceAlias?resourceAlias:resource.Get();}
+    ID3D12Heap* RightMemory() const {return memoryAlias?memoryAlias:memory.Get();}
 };
 struct State {
     // Native internal Release callbacks can re-enter while a shadow call runs.
@@ -144,7 +148,7 @@ std::shared_ptr<Item> Mapped(void* original,Kind kind,const std::shared_ptr<Cont
     return item;
 }
 void TrackResource(ID3D12Resource* original,const std::shared_ptr<Item>& item) {
-    if(item->description.Dimension==D3D12_RESOURCE_DIMENSION_BUFFER){item->leftAddress=original->GetGPUVirtualAddress();item->rightAddress=item->resource->GetGPUVirtualAddress();}
+    if(item->description.Dimension==D3D12_RESOURCE_DIMENSION_BUFFER){item->leftAddress=original->GetGPUVirtualAddress();item->rightAddress=item->RightResource()->GetGPUVirtualAddress();}
     Remember(original,item);++Registry().counts.resources;
 }
 bool HeapSupported(const D3D12_HEAP_PROPERTIES& heap,D3D12_HEAP_FLAGS flags) {
@@ -155,7 +159,7 @@ bool HeapSupported(const D3D12_HEAP_PROPERTIES& heap,D3D12_HEAP_FLAGS flags) {
 bool Mapper::Valid() const { return context_ && context_->active; }
 ID3D12Resource* Mapper::Resource(ID3D12Resource* original) {
     if(!original) return nullptr;
-    auto item=Mapped(original,Kind::Resource,context_); return item?item->resource.Get():nullptr;
+    auto item=Mapped(original,Kind::Resource,context_); return item?item->RightResource():nullptr;
 }
 ID3D12PipelineState* Mapper::Pipeline(ID3D12PipelineState* original) {
     if(!original) return nullptr;
@@ -202,7 +206,7 @@ ID3D12DescriptorHeap* Mapper::Heap(ID3D12DescriptorHeap* original) {
 }
 ID3D12Heap* Mapper::Memory(ID3D12Heap* original) {
     if(!original)return nullptr;
-    auto item=Mapped(original,Kind::MemoryHeap,context_);return item?item->memory.Get():nullptr;
+    auto item=Mapped(original,Kind::MemoryHeap,context_);return item?item->RightMemory():nullptr;
 }
 ID3D12QueryHeap* Mapper::Query(ID3D12QueryHeap* original) {
     auto item=Mapped(original,Kind::QueryHeap,context_);return item?item->queries.Get():nullptr;
@@ -322,8 +326,13 @@ void Resource(ID3D12Device* device,ID3D12Resource* original,const D3D12_HEAP_PRO
     try {
         Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(!context || !context->active) return;
         auto item=New(Kind::Resource,context); item->description=*desc; item->heapType=heap->Type;
-        if(!HeapSupported(*heap,flags) ||
-            FAILED(device->CreateCommittedResource(heap,flags,desc,initial,clear,IID_PPV_ARGS(&item->resource)))) { Stop(context,"resource cannot be mirrored"); return; }
+        if(!HeapSupported(*heap,flags)){Stop(context,"resource cannot be mirrored");return;}
+        // UPLOAD buffers are GPU-read-only GENERIC_READ inputs. Both command
+        // lists consume the app's same bytes; its fence follows the paired
+        // submission and protects reuse for both eyes. Borrow without AddRef so
+        // normal app Release can retire the identity, just like compute PSOs.
+        if(heap->Type==D3D12_HEAP_TYPE_UPLOAD){item->resourceAlias=original;TrackResource(original,item);return;}
+        if(FAILED(device->CreateCommittedResource(heap,flags,desc,initial,clear,IID_PPV_ARGS(&item->resource)))) { Stop(context,"resource cannot be mirrored"); return; }
         if(item->resource.Get()==original) { Stop(context,"resource clone aliases original"); return; }
         TrackResource(original,item);
     } catch(...) { Failure(device,"resource observation failed"); }
@@ -332,7 +341,9 @@ void MemoryHeap(ID3D12Device* device,ID3D12Heap* original,const D3D12_HEAP_DESC*
     try {
         Lock lock(Registry().mutex);Drain();auto context=Owner(device);if(!context || !context->active)return;
         auto item=New(Kind::MemoryHeap,context);item->heapType=desc->Properties.Type;
-        if(!HeapSupported(desc->Properties,desc->Flags) || FAILED(device->CreateHeap(desc,IID_PPV_ARGS(&item->memory)))){Stop(context,"memory heap cannot be mirrored");return;}
+        if(!HeapSupported(desc->Properties,desc->Flags)){Stop(context,"memory heap cannot be mirrored");return;}
+        if(item->heapType==D3D12_HEAP_TYPE_UPLOAD)item->memoryAlias=original;
+        else if(FAILED(device->CreateHeap(desc,IID_PPV_ARGS(&item->memory)))){Stop(context,"memory heap cannot be mirrored");return;}
         Remember(original,item);
     }catch(...){Failure(device,"memory heap observation failed");}
 }
@@ -359,6 +370,7 @@ void PlacedResource(ID3D12Device* device,ID3D12Resource* original,ID3D12Heap* he
         Lock lock(Registry().mutex);Drain();auto context=Owner(device);if(!context || !context->active)return;
         auto allocation=Mapped(heap,Kind::MemoryHeap,context);if(!allocation)return;
         auto item=New(Kind::Resource,context);item->description=*desc;item->heapType=allocation->heapType;item->memory=allocation->memory;
+        if(item->heapType==D3D12_HEAP_TYPE_UPLOAD){item->resourceAlias=original;TrackResource(original,item);return;}
         if(FAILED(device->CreatePlacedResource(item->memory.Get(),offset,desc,initial,clear,IID_PPV_ARGS(&item->resource)))){Stop(context,"placed resource creation failed");return;}
         TrackResource(original,item);
     }catch(...){Failure(device,"placed resource observation failed");}
@@ -490,21 +502,8 @@ void Execute(ID3D12CommandQueue* queue,UINT count,ID3D12CommandList* const* list
             if(!list || !list->closed) { Stop(context,"untracked or open command list submitted"); break; }
             paired.push_back(list->list.Get());
         }
-        // Upload snapshots are captured before either submission. The app's
-        // fences follow the entire paired batch, protecting reuse of both eyes.
-        std::unordered_set<Item*> visited;
-        for(const auto& entry:Registry().objects) {
-            auto item=entry.second;
-            if(item->context!=context || item->kind!=Kind::Resource || item->heapType!=D3D12_HEAP_TYPE_UPLOAD || !visited.insert(item.get()).second) continue;
-            auto* original=static_cast<ID3D12Resource*>(item->identities[0]); void* source=nullptr; void* target=nullptr;
-            const D3D12_RANGE noRead{0,0};
-            const D3D12_RANGE readRange{0,SIZE_T(item->description.Width)};
-            if(FAILED(original->Map(0,&readRange,&source))) { Stop(context,"upload snapshot failed"); break; }
-            const auto mapped=item->resource->Map(0,&noRead,&target);
-            if(SUCCEEDED(mapped)) { std::memcpy(target,source,size_t(item->description.Width)); item->resource->Unmap(0,nullptr); }
-            original->Unmap(0,&noRead);
-            if(FAILED(mapped)) { Stop(context,"upload shadow mapping failed"); break; }
-        }
+        // GPU-read-only upload inputs are shared. No CPU reads or whole-buffer
+        // copies at submission; app fences follow both lists before CPU reuse.
         if(context->active) { execute(queue,UINT(paired.size()),paired.data()); Registry().counts.replays+=count; }
         else execute(queue,count,lists);
     } catch(...) { Failure(queue,"submission translation failed"); execute(queue,count,lists); }
@@ -521,7 +520,7 @@ void Released(void*,std::shared_ptr<void> token) noexcept {
 }
 HRESULT Twin(ID3D12Resource* original,ID3D12Resource** output) noexcept {
     if(!output) return E_POINTER; *output=nullptr;
-    try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(!item || !item->resource || !item->context->active) return E_FAIL; return item->resource.CopyTo(output); } catch(...) { return E_FAIL; }
+    try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(!item || !item->RightResource() || !item->context->active) return E_FAIL; *output=item->RightResource();(*output)->AddRef();return S_OK; } catch(...) { return E_FAIL; }
 }
 void Snapshot(Counts& output) noexcept {
     try { Lock lock(Registry().mutex); Drain(); output=Registry().counts; std::unordered_set<Item*> visited; for(const auto& entry:Registry().objects) visited.insert(entry.second.get()); output.liveObjects=visited.size(); } catch(...) { output={}; }

@@ -121,9 +121,22 @@ and shader coverage, managed launch/cleanup and real-game validation.
 descriptor heaps, compatible graphics pipelines and graphics/compute command lists. The app
 records its native left view once. A rewritten vertex pipeline records the
 right view into separate resources, and both lists are submitted in the same
-queue batch before the app's completion fence. Root constants and upload-buffer
-snapshots come from that submission. `VRX_DX12_SHIFT` (default 0.25) is the full
+queue batch before the app's completion fence. Root constants and upload inputs
+come from that submission. `VRX_DX12_SHIFT` (default 0.25) is the full
 native-left/right clip offset; `VRX_DX12_CONVERGENCE` defaults to zero.
+
+GPU-read-only `UPLOAD` buffers and their placed allocations are shared by both
+command lists. Their GPU addresses remain unchanged; no CPU scan, Map/read or
+whole-buffer copy runs at submission. Writable/default resources and readbacks
+retain independent eye storage. The app's fence follows both lists, protecting
+CPU reuse of upload-ring bytes. This relies on the normal
+[upload-heap contract](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_heap_type):
+GPU reads in fixed `GENERIC_READ` state, with CPU reuse synchronized by the app.
+Borrowed resource identities do not pin the app's COM lifetime. Hardware/WARP
+tests cover committed buffers, overlapping placed allocations, persistent maps,
+CPU writes after command recording, direct/compute/copy queues, distinct GPU-written
+results and complete retirement. A mostly untouched 64 MiB input verifies that
+large uploads share their original storage.
 
 GPU and WARP fixtures verify 18 successive current-frame pairs, direct and
 indexed draws, a nonzero index-buffer address offset, depth-dependent disparity,
