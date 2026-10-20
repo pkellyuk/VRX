@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough)
+param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported)
 $ErrorActionPreference='Stop'
 $temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $root=Join-Path $temporary ('VRX-DX12-interception-'+[Guid]::NewGuid().ToString('N'))
@@ -13,7 +13,10 @@ try {
     $start.UseShellExecute=$false; $start.CreateNoWindow=$true
     $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
     $start.Environment['VRX_DX12_INTERCEPT']=$(if($Passthrough){'0'}else{'1'})
-    $start.ArgumentList.Add($(if($Passthrough){'--passthrough'}else{'--intercept'}))
+    $start.Environment['VRX_DX12_MIRROR']=$(if($Mirror){'1'}else{'0'})
+    $start.Environment['VRX_DX12_SHIFT']='0.4'; $start.Environment['VRX_DX12_CONVERGENCE']='0'
+    $start.ArgumentList.Add($(if($Mirror){if($Unsupported){'--unsupported'}else{'--mirror'}}elseif($Passthrough){'--passthrough'}else{'--intercept'}))
+    if($Warp) { $start.ArgumentList.Add('--warp') }
     $child=[Diagnostics.Process]::Start($start)
     $stdout=$child.StandardOutput.ReadToEndAsync(); $stderr=$child.StandardError.ReadToEndAsync()
     if(-not $child.WaitForExit(30000)) { $child.Kill(); $child.WaitForExit(); throw 'Native interceptor fixture timed out' }

@@ -3,11 +3,13 @@
 // are preserved; no proxy objects are passed into the graphics driver.
 #include "interceptor.h"
 #include "dx12_slots.h"
+#include "mirror.h"
 #include <MinHook.h>
 #include <wrl/client.h>
 #include <mutex>
 #include <unordered_map>
 #include <atomic>
+#include <vector>
 
 namespace vrx::dx12 {
 using Microsoft::WRL::ComPtr;
@@ -16,7 +18,7 @@ struct Hook { void* detour = nullptr; void* original = nullptr; };
 // Hooks stay installed for the lifetime of the side-loaded module. Do not
 // unload it while graphics threads can still execute a trampoline.
 struct Registry {
-    std::mutex mutex;
+    std::recursive_mutex mutex;
     std::unordered_map<void*, Hook> hooks;
     std::atomic<uint64_t> devices{0}, queues{0}, lists{0}, resources{0}, pipelines{0};
     std::atomic<uint64_t> closes{0}, resets{0}, draws{0}, indexed{0}, bundles{0}, submits{0}, failures{0};
@@ -30,7 +32,7 @@ struct Call {
 };
 void* Entry(void* object, unsigned index) { return (*static_cast<void***>(object))[index]; }
 template<class Function> Function Original(void* object, unsigned index) {
-    auto& state = State(); std::lock_guard<std::mutex> lock(state.mutex);
+    auto& state = State(); std::lock_guard<std::recursive_mutex> lock(state.mutex);
     const auto found = state.hooks.find(Entry(object,index));
     // Every detour is enabled only after its trampoline was registered.
     if(found == state.hooks.end()) std::terminate();
@@ -53,52 +55,157 @@ void Add(Registry& state, void* object, unsigned index, void* detour) {
     state.hooks.emplace(entry,Hook{detour,original});
     if(MH_QueueEnableHook(entry) != MH_OK) ++state.failures;
 }
+ULONG STDMETHODCALLTYPE Release(void* object) {
+    Call call; using Fn=ULONG(STDMETHODCALLTYPE*)(void*);
+    auto token=mirror::BeforeRelease(object);
+    const auto result=Original<Fn>(object,2)(object);
+    if(!result) mirror::Released(object,std::move(token));
+    return result;
+}
+void Lifetime(IUnknown* object) noexcept {
+    try {
+        ComPtr<IUnknown> identity; object->QueryInterface(IID_PPV_ARGS(&identity));
+        auto& state=State(); std::lock_guard<std::recursive_mutex> lock(state.mutex);
+        Add(state,object,2,reinterpret_cast<void*>(&Release));
+        if(identity) Add(state,identity.Get(),2,reinterpret_cast<void*>(&Release));
+        if(MH_ApplyQueued()!=MH_OK) ++state.failures;
+    } catch(...) { ++State().failures; }
+}
 HRESULT STDMETHODCALLTYPE Close(ID3D12GraphicsCommandList* object) {
     Call call;
     using Fn = HRESULT(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*);
     const auto result = Original<Fn>(object,slot::ID3D12GraphicsCommandList_Close)(object);
-    if(call.outer && SUCCEEDED(result)) ++State().closes; return result;
+    if(call.outer && SUCCEEDED(result)) { ++State().closes; mirror::Close(object); } return result;
 }
 HRESULT STDMETHODCALLTYPE Reset(ID3D12GraphicsCommandList* object,ID3D12CommandAllocator* allocator,ID3D12PipelineState* pipeline) {
     Call call;
     using Fn = HRESULT(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineState*);
     const auto result = Original<Fn>(object,slot::ID3D12GraphicsCommandList_Reset)(object,allocator,pipeline);
-    if(call.outer && SUCCEEDED(result)) ++State().resets; return result;
+    if(call.outer && SUCCEEDED(result)) { ++State().resets; mirror::Reset(object,allocator,pipeline); } return result;
 }
 void STDMETHODCALLTYPE Draw(ID3D12GraphicsCommandList* object,UINT vertices,UINT instances,UINT firstVertex,UINT firstInstance) {
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,UINT);
     if(call.outer) ++State().draws;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawInstanced)(object,vertices,instances,firstVertex,firstInstance);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto&){ q->DrawInstanced(vertices,instances,firstVertex,firstInstance); });
 }
 void STDMETHODCALLTYPE DrawIndexed(ID3D12GraphicsCommandList* object,UINT indices,UINT instances,UINT firstIndex,INT baseVertex,UINT firstInstance) {
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,INT,UINT);
     if(call.outer) ++State().indexed;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawIndexedInstanced)(object,indices,instances,firstIndex,baseVertex,firstInstance);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto&){ q->DrawIndexedInstanced(indices,instances,firstIndex,baseVertex,firstInstance); });
 }
 void STDMETHODCALLTYPE Bundle(ID3D12GraphicsCommandList* object,ID3D12GraphicsCommandList* bundle) {
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,ID3D12GraphicsCommandList*);
     if(call.outer) ++State().bundles;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_ExecuteBundle)(object,bundle);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){ auto right=map.Bundle(bundle); if(map.Valid()) q->ExecuteBundle(right); });
+}
+// These calls carry only immutable values or immutable root-signature objects.
+#define SIMPLE(Name,Parameters,Native,Replay) \
+void STDMETHODCALLTYPE Name Parameters { \
+    Call call; Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name) Native; \
+    if(call.outer) mirror::Record(object,[&](auto* q,auto&){q->Name Replay;}); \
+}
+SIMPLE(RSSetViewports,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_VIEWPORT* values),(object,count,values),(count,values))
+SIMPLE(RSSetScissorRects,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_RECT* values),(object,count,values),(count,values))
+SIMPLE(IASetPrimitiveTopology,(ID3D12GraphicsCommandList* object,D3D12_PRIMITIVE_TOPOLOGY value),(object,value),(value))
+SIMPLE(SetGraphicsRootSignature,(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value),(object,value),(value))
+SIMPLE(SetGraphicsRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
+SIMPLE(SetGraphicsRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT index,UINT count,const void* data,UINT offset),(object,index,count,data,offset),(index,count,data,offset))
+#undef SIMPLE
+void STDMETHODCALLTYPE SetPipelineState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
+    Call call; Original<decltype(&SetPipelineState)>(object,slot::ID3D12GraphicsCommandList_SetPipelineState)(object,value);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->SetPipelineState(right);});
+}
+void STDMETHODCALLTYPE ClearState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
+    Call call; Original<decltype(&ClearState)>(object,slot::ID3D12GraphicsCommandList_ClearState)(object,value);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->ClearState(right);});
+}
+void STDMETHODCALLTYPE OMSetRenderTargets(ID3D12GraphicsCommandList* object,UINT count,const D3D12_CPU_DESCRIPTOR_HANDLE* values,BOOL contiguous,const D3D12_CPU_DESCRIPTOR_HANDLE* depth) {
+    Call call; Original<decltype(&OMSetRenderTargets)>(object,slot::ID3D12GraphicsCommandList_OMSetRenderTargets)(object,count,values,contiguous,depth);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){
+        if(depth || count>8 || (count && !values)) { mirror::Unsupported(object,"depth or invalid render target range"); return; }
+        D3D12_CPU_DESCRIPTOR_HANDLE right[8]{}; for(UINT i=0;i<(contiguous && count?1:count);++i) right[i]=map.Cpu(values[i]);
+        if(map.Valid()) q->OMSetRenderTargets(count,count?right:nullptr,contiguous,nullptr);
+    });
+}
+void STDMETHODCALLTYPE ClearRenderTargetView(ID3D12GraphicsCommandList* object,D3D12_CPU_DESCRIPTOR_HANDLE target,const FLOAT color[4],UINT count,const D3D12_RECT* rects) {
+    Call call; Original<decltype(&ClearRenderTargetView)>(object,slot::ID3D12GraphicsCommandList_ClearRenderTargetView)(object,target,color,count,rects);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Cpu(target); if(map.Valid()) q->ClearRenderTargetView(right,color,count,rects);});
+}
+void STDMETHODCALLTYPE ResourceBarrier(ID3D12GraphicsCommandList* object,UINT count,const D3D12_RESOURCE_BARRIER* values) {
+    Call call; Original<decltype(&ResourceBarrier)>(object,slot::ID3D12GraphicsCommandList_ResourceBarrier)(object,count,values);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){
+        std::vector<D3D12_RESOURCE_BARRIER> right(values,values+count);
+        for(auto& b:right) {
+            if(b.Type==D3D12_RESOURCE_BARRIER_TYPE_TRANSITION) b.Transition.pResource=map.Resource(b.Transition.pResource);
+            else if(b.Type==D3D12_RESOURCE_BARRIER_TYPE_UAV) b.UAV.pResource=map.Resource(b.UAV.pResource);
+            else if(b.Type==D3D12_RESOURCE_BARRIER_TYPE_ALIASING) { b.Aliasing.pResourceBefore=map.Resource(b.Aliasing.pResourceBefore); b.Aliasing.pResourceAfter=map.Resource(b.Aliasing.pResourceAfter); }
+            else { mirror::Unsupported(object,"unknown resource barrier"); return; }
+        }
+        if(map.Valid()) q->ResourceBarrier(count,right.data());
+    });
+}
+void STDMETHODCALLTYPE IASetIndexBuffer(ID3D12GraphicsCommandList* object,const D3D12_INDEX_BUFFER_VIEW* value) {
+    Call call; Original<decltype(&IASetIndexBuffer)>(object,slot::ID3D12GraphicsCommandList_IASetIndexBuffer)(object,value);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){D3D12_INDEX_BUFFER_VIEW right{}; if(value){right=*value;right.BufferLocation=map.Address(value->BufferLocation);} if(map.Valid()) q->IASetIndexBuffer(value?&right:nullptr);});
+}
+void STDMETHODCALLTYPE IASetVertexBuffers(ID3D12GraphicsCommandList* object,UINT start,UINT count,const D3D12_VERTEX_BUFFER_VIEW* values) {
+    Call call; Original<decltype(&IASetVertexBuffers)>(object,slot::ID3D12GraphicsCommandList_IASetVertexBuffers)(object,start,count,values);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){
+        if(!values) { q->IASetVertexBuffers(start,count,nullptr); return; }
+        std::vector<D3D12_VERTEX_BUFFER_VIEW> right(values,values+count); for(auto& view:right) view.BufferLocation=map.Address(view.BufferLocation);
+        if(map.Valid()) q->IASetVertexBuffers(start,count,right.data());
+    });
+}
+void STDMETHODCALLTYPE CopyResource(ID3D12GraphicsCommandList* object,ID3D12Resource* dst,ID3D12Resource* src) {
+    Call call; Original<decltype(&CopyResource)>(object,slot::ID3D12GraphicsCommandList_CopyResource)(object,dst,src);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->CopyResource(d,s);});
+}
+void STDMETHODCALLTYPE CopyBufferRegion(ID3D12GraphicsCommandList* object,ID3D12Resource* dst,UINT64 offset,ID3D12Resource* src,UINT64 source,UINT64 bytes) {
+    Call call; Original<decltype(&CopyBufferRegion)>(object,slot::ID3D12GraphicsCommandList_CopyBufferRegion)(object,dst,offset,src,source,bytes);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->CopyBufferRegion(d,offset,s,source,bytes);});
+}
+void STDMETHODCALLTYPE CopyTextureRegion(ID3D12GraphicsCommandList* object,const D3D12_TEXTURE_COPY_LOCATION* dst,UINT x,UINT y,UINT z,const D3D12_TEXTURE_COPY_LOCATION* src,const D3D12_BOX* box) {
+    Call call; Original<decltype(&CopyTextureRegion)>(object,slot::ID3D12GraphicsCommandList_CopyTextureRegion)(object,dst,x,y,z,src,box);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto d=*dst,s=*src;d.pResource=map.Resource(dst->pResource);s.pResource=map.Resource(src->pResource);if(map.Valid())q->CopyTextureRegion(&d,x,y,z,&s,box);});
+}
+void STDMETHODCALLTYPE SetDescriptorHeaps(ID3D12GraphicsCommandList* object,UINT count,ID3D12DescriptorHeap* const* heaps) {
+    Call call; Original<decltype(&SetDescriptorHeaps)>(object,slot::ID3D12GraphicsCommandList_SetDescriptorHeaps)(object,count,heaps);
+    if(call.outer) mirror::Unsupported(object,"shader-visible descriptor heaps need additional translation");
+}
+void STDMETHODCALLTYPE Dispatch(ID3D12GraphicsCommandList* object,UINT x,UINT y,UINT z) {
+    Call call; Original<decltype(&Dispatch)>(object,slot::ID3D12GraphicsCommandList_Dispatch)(object,x,y,z);
+    if(call.outer) mirror::Unsupported(object,"compute dispatch is not mirrored yet");
 }
 void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* object,UINT count,ID3D12CommandList* const* lists);
 void List(ID3D12GraphicsCommandList* object) noexcept {
     try {
-    auto& state = State(); std::lock_guard<std::mutex> lock(state.mutex);
+    auto& state = State(); std::lock_guard<std::recursive_mutex> lock(state.mutex);
     Add(state,object,slot::ID3D12GraphicsCommandList_Close,reinterpret_cast<void*>(&Close));
     Add(state,object,slot::ID3D12GraphicsCommandList_Reset,reinterpret_cast<void*>(&Reset));
     Add(state,object,slot::ID3D12GraphicsCommandList_DrawInstanced,reinterpret_cast<void*>(&Draw));
     Add(state,object,slot::ID3D12GraphicsCommandList_DrawIndexedInstanced,reinterpret_cast<void*>(&DrawIndexed));
     Add(state,object,slot::ID3D12GraphicsCommandList_ExecuteBundle,reinterpret_cast<void*>(&Bundle));
+#define RECORD_HOOK(Name) Add(state,object,slot::ID3D12GraphicsCommandList_##Name,reinterpret_cast<void*>(&Name));
+    RECORD_HOOK(RSSetViewports) RECORD_HOOK(RSSetScissorRects) RECORD_HOOK(IASetPrimitiveTopology)
+    RECORD_HOOK(SetGraphicsRootSignature) RECORD_HOOK(SetGraphicsRoot32BitConstant) RECORD_HOOK(SetGraphicsRoot32BitConstants)
+    RECORD_HOOK(SetPipelineState) RECORD_HOOK(ClearState) RECORD_HOOK(OMSetRenderTargets) RECORD_HOOK(ClearRenderTargetView)
+    RECORD_HOOK(ResourceBarrier) RECORD_HOOK(IASetIndexBuffer) RECORD_HOOK(IASetVertexBuffers)
+    RECORD_HOOK(CopyResource) RECORD_HOOK(CopyBufferRegion) RECORD_HOOK(CopyTextureRegion)
+    RECORD_HOOK(SetDescriptorHeaps) RECORD_HOOK(Dispatch)
+#undef RECORD_HOOK
     if(MH_ApplyQueued() != MH_OK) ++state.failures;
     ++state.lists;
     } catch(...) { ++State().failures; }
 }
 void Queue(ID3D12CommandQueue* queue) noexcept {
     try {
-        auto& state = State(); std::lock_guard<std::mutex> lock(state.mutex);
+        auto& state = State(); std::lock_guard<std::recursive_mutex> lock(state.mutex);
         Add(state,queue,slot::ID3D12CommandQueue_ExecuteCommandLists,reinterpret_cast<void*>(&Execute));
         if(MH_ApplyQueued() != MH_OK) ++state.failures;
         ++state.queues;
@@ -108,7 +215,8 @@ void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* object,UINT count,ID3D12Comma
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*,UINT,ID3D12CommandList* const*);
     if(call.outer) ++State().submits;
-    Original<Fn>(object,slot::ID3D12CommandQueue_ExecuteCommandLists)(object,count,lists);
+    const auto execute=Original<Fn>(object,slot::ID3D12CommandQueue_ExecuteCommandLists);
+    if(call.outer) mirror::Execute(object,count,lists,execute); else execute(object,count,lists);
 }
 HRESULT STDMETHODCALLTYPE CreateQueue(ID3D12Device* object,const D3D12_COMMAND_QUEUE_DESC* desc,REFIID iid,void** output) {
     Call call;
@@ -116,7 +224,7 @@ HRESULT STDMETHODCALLTYPE CreateQueue(ID3D12Device* object,const D3D12_COMMAND_Q
     const auto result = Original<Fn>(object,slot::ID3D12Device_CreateCommandQueue)(object,desc,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output) {
         ComPtr<ID3D12CommandQueue> queue;
-        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&queue)))) Queue(queue.Get());
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&queue)))) { Queue(queue.Get()); Lifetime(queue.Get()); mirror::Queue(object,queue.Get()); }
     }
     return result;
 }
@@ -127,7 +235,7 @@ HRESULT STDMETHODCALLTYPE CreateList(ID3D12Device* object,UINT node,D3D12_COMMAN
     const auto result = Original<Fn>(object,slot::ID3D12Device_CreateCommandList)(object,node,type,allocator,pipeline,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output) {
         ComPtr<ID3D12GraphicsCommandList> list;
-        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&list)))) List(list.Get());
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&list)))) { List(list.Get()); Lifetime(list.Get()); mirror::List(object,list.Get(),allocator,pipeline,node,type,false); }
     }
     return result;
 }
@@ -137,7 +245,11 @@ HRESULT STDMETHODCALLTYPE CreateList1(ID3D12Device4* object,UINT node,D3D12_COMM
     const auto result = Original<Fn>(object,slot::ID3D12Device4_CreateCommandList1)(object,node,type,flags,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output) {
         ComPtr<ID3D12GraphicsCommandList> list;
-        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&list)))) List(list.Get());
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&list)))) {
+            List(list.Get()); Lifetime(list.Get());
+            if(flags!=D3D12_COMMAND_LIST_FLAG_NONE) mirror::Unsupported(object,"command list flags are unsupported");
+            else mirror::List(object,list.Get(),nullptr,nullptr,node,type,true);
+        }
     }
     return result;
 }
@@ -145,24 +257,58 @@ HRESULT STDMETHODCALLTYPE CreatePipeline(ID3D12Device* object,const D3D12_GRAPHI
     Call call;
     using Fn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*,const D3D12_GRAPHICS_PIPELINE_STATE_DESC*,REFIID,void**);
     const auto result = Original<Fn>(object,slot::ID3D12Device_CreateGraphicsPipelineState)(object,desc,iid,output);
-    if(call.outer && SUCCEEDED(result) && output && *output) ++State().pipelines; return result;
+    if(call.outer && SUCCEEDED(result) && output && *output) {
+        ++State().pipelines; ComPtr<ID3D12PipelineState> pipeline;
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&pipeline)))) { Lifetime(pipeline.Get()); mirror::Pipeline(object,pipeline.Get(),desc); }
+    } return result;
 }
 HRESULT STDMETHODCALLTYPE CreateResource(ID3D12Device* object,const D3D12_HEAP_PROPERTIES* heap,D3D12_HEAP_FLAGS flags,const D3D12_RESOURCE_DESC* desc,
     D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,REFIID iid,void** output) {
     Call call;
     using Fn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*,const D3D12_HEAP_PROPERTIES*,D3D12_HEAP_FLAGS,const D3D12_RESOURCE_DESC*,D3D12_RESOURCE_STATES,const D3D12_CLEAR_VALUE*,REFIID,void**);
     const auto result = Original<Fn>(object,slot::ID3D12Device_CreateCommittedResource)(object,heap,flags,desc,initial,clear,iid,output);
-    if(call.outer && SUCCEEDED(result) && output && *output) ++State().resources; return result;
+    if(call.outer && SUCCEEDED(result) && output && *output) {
+        ++State().resources; ComPtr<ID3D12Resource> resource;
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&resource)))) { Lifetime(resource.Get()); mirror::Resource(object,resource.Get(),heap,flags,desc,initial,clear); }
+    } return result;
+}
+HRESULT STDMETHODCALLTYPE AllocatorReset(ID3D12CommandAllocator* object) {
+    Call call; auto result=Original<decltype(&AllocatorReset)>(object,slot::ID3D12CommandAllocator_Reset)(object);
+    if(call.outer && SUCCEEDED(result)) mirror::AllocatorReset(object); return result;
+}
+HRESULT STDMETHODCALLTYPE CreateAllocator(ID3D12Device* object,D3D12_COMMAND_LIST_TYPE type,REFIID iid,void** output) {
+    Call call; auto result=Original<decltype(&CreateAllocator)>(object,slot::ID3D12Device_CreateCommandAllocator)(object,type,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output) {
+        ComPtr<ID3D12CommandAllocator> allocator;
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&allocator)))) {
+            { auto& s=State(); std::lock_guard<std::recursive_mutex> lock(s.mutex); Add(s,allocator.Get(),slot::ID3D12CommandAllocator_Reset,reinterpret_cast<void*>(&AllocatorReset)); if(MH_ApplyQueued()!=MH_OK) ++s.failures; }
+            Lifetime(allocator.Get()); mirror::Allocator(object,allocator.Get(),type);
+        }
+    } return result;
+}
+HRESULT STDMETHODCALLTYPE CreateHeap(ID3D12Device* object,const D3D12_DESCRIPTOR_HEAP_DESC* desc,REFIID iid,void** output) {
+    Call call; auto result=Original<decltype(&CreateHeap)>(object,slot::ID3D12Device_CreateDescriptorHeap)(object,desc,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output) {
+        ComPtr<ID3D12DescriptorHeap> heap;
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&heap)))) { Lifetime(heap.Get()); mirror::Heap(object,heap.Get(),desc); }
+    } return result;
+}
+void STDMETHODCALLTYPE CreateRtv(ID3D12Device* object,ID3D12Resource* resource,const D3D12_RENDER_TARGET_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    Call call; Original<decltype(&CreateRtv)>(object,slot::ID3D12Device_CreateRenderTargetView)(object,resource,desc,handle);
+    if(call.outer) mirror::Rtv(object,resource,desc,handle);
 }
 } // namespace
 void Attach(ID3D12Device* device) noexcept {
     try {
-        auto& state = State(); std::lock_guard<std::mutex> lock(state.mutex);
+        auto& state = State(); std::unique_lock<std::recursive_mutex> lock(state.mutex);
         if(!state.initialized) {
             if(MH_Initialize() != MH_OK) { ++state.failures; return; }
             state.initialized = true;
         }
         Add(state,device,slot::ID3D12Device_CreateCommandQueue,reinterpret_cast<void*>(&CreateQueue));
+        Add(state,device,slot::ID3D12Device_CreateCommandAllocator,reinterpret_cast<void*>(&CreateAllocator));
+        Add(state,device,slot::ID3D12Device_CreateDescriptorHeap,reinterpret_cast<void*>(&CreateHeap));
+        Add(state,device,slot::ID3D12Device_CreateRenderTargetView,reinterpret_cast<void*>(&CreateRtv));
         Add(state,device,slot::ID3D12Device_CreateCommandList,reinterpret_cast<void*>(&CreateList));
         Add(state,device,slot::ID3D12Device_CreateGraphicsPipelineState,reinterpret_cast<void*>(&CreatePipeline));
         Add(state,device,slot::ID3D12Device_CreateCommittedResource,reinterpret_cast<void*>(&CreateResource));
@@ -171,6 +317,7 @@ void Attach(ID3D12Device* device) noexcept {
             Add(state,newer.Get(),slot::ID3D12Device4_CreateCommandList1,reinterpret_cast<void*>(&CreateList1));
         if(MH_ApplyQueued() != MH_OK) ++state.failures;
         ++state.devices;
+        lock.unlock(); Lifetime(device); mirror::Device(device);
     } catch(...) { ++State().failures; }
 }
 void Snapshot(Counts& output) noexcept {
@@ -178,5 +325,8 @@ void Snapshot(Counts& output) noexcept {
     output.devices=s.devices; output.queues=s.queues; output.commandLists=s.lists; output.resources=s.resources; output.pipelines=s.pipelines;
     output.closes=s.closes; output.resets=s.resets; output.draws=s.draws; output.indexedDraws=s.indexed; output.bundles=s.bundles;
     output.submissions=s.submits; output.hookFailures=s.failures;
+    mirror::Counts replay; mirror::Snapshot(replay);
+    output.mirrorReplays=replay.replays; output.mirrorStops=replay.stops; output.mirrorResources=replay.resources; output.mirrorPipelines=replay.pipelines; output.mirrorLiveObjects=replay.liveObjects;
 }
+void DiagnosticScope(bool enter) noexcept { if(enter) ++callDepth; else if(callDepth) --callDepth; }
 } // namespace vrx::dx12

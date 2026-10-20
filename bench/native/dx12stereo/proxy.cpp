@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Paul Kelly. SPDX-License-Identifier: GPL-3.0-or-later
 // Opt-in local D3D12 loader bridge. No work is performed under the loader lock.
 #include "interceptor.h"
+#include "mirror.h"
 #include <cstring>
 #include <wrl/client.h>
 
@@ -80,3 +81,7 @@ extern "C" HRESULT WINAPI VRX_DX12_GetCounts(vrx::dx12::Counts* output,UINT byte
     if(!output || bytes!=sizeof(*output)) return E_INVALIDARG;
     vrx::dx12::Snapshot(*output); return S_OK;
 }
+extern "C" HRESULT WINAPI VRX_DX12_GetTwin(ID3D12Resource* resource,ID3D12Resource** output) noexcept {
+    return vrx::dx12::mirror::Twin(resource,output);
+}
+extern "C" void WINAPI VRX_DX12_DiagnosticScope(BOOL enter) noexcept { vrx::dx12::DiagnosticScope(enter!=FALSE); }

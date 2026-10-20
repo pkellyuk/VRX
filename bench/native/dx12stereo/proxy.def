@@ -20,3 +20,5 @@ EXPORTS
     D3D12SerializeVersionedRootSignature @116
     GetBehaviorValue @117
     VRX_DX12_GetCounts @1000
+    VRX_DX12_GetTwin @1001
+    VRX_DX12_DiagnosticScope @1002

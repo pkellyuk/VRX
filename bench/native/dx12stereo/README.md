@@ -91,8 +91,9 @@ preserved. Nested driver/debug-layer calls are forwarded without a second app
 event. Hook slots are derived from the installed Microsoft SDK declarations.
 The bridge is pinned once hooks are installed; unloading active trampolines is
 not supported. It captures legacy and Device4 command-list creation, resources,
-graphics pipelines, draws, close/reset and queue submission. This is currently
-observation/forwarding, **not same-frame replay or shader modification**.
+graphics pipelines, draws, close/reset and queue submission. The additional
+`VRX_DX12_MIRROR=1` switch enables the limited command/resource replay described
+below; interception alone preserves native forwarding.
 
 MinHook 1.3.4 is fetched at commit
 `c3fcafdc10146beb5919319d0683e44e3c30d537`. Its upstream BSD license, including
@@ -109,8 +110,38 @@ legacy/versioned root signatures, original COM identity, pixel preservation,
 list reset, indexed draws inside bundles, and concurrent device use. A separate
 assembly test checks integer, floating-point and stack arguments and returns
 through the opaque export forwarders. Existing games and headset sessions are
-not touched. The desktop DX12 route remains disabled pending actual stereo
-replay, shader coverage, managed launch/cleanup and real-game validation.
+not touched. The desktop DX12 route remains disabled pending broader command
+and shader coverage, managed launch/cleanup and real-game validation.
+
+### Same-frame command/resource replay
+
+`mirror.cpp` independently mirrors committed resources, command allocators,
+RTV heaps, compatible graphics pipelines and graphics command lists. The app
+records its native left view once. A rewritten vertex pipeline records the
+right view into separate resources, and both lists are submitted in the same
+queue batch before the app's completion fence. Root constants and upload-buffer
+snapshots come from that submission. `VRX_DX12_SHIFT` (default 0.25) is the full
+native-left/right clip offset; `VRX_DX12_CONVERGENCE` defaults to zero.
+
+GPU and WARP fixtures verify 18 successive current-frame pairs, direct and
+indexed draws, a nonzero index-buffer address offset, depth-dependent disparity,
+unchanged native-left centering and HUD pixels. A native-only indexed control
+checks the fixture geometry before replay. Final Release retirement uses identity
+tokens and a deferred queue, avoiding a backend lock inside driver Release
+callbacks and avoiding deletion of a newer object at a reused address. Fixtures
+check that all tracked identities and shadow objects retire after scene teardown.
+An unsupported descriptor-heap command stops replay while the original view
+continues rendering correctly.
+
+This is an offscreen graphics subset, not a game-ready DX12 route. Shader-visible
+descriptor heaps, depth targets and compute dispatch currently stop replay.
+Many commands and newer resource/pipeline creation APIs still need interception
+and translation; unobserved commands are not yet comprehensively rejected.
+Upload buffers are copied in full at submission and need a scalable update
+strategy. Swapchain/Present interception and connection of replayed game views
+to the shared-texture publisher remain to be implemented. Multi-node devices
+and non-default command-list flags are rejected. Existing games are not launched
+with this experimental backend by the chooser.
 
 ### Vertex rewrite implementation notes
 
@@ -129,8 +160,9 @@ exactly. The HUD heuristic can be disabled for orthographic geometry. Zero
 calibration is pixel-identical to the original. Checks also cover signature
 preservation, output-looking immediate literals, missing temporary declarations,
 checksums and malformed bounds.
-The D3D12 debug layer is used when available. This library is not yet connected
-to app command mirroring; the proxy still forwards original graphics commands.
+The D3D12 debug layer is used when available. With the mirror switch enabled,
+this library supplies the right-eye pipeline while the original graphics calls
+continue rendering the native left view.
 
 Microsoft's public DXC source provides the token definitions and retail container
 hash implementation under its included University of Illinois/NCSA license.

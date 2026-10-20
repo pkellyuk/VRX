@@ -33,10 +33,11 @@ def main():
     args = parser.parse_args()
     source = args.header.read_text(encoding="utf-8-sig")
     selected = {
-        "ID3D12Device": ["CreateCommandQueue", "CreateCommandList", "CreateGraphicsPipelineState", "CreateCommittedResource"],
+        "ID3D12Device": ["CreateCommandQueue", "CreateCommandAllocator", "CreateCommandList", "CreateGraphicsPipelineState", "CreateCommittedResource", "CreateDescriptorHeap", "CreateRenderTargetView"],
+        "ID3D12CommandAllocator": ["Reset"],
         "ID3D12Device4": ["CreateCommandList1"],
         "ID3D12CommandQueue": ["ExecuteCommandLists"],
-        "ID3D12GraphicsCommandList": ["Close", "Reset", "DrawInstanced", "DrawIndexedInstanced", "ExecuteBundle"],
+        "ID3D12GraphicsCommandList": ["Close", "Reset", "DrawInstanced", "DrawIndexedInstanced", "ExecuteBundle", "ClearState", "SetPipelineState", "RSSetViewports", "RSSetScissorRects", "IASetPrimitiveTopology", "OMSetRenderTargets", "ClearRenderTargetView", "ResourceBarrier", "SetGraphicsRootSignature", "SetGraphicsRoot32BitConstant", "SetGraphicsRoot32BitConstants", "IASetIndexBuffer", "IASetVertexBuffers", "CopyResource", "CopyBufferRegion", "CopyTextureRegion", "SetDescriptorHeaps", "Dispatch"],
     }
     rows = ["// Generated from Microsoft's installed d3d12.h; do not edit.", "#pragma once", "namespace vrx::dx12::slot {"]
     for interface, methods in selected.items():
