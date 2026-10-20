@@ -48,6 +48,11 @@ internal static class GeometryLaunchTests
         tested.GeometrySeparation=.35f; tested.GeometryConvergence=.02f; store.Save(tested);
         var remembered=store.Load(shockExe);
         Check(remembered.GeometrySeparation==.35f && remembered.GeometryConvergence==.02f && remembered.SelectedStereoBackend==StereoPaths.Auto,"reloading Auto preserves user calibration");
+        Check(!remembered.GeometryLaunchArguments!.Contains("-Res"),"the game controls its saved resolution");
+        remembered.GeometryProfileId="system-shock-vkd3d-v1";
+        remembered.GeometryLaunchArguments="-norhithread -windowed -ResX=1280 -ResY=720 -dx12";
+        store.Save(remembered); remembered=store.Load(shockExe);
+        Check(remembered.GeometryProfileId==TestedStereoProfiles.SystemShock && remembered.GeometrySeparation==.35f && remembered.GeometryLaunchArguments=="-dx12 -norhithread -windowed","migrate the old test resolution without changing stereo tuning");
         remembered.SelectStereoBackend(StereoPaths.Depth); store.Save(remembered);
         Check(store.Load(shockExe).EffectiveStereoBackend==StereoPaths.Depth,"an explicit depth choice overrides the built-in profile");
         var unknown=store.Load(Path.Combine(root,"unknown.exe"));

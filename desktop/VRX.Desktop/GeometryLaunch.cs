@@ -128,7 +128,7 @@ public static class GeometryLaunch
         if(unreal) result.Add(backend switch {StereoPaths.Vulkan=>"-vulkan",StereoPaths.Dx12 or StereoPaths.Vkd3d=>"-dx12",_=>"-dx11"});
         return result.ToArray();
     }
-    private static async Task<string[]> ProcessArguments(int pid,CancellationToken token) {
+    internal static async Task<string[]> ProcessArguments(int pid,CancellationToken token) {
         string powershell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");
         var start=new ProcessStartInfo(powershell){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8};
         foreach(string arg in new[]{"-NoProfile","-NonInteractive","-Command",$"[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-CimInstance Win32_Process -Filter 'ProcessId={pid.ToString(CultureInfo.InvariantCulture)}').CommandLine"}) start.ArgumentList.Add(arg);

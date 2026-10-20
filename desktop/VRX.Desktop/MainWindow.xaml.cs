@@ -685,6 +685,7 @@ public partial class MainWindow : Window
         starting = true; startCancellation = new CancellationTokenSource(); UpdateButtons();
         try
         {
+            await GeometrySessionLifecycle.ReleasePrevious(app,store.Root,startCancellation.Token);
             EngineSession.EnsureAvailable();
             if (profile!.EffectiveStereoBackend == StereoPaths.Dx12) throw new InvalidOperationException(Loc.Get("PathDx12Unavailable"));
             string? existingGeometry = profile.GeometryStereo ? GeometryLaunch.ExistingSession(app,profile,store.Root) : null;
@@ -1719,6 +1720,7 @@ public partial class MainWindow : Window
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
         await GeometryLaunchTests.Run(output);
+        await GeometrySessionLifecycleTests.Run(output);
         if(Environment.GetCommandLineArgs().Contains("--geometry-launch-integration-test"))
             await GeometryLaunchIntegrationTests.Run(output);
         if(Environment.GetCommandLineArgs().Contains("--vkd3d-geometry-launch-integration-test"))

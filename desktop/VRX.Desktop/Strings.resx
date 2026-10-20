@@ -344,4 +344,5 @@ You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="TestedSystemShock" xml:space="preserve"><value>Tested: System Shock · D3D12 → Vulkan</value></data>
   <data name="GeometryChooserNotice" xml:space="preserve"><value>Geometry stereo is experimental and may need a game restart and temporary graphics DLLs. Use only games that permit graphics layers; anti-cheat may block them. Review the restart details before proceeding.</value></data>
   <data name="ErrorVkd3dMissing" xml:space="preserve"><value>The x64 vkd3d-proton runtime is missing. Install d3d12.dll and d3d12core.dll in geometry/vkd3d, or set VRX_VKD3D_DIRECTORY to the local build folder.</value></data>
+  <data name="ErrorPreviousGeometryStop" xml:space="preserve"><value>The previous game viewer did not stop. Close its VR session, then try Attach / Play again.</value></data>
 </root>

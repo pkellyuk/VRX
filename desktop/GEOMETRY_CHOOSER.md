@@ -15,7 +15,8 @@ supports D3D11, not D3D9/10. Unknown games' automatic geometry renderer tries na
 Vulkan. Native D3D12 command replay remains developer-only.
 
 The System Shock remake Steam profile (482400) uses vkd3d-proton with separation
-0.5, convergence 0, and `-dx12 -norhithread -windowed -ResX=1280 -ResY=720`.
+0.5, convergence 0, and `-dx12 -norhithread -windowed`. Resolution comes from the
+game's saved settings; the earlier 1280×720 test override is migrated away.
 The Steam manifest and shipping executable identify it; a matching window title
 alone does not. Calibration is seeded once and later user edits are preserved.
 Base settings and Apply to all never copy another game's renderer or calibration.
@@ -39,3 +40,10 @@ D3D11/D3D12 fixtures, distinct same-frame GPU eyes, VRX consumer checks, stream
 reuse and owned-file cleanup. These tests do not restart an installed game or
 create an OpenXR session. `VRX_GEOMETRY_TEST_ENGINE` can select a freshly built
 consumer when the normal engine binary is in use.
+
+Geometry viewers close when their original game process exits, including a game
+restart. Session records permit cooperative recovery if a desktop UI crashed and
+left its viewer behind. Recovery checks the game executable, viewer start time,
+engine location and exact geometry/control arguments. A viewer owned by another
+live desktop UI is left alone. The recorded earlier System Shock command-line
+trial can also be released when attaching from the desktop chooser.

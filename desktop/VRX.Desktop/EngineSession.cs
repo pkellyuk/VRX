@@ -87,12 +87,21 @@ public sealed class EngineSession
             RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8 };
         foreach (string arg in Arguments(app, window, profile, control)) start.ArgumentList.Add(arg);
+        long geometryStartTicks=0;
+        if(profile.GeometryStereo) {
+            using var game=Process.GetProcessById(app.Pid);
+            geometryStartTicks=game.StartTime.ToUniversalTime().Ticks;
+        }
         var child = new Process { StartInfo = start };
         Debug.WriteLine($"[Engine] start {engine} for {(screen ? "display " + window.Monitor : app.FullPath)} pid {app.Pid}: {string.Join(' ', start.ArgumentList)}");
         try
         {
             child.Start(); process = child;
             Debug.WriteLine($"[Engine] started pid {child.Id}");
+            if (profile.GeometryStereo) {
+                GeometrySessionLifecycle.Record(sessionRoot, child, app, profile.GeometrySession, control);
+                _ = GeometrySessionLifecycle.WatchGame(child, app.Pid, control,geometryStartTicks);
+            }
             _ = Observe(child, sessionRoot);
             if (!screen) RunningApps.SetForegroundWindow(window.Handle);
         }
@@ -155,7 +164,8 @@ public sealed class EngineSession
         }
         await Task.WhenAll(Read(child.StandardOutput), Read(child.StandardError), child.WaitForExitAsync());
         int code = child.ExitCode;
-        process = null; child.Dispose(); gate.Dispose();
+        if (ReferenceEquals(process,child)) process = null;
+        child.Dispose(); gate.Dispose();
         Exited?.Invoke(code);
     }
     public async Task Stop(Profile profile)
