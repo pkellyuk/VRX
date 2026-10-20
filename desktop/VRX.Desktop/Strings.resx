@@ -329,4 +329,9 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="StatusGeometryCancelled" xml:space="preserve"><value>Game restart cancelled. The game was left running.</value></data>
   <data name="StatusGeometryRestarting" xml:space="preserve"><value>Restarting the selected game with geometry stereo…</value></data>
   <data name="ErrorGeometryFilesBusy" xml:space="preserve"><value>Another VRX operation is changing this game's launch files. Try again.</value></data>
+  <data name="ErrorGeometryNativeMissing" xml:space="preserve"><value>Native DX12 stereo is missing or incompatible. Install or build the optional native backend before trying this method.</value></data>
+  <data name="ErrorGeometrySourceChanged" xml:space="preserve"><value>The stereo runtime changed while being copied. Try again.</value></data>
+  <data name="ErrorGeometryNativeStopped" xml:space="preserve"><value>Native DX12 stereo stopped: {0}
+You can try another stereo method. Diagnostic logs: {1}</value></data>
+  <data name="ErrorGeometryNativeCoverage" xml:space="preserve"><value>The bridge could not establish complete native stereo interception.</value></data>
 </root>

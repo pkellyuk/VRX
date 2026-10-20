@@ -49,6 +49,8 @@ try {
     }
     if($Preview){[pscustomobject]@{Executable=$application;Proxy=$bridge;Session=$Session;Arguments=$GameArguments;ObserveOnly=$ObserveOnly.IsPresent};return}
     $runRoot=Join-Path $PSScriptRoot ('out/native-'+[Guid]::NewGuid().ToString('N'));$null=New-Item -ItemType Directory -Path $runRoot
+    $runRecord=[pscustomobject]@{Pid=0;StartTicks=0L;Executable=$application;Session=$Session;Backend='dx12';ObserveOnly=$ObserveOnly.IsPresent;Arguments=$GameArguments}
+    $runRecord | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runRoot 'run.json')
     $hash=(Get-FileHash -LiteralPath $bridge -Algorithm SHA256).Hash
     $record=[pscustomobject]@{Path=$target;SHA256=$hash}
     $record | ConvertTo-Json -AsArray | Set-Content -LiteralPath (Join-Path $runRoot 'installed.json')
@@ -74,8 +76,8 @@ try {
     $start.Environment.Remove('VRX_DX12_TEST_TEN') > $null
     if($SteamAppId){$start.Environment['SteamAppId']=$SteamAppId;$start.Environment['SteamGameId']=$SteamAppId}
     $child=[Diagnostics.Process]::Start($start);if(-not $child){throw 'Native DX12 app did not start'};$started=$true
-    [pscustomobject]@{Pid=$child.Id;StartTicks=$child.StartTime.ToUniversalTime().Ticks;Executable=$application;Session=$Session;Backend='dx12';ObserveOnly=$ObserveOnly.IsPresent;Arguments=$GameArguments} |
-        ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runRoot 'run.json')
+    $runRecord.Pid=$child.Id;$runRecord.StartTicks=$child.StartTime.ToUniversalTime().Ticks
+    $runRecord | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runRoot 'run.json')
     Write-Output "Native DX12 PID $($child.Id); session $Session; run $runRoot"
     $gate.ReleaseMutex();$held=$false
     $child.WaitForExit();$result=$child.ExitCode

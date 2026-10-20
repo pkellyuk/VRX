@@ -289,7 +289,10 @@ arguments request DX12 in a 1280x720 window. Use `-GameArguments` for other engi
 `-ObserveOnly` forwards native rendering without creating right-eye resources.
 Keep the launcher alive: its `out/native-GUID` directory records process/file
 ownership for recovery if the launcher is interrupted; startup recovery is not
-yet implemented. This CLI does not wire up the desktop chooser.
+yet implemented in the CLI itself. The managed coordinator can recover its
+process/file ownership records; zero-PID ownership is written before installation
+so failed or interrupted startup remains recoverable. This CLI does not wire up
+the desktop chooser.
 
 `dx12_status.exe TOKEN [EXPECTED_PID]` reads bounded, process-owned JSON counters
 and the first replay-stop reason without loading a graphics device in the reader.
@@ -302,6 +305,18 @@ process or a zero stop count alone is insufficient.
 The launcher integration test runs an ordinary native application from a path
 containing spaces/brackets, verifies live status in another process in both
 modes, stops it normally, and checks owned cleanup and existing-DLL preservation.
+
+The managed launch coordinator now has a native backend path independent of
+Vulkan/DXVK: x64 runtime preflight, literal arguments, scoped child environment,
+atomic non-overwriting installation, backend-specific ownership and cleanup,
+and native diagnostic validation in addition to fresh same-frame GPU metadata.
+It checks cancellation/runtime availability before closing the selected process.
+Native replay stops are saved to the run folder and surfaced as an error while
+the game continues natively. Passive desktop smoke checks cover malformed,
+stale, foreign, observation-only and stopped status snapshots, live IPC,
+invariant calibration, cancellation, runtime absence and owned file cleanup.
+The desktop DX12 button remains disabled pending end-to-end managed restart
+and actual game/headset validation.
 
 A local System Shock Remake Steam build 22239093 test used native `-dx12` with
 this launcher. Observation recorded pipeline streams, placed resources and

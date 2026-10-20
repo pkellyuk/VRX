@@ -74,6 +74,7 @@ internal static class GeometryLaunchTests
             using var image=File.Create(Path.Combine(output,"ui-geometry-restart.png")); encoder.Save(image);
         } finally { dialog.Close(); }
         Check(!current.HasExited,"displaying and dismissing restart details is passive");
+        await NativeGeometryLaunchTests.Run(root,app);
         File.WriteAllText(Path.Combine(output,"geometry-launch-pass.txt"),"PASS: profile migration and per-game persistence; base/apply-all isolation; literal Windows arguments; API switch handling; scoped DLL install/rollback and hash-preserving cleanup; Steam manifest resolution; fresh same-frame stream owner validation; real command-line preflight without restarting a game.");
     }
 }
