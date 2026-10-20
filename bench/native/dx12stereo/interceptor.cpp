@@ -143,13 +143,16 @@ SIMPLE(IASetPrimitiveTopology,(ID3D12GraphicsCommandList* object,D3D12_PRIMITIVE
 SIMPLE(OMSetStencilRef,(ID3D12GraphicsCommandList* object,UINT value),(object,value),(value))
 SIMPLE(SetGraphicsRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
 SIMPLE(SetGraphicsRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT index,UINT count,const void* data,UINT offset),(object,index,count,data,offset),(index,count,data,offset))
-SIMPLE(SetComputeRootSignature,(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value),(object,value),(value))
 SIMPLE(SetComputeRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
 SIMPLE(SetComputeRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT index,UINT count,const void* data,UINT offset),(object,index,count,data,offset),(index,count,data,offset))
 #undef SIMPLE
 void STDMETHODCALLTYPE SetGraphicsRootSignature(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value) {
     Call call;Original<decltype(&SetGraphicsRootSignature)>(object,slot::ID3D12GraphicsCommandList_SetGraphicsRootSignature)(object,value);
     if(call.outer){mirror::Record(object,__func__,[&](auto* q,auto&){q->SetGraphicsRootSignature(value);});mirror::BindRoot(object,value);}
+}
+void STDMETHODCALLTYPE SetComputeRootSignature(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value) {
+    Call call;Original<decltype(&SetComputeRootSignature)>(object,slot::ID3D12GraphicsCommandList_SetComputeRootSignature)(object,value);
+    if(call.outer){mirror::Record(object,__func__,[&](auto* q,auto&){q->SetComputeRootSignature(value);});mirror::BindRoot(object,value,true);}
 }
 // NULL is the documented {1,1,1,1} default. The installed native runtime
 // dereferences NULL even without interception (hardware and WARP), so pass its
@@ -173,6 +176,7 @@ void STDMETHODCALLTYPE ClearState(ID3D12GraphicsCommandList* object,ID3D12Pipeli
     if(call.outer)mirror::BindTargets(object,0,nullptr,FALSE);
     if(call.outer)mirror::BindPipeline(object,value);
     if(call.outer)mirror::BindRoot(object,nullptr);
+    if(call.outer)mirror::BindRoot(object,nullptr,true);
 }
 void STDMETHODCALLTYPE OMSetRenderTargets(ID3D12GraphicsCommandList* object,UINT count,const D3D12_CPU_DESCRIPTOR_HANDLE* values,BOOL contiguous,const D3D12_CPU_DESCRIPTOR_HANDLE* depth) {
     Call call; Original<decltype(&OMSetRenderTargets)>(object,slot::ID3D12GraphicsCommandList_OMSetRenderTargets)(object,count,values,contiguous,depth);
@@ -249,12 +253,13 @@ void STDMETHODCALLTYPE SetGraphicsRootDescriptorTable(ID3D12GraphicsCommandList*
 void STDMETHODCALLTYPE SetComputeRootDescriptorTable(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&SetComputeRootDescriptorTable)>(object,slot::ID3D12GraphicsCommandList_SetComputeRootDescriptorTable)(object,index,handle);
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Gpu(handle); if(map.Valid()) q->SetComputeRootDescriptorTable(index,right);});
+    if(call.outer)mirror::BindInput(object,index,handle.ptr,false,true);
 }
 #define ROOT_ADDRESS(Name,Graphics) \
 void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_VIRTUAL_ADDRESS address) { \
     Call call; Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name)(object,index,address); \
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Address(address);if(map.Valid()) q->Name(index,right);}); \
-    if constexpr(Graphics){if(call.outer)mirror::BindInput(object,index,address,true);} \
+    if(call.outer)mirror::BindInput(object,index,address,true,!Graphics); \
 }
 ROOT_ADDRESS(SetGraphicsRootConstantBufferView,true)
 ROOT_ADDRESS(SetGraphicsRootShaderResourceView,true)
@@ -311,6 +316,7 @@ void STDMETHODCALLTYPE DiscardResource(ID3D12GraphicsCommandList* object,ID3D12R
 void STDMETHODCALLTYPE Dispatch(ID3D12GraphicsCommandList* object,UINT x,UINT y,UINT z) {
     Call call; Original<decltype(&Dispatch)>(object,slot::ID3D12GraphicsCommandList_Dispatch)(object,x,y,z);
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto&){q->Dispatch(x,y,z);},mirror::RecordKind::Work);
+    if(call.outer)mirror::TraceDispatch(object,x,y,z);
 }
 void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* object,UINT count,ID3D12CommandList* const* lists);
 // Preserve the exact SDK calling convention and parameter types. Querying an
@@ -573,7 +579,7 @@ void STDMETHODCALLTYPE CreateDepthStencilView(ID3D12Device* object,ID3D12Resourc
 HRESULT STDMETHODCALLTYPE CreateComputePipelineState(ID3D12Device* object,const D3D12_COMPUTE_PIPELINE_STATE_DESC* desc,REFIID iid,void** output) {
     Call call;const auto result=Original<decltype(&CreateComputePipelineState)>(object,slot::ID3D12Device_CreateComputePipelineState)(object,desc,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output) {
-        PipelineCreated(object,*output,[&](auto* pipeline){mirror::ComputePipeline(object,pipeline);});
+        PipelineCreated(object,*output,[&](auto* pipeline){mirror::ComputePipeline(object,pipeline,desc->CS);});
     } return result;
 }
 void STDMETHODCALLTYPE CreateConstantBufferView(ID3D12Device* object,const D3D12_CONSTANT_BUFFER_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
@@ -595,7 +601,7 @@ void STDMETHODCALLTYPE CreateShaderResourceView(ID3D12Device* object,ID3D12Resou
 void STDMETHODCALLTYPE CreateUnorderedAccessView(ID3D12Device* object,ID3D12Resource* resource,ID3D12Resource* counter,const D3D12_UNORDERED_ACCESS_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&CreateUnorderedAccessView)>(object,slot::ID3D12Device_CreateUnorderedAccessView)(object,resource,counter,desc,handle);
     if(call.outer) mirror::Observe(object,[&](auto* d,auto& map){auto r=map.Resource(resource),c=map.Resource(counter);auto h=map.Cpu(handle);if(map.Valid())d->CreateUnorderedAccessView(r,c,desc,h);});
-    if(call.outer)mirror::Srv(object,nullptr,nullptr,handle);
+    if(call.outer)mirror::Uav(object,resource,desc,handle);
 }
 void STDMETHODCALLTYPE CreateSampler(ID3D12Device* object,const D3D12_SAMPLER_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&CreateSampler)>(object,slot::ID3D12Device_CreateSampler)(object,desc,handle);

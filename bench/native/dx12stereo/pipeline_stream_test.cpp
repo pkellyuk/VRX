@@ -31,7 +31,7 @@ int main(){try {
     struct Shaders {Subobject<D3D12_SHADER_BYTECODE> vs,cs,gs;} shaders{{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS,shader},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS,{}},{D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS,{}}};
     Check(ParseObject(shaders).kind==Kind::Graphics,"empty irrelevant stages are legal");shaders.cs.value=shader;
     Check(ParseObject(shaders).kind==Kind::Invalid,"two active pipeline classes rejected");shaders.vs.value={};shaders.gs.value=shader;
-    Check(ParseObject(shaders).kind==Kind::Compute,"runtime ignores graphics-only stages in compute streams");shaders.vs.value=shader;shaders.cs.value={};
+    auto compute=ParseObject(shaders);Check(compute.kind==Kind::Compute && compute.cs.pShaderBytecode==code && compute.cs.BytecodeLength==sizeof(code),"compute bytecode retained while runtime ignores graphics-only stages");shaders.vs.value=shader;shaders.cs.value={};
     auto geometry=ParseObject(shaders);Check(geometry.kind==Kind::Graphics && geometry.FinalShader().pShaderBytecode==code,"geometry is selected as the final position-producing stage");
     geometry.Shader({replacement,sizeof(replacement)});copy=geometry.Desc();auto final=Parse(&copy);Check(final.gs.pShaderBytecode==replacement && final.vs.pShaderBytecode==code && shaders.gs.value.pShaderBytecode==code,"final-stage replacement preserves original vertex and caller streams");shaders.gs.type=D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS;
     Check(ParseObject(shaders).kind==Kind::Invalid,"duplicate subobject rejected");

@@ -244,6 +244,9 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         add_test(NAME native_dx12_debug_gpu_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -GpuValidation ${extra})
         set_tests_properties(native_dx12_debug_gpu_${adapter} PROPERTIES TIMEOUT 60)
+        add_test(NAME native_dx12_compute_trace_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_mirror_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -ComputeTrace ${extra})
+        set_tests_properties(native_dx12_compute_trace_${adapter} PROPERTIES TIMEOUT 40)
 
 
         foreach(mesh_mode shifted zero stream probes probes_stream probes_nonindexed probes_fallback)

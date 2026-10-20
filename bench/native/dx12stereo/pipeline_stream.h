@@ -24,6 +24,7 @@ struct Parsed {
     size_t geometry=SIZE_MAX;
     D3D12_SHADER_BYTECODE vs{};
     D3D12_SHADER_BYTECODE ps{};
+    D3D12_SHADER_BYTECODE cs{};
     D3D12_SHADER_BYTECODE gs{};
     std::string reason;
     std::vector<uint64_t> storage;
@@ -73,7 +74,7 @@ inline Parsed Parse(const D3D12_PIPELINE_STATE_STREAM_DESC* desc) {
             case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS:
             case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DS: {
                 D3D12_SHADER_BYTECODE shader{};std::memcpy(&shader,bytes+at,sizeof(shader));const bool active=shader.pShaderBytecode && shader.BytecodeLength;
-                if(type==D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS)compute=active;
+                if(type==D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS){compute=active;out.cs=shader;}
                 else if(type==D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS)mesh=active;
                 else if(type==D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS){out.geometry=at;out.gs=shader;}
                 else if(active){unsupported=true;if(out.reason.empty())out.reason="tessellation requires final domain-stage stereo transformation";}

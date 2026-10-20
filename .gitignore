@@ -19,6 +19,12 @@ bench/native/**/out/
 bench/xmmodel/out/
 desktop/out/
 release/out/
+# Promo render intermediates and downloaded FFmpeg toolchains. Keep sources,
+# source artwork and finished deliverables under version control.
+promo/build/
+promo/tools/ffmpeg-*.zip
+promo/tools/ffmpeg-*-essentials_build/
+release/steam/store/screenshots/work/
 *.obj
 *.exe
 *.pdb

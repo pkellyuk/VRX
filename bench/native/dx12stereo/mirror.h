@@ -56,7 +56,7 @@ void PlacedResource(ID3D12Device*,ID3D12Resource*,ID3D12Heap*,UINT64,const D3D12
 void ReservedResource(ID3D12Device*,ID3D12Resource*,const D3D12_RESOURCE_DESC*,D3D12_RESOURCE_STATES,const D3D12_CLEAR_VALUE*) noexcept;
 void Pipeline(ID3D12Device*,ID3D12PipelineState*,const D3D12_GRAPHICS_PIPELINE_STATE_DESC*) noexcept;
 void StreamPipeline(ID3D12Device*,ID3D12PipelineState*,const D3D12_PIPELINE_STATE_STREAM_DESC*) noexcept;
-void ComputePipeline(ID3D12Device*,ID3D12PipelineState*) noexcept;
+void ComputePipeline(ID3D12Device*,ID3D12PipelineState*,const D3D12_SHADER_BYTECODE&) noexcept;
 void Heap(ID3D12Device*,ID3D12DescriptorHeap*,const D3D12_DESCRIPTOR_HEAP_DESC*) noexcept;
 void Rtv(ID3D12Device*,ID3D12Resource*,const D3D12_RENDER_TARGET_VIEW_DESC*,D3D12_CPU_DESCRIPTOR_HANDLE) noexcept;
 void List(ID3D12Device*,ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineState*,UINT,D3D12_COMMAND_LIST_TYPE,bool closed) noexcept;
@@ -64,9 +64,11 @@ void Reset(ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineStat
 void Close(ID3D12GraphicsCommandList*) noexcept;
 void BindTargets(ID3D12GraphicsCommandList*,UINT,const D3D12_CPU_DESCRIPTOR_HANDLE*,BOOL) noexcept;
 void BindPipeline(ID3D12GraphicsCommandList*,ID3D12PipelineState*) noexcept;
-void BindInput(ID3D12GraphicsCommandList*,UINT,UINT64,bool address) noexcept;
-void BindRoot(ID3D12GraphicsCommandList*,ID3D12RootSignature*) noexcept;
+void BindInput(ID3D12GraphicsCommandList*,UINT,UINT64,bool address,bool compute=false) noexcept;
+void BindRoot(ID3D12GraphicsCommandList*,ID3D12RootSignature*,bool compute=false) noexcept;
+void TraceDispatch(ID3D12GraphicsCommandList*,UINT,UINT,UINT) noexcept;
 void Srv(ID3D12Device*,ID3D12Resource*,const D3D12_SHADER_RESOURCE_VIEW_DESC*,D3D12_CPU_DESCRIPTOR_HANDLE) noexcept;
+void Uav(ID3D12Device*,ID3D12Resource*,const D3D12_UNORDERED_ACCESS_VIEW_DESC*,D3D12_CPU_DESCRIPTOR_HANDLE) noexcept;
 void CopyInputs(ID3D12Device*,UINT,const D3D12_CPU_DESCRIPTOR_HANDLE*,const UINT*,UINT,const D3D12_CPU_DESCRIPTOR_HANDLE*,const UINT*,D3D12_DESCRIPTOR_HEAP_TYPE) noexcept;
 std::shared_ptr<void> BeginProbe(ID3D12GraphicsCommandList*) noexcept;
 void EndProbe(ID3D12GraphicsCommandList*,const std::shared_ptr<void>&) noexcept;
