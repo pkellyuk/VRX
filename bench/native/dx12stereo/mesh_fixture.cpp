@@ -30,6 +30,9 @@ float4 PS():SV_Target{return float4(color,1);}
         D3D12_COMMAND_QUEUE_DESC qd{};qd.Type=D3D12_COMMAND_LIST_TYPE_COPY;ComPtr<ID3D12CommandQueue> copy;ComPtr<ID3D12CommandAllocator> allocator;ComPtr<ID3D12GraphicsCommandList> commands;ComPtr<ID3D12Fence> ready;
         Hr(scene.device->CreateCommandQueue(&qd,IID_PPV_ARGS(&copy)));Hr(scene.device->CreateCommandAllocator(qd.Type,IID_PPV_ARGS(&allocator)));Hr(scene.device->CreateCommandList(0,qd.Type,allocator.Get(),nullptr,IID_PPV_ARGS(&commands)));Hr(commands->Close());Hr(scene.device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&ready)));
         for(UINT frame=1;frame<=12;++frame){
+            if(frame==7){wchar_t probeMode[3]{};if(GetEnvironmentVariableW(L"VRX_DX12_REPLAY_PROBES",probeMode,3)==1 && probeMode[0]==L'1'){
+                const auto length=GetEnvironmentVariableW(L"VRX_DX12_DEBUG_LOG",nullptr,0);Check(length>0 && length<32768,"owned probe request path");std::wstring path(length,L'\0');const auto got=GetEnvironmentVariableW(L"VRX_DX12_DEBUG_LOG",path.data(),length);Check(got>0 && got<length,"read probe request path");path.resize(got);path+=L".request";FILE* request=nullptr;Check(_wfopen_s(&request,path.c_str(),L"wb")==0 && request,"open owned probe request");std::fputs("1\n",request);std::fclose(request);Sleep(1100);
+            }}
             scene.Wait();Hr(allocator->Reset());Hr(commands->Reset(allocator.Get(),nullptr));
             void* bytes=nullptr;Hr(upload->Map(0,nullptr,&bytes));std::memset(bytes,0,1024);
             // Nonzero resource/view offsets and base vertex exercise address translation.

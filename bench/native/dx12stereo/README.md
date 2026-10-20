@@ -612,7 +612,7 @@ queries (and implies the debug layer). It samples indexed draws on DIRECT lists,
 at most once per 30 presentations, rotating the draw ordinal using the preceding
 frame's draw count. The first 64 samples report native/right IA, vertex-shader,
 clipping and pixel-shader counters. Results are mapped only after a queue fence
-completes; there is no CPU fence wait or frame-pixel readback. Query storage stays
+completes, without a CPU fence wait. Query storage stays
 alive across list reset/release until queued work retires. Ordinary launches
 strip this diagnostic setting. Hardware/WARP mesh tests validate equal populated
 GPU counters alongside equal native/right pixels for the sampled draw.
@@ -626,3 +626,22 @@ These early samples do not establish correctness of later gameplay draws. A
 subsequent gameplay readback (frame 2756/2756) still shows the full scene on the
 left and HUD-only on the right. Render-target contents and later compositing
 remain under investigation; pipeline work counts alone cannot establish them.
+
+Colour probes additionally compare the raw bytes of a centred region up to
+16x16 in each bound single-sample 2D render-target view. Mip/array-subresource
+selection and view format are retained; COPY_SOURCE transitions are restored to
+RENDER_TARGET before the game continues. These small diagnostic readbacks are
+opt-in and are separate from the GPU-only production frame transport. Hardware
+and WARP validate populated matching regions, unchanged native/replayed scene
+pixels and retirement even when stereo stops before submission.
+
+Writing a larger positive integer into `native-debug.log.request` in the owned
+run folder requests another 64-sample batch, polled at most once per second.
+There is a process-wide ceiling of 256 samples per device context. A mesh test
+rearms during rendering and verifies the second populated colour comparison.
+
+The System Shock colour trace identifies a divergent 640x360 R11G11B10_FLOAT
+target: the sampled fullscreen draw has 230,400 pixel-shader invocations in each
+eye, but the right region is all zero while the left is populated. Other sampled
+G-buffer targets match. This narrows the failure to colour inputs/output or later
+compositing, rather than absence of geometry execution.

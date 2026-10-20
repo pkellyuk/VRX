@@ -62,6 +62,7 @@ void Rtv(ID3D12Device*,ID3D12Resource*,const D3D12_RENDER_TARGET_VIEW_DESC*,D3D1
 void List(ID3D12Device*,ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineState*,UINT,D3D12_COMMAND_LIST_TYPE,bool closed) noexcept;
 void Reset(ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineState*) noexcept;
 void Close(ID3D12GraphicsCommandList*) noexcept;
+void BindTargets(ID3D12GraphicsCommandList*,UINT,const D3D12_CPU_DESCRIPTOR_HANDLE*,BOOL) noexcept;
 std::shared_ptr<void> BeginProbe(ID3D12GraphicsCommandList*) noexcept;
 void EndProbe(ID3D12GraphicsCommandList*,const std::shared_ptr<void>&) noexcept;
 enum class RecordKind { State,Transfer,Work };

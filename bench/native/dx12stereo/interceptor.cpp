@@ -164,6 +164,7 @@ void STDMETHODCALLTYPE SetPipelineState(ID3D12GraphicsCommandList* object,ID3D12
 void STDMETHODCALLTYPE ClearState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
     Call call; Original<decltype(&ClearState)>(object,slot::ID3D12GraphicsCommandList_ClearState)(object,value);
     if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->ClearState(right);});
+    if(call.outer)mirror::BindTargets(object,0,nullptr,FALSE);
 }
 void STDMETHODCALLTYPE OMSetRenderTargets(ID3D12GraphicsCommandList* object,UINT count,const D3D12_CPU_DESCRIPTOR_HANDLE* values,BOOL contiguous,const D3D12_CPU_DESCRIPTOR_HANDLE* depth) {
     Call call; Original<decltype(&OMSetRenderTargets)>(object,slot::ID3D12GraphicsCommandList_OMSetRenderTargets)(object,count,values,contiguous,depth);
@@ -173,6 +174,7 @@ void STDMETHODCALLTYPE OMSetRenderTargets(ID3D12GraphicsCommandList* object,UINT
         const auto rightDepth=depth?map.Cpu(*depth):D3D12_CPU_DESCRIPTOR_HANDLE{};
         if(map.Valid()) q->OMSetRenderTargets(count,count?right:nullptr,contiguous,depth?&rightDepth:nullptr);
     });
+    if(call.outer)mirror::BindTargets(object,count,values,contiguous);
 }
 void STDMETHODCALLTYPE ClearRenderTargetView(ID3D12GraphicsCommandList* object,D3D12_CPU_DESCRIPTOR_HANDLE target,const FLOAT color[4],UINT count,const D3D12_RECT* rects) {
     Call call; Original<decltype(&ClearRenderTargetView)>(object,slot::ID3D12GraphicsCommandList_ClearRenderTargetView)(object,target,color,count,rects);

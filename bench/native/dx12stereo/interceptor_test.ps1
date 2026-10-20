@@ -41,6 +41,7 @@ try {
     if($DebugLayer){$log=Get-Content -LiteralPath (Join-Path $root 'native-debug.log') -Raw;if($log -notmatch 'debug layer enabled before device creation' -or $log -notmatch 'info-queue callback ready' -or ($NullBlendProbe -and $log -notmatch 'VRX diagnostic application-message probe')){throw 'Native debug logging did not observe the requested callback'}}
     if($DebugLayer -and -not $ReplayProbes -and ($log -notmatch 'VRX diagnostic error after warning flood' -or [regex]::Matches($log,'VRX diagnostic application-message probe').Count -ne 1)){throw 'Warnings hid an error or a device callback was duplicated'}
     if($ReplayProbes -and -not $Unsupported -and $log -notmatch 'VRX replay probe 1: iaV=3/3 iaP=1/1 vs=3/3 clipIn=1/1 clipOut=1/1 ps=([1-9][0-9]*)/\1(?:\r?\n|$)'){throw 'Paired GPU counters did not prove identical native/right geometry'}
+    if($ReplayProbes -and -not $Unsupported -and ($log -notmatch 'VRX replay colour 1 target=0 .*hash=([0-9a-f]+)/\1 nonzero=([1-9][0-9]*)/\2(?:\r?\n|$)' -or $log -notmatch 'VRX replay colour 2 target=0 .*hash=([0-9a-f]+)/\1 nonzero=([1-9][0-9]*)/\2(?:\r?\n|$)')){throw ('Colour readback or live probe request did not compare identical populated targets: '+$log)}
     if($ReplayProbes -and $Unsupported -and $log -notmatch 'VRX unpaired replay probe omitted after stereo stop'){throw 'Probe resources were not fenced and retired after native fallback'}
     if($GpuValidation -and $log -notmatch 'VRX GPU-based validation enabled'){throw 'GPU-based validation was not enabled'}
 } finally {

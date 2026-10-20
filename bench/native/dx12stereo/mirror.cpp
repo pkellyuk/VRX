@@ -35,9 +35,17 @@ struct Context {
     std::string recordCommands; // diagnostic comma-delimited allowlist
     std::string reason;
     uint64_t probeCount=0,nextProbePresentation=0,probeOrdinal=0,previousIndexed=1;
+    uint64_t probeBudget=0,lastProbeCheck=0,lastProbeRequest=0;
 };
 namespace {
 enum class Kind { Device,Queue,Allocator,Resource,Pipeline,Heap,List,Swapchain,MemoryHeap,QueryHeap,Signature };
+struct Item;
+struct TargetView {
+    std::weak_ptr<Item> resource;
+    ID3D12Resource* native=nullptr;
+    UINT subresource=0,width=0,height=0;
+    DXGI_FORMAT format=DXGI_FORMAT_UNKNOWN;
+};
 struct Item {
     Kind kind;
     std::shared_ptr<Context> context;
@@ -57,6 +65,9 @@ struct Item {
     ComPtr<ID3D12CommandAllocator> listAllocator;
     std::vector<std::shared_ptr<diagnostic::ReplayProbe>> probes;
     D3D12_COMMAND_LIST_TYPE listType=D3D12_COMMAND_LIST_TYPE_DIRECT;
+    std::vector<TargetView> targets;
+    std::unordered_map<UINT,TargetView> rtvs;
+    D3D12_DESCRIPTOR_HEAP_TYPE descriptorType=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     D3D12_HEAP_TYPE heapType=D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC description{};
     uint64_t leftAddress=0,rightAddress=0;
@@ -169,6 +180,10 @@ void TrackResource(ID3D12Resource* original,const std::shared_ptr<Item>& item) {
 bool HeapSupported(const D3D12_HEAP_PROPERTIES& heap,D3D12_HEAP_FLAGS flags) {
     return !(flags&(D3D12_HEAP_FLAG_SHARED|D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER|D3D12_HEAP_FLAG_HARDWARE_PROTECTED)) &&
         (heap.Type==D3D12_HEAP_TYPE_DEFAULT || heap.Type==D3D12_HEAP_TYPE_UPLOAD || heap.Type==D3D12_HEAP_TYPE_READBACK);
+}
+std::shared_ptr<Item> TargetHeap(const std::shared_ptr<Context>& context,D3D12_CPU_DESCRIPTOR_HANDLE handle,UINT& index){
+    for(const auto& entry:Registry().objects){const auto& heap=entry.second;if(heap->kind!=Kind::Heap || heap->context!=context || heap->descriptorType!=D3D12_DESCRIPTOR_HEAP_TYPE_RTV || handle.ptr<heap->leftCpu.ptr)continue;const auto delta=handle.ptr-heap->leftCpu.ptr;if(heap->stride && delta%heap->stride==0 && delta/heap->stride<heap->descriptors){index=UINT(delta/heap->stride);return heap;}}
+    return {};
 }
 } // namespace
 bool Mapper::Valid() const { return context_ && context_->active; }
@@ -469,7 +484,7 @@ void Heap(ID3D12Device* device,ID3D12DescriptorHeap* original,const D3D12_DESCRI
         if(desc->Flags&D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) {
             item->leftGpu=original->GetGPUDescriptorHandleForHeapStart(); item->rightGpu=item->heap->GetGPUDescriptorHandleForHeapStart();
         }
-        item->descriptors=desc->NumDescriptors; item->stride=device->GetDescriptorHandleIncrementSize(desc->Type); Remember(original,item);
+        item->descriptorType=desc->Type;item->descriptors=desc->NumDescriptors; item->stride=device->GetDescriptorHandleIncrementSize(desc->Type); Remember(original,item);
     } catch(...) { Failure(device,"descriptor heap observation failed"); }
 }
 void ComputePipeline(ID3D12Device* device,ID3D12PipelineState* original) noexcept {
@@ -486,6 +501,15 @@ void Rtv(ID3D12Device* device,ID3D12Resource* resource,const D3D12_RENDER_TARGET
         Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(!context || !context->active) return;
         Mapper map(context); auto right=map.Resource(resource); auto target=map.Cpu(handle);
         if(map.Valid()) device->CreateRenderTargetView(right,desc,target);
+        static const bool probing=diagnostic::ProbesRequested();if(!probing)return;
+        UINT index=0;auto heap=TargetHeap(context,handle,index);if(!heap)return;heap->rtvs.erase(index);if(!resource)return;
+        auto source=Find(resource);if(!source)return;const auto& d=source->description;
+        if(d.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.SampleDesc.Count!=1)return;
+        UINT mip=0,slice=0;DXGI_FORMAT format=d.Format;
+        if(desc){format=desc->Format;if(desc->ViewDimension==D3D12_RTV_DIMENSION_TEXTURE2D){mip=desc->Texture2D.MipSlice;if(desc->Texture2D.PlaneSlice)return;}else if(desc->ViewDimension==D3D12_RTV_DIMENSION_TEXTURE2DARRAY){mip=desc->Texture2DArray.MipSlice;slice=desc->Texture2DArray.FirstArraySlice;if(desc->Texture2DArray.PlaneSlice)return;}else return;}
+        if(mip>=d.MipLevels || slice>=d.DepthOrArraySize)return;
+        TargetView view{source,resource,mip+slice*d.MipLevels,UINT(std::max(UINT64(1),d.Width>>mip)),std::max(UINT(1),d.Height>>mip),format};
+        heap->rtvs[index]=view;
     } catch(...) { Failure(device,"view observation failed"); }
 }
 void List(ID3D12Device* device,ID3D12GraphicsCommandList* original,ID3D12CommandAllocator* allocator,ID3D12PipelineState* pipeline,UINT node,D3D12_COMMAND_LIST_TYPE type,bool closed) noexcept {
@@ -511,22 +535,34 @@ void Reset(ID3D12GraphicsCommandList* original,ID3D12CommandAllocator* allocator
         auto allocation=Mapped(allocator,Kind::Allocator,item->context); Mapper map(item->context); auto pso=map.Pipeline(pipeline);
         if(!allocation || !map.Valid()) return;
         if(FAILED(item->list->Reset(allocation->allocator.Get(),pso))) { Stop(item->context,"command list reset failed"); return; }
-        item->listAllocator=allocation->allocator; item->closed=false;item->probes.clear();
+        item->listAllocator=allocation->allocator; item->closed=false;item->probes.clear();item->targets.clear();
     } catch(...) { }
 }
 void Close(ID3D12GraphicsCommandList* original) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(item && item->context->active) { if(FAILED(item->list->Close())) Stop(item->context,"command list close failed"); else item->closed=true; } } catch(...) { }
+}
+void BindTargets(ID3D12GraphicsCommandList* original,UINT count,const D3D12_CPU_DESCRIPTOR_HANDLE* handles,BOOL contiguous) noexcept {
+    static const bool requested=diagnostic::ProbesRequested();if(!requested)return;
+    try {
+        Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || item->kind!=Kind::List)return;item->targets.clear();if(count>8 || (count && !handles))return;
+        const auto stride=contiguous?item->context->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV):0;
+        for(UINT i=0;i<count;++i){const D3D12_CPU_DESCRIPTOR_HANDLE handle=contiguous?D3D12_CPU_DESCRIPTOR_HANDLE{handles[0].ptr+SIZE_T(i)*stride}:handles[i];UINT index=0;auto heap=TargetHeap(item->context,handle,index);if(!heap)continue;auto target=heap->rtvs.find(index);if(target!=heap->rtvs.end())item->targets.push_back(target->second);}
+    }catch(...){diagnostic::Write(nullptr,1,0,"VRX replay target tracking failed");}
 }
 std::shared_ptr<void> BeginProbe(ID3D12GraphicsCommandList* original) noexcept {
     static const bool requested=diagnostic::ProbesRequested();if(!requested)return {};
     try {
         Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || item->kind!=Kind::List || item->closed || item->listType!=D3D12_COMMAND_LIST_TYPE_DIRECT)return {};
         const auto& context=item->context;
+        const auto now=GetTickCount64();if(now-context->lastProbeCheck>=1000){context->lastProbeCheck=now;const auto request=diagnostic::ProbeRequest();if(request>context->lastProbeRequest){context->lastProbeRequest=request;context->probeBudget=0;context->nextProbePresentation=Registry().counts.presentations;context->probeOrdinal=0;}}
         const auto ordinal=++context->probeOrdinal;
-        if(!context->active || context->recordOnly || context->probeCount>=64 || Registry().counts.presentations<context->nextProbePresentation)return {};
+        if(!context->active || context->recordOnly || context->probeBudget>=64 || context->probeCount>=256 || Registry().counts.presentations<context->nextProbePresentation)return {};
         if(ordinal!=1+(context->probeCount*37)%context->previousIndexed)return {};
         context->nextProbePresentation=Registry().counts.presentations+30;
-        auto probe=diagnostic::ReplayProbe::Create(context->device,++context->probeCount);if(!probe)return {};
+        ++context->probeBudget;
+        std::vector<diagnostic::ColourTarget> targets;
+        for(const auto& view:item->targets)if(auto source=view.resource.lock()){diagnostic::ColourTarget target;target.native=view.native;target.right=source->RightResource();target.subresource=view.subresource;target.width=view.width;target.height=view.height;target.format=view.format;targets.push_back(std::move(target));}
+        auto probe=diagnostic::ReplayProbe::Create(context->device,++context->probeCount,std::move(targets));if(!probe)return {};
         item->probes.push_back(probe);probe->Begin(original,item->list.Get());return probe;
     }catch(...){diagnostic::Write(nullptr,1,0,"VRX replay probe begin failed");return {};}
 }
