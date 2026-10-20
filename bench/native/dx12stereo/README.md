@@ -508,7 +508,8 @@ following each restart. A visible menu does not count as a successful comparison
 | Primitive topology only | Full scene |
 | Blend factor only, original native-first sequence | HUD over black world |
 | Blend factor only, private input snapshot and native call last | Full scene |
-| Full mirroring with revised blend wrapper | GPU stream ready; gameplay/headset observation pending |
+| Full mirroring with revised blend wrapper | Full native/left scene; right HUD over black world |
+| Zero separation, original graphics pipelines, full resource/command replay | Right-eye 3D menu background absent in GPU readback |
 
 `-RecordOnly` never submits shadow lists or publishes a stereo stream.
 `-SkipRecordingWork` omits draw, dispatch, bundle and indirect work;
@@ -553,9 +554,32 @@ The missing-world regression is isolated to blend-factor recording. The
 private-snapshot, shadow-first/native-last sequence restores the scene in the
 isolated saved-game comparison. That comparison does not distinguish storage
 aliasing from call-order effects, so it is not proof of the driver's mechanism.
-Full command/resource replay is the next gameplay and headset validation.
+Full replay restores the native/left view but still loses right-eye world geometry.
+A GPU readback of frame 9525/9525 confirms this in the shared textures at
+1280x720 per eye; this is not a headset display or frame-pairing failure.
 
 Output-state pixel tests additionally cover initial versus delayed pipeline
 binding, legacy and streamed PSOs, and record-only blend/stencil calls both
 separately and together. They validate native pixels while unsubmitted shadow
 lists remain unbound, plus full same-frame replay with late PSO binding.
+
+Exact zero separation/convergence uses the immutable native graphics PSO after
+normal shader/capability validation. It avoids a redundant rewrite/compilation
+and provides an unmodified-pipeline comparison for resource replay. Legacy and
+streamed hardware/WARP fixtures verify byte-identical native/right pixels across
+18 moving frames, including indexed input and compute/resource dependencies.
+Nonzero calibration retains the rewritten pipeline path.
+
+`launch-native.ps1 -DebugLayer` explicitly enables D3D12 validation before device
+creation and saves warnings/errors in the owned run's `native-debug.log`.
+Mirrored resources, descriptor heaps and command lists receive diagnostic names.
+The callback only writes bounded log data; it performs no graphics calls and
+retains no COM objects. A private device cookie avoids duplicate registration
+without extending the device's lifetime. Normal CLI and managed launches clear
+inherited debug options and log paths. Hardware/WARP probes, launcher ownership
+checks and managed native restart integration verify the scoped behavior.
+
+Unmodified graphics pipelines also lose the right-eye title-screen 3D scene
+(frame 41560/41560). This rules out the shader stereo offset as the source of
+that failure. Native validation is now being used to inspect command/resource
+replay; a visible 2D menu alone does not prove the right-eye scene is correct.

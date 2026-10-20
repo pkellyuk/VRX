@@ -7,15 +7,16 @@ $application=Join-Path $root 'native [fixture].exe';Copy-Item -LiteralPath $Fixt
 $launcher=Join-Path $PSScriptRoot 'launch-native.ps1';$bridge=(Resolve-Path -LiteralPath $Proxy).Path;$status=(Resolve-Path -LiteralPath $StatusTool).Path
 function Quote([string]$Text){return "'"+$Text.Replace("'","''")+"'"}
 function StartLauncher([string]$Command){
-    $start=[Diagnostics.ProcessStartInfo]::new('pwsh');$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    $start=[Diagnostics.ProcessStartInfo]::new('pwsh');$start.Environment['VRX_DX12_DEBUG_LAYER']='1';$start.Environment['VRX_DX12_DEBUG_LOG']='unwanted-debug.log';$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
     foreach($arg in @('-NoProfile','-EncodedCommand',[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command)))){$start.ArgumentList.Add($arg)}
     return [Diagnostics.Process]::Start($start)
 }
 try {
-    foreach($mode in @('mirror','observe','record','clone','queues','no-work','state','pipeline')) {
-        $observe=$mode -eq 'observe';$recordOnly=$mode -in @('record','queues','no-work','state','pipeline');$cloneOnly=$mode -eq 'clone';$skipCommands=$mode -eq 'queues';$skipWork=$mode -eq 'no-work';$stateOnly=$mode -eq 'state';$recordCommands=$(if($mode -eq 'pipeline'){'SetPipelineState'}else{''})
+    foreach($mode in @('mirror','observe','record','clone','queues','no-work','state','pipeline','debug')) {
+        $debugLayer=$mode -eq 'debug';$observe=$mode -eq 'observe';$recordOnly=$mode -in @('record','queues','no-work','state','pipeline','debug');$cloneOnly=$mode -eq 'clone';$skipCommands=$mode -eq 'queues';$skipWork=$mode -eq 'no-work';$stateOnly=$mode -eq 'state';$recordCommands=$(if($mode -eq 'pipeline'){'SetPipelineState'}else{''})
         $session='launch-'+[Guid]::NewGuid().ToString('N');$stop=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,'Local\VRX.dx12.'+$session+'.fixture-stop')
         $command='& '+(Quote $launcher)+' -Executable '+(Quote $application)+' -Proxy '+(Quote $bridge)+' -Session '+(Quote $session)+' -GameArguments @('+(Quote ('--serve-gpu='+$session))+')'+$(if($observe){' -ObserveOnly'}elseif($recordOnly){' -RecordOnly'}elseif($cloneOnly){' -CloneOnly'}else{''})
+        if($debugLayer){$command+=' -DebugLayer'}
         if($recordCommands){$command+=' -RecordCommands '+(Quote $recordCommands)}
         if($stateOnly){$command+=' -RecordStateOnly'}
         if($skipWork){$command+=' -SkipRecordingWork'}
@@ -42,7 +43,9 @@ try {
             if(Test-Path -LiteralPath (Join-Path $root 'd3d12.dll')){throw 'Launcher left its unchanged bridge installed'}
             $match=[regex]::Match($output,'run ([^\r\n]+)');if(-not $match.Success){throw 'Missing owned native run record'}
             $run=Get-Content -LiteralPath (Join-Path $match.Groups[1].Value 'run.json') -Raw|ConvertFrom-Json
-            if($run.Executable -ne $application -or $run.Arguments.Count -ne 1 -or $run.Arguments[0] -ne ('--serve-gpu='+$session) -or $run.ObserveOnly -ne $observe -or $run.RecordOnly -ne $recordOnly -or $run.CloneOnly -ne $cloneOnly -or $run.SkipCommandRecording -ne $skipCommands -or $run.SkipRecordingWork -ne $skipWork -or $run.RecordStateOnly -ne $stateOnly -or $run.RecordCommands -ne $recordCommands){throw 'Owned run identity or literal arguments differ'}
+            if($run.Executable -ne $application -or $run.Arguments.Count -ne 1 -or $run.Arguments[0] -ne ('--serve-gpu='+$session) -or $run.ObserveOnly -ne $observe -or $run.RecordOnly -ne $recordOnly -or $run.CloneOnly -ne $cloneOnly -or $run.SkipCommandRecording -ne $skipCommands -or $run.SkipRecordingWork -ne $skipWork -or $run.RecordStateOnly -ne $stateOnly -or $run.RecordCommands -ne $recordCommands -or $run.DebugLayer -ne $debugLayer){throw 'Owned run identity or literal arguments differ'}
+            $debugFile=Join-Path $match.Groups[1].Value 'native-debug.log'
+            if($debugLayer){$nativeLog=Get-Content -LiteralPath $debugFile -Raw;if($nativeLog -notmatch 'debug layer enabled before device creation' -or $nativeLog -notmatch 'info-queue callback ready'){throw 'Launcher debug callbacks were not active'}}elseif(Test-Path -LiteralPath $debugFile){throw 'Ordinary launches must not write a native debug log'}
         }finally{
             $null=$stop.Set();if($game -and -not $game.HasExited){$game.Kill();$game.WaitForExit()};if(-not $child.HasExited -and -not $child.WaitForExit(3000)){$child.Kill();$child.WaitForExit()}
             if($game){$game.Dispose()};$child.Dispose();$stop.Dispose()

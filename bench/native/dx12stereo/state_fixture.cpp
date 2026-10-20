@@ -12,6 +12,10 @@ int main(int argc,char** argv){try {
     {
         ComPtr<IDXGIAdapter> adapter;if(warp){ComPtr<IDXGIFactory4> factory;Hr(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));Hr(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)));}
         Scene scene;scene.Init(adapter.Get());
+        wchar_t debugMode[3]{};
+        if(GetEnvironmentVariableW(L"VRX_DX12_DEBUG_LAYER",debugMode,3)==1 && debugMode[0]==L'1' && scene.messages){
+            Hr(scene.messages->AddApplicationMessage(D3D12_MESSAGE_SEVERITY_WARNING,"VRX diagnostic application-message probe"));scene.messages->ClearStoredMessages();
+        }
         if(nullProbe){
             Hr(scene.allocator->Reset());Hr(scene.commands->Reset(scene.allocator.Get(),nullptr));
             std::puts("Native NULL blend call: begin");std::fflush(stdout);

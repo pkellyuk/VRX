@@ -20,6 +20,7 @@ internal static class NativeGeometryLaunchIntegrationTests
         using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(100));var token=timeout.Token;
         var log=new List<string>();GeometryLaunch.Run? running=null;
         var diagnosticEnvironment=new Dictionary<string,string>{
+            ["VRX_DX12_DEBUG_LAYER"]="1",["VRX_DX12_DEBUG_LOG"]="unwanted-debug.log",
             ["VRX_DX12_RECORD_ONLY"]="1",["VRX_DX12_CLONE_ONLY"]="1",["VRX_DX12_SKIP_COMMANDS"]="1",
             ["VRX_DX12_SKIP_WORK"]="1",["VRX_DX12_STATE_ONLY"]="1",["VRX_DX12_RECORD_COMMANDS"]="SetPipelineState"};
         var previousEnvironment=diagnosticEnvironment.Keys.ToDictionary(key=>key,Environment.GetEnvironmentVariable);
@@ -59,6 +60,7 @@ internal static class NativeGeometryLaunchIntegrationTests
                 var plan=await GeometryLaunch.Prepare(await Window(running),profile,root,log.Add,token);Check(plan.Arguments.Contains(literal),"literal argument survives managed command-line capture");int old=running.Pid;
                 running=await GeometryLaunch.Restart(plan,profile,root,log.Add,token);
                 Check(running.Pid!=old && GeometryLaunch.IsRunning(running) && NativeStereoStatus.Read(session,running.Pid)?.Ready==true,"native child has fresh replay/publication diagnostics");
+                Check(!File.Exists(Path.Combine(root,"unwanted-debug.log")),"ordinary managed launches do not inherit debug logging side effects");
                 Check(GeometryLaunch.ExistingSession(await Window(running),profile,root)==session,"native stream reuse validates backend and owner");
                 var wrong=new Profile{ExecutablePath=executable};wrong.SelectStereoBackend(StereoPaths.Vulkan);Check(GeometryLaunch.ExistingSession(await Window(running),wrong,root)==null,"native output cannot silently satisfy a Vulkan choice");
                 string pixels=await Tool(snapshot,[session,Path.Combine(root,$"eyes-{attempt}.ppm"),running.Pid.ToString(CultureInfo.InvariantCulture)]);

@@ -36,6 +36,7 @@ int main(int argc,char** argv) {
         Check(counts && twin && scope,"local native mirror bridge loaded");
         const auto session=L"native-mirror-status-"+std::to_wstring(GetCurrentProcessId());Check(SetEnvironmentVariableW(L"VRX_XG_SESSION",session.c_str())!=0,"set isolated diagnostics session");
         ComPtr<ID3D12Debug> debug; if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) debug->EnableDebugLayer();
+        wchar_t shift[3]{};const bool zeroShift=GetEnvironmentVariableW(L"VRX_DX12_SHIFT",shift,3)==1 && shift[0]==L'0';
         double distance[2]{};
         {
             ComPtr<IDXGIAdapter> adapter; if(warp){ComPtr<IDXGIFactory4> factory; Hr(CreateDXGIFactory1(IID_PPV_ARGS(&factory))); Hr(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)));}
@@ -44,10 +45,10 @@ int main(int argc,char** argv) {
             { Diagnostic native; Frame(scene,0,2,false,true,bindings?&views:nullptr); Pixels(scene,Capture(scene,true,true),0,true); }
             for(UINT frame=1;frame<=18;++frame) {
                 float w=frame>=17?1.0f:frame%2?2.0f:4.0f; Frame(scene,frame,w,false,frame%3==0,bindings?&views:nullptr);
-                auto disparity=Pixels(scene,Capture(scene),frame,w==1);
-                if(w!=1) { Check(disparity>(w==2?7:3),"replayed shader produces real geometry disparity"); distance[frame%2]=disparity; }
+                auto disparity=Pixels(scene,Capture(scene),frame,w==1 || zeroShift);
+                if(w!=1 && !zeroShift) { Check(disparity>(w==2?7:3),"replayed shader produces real geometry disparity"); distance[frame%2]=disparity; }
             }
-            Check(distance[1]/distance[0]>1.7 && distance[1]/distance[0]<2.3,"replay disparity decreases with depth");
+            if(!zeroShift)Check(distance[1]/distance[0]>1.7 && distance[1]/distance[0]<2.3,"replay disparity decreases with depth");
             if(unsupported) { Frame(scene,19,2,true); Pixels(scene,Capture(scene,false),19,true); }
         }
         vrx::dx12::Counts result; Hr(counts(&result,sizeof(result)));

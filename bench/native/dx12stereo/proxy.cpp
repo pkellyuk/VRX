@@ -2,6 +2,7 @@
 // Opt-in local D3D12 loader bridge. No work is performed under the loader lock.
 #include "interceptor.h"
 #include "mirror.h"
+#include "native_debug.h"
 #include <cstring>
 #include <wrl/client.h>
 
@@ -36,6 +37,7 @@ extern "C" FARPROC ResolveSystemOrdinal(UINT ordinal) noexcept {
 extern "C" HRESULT WINAPI D3D12CreateDevice(IUnknown* adapter,D3D_FEATURE_LEVEL level,REFIID iid,void** output) {
     const auto real=Function<PFN_D3D12_CREATE_DEVICE>("D3D12CreateDevice");
     if(!real) { if(output) *output=nullptr; return Missing; }
+    if(Enabled() && vrx::dx12::ApiOuter())vrx::dx12::diagnostic::Enable(Function<PFN_D3D12_GET_DEBUG_INTERFACE>("D3D12GetDebugInterface"));
     const auto result=real(adapter,level,iid,output);
     if(SUCCEEDED(result) && output && *output && Enabled() && vrx::dx12::ApiOuter()) {
         // Code patches/trampolines are process-scoped. Pin the module before
@@ -44,7 +46,7 @@ extern "C" HRESULT WINAPI D3D12CreateDevice(IUnknown* adapter,D3D_FEATURE_LEVEL 
         if(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
             reinterpret_cast<LPCWSTR>(&D3D12CreateDevice),&pinned)) {
             Microsoft::WRL::ComPtr<ID3D12Device> device;
-            if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&device)))) vrx::dx12::Attach(device.Get());
+            if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&device)))) {vrx::dx12::diagnostic::Attach(device.Get());vrx::dx12::Attach(device.Get());}
         }
     }
     return result;

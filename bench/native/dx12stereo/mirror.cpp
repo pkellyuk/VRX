@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Paul Kelly. SPDX-License-Identifier: GPL-3.0-or-later
 #include "mirror.h"
+#include "native_debug.h"
 #include "dxbc_patch.h"
 #include "publisher.h"
 #include "pipeline_stream.h"
@@ -154,6 +155,7 @@ std::shared_ptr<Item> Mapped(void* original,Kind kind,const std::shared_ptr<Cont
     return item;
 }
 void TrackResource(ID3D12Resource* original,const std::shared_ptr<Item>& item) {
+    diagnostic::Name(item->resource.Get(),L"resource",original);
     if(item->description.Dimension==D3D12_RESOURCE_DIMENSION_BUFFER){item->leftAddress=original->GetGPUVirtualAddress();item->rightAddress=item->RightResource()->GetGPUVirtualAddress();}
     Remember(original,item);++Registry().counts.resources;
 }
@@ -409,6 +411,11 @@ void Pipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D12_GRA
             const auto final=desc->GS.BytecodeLength?desc->GS:desc->VS;auto shader=dxbc::Rewrite(final.pShaderBytecode,final.BytecodeLength,context->calibration);
             item->pipelineReason=shader.reason;
             if(shader.status==dxbc::Status::Patched) {
+                if(context->calibration.shift==0 && context->calibration.convergence==0){
+                    // Exact zero separation needs no shader rewrite. Preserve
+                    // native bytecode and share this immutable PSO, as for compute.
+                    item->pipelineAlias=original;++Registry().counts.pipelines;Remember(original,item);return;
+                }
                 auto clone=*desc;if(desc->GS.BytecodeLength)clone.GS={shader.bytes.data(),shader.bytes.size()};else clone.VS={shader.bytes.data(),shader.bytes.size()};clone.CachedPSO={};
                 item->pipelineReason="rewritten graphics pipeline creation failed";
                 if(SUCCEEDED(device->CreateGraphicsPipelineState(&clone,IID_PPV_ARGS(&item->pipeline)))) {
@@ -430,6 +437,9 @@ void StreamPipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D
         if(parsed.kind==stream::Kind::Graphics) {
             const auto final=parsed.FinalShader();auto shader=dxbc::Rewrite(final.pShaderBytecode,final.BytecodeLength,context->calibration);item->pipelineReason=shader.reason;
             if(shader.status==dxbc::Status::Patched) {
+                if(context->calibration.shift==0 && context->calibration.convergence==0){
+                    item->pipelineAlias=original;++Registry().counts.pipelines;Remember(original,item);return;
+                }
                 parsed.Shader({shader.bytes.data(),shader.bytes.size()});parsed.ClearCache();auto clone=parsed.Desc();ComPtr<ID3D12Device2> newer;
                 item->pipelineReason="rewritten pipeline stream creation failed";
                 if(SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&newer))) && SUCCEEDED(newer->CreatePipelineState(&clone,IID_PPV_ARGS(&item->pipeline)))) {
@@ -446,6 +456,7 @@ void Heap(ID3D12Device* device,ID3D12DescriptorHeap* original,const D3D12_DESCRI
         Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(!context || !context->active) return;
         auto item=New(Kind::Heap,context);
         if(FAILED(device->CreateDescriptorHeap(desc,IID_PPV_ARGS(&item->heap)))) { Stop(context,"descriptor heap creation failed"); return; }
+        diagnostic::Name(item->heap.Get(),L"descriptor heap",original);
         item->leftCpu=original->GetCPUDescriptorHandleForHeapStart(); item->rightCpu=item->heap->GetCPUDescriptorHandleForHeapStart();
         if(desc->Flags&D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) {
             item->leftGpu=original->GetGPUDescriptorHandleForHeapStart(); item->rightGpu=item->heap->GetGPUDescriptorHandleForHeapStart();
@@ -482,6 +493,7 @@ void List(ID3D12Device* device,ID3D12GraphicsCommandList* original,ID3D12Command
             ComPtr<ID3D12Device4> newer;
             if(FAILED(device->QueryInterface(IID_PPV_ARGS(&newer))) || FAILED(newer->CreateCommandList1(node,type,D3D12_COMMAND_LIST_FLAG_NONE,IID_PPV_ARGS(&item->list)))) { Stop(context,"closed command list creation failed"); return; }
         }
+        diagnostic::Name(item->list.Get(),L"command list",original);
         Remember(original,item);
     } catch(...) { Failure(device,"list observation failed"); }
 }
