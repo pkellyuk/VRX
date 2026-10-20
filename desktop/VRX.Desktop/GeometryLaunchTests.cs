@@ -30,6 +30,15 @@ internal static class GeometryLaunchTests
         store.ApplyToAll(settings,out int skipped,out int failed);
         Check(skipped==0 && failed==0 && store.Load(exe).EffectiveStereoBackend==StereoPaths.Dxvk && store.Load(exe).GeometryLaunchArguments==p.GeometryLaunchArguments && store.Load(exe).Width==7,"Apply to all preserves each game's launch choice");
         Check(StereoPaths.Session(exe)==StereoPaths.Session(exe.ToUpperInvariant()) && Profile.ValidGeometrySession(StereoPaths.Session(exe)),"session identity is stable and valid");
+        foreach(string backend in new[]{StereoPaths.Depth,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Dx12}){
+            var choice=new Profile{ExecutablePath=Path.Combine(root,backend+".exe"),StereoBackend=backend,GeometryStereo=backend==StereoPaths.Depth};
+            bool geometry=backend!=StereoPaths.Depth;
+            Check(choice.GeometryStereo==geometry && StereoPaths.FromGeometryChoice(geometry,backend)==backend,"explicit method determines the geometry checkbox without changing the selected backend");
+            store.Save(choice);var loaded=store.Load(choice.ExecutablePath);
+            Check(loaded.EffectiveStereoBackend==backend && loaded.GeometryStereo==geometry,"all render methods round-trip despite a contradictory legacy checkbox");
+            Check(StereoPaths.FromGeometryChoice(false,backend)==StereoPaths.Depth,"unchecking geometry selects depth estimation");
+        }
+        Check(StereoPaths.FromGeometryChoice(true,StereoPaths.Depth)==StereoPaths.Vulkan,"legacy checkbox still selects Vulkan");
         byte[] h=new byte[176];
         void U(int at,uint v)=>BinaryPrimitives.WriteUInt32LittleEndian(h.AsSpan(at,4),v);
         void Q(int at,ulong v)=>BinaryPrimitives.WriteUInt64LittleEndian(h.AsSpan(at,8),v);

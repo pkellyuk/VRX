@@ -17,9 +17,13 @@ public sealed class Profile
     public double Strength { get; set; } = 1;
     public bool Follow { get; set; }
     public bool Stereo { get; set; } = true;
-    // Geometry input is selected at Attach / Play. The game must already be
-    // running with the explicit Vulkan launcher using this session name.
-    public bool GeometryStereo { get; set; }
+    // Explicit methods determine the input type. Keep the old checkbox only
+    // as a migration fallback for profiles without a method choice.
+    private bool legacyGeometryStereo;
+    public bool GeometryStereo {
+        get => StereoPaths.Valid(StereoBackend) ? StereoPaths.Geometry(StereoBackend) : legacyGeometryStereo;
+        set => legacyGeometryStereo=value;
+    }
     // Empty migrates legacy profiles from the geometry checkbox. New choices
     // belong to this executable, never the display or base settings.
     public string StereoBackend { get; set; } = "";

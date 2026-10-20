@@ -273,7 +273,7 @@ public partial class MainWindow : Window
             Distance = DistanceSlider.Value, Height = HeightSlider.Value, Horizontal = HorizontalSlider.Value,
             Strength = StrengthSlider.Value, Follow = FollowCheck.IsChecked == true, Stereo = StereoCheck.IsChecked == true,
             GeometryStereo = GeometryCheck.IsChecked == true, GeometrySession = GeometrySessionText.Text,
-            StereoBackend = GeometryCheck.IsChecked == true ? (profile.EffectiveStereoBackend == StereoPaths.Dxvk ? StereoPaths.Dxvk : StereoPaths.Vulkan) : StereoPaths.Depth,
+            StereoBackend = StereoPaths.FromGeometryChoice(GeometryCheck.IsChecked == true,profile.EffectiveStereoBackend),
             GeometryLaunchArguments = profile.GeometryLaunchArguments, GeometryWorkingDirectory = profile.GeometryWorkingDirectory,
             GeometrySteamAppId = profile.GeometrySteamAppId, GeometrySeparation = profile.GeometrySeparation, GeometryConvergence = profile.GeometryConvergence,
             ForegroundRefinement = ForegroundCheck.IsChecked == true,
@@ -356,7 +356,7 @@ public partial class MainWindow : Window
         if (GeometryCheck == null || GeometryContent == null || AiDepthContent == null || StrengthSlider == null || DesktopAwayCheck == null) return;
         bool geometry = GeometryCheck.IsChecked == true;
         if (profile != null && StereoPathList != null) {
-            string selected = geometry ? (profile.EffectiveStereoBackend == StereoPaths.Dxvk ? StereoPaths.Dxvk : StereoPaths.Vulkan) : StereoPaths.Depth;
+            string selected = StereoPaths.FromGeometryChoice(geometry,profile.EffectiveStereoBackend);
             bool wasLoading = loading; loading = true;
             foreach (ComboBoxItem item in StereoPathList.Items) if ((string)item.Tag == selected) StereoPathList.SelectedItem = item;
             loading = wasLoading;
