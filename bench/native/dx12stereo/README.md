@@ -492,3 +492,7 @@ recording is enabled, even without submitting those lists. `-RecordOnly
 -SkipRecordingWork` isolates state, copies, clears and query recording from draws,
 dispatch, indirect work and bundles. These diagnostics never submit or publish a
 second eye; normal managed launches strip the diagnostic child environment.
+
+System Shock still loses its world scene with second-eye work recording omitted.
+`-RecordOnly -RecordStateOnly` further excludes copies, clears, barriers and
+queries while retaining pipeline/root bindings and other draw state.

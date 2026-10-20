@@ -62,8 +62,9 @@ void Rtv(ID3D12Device*,ID3D12Resource*,const D3D12_RENDER_TARGET_VIEW_DESC*,D3D1
 void List(ID3D12Device*,ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineState*,UINT,D3D12_COMMAND_LIST_TYPE,bool closed) noexcept;
 void Reset(ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineState*) noexcept;
 void Close(ID3D12GraphicsCommandList*) noexcept;
-// Work includes draws, dispatch and bundles; diagnostic suppression never publishes.
-void Record(ID3D12GraphicsCommandList*,Callback<ID3D12GraphicsCommandList*,Mapper&>,bool work=false) noexcept;
+enum class RecordKind { State,Transfer,Work };
+// Diagnostic filtering never submits or publishes incomplete command lists.
+void Record(ID3D12GraphicsCommandList*,Callback<ID3D12GraphicsCommandList*,Mapper&>,RecordKind kind=RecordKind::State) noexcept;
 void Observe(ID3D12Device*,Callback<ID3D12Device*,Mapper&>) noexcept;
 void QueueCommand(ID3D12CommandQueue*,Callback<ID3D12CommandQueue*,Mapper&>) noexcept;
 // Executes originals and replays in one batch. Caller supplies the trampoline.
