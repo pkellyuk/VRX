@@ -485,3 +485,10 @@ DXIL, linkage/subroutines and unsupported position layouts need further work.
 Rejected transforms return no replacement bytecode, allowing native forwarding
 without advertising a stereo stream. W=1 is a heuristic and cannot identify
 every HUD or projection convention automatically.
+
+The System Shock comparison preserves the full native scene with cloning and
+mirrored queue mappings enabled, but loses the scene when shadow command
+recording is enabled, even without submitting those lists. `-RecordOnly
+-SkipRecordingWork` isolates state, copies, clears and query recording from draws,
+dispatch, indirect work and bundles. These diagnostics never submit or publish a
+second eye; normal managed launches strip the diagnostic child environment.

@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard,[switch]$Vrs,[switch]$DepthBounds,[switch]$RecordOnly,[switch]$CloneOnly,[switch]$SkipCommandRecording)
+param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard,[switch]$Vrs,[switch]$DepthBounds,[switch]$RecordOnly,[switch]$CloneOnly,[switch]$SkipRecordingWork,[switch]$SkipCommandRecording)
 $ErrorActionPreference='Stop'
 $temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $root=Join-Path $temporary ('VRX-DX12-interception-'+[Guid]::NewGuid().ToString('N'))
@@ -16,6 +16,7 @@ try {
     $start.Environment['VRX_DX12_MIRROR']=$(if($Mirror){'1'}else{'0'})
     $start.Environment['VRX_DX12_RECORD_ONLY']=$(if($RecordOnly -or $CloneOnly){'1'}else{'0'})
     $start.Environment['VRX_DX12_CLONE_ONLY']=$(if($CloneOnly){'1'}else{'0'})
+    $start.Environment['VRX_DX12_SKIP_WORK']=$(if($SkipRecordingWork){'1'}else{'0'})
     $start.Environment['VRX_DX12_SKIP_COMMANDS']=$(if($SkipCommandRecording){'1'}else{'0'})
     $start.Environment['VRX_DX12_SHIFT']='0.4'; $start.Environment['VRX_DX12_CONVERGENCE']='0'
     $start.Environment['VRX_DX12_TEST_MODERN']=$(if($Modern){'1'}else{'0'})

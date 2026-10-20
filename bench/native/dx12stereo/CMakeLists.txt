@@ -216,6 +216,9 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         add_test(NAME native_dx12_queue_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly -SkipCommandRecording ${extra})
         set_tests_properties(native_dx12_queue_only_${adapter} PROPERTIES TIMEOUT 40)
+        add_test(NAME native_dx12_record_no_work_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly -SkipRecordingWork ${extra})
+        set_tests_properties(native_dx12_record_no_work_${adapter} PROPERTIES TIMEOUT 40)
     endforeach()
     foreach(mode write protected)
         foreach(adapter hw warp)

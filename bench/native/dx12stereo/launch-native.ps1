@@ -18,11 +18,13 @@ param(
     [switch]$ObserveOnly,
     [switch]$RecordOnly,
     [switch]$CloneOnly,
+    [switch]$SkipRecordingWork,
     [switch]$SkipCommandRecording,
     [switch]$Preview
 )
 $ErrorActionPreference='Stop'
 if([int]$ObserveOnly.IsPresent+[int]$RecordOnly.IsPresent+[int]$CloneOnly.IsPresent -gt 1){throw 'Choose only one native diagnostic mode'}
+if($SkipRecordingWork -and -not $RecordOnly){throw 'Skipping shadow GPU work requires -RecordOnly'}
 if($SkipCommandRecording -and -not $RecordOnly){throw 'Skipping shadow command recording requires -RecordOnly'}
 $application=(Resolve-Path -LiteralPath $Executable).Path
 $bridge=(Resolve-Path -LiteralPath $Proxy).Path
@@ -52,9 +54,9 @@ try {
     foreach($running in @(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($application)) -ErrorAction SilentlyContinue)) {
         if([string]::Equals($running.Path,$application,[StringComparison]::OrdinalIgnoreCase)){throw 'The selected game is already running'}
     }
-    if($Preview){[pscustomobject]@{Executable=$application;Proxy=$bridge;Session=$Session;Arguments=$GameArguments;ObserveOnly=$ObserveOnly.IsPresent;RecordOnly=$RecordOnly.IsPresent;CloneOnly=$CloneOnly.IsPresent;SkipCommandRecording=$SkipCommandRecording.IsPresent};return}
+    if($Preview){[pscustomobject]@{Executable=$application;Proxy=$bridge;Session=$Session;Arguments=$GameArguments;ObserveOnly=$ObserveOnly.IsPresent;RecordOnly=$RecordOnly.IsPresent;CloneOnly=$CloneOnly.IsPresent;SkipRecordingWork=$SkipRecordingWork.IsPresent;SkipCommandRecording=$SkipCommandRecording.IsPresent};return}
     $runRoot=Join-Path $PSScriptRoot ('out/native-'+[Guid]::NewGuid().ToString('N'));$null=New-Item -ItemType Directory -Path $runRoot
-    $runRecord=[pscustomobject]@{Pid=0;StartTicks=0L;Executable=$application;Session=$Session;Backend='dx12';ObserveOnly=$ObserveOnly.IsPresent;RecordOnly=$RecordOnly.IsPresent;CloneOnly=$CloneOnly.IsPresent;SkipCommandRecording=$SkipCommandRecording.IsPresent;Arguments=$GameArguments}
+    $runRecord=[pscustomobject]@{Pid=0;StartTicks=0L;Executable=$application;Session=$Session;Backend='dx12';ObserveOnly=$ObserveOnly.IsPresent;RecordOnly=$RecordOnly.IsPresent;CloneOnly=$CloneOnly.IsPresent;SkipRecordingWork=$SkipRecordingWork.IsPresent;SkipCommandRecording=$SkipCommandRecording.IsPresent;Arguments=$GameArguments}
     $runRecord | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runRoot 'run.json')
     $hash=(Get-FileHash -LiteralPath $bridge -Algorithm SHA256).Hash
     $record=[pscustomobject]@{Path=$target;SHA256=$hash}
@@ -75,6 +77,7 @@ try {
     $start.Environment['VRX_DX12_INTERCEPT']='1';$start.Environment['VRX_DX12_MIRROR']=$(if($ObserveOnly){'0'}else{'1'})
     $start.Environment['VRX_DX12_RECORD_ONLY']=$(if($RecordOnly -or $CloneOnly){'1'}else{'0'})
     $start.Environment['VRX_DX12_CLONE_ONLY']=$(if($CloneOnly){'1'}else{'0'})
+    $start.Environment['VRX_DX12_SKIP_WORK']=$(if($SkipRecordingWork){'1'}else{'0'})
     $start.Environment['VRX_DX12_SKIP_COMMANDS']=$(if($SkipCommandRecording){'1'}else{'0'})
     $start.Environment['VRX_XG_SESSION']=$Session
     $start.Environment['VRX_DX12_SHIFT']=$Shift.ToString('R',[Globalization.CultureInfo]::InvariantCulture)

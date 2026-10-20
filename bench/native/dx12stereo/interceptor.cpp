@@ -110,21 +110,21 @@ void STDMETHODCALLTYPE Draw(ID3D12GraphicsCommandList* object,UINT vertices,UINT
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,UINT);
     if(call.outer) ++State().draws;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawInstanced)(object,vertices,instances,firstVertex,firstInstance);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto&){ q->DrawInstanced(vertices,instances,firstVertex,firstInstance); });
+    if(call.outer) mirror::Record(object,[&](auto* q,auto&){ q->DrawInstanced(vertices,instances,firstVertex,firstInstance); },true);
 }
 void STDMETHODCALLTYPE DrawIndexed(ID3D12GraphicsCommandList* object,UINT indices,UINT instances,UINT firstIndex,INT baseVertex,UINT firstInstance) {
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,INT,UINT);
     if(call.outer) ++State().indexed;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawIndexedInstanced)(object,indices,instances,firstIndex,baseVertex,firstInstance);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto&){ q->DrawIndexedInstanced(indices,instances,firstIndex,baseVertex,firstInstance); });
+    if(call.outer) mirror::Record(object,[&](auto* q,auto&){ q->DrawIndexedInstanced(indices,instances,firstIndex,baseVertex,firstInstance); },true);
 }
 void STDMETHODCALLTYPE Bundle(ID3D12GraphicsCommandList* object,ID3D12GraphicsCommandList* bundle) {
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,ID3D12GraphicsCommandList*);
     if(call.outer) ++State().bundles;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_ExecuteBundle)(object,bundle);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){ auto right=map.Bundle(bundle); if(map.Valid()) q->ExecuteBundle(right); });
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){ auto right=map.Bundle(bundle); if(map.Valid()) q->ExecuteBundle(right); },true);
 }
 // These calls carry only immutable values or immutable root-signature objects.
 #define SIMPLE(Name,Parameters,Native,Replay) \
@@ -265,7 +265,7 @@ GUARDED(SOSetTargets,(ID3D12GraphicsCommandList* object,UINT start,UINT count,co
 #undef GUARDED
 void STDMETHODCALLTYPE ExecuteIndirect(ID3D12GraphicsCommandList* object,ID3D12CommandSignature* signature,UINT count,ID3D12Resource* buffer,UINT64 offset,ID3D12Resource* counter,UINT64 counterOffset){
     Call call;Original<decltype(&ExecuteIndirect)>(object,slot::ID3D12GraphicsCommandList_ExecuteIndirect)(object,signature,count,buffer,offset,counter,counterOffset);
-    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto s=map.Signature(signature);auto b=map.Resource(buffer),c=map.Resource(counter);if(map.Valid())q->ExecuteIndirect(s,count,b,offset,c,counterOffset);});
+    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto s=map.Signature(signature);auto b=map.Resource(buffer),c=map.Resource(counter);if(map.Valid())q->ExecuteIndirect(s,count,b,offset,c,counterOffset);},true);
 }
 #define UAV_CLEAR(Name,T) \
 void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const T values[4],UINT count,const D3D12_RECT* rects){ \
@@ -285,7 +285,7 @@ void STDMETHODCALLTYPE DiscardResource(ID3D12GraphicsCommandList* object,ID3D12R
 }
 void STDMETHODCALLTYPE Dispatch(ID3D12GraphicsCommandList* object,UINT x,UINT y,UINT z) {
     Call call; Original<decltype(&Dispatch)>(object,slot::ID3D12GraphicsCommandList_Dispatch)(object,x,y,z);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto&){q->Dispatch(x,y,z);});
+    if(call.outer) mirror::Record(object,[&](auto* q,auto&){q->Dispatch(x,y,z);},true);
 }
 void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* object,UINT count,ID3D12CommandList* const* lists);
 // Preserve the exact SDK calling convention and parameter types. Querying an
