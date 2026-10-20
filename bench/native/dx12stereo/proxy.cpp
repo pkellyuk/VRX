@@ -37,7 +37,7 @@ extern "C" HRESULT WINAPI D3D12CreateDevice(IUnknown* adapter,D3D_FEATURE_LEVEL 
     const auto real=Function<PFN_D3D12_CREATE_DEVICE>("D3D12CreateDevice");
     if(!real) { if(output) *output=nullptr; return Missing; }
     const auto result=real(adapter,level,iid,output);
-    if(SUCCEEDED(result) && output && *output && Enabled()) {
+    if(SUCCEEDED(result) && output && *output && Enabled() && vrx::dx12::ApiOuter()) {
         // Code patches/trampolines are process-scoped. Pin the module before
         // installing them so a client FreeLibrary cannot leave dangling jumps.
         HMODULE pinned=nullptr;

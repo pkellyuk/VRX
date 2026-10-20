@@ -1,7 +1,8 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Engine, [Parameter(Mandatory)][string]$Producer, [switch]$Gpu, [switch]$SameFrame, [switch]$Mirror)
+param([Parameter(Mandatory)][string]$Engine, [Parameter(Mandatory)][string]$Producer, [switch]$Gpu, [switch]$SameFrame, [switch]$Mirror, [string]$Proxy)
 $ErrorActionPreference = 'Stop'
 if ($Mirror) { $Gpu = $true; $SameFrame = $true; }
+if ($Proxy) {if($Mirror){throw 'Native DX12 proxy and Vulkan mirror modes are mutually exclusive'};$Gpu=$true;$SameFrame=$true}
 $session = 'check-' + [Guid]::NewGuid().ToString('N')
 $producerPath = (Resolve-Path -LiteralPath $Producer).Path
 $enginePath = (Resolve-Path -LiteralPath $Engine).Path
@@ -14,8 +15,21 @@ $start.Environment['VK_LAYER_PATH'] = [IO.Path]::GetDirectoryName($producerPath)
 $start.ArgumentList.Add($(if ($Mirror) { '--serve-mirror-gpu=' } elseif ($Gpu) { '--serve-gpu=' } else { '--serve=' }) + $session)
 $child = [Diagnostics.Process]::new()
 $child.StartInfo = $start
+$fixtureRoot=$null
+$started=$false
 try {
+    if($Proxy) {
+        $fixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('VRX-DX12-engine-'+[Guid]::NewGuid().ToString('N'))
+        $null=New-Item -ItemType Directory -Path $fixtureRoot
+        $fixture=Join-Path $fixtureRoot 'native-present.exe'
+        Copy-Item -LiteralPath $producerPath -Destination $fixture
+        Copy-Item -LiteralPath (Resolve-Path -LiteralPath $Proxy).Path -Destination (Join-Path $fixtureRoot 'd3d12.dll')
+        $child.StartInfo.FileName=$fixture
+        $child.StartInfo.Environment['VRX_DX12_INTERCEPT']='1';$child.StartInfo.Environment['VRX_DX12_MIRROR']='1'
+        $child.StartInfo.Environment['VRX_DX12_SHIFT']='0.4';$child.StartInfo.Environment['VRX_DX12_CONVERGENCE']='0'
+    }
     if (-not $child.Start()) { throw 'Geometry test producer did not start.' }
+    $started=$true
     $producerOut = $child.StandardOutput.ReadToEndAsync()
     $producerErr = $child.StandardError.ReadToEndAsync()
     # Wait for the named mapping, not an arbitrary shader-startup delay.
@@ -24,9 +38,17 @@ try {
     do {
         try {
             $map = [IO.MemoryMappedFiles.MemoryMappedFile]::OpenExisting('Local\VRX.xgstereo.' + $session + $(if ($Gpu) { '.gpu.frames' } else { '.frames' }))
-            $map.Dispose(); $ready = $true
-        } catch [IO.FileNotFoundException] { Start-Sleep -Milliseconds 10 }
+            try {
+                $view=$map.CreateViewAccessor(0,$(if($Gpu){176}else{72}),[IO.MemoryMappedFiles.MemoryMappedFileAccess]::Read)
+                try {
+                    $ready=$view.ReadUInt32(0) -eq $(if($Gpu){0x47534758}else{0x50534758}) -and
+                        $view.ReadUInt32(4) -eq 1 -and $view.ReadUInt32($(if($Gpu){12}else{28})) -eq 1 -and
+                        $view.ReadUInt32($(if($Gpu){16}else{64})) -eq $child.Id
+                } finally {$view.Dispose()}
+            } finally {$map.Dispose()}
+        } catch [IO.FileNotFoundException] { }
         if ($child.HasExited) { throw ('Producer failed: ' + $producerErr.GetAwaiter().GetResult()) }
+        if(-not $ready){Start-Sleep -Milliseconds 10}
     } while (-not $ready -and [Environment]::TickCount64 -lt $deadline)
     if (-not $ready) { throw 'Producer mapping unavailable.' }
     foreach ($mode in @('stereo', 'mono', 'wrong-owner')) {
@@ -68,6 +90,11 @@ try {
     Write-Output 'PASS: producer -> Windows pair transport -> VRX D3D12 eye textures; stereo, mono and wrong-owner rejection'
 }
 finally {
-    if ($child.Id -and -not $child.HasExited) { $child.Kill(); $child.WaitForExit() }
+    if ($started -and -not $child.HasExited) { $child.Kill(); $child.WaitForExit() }
     $child.Dispose()
+    if($fixtureRoot) {
+        $resolved=[IO.Path]::GetFullPath($fixtureRoot);$temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+        if(-not $resolved.StartsWith($temporary,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($resolved) -notmatch '^VRX-DX12-engine-[0-9a-f]{32}$') {throw 'Refusing cleanup outside owned native DX12 fixture directory'}
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
 }

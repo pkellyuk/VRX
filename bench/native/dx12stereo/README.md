@@ -142,15 +142,43 @@ pass. Both eyes must contain the current frame's exact colour and valid geometry
 disparity, and all shadows must retire after teardown. Compute pipelines share
 immutable native bytecode; bindings, resources and dispatches are replayed.
 
-This is an offscreen graphics/compute subset, not a game-ready DX12 route.
+### Swapchain publication
+
+Native DXGI factory methods are hooked after device creation, including factories
+that already exist. The bridge observes D3D12 queue-based swapchains, clones their
+backbuffers, and publishes the native left/replayed right view before ordinary
+`Present` or `Present1` through the same GPU texture stream consumed by VRX.
+Set `VRX_XG_SESSION` to an isolated valid session name to enable publication;
+offscreen tests need no session. Internal publisher/consumer device creation is
+excluded from app interception. The diagnostic counts ABI is version 3.
+
+HWND hardware/WARP and legacy factory fixtures verify 18 current-frame pairs,
+both Present APIs, test-only Present suppression, two resizes (including explicit
+single-node queue arrays), odd extents, native-left centering, HUD pixels and
+teardown. Resize releases pending backbuffer references after copy completion;
+new GPU stream generations can replace the producer's inactive mapping while
+old readers still hold it. Old readers detect that replacement, and their
+cleanup cannot disconnect the new reader. A fence/event worker also releases
+completed source references without needing another frame, preventing a native
+swapchain/backbuffer reference cycle at app exit.
+An optional `native_dx12_present_engine_handoff` test copies the ordinary fixture
+and bridge into an owned temporary directory, starts its native swapchain loop,
+and verifies the actual VRX GPU consumer in stereo and mono modes, plus wrong-PID
+rejection. The process and copied DLLs are scoped to that fixture; no game or
+headset session is started. Readiness requires initialized metadata owned by the
+launched process, rather than only the existence of a named mapping.
+
+This remains a limited graphics/compute/presentation subset, not a game-ready DX12 route.
 Predication and raytracing acceleration-structure views currently stop replay.
 Many commands and newer resource/pipeline creation APIs still need interception
 and translation; unobserved commands are not yet comprehensively rejected.
 Upload buffers are copied in full at submission and need a scalable update
-strategy. Swapchain/Present interception and connection of replayed game views
-to the shared-texture publisher remain to be implemented. Multi-node devices
-and non-default command-list flags are rejected. Existing games are not launched
-with this experimental backend by the chooser.
+strategy. Presentation currently requires RGBA8, a single direct queue/node and
+blocking Present semantics; `DO_NOT_WAIT` stops the stream rather than reporting
+an unaccepted Present as a successful publication. BGRA/HDR conversion, automatic
+VRX consumer reconnection after resize, managed launch/cleanup and real-game
+validation remain necessary. Multi-node devices and non-default command-list
+flags are rejected. Existing games are not launched with this backend by the chooser.
 
 ### Vertex rewrite implementation notes
 

@@ -23,6 +23,7 @@ struct Registry {
     std::atomic<uint64_t> devices{0}, queues{0}, lists{0}, resources{0}, pipelines{0};
     std::atomic<uint64_t> closes{0}, resets{0}, draws{0}, indexed{0}, bundles{0}, submits{0}, failures{0};
     bool initialized = false;
+    bool dxgi = false;
 };
 Registry& State() { static auto* state = new Registry; return *state; }
 thread_local unsigned callDepth = 0;
@@ -391,6 +392,80 @@ void STDMETHODCALLTYPE CopyDescriptors(ID3D12Device* object,UINT dstCount,const 
         if(map.Valid())d->CopyDescriptors(dstCount,target.data(),dstSizes,srcCount,source.data(),srcSizes,type);
     });
 }
+HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* object,UINT sync,UINT flags) {
+    Call call;if(call.outer)mirror::Present(object,flags);
+    return Original<decltype(&Present)>(object,slot::IDXGISwapChain_Present)(object,sync,flags);
+}
+HRESULT STDMETHODCALLTYPE Present1(IDXGISwapChain1* object,UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* parameters) {
+    Call call;if(call.outer)mirror::Present(object,flags);
+    return Original<decltype(&Present1)>(object,slot::IDXGISwapChain1_Present1)(object,sync,flags,parameters);
+}
+HRESULT STDMETHODCALLTYPE GetBuffer(IDXGISwapChain* object,UINT index,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&GetBuffer)>(object,slot::IDXGISwapChain_GetBuffer)(object,index,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output) {
+        ComPtr<ID3D12Resource> resource;
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&resource)))) {Lifetime(resource.Get());mirror::BackBuffer(object,resource.Get());}
+    }return result;
+}
+HRESULT STDMETHODCALLTYPE ResizeBuffers(IDXGISwapChain* object,UINT count,UINT width,UINT height,DXGI_FORMAT format,UINT flags) {
+    Call call;if(call.outer)mirror::Resize(object);
+    return Original<decltype(&ResizeBuffers)>(object,slot::IDXGISwapChain_ResizeBuffers)(object,count,width,height,format,flags);
+}
+HRESULT STDMETHODCALLTYPE ResizeBuffers1(IDXGISwapChain3* object,UINT count,UINT width,UINT height,DXGI_FORMAT format,UINT flags,const UINT* nodes,IUnknown* const* queues) {
+    Call call;if(call.outer)mirror::Resize(object,count,nodes,queues);
+    return Original<decltype(&ResizeBuffers1)>(object,slot::IDXGISwapChain3_ResizeBuffers1)(object,count,width,height,format,flags,nodes,queues);
+}
+void Chain(IUnknown* device,IDXGISwapChain* chain) noexcept {
+    try {
+        if(!chain || !device)return;
+        ComPtr<ID3D12CommandQueue> queue;
+        if(FAILED(device->QueryInterface(IID_PPV_ARGS(&queue))) || !mirror::Swapchain(queue.Get(),chain))return;
+        Lifetime(chain);ComPtr<IDXGISwapChain3> newer;chain->QueryInterface(IID_PPV_ARGS(&newer));if(newer)Lifetime(newer.Get());
+        auto& state=State();std::lock_guard<std::recursive_mutex> lock(state.mutex);
+        Add(state,chain,slot::IDXGISwapChain_Present,reinterpret_cast<void*>(&Present));
+        Add(state,chain,slot::IDXGISwapChain_GetBuffer,reinterpret_cast<void*>(&GetBuffer));
+        Add(state,chain,slot::IDXGISwapChain_ResizeBuffers,reinterpret_cast<void*>(&ResizeBuffers));
+        if(newer) {
+            Add(state,newer.Get(),slot::IDXGISwapChain1_Present1,reinterpret_cast<void*>(&Present1));
+            Add(state,newer.Get(),slot::IDXGISwapChain3_ResizeBuffers1,reinterpret_cast<void*>(&ResizeBuffers1));
+        }
+        if(MH_ApplyQueued()!=MH_OK)++state.failures;
+    } catch(...) {++State().failures;mirror::Unsupported(chain,"swapchain hook installation failed");}
+}
+HRESULT STDMETHODCALLTYPE CreateSwapChain(IDXGIFactory* object,IUnknown* device,DXGI_SWAP_CHAIN_DESC* desc,IDXGISwapChain** output) {
+    Call call;const auto result=Original<decltype(&CreateSwapChain)>(object,slot::IDXGIFactory_CreateSwapChain)(object,device,desc,output);
+    if(call.outer && SUCCEEDED(result) && output)Chain(device,*output);return result;
+}
+HRESULT STDMETHODCALLTYPE CreateSwapChainForHwnd(IDXGIFactory2* object,IUnknown* device,HWND hwnd,const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen,IDXGIOutput* restrictOutput,IDXGISwapChain1** output) {
+    Call call;const auto result=Original<decltype(&CreateSwapChainForHwnd)>(object,slot::IDXGIFactory2_CreateSwapChainForHwnd)(object,device,hwnd,desc,fullscreen,restrictOutput,output);
+    if(call.outer && SUCCEEDED(result) && output)Chain(device,*output);return result;
+}
+HRESULT STDMETHODCALLTYPE CreateSwapChainForCoreWindow(IDXGIFactory2* object,IUnknown* device,IUnknown* window,const DXGI_SWAP_CHAIN_DESC1* desc,IDXGIOutput* restrictOutput,IDXGISwapChain1** output) {
+    Call call;const auto result=Original<decltype(&CreateSwapChainForCoreWindow)>(object,slot::IDXGIFactory2_CreateSwapChainForCoreWindow)(object,device,window,desc,restrictOutput,output);
+    if(call.outer && SUCCEEDED(result) && output)Chain(device,*output);return result;
+}
+HRESULT STDMETHODCALLTYPE CreateSwapChainForComposition(IDXGIFactory2* object,IUnknown* device,const DXGI_SWAP_CHAIN_DESC1* desc,IDXGIOutput* restrictOutput,IDXGISwapChain1** output) {
+    Call call;const auto result=Original<decltype(&CreateSwapChainForComposition)>(object,slot::IDXGIFactory2_CreateSwapChainForComposition)(object,device,desc,restrictOutput,output);
+    if(call.outer && SUCCEEDED(result) && output)Chain(device,*output);return result;
+}
+void PresentationHooks() {
+    Call internal;
+    auto& state=State();std::lock_guard<std::recursive_mutex> lock(state.mutex);if(state.dxgi)return;
+    // Factory instances may predate device creation. Hook the native method
+    // entrypoints shared by those instances before the app creates its chain.
+    wchar_t path[32768]{};const auto length=GetSystemDirectoryW(path,32768);
+    if(!length || length>=32750) {++state.failures;return;}
+    constexpr wchar_t suffix[]=L"\\dxgi.dll";std::memcpy(path+length,suffix,sizeof(suffix));
+    static HMODULE module=LoadLibraryExW(path,nullptr,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    const auto create=reinterpret_cast<HRESULT(WINAPI*)(REFIID,void**)>(module?GetProcAddress(module,"CreateDXGIFactory1"):nullptr);
+    ComPtr<IDXGIFactory2> factory;
+    if(!create || FAILED(create(IID_PPV_ARGS(&factory)))) {++state.failures;return;}
+    Add(state,factory.Get(),slot::IDXGIFactory_CreateSwapChain,reinterpret_cast<void*>(&CreateSwapChain));
+#define FACTORY_HOOK(Name) Add(state,factory.Get(),slot::IDXGIFactory2_##Name,reinterpret_cast<void*>(&Name));
+    FACTORY_HOOK(CreateSwapChainForHwnd) FACTORY_HOOK(CreateSwapChainForCoreWindow) FACTORY_HOOK(CreateSwapChainForComposition)
+#undef FACTORY_HOOK
+    if(MH_ApplyQueued()!=MH_OK)++state.failures;else state.dxgi=true;
+}
 } // namespace
 void Attach(ID3D12Device* device) noexcept {
     try {
@@ -416,7 +491,7 @@ void Attach(ID3D12Device* device) noexcept {
             Add(state,newer.Get(),slot::ID3D12Device4_CreateCommandList1,reinterpret_cast<void*>(&CreateList1));
         if(MH_ApplyQueued() != MH_OK) ++state.failures;
         ++state.devices;
-        lock.unlock(); Lifetime(device); mirror::Device(device);
+        lock.unlock(); Lifetime(device); mirror::Device(device);PresentationHooks();
     } catch(...) { ++State().failures; }
 }
 void Snapshot(Counts& output) noexcept {
@@ -426,6 +501,8 @@ void Snapshot(Counts& output) noexcept {
     output.submissions=s.submits; output.hookFailures=s.failures;
     mirror::Counts replay; mirror::Snapshot(replay);
     output.mirrorReplays=replay.replays; output.mirrorStops=replay.stops; output.mirrorResources=replay.resources; output.mirrorPipelines=replay.pipelines; output.mirrorLiveObjects=replay.liveObjects;
+    output.swapchains=replay.swapchains;output.presentations=replay.presentations;output.publications=replay.publications;output.presentDrops=replay.presentDrops;output.resizes=replay.resizes;
 }
 void DiagnosticScope(bool enter) noexcept { if(enter) ++callDepth; else if(callDepth) --callDepth; }
+bool ApiOuter() noexcept {return callDepth==0;}
 } // namespace vrx::dx12

@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Paul Kelly. SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include <d3d12.h>
+#include <dxgi1_6.h>
 #include <memory>
 #include <cstdint>
 namespace vrx::dx12::mirror {
@@ -30,12 +31,16 @@ public:
     D3D12_GPU_VIRTUAL_ADDRESS Address(D3D12_GPU_VIRTUAL_ADDRESS original);
     bool Valid() const;
 };
-struct Counts { uint64_t replays=0,stops=0,resources=0,pipelines=0,liveObjects=0; };
+struct Counts { uint64_t replays=0,stops=0,resources=0,pipelines=0,liveObjects=0,swapchains=0,presentations=0,publications=0,presentDrops=0,resizes=0; };
 void Snapshot(Counts& output) noexcept;
 void Unsupported(void*,const char*) noexcept;
 // Observers run only at the outer API boundary, with internal calls suppressed.
 void Device(ID3D12Device*) noexcept;
 void Queue(ID3D12Device*,ID3D12CommandQueue*) noexcept;
+bool Swapchain(ID3D12CommandQueue*,IDXGISwapChain*) noexcept;
+void BackBuffer(IDXGISwapChain*,ID3D12Resource*) noexcept;
+void Present(IDXGISwapChain*,UINT flags) noexcept;
+void Resize(IDXGISwapChain*,UINT count=0,const UINT* nodes=nullptr,IUnknown* const* queues=nullptr) noexcept;
 void Allocator(ID3D12Device*,ID3D12CommandAllocator*,D3D12_COMMAND_LIST_TYPE) noexcept;
 void AllocatorReset(ID3D12CommandAllocator*) noexcept;
 void Resource(ID3D12Device*,ID3D12Resource*,const D3D12_HEAP_PROPERTIES*,D3D12_HEAP_FLAGS,const D3D12_RESOURCE_DESC*,D3D12_RESOURCE_STATES,const D3D12_CLEAR_VALUE*) noexcept;

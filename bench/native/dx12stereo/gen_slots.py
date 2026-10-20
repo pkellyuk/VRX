@@ -12,7 +12,7 @@ from pathlib import Path
 
 def slots(source, interface):
     declarations = {}
-    for match in re.finditer(r"\b(ID3D12\w+)\s*:\s*public\s+(\w+)\s*\{\s*public:(.*?)\n\s*\};", source, re.S):
+    for match in re.finditer(r"\b((?:ID3D12|IDXGI)\w+)\s*:\s*public\s+(\w+)\s*\{\s*public:(.*?)\n\s*\};", source, re.S):
         name, parent, body = match.groups()
         methods = list(dict.fromkeys(re.findall(r"virtual\s+[^;]*?STDMETHODCALLTYPE\s+(\w+)\s*\(", body)))
         declarations[name] = (parent, methods)
@@ -32,11 +32,18 @@ def main():
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     source = args.header.read_text(encoding="utf-8-sig")
+    shared = args.header.parent.parent / "shared"
+    source += "\n".join(p.read_text(encoding="utf-8-sig") for p in sorted(shared.glob("dxgi*.h")))
     selected = {
         "ID3D12Device": ["CreateCommandQueue", "CreateCommandAllocator", "CreateCommandList", "CreateGraphicsPipelineState", "CreateCommittedResource", "CreateDescriptorHeap", "CreateRenderTargetView", "CreateDepthStencilView", "CreateConstantBufferView", "CreateShaderResourceView", "CreateUnorderedAccessView", "CreateSampler", "CopyDescriptors", "CopyDescriptorsSimple", "CreateComputePipelineState"],
         "ID3D12CommandAllocator": ["Reset"],
         "ID3D12Device4": ["CreateCommandList1"],
         "ID3D12CommandQueue": ["ExecuteCommandLists"],
+        "IDXGIFactory": ["CreateSwapChain"],
+        "IDXGIFactory2": ["CreateSwapChainForHwnd", "CreateSwapChainForCoreWindow", "CreateSwapChainForComposition"],
+        "IDXGISwapChain": ["Present", "GetBuffer", "ResizeBuffers"],
+        "IDXGISwapChain1": ["Present1"],
+        "IDXGISwapChain3": ["ResizeBuffers1"],
         "ID3D12GraphicsCommandList": ["Close", "Reset", "DrawInstanced", "DrawIndexedInstanced", "ExecuteBundle", "ClearState", "SetPipelineState", "RSSetViewports", "RSSetScissorRects", "IASetPrimitiveTopology", "OMSetRenderTargets", "ClearRenderTargetView", "ResourceBarrier", "SetGraphicsRootSignature", "SetGraphicsRoot32BitConstant", "SetGraphicsRoot32BitConstants", "IASetIndexBuffer", "IASetVertexBuffers", "CopyResource", "CopyBufferRegion", "CopyTextureRegion", "SetDescriptorHeaps", "Dispatch", "ClearDepthStencilView", "SetGraphicsRootDescriptorTable", "SetGraphicsRootConstantBufferView", "SetGraphicsRootShaderResourceView", "SetGraphicsRootUnorderedAccessView", "SetPredication", "SetComputeRootSignature", "SetComputeRoot32BitConstant", "SetComputeRoot32BitConstants", "SetComputeRootDescriptorTable", "SetComputeRootConstantBufferView", "SetComputeRootShaderResourceView", "SetComputeRootUnorderedAccessView"],
     }
     rows = ["// Generated from Microsoft's installed d3d12.h; do not edit.", "#pragma once", "namespace vrx::dx12::slot {"]

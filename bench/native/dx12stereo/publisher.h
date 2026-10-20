@@ -4,6 +4,7 @@
 #include "../xgstereo/gpu_transport.h"
 #include <memory>
 #include <mutex>
+#include <thread>
 
 namespace xg::dx12 {
 enum class PublishResult { Published, Dropped, Invalid, Failed };
@@ -35,6 +36,21 @@ class Publisher {
     uint64_t lastFrame_ = 0;
     bool failed_ = false;
     std::mutex mutex_;
+    HANDLE retiredEvent_ = nullptr;
+    std::thread retirement_;
+    bool stopping_ = false;
+
+    void Retire() noexcept {
+        for (;;) {
+            const auto status=WaitForSingleObject(retiredEvent_,100);
+            if(status!=WAIT_OBJECT_0 && status!=WAIT_TIMEOUT)return;
+            std::lock_guard<std::mutex> lock(mutex_);
+            if(stopping_)return;
+            for(auto& slot:slots_) if(slot.pending && slot.ready && slot.ready->GetCompletedValue()>=slot.pending) {
+                slot.left.Reset();slot.right.Reset();
+            }
+        }
+    }
 
     bool Matches(const Eye& eye) const {
         if (!eye.texture) return false;
@@ -58,12 +74,19 @@ public:
     Publisher() = default;
     Publisher(const Publisher&) = delete;
     Publisher& operator=(const Publisher&) = delete;
+    void Close() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(writer_) writer_->Close();
+        failed_=true;
+    }
     ~Publisher() {
         // Retire command allocators and resource references only after GPU use.
         // A lost device reports UINT64_MAX and requires no further fence wait.
         // A caller must let the queue run; never destroy while it waits on a
         // fence that only this thread could signal.
         if (writer_) writer_->Close();
+        { std::lock_guard<std::mutex> lock(mutex_);stopping_=true;if(retiredEvent_)SetEvent(retiredEvent_); }
+        if(retirement_.joinable())retirement_.join();
         for (auto& s : slots_) if (s.pending && s.ready && s.ready->GetCompletedValue() < s.pending) {
             HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
             if (event) {
@@ -71,6 +94,7 @@ public:
                 CloseHandle(event);
             }
         }
+        if(retiredEvent_)CloseHandle(retiredEvent_);
     }
     bool Create(ID3D12CommandQueue* queue, const std::wstring& session, uint32_t width, uint32_t height) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -91,7 +115,10 @@ public:
                 FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, s.allocator.Get(), nullptr, IID_PPV_ARGS(&s.commands))) ||
                 FAILED(s.commands->Close())) return false;
         }
-        writer_ = std::move(writer); slots_ = std::move(slots); device_ = std::move(device); queue_ = queue; width_ = width; height_ = height; return true;
+        writer_ = std::move(writer); slots_ = std::move(slots); device_ = std::move(device); queue_ = queue; width_ = width; height_ = height;
+        retiredEvent_=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!retiredEvent_)return false;
+        try {retirement_=std::thread([this]{Retire();});}catch(...){return false;}
+        return true;
     }
     PublishResult Submit(uint64_t frame, const Eye& left, const Eye& right) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -130,6 +157,10 @@ public:
             return fail();
         }
         s.pending = sequence; lastFrame_ = frame;
+        // A swapchain buffer can retain its parent. Retire completed source
+        // references even when no later Submit/Resize occurs, so app teardown
+        // cannot form a swapchain->publisher->backbuffer ownership cycle.
+        if(FAILED(s.ready->SetEventOnCompletion(sequence,retiredEvent_)))return fail();
         const auto result = writer_->TryPublish(uint32_t(index), sequence, frame, frame);
         if (result == GpuPublish::Invalid) return fail();
         return result == GpuPublish::Published ? PublishResult::Published : PublishResult::Dropped;

@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Paul Kelly. SPDX-License-Identifier: GPL-3.0-or-later
 #include "mirror.h"
 #include "dxbc_patch.h"
+#include "publisher.h"
 #include <wrl/client.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -24,7 +25,7 @@ struct Context {
     std::string reason;
 };
 namespace {
-enum class Kind { Device,Queue,Allocator,Resource,Pipeline,Heap,List };
+enum class Kind { Device,Queue,Allocator,Resource,Pipeline,Heap,List,Swapchain };
 struct Item {
     Kind kind;
     std::shared_ptr<Context> context;
@@ -43,6 +44,9 @@ struct Item {
     D3D12_GPU_DESCRIPTOR_HANDLE leftGpu{},rightGpu{};
     UINT descriptors=0,stride=0;
     bool closed=false;
+    ComPtr<ID3D12CommandQueue> queue;
+    std::unique_ptr<xg::dx12::Publisher> publisher;
+    uint64_t frame=0;
 };
 struct State {
     // Native internal Release callbacks can re-enter while a shadow call runs.
@@ -77,6 +81,7 @@ void Drain() {
         for(const auto& entry:Registry().objects) {
             auto& context=entry.second->context;
             if(context->active) { context->active=false; ++Registry().counts.stops; }
+            if(entry.second->publisher)entry.second->publisher->Close();
         }
     }
     // Release callbacks never wait for this mutex or any GPU operation. Apply
@@ -95,7 +100,11 @@ void Drain() {
 }
 std::shared_ptr<Context> Owner(void* p) { auto object=Find(p); return object?object->context:nullptr; }
 void Stop(const std::shared_ptr<Context>& context,const char* reason) {
-    if(context && context->active) { context->active=false; context->reason=reason; ++Registry().counts.stops; }
+    if(context && context->active) {
+        context->active=false; context->reason=reason; ++Registry().counts.stops;
+        for(const auto& entry:Registry().objects)
+            if(entry.second->context==context && entry.second->publisher) entry.second->publisher->Close();
+    }
 }
 void Failure(void* original,const char* reason) noexcept { try { Lock lock(Registry().mutex); Drain(); Stop(Owner(original),reason); } catch(...) {} }
 bool IsEnabled() { wchar_t value[3]{}; return GetEnvironmentVariableW(L"VRX_DX12_MIRROR",value,3)==1 && value[0]==L'1'; }
@@ -187,6 +196,67 @@ void Device(ID3D12Device* device) noexcept {
 }
 void Queue(ID3D12Device* device,ID3D12CommandQueue* queue) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(context) Remember(queue,New(Kind::Queue,context)); } catch(...) { }
+}
+bool Swapchain(ID3D12CommandQueue* queue,IDXGISwapChain* original) noexcept {
+    try {
+        Lock lock(Registry().mutex);Drain();auto context=Owner(queue);if(!context || !context->active) return false;
+        if(queue->GetDesc().Type!=D3D12_COMMAND_LIST_TYPE_DIRECT) {Stop(context,"non-direct presentation queue");return false;}
+        ComPtr<IDXGISwapChain3> chain;if(FAILED(original->QueryInterface(IID_PPV_ARGS(&chain)))) {Stop(context,"swapchain3 required");return false;}
+        auto item=New(Kind::Swapchain,context);item->queue=queue;Remember(original,item);
+        if(chain.Get()!=original) {item->identities.push_back(chain.Get());Registry().objects[chain.Get()]=item;Index(chain.Get(),item);}
+        ++Registry().counts.swapchains;return true;
+    } catch(...) {Failure(queue,"swapchain observation failed");return false;}
+}
+void BackBuffer(IDXGISwapChain* chain,ID3D12Resource* original) noexcept {
+    try {
+        Lock lock(Registry().mutex);Drain();auto context=Owner(chain);if(!context || !context->active || Find(original))return;
+        const auto desc=original->GetDesc();D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;
+        Resource(context->device,original,&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_PRESENT,nullptr);
+    } catch(...) {Failure(chain,"backbuffer observation failed");}
+}
+void Present(IDXGISwapChain* original,UINT flags) noexcept {
+    if(flags&DXGI_PRESENT_TEST)return;
+    try {
+        Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || item->kind!=Kind::Swapchain || !item->context->active)return;
+        if(flags&DXGI_PRESENT_DO_NOT_WAIT) {Stop(item->context,"nonblocking presentation needs a publication transaction");return;}
+        wchar_t session[66]{};const auto length=GetEnvironmentVariableW(L"VRX_XG_SESSION",session,66);
+        // Offscreen interception tests need no named stream. A launcher supplies
+        // the session explicitly; never claim an arbitrary process-wide stream.
+        if(!length)return;
+        if(length>=66 || !xg::ValidSession(session)) {Stop(item->context,"invalid presentation session");return;}
+        ComPtr<IDXGISwapChain3> chain;ComPtr<ID3D12Resource> left;
+        if(FAILED(original->QueryInterface(IID_PPV_ARGS(&chain))) || FAILED(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&left)))) {Stop(item->context,"presentation buffer unavailable");return;}
+        auto resource=Mapped(left.Get(),Kind::Resource,item->context);if(!resource)return;
+        if(!item->publisher) {
+            const auto desc=left->GetDesc();
+            if(desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM || desc.Width>4096 || desc.Height>4096 || desc.SampleDesc.Count!=1) {Stop(item->context,"unsupported presentation format or extent");return;}
+            auto publisher=std::make_unique<xg::dx12::Publisher>();
+            if(!publisher->Create(item->queue.Get(),session,UINT(desc.Width),desc.Height)) {Stop(item->context,"shared presentation stream creation failed");return;}
+            item->publisher=std::move(publisher);
+        }
+        ++Registry().counts.presentations;
+        const auto result=item->publisher->Submit(++item->frame,{left.Get(),0,D3D12_RESOURCE_STATE_PRESENT},{resource->resource.Get(),0,D3D12_RESOURCE_STATE_PRESENT});
+        if(result==xg::dx12::PublishResult::Published)++Registry().counts.publications;
+        else if(result==xg::dx12::PublishResult::Dropped)++Registry().counts.presentDrops;
+        else Stop(item->context,"shared presentation submission failed");
+    } catch(...) {Failure(original,"presentation translation failed");}
+}
+void Resize(IDXGISwapChain* original,UINT count,const UINT* nodes,IUnknown* const* queues) noexcept {
+    try {
+        Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || item->kind!=Kind::Swapchain)return;
+        if(nodes || queues) {
+            if(!count) {DXGI_SWAP_CHAIN_DESC desc{};if(SUCCEEDED(original->GetDesc(&desc)))count=desc.BufferCount;}
+            for(UINT i=0;i<count;++i) {
+                ComPtr<ID3D12CommandQueue> queue;
+                if((nodes && nodes[i]>1) || (queues && (!queues[i] || FAILED(queues[i]->QueryInterface(IID_PPV_ARGS(&queue))) || queue.Get()!=item->queue.Get()))) {
+                    Stop(item->context,"multiple presentation queues or nodes need additional support");break;
+                }
+            }
+        }
+        // Drop native backbuffer references only after their copy work completes,
+        // before DXGI validates that ResizeBuffers owns every buffer reference.
+        item->publisher.reset();Drain();++Registry().counts.resizes;
+    } catch(...) {Failure(original,"presentation resize cleanup failed");}
 }
 void Allocator(ID3D12Device* device,ID3D12CommandAllocator* original,D3D12_COMMAND_LIST_TYPE type) noexcept {
     try {
