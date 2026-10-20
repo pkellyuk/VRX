@@ -55,6 +55,18 @@ def main():
     selected["ID3D12Device"] += ["CreateQueryHeap"]
     selected["ID3D12Device"] += ["CreateCommandSignature"]
     selected["ID3D12GraphicsCommandList"] += ["ResolveSubresource", "OMSetBlendFactor", "OMSetStencilRef", "SOSetTargets", "ClearUnorderedAccessViewUint", "ClearUnorderedAccessViewFloat", "DiscardResource", "BeginQuery", "EndQuery", "ResolveQueryData", "ExecuteIndirect"]
+    # Every extended recording entry must stop replay until it has an explicit
+    # translation. Derive typed registrations as well as slots from the SDK.
+    extended = {}
+    versions = {int(v) for v in re.findall(r"\bID3D12GraphicsCommandList(\d+)\s*:\s*public", source)}
+    if versions - set(range(1, 11)):
+        raise RuntimeError(f"New command-list interfaces need explicit guard registration: {sorted(versions)}")
+    for version in range(1, 11):
+        interface = f"ID3D12GraphicsCommandList{version}"
+        parent = "ID3D12GraphicsCommandList" + (str(version - 1) if version > 1 else "")
+        inherited = slots(source, parent)
+        extended[interface] = [method for method in slots(source, interface) if method not in inherited]
+        selected[interface] = extended[interface]
     rows = ["// Generated from Microsoft's installed d3d12.h; do not edit.", "#pragma once", "namespace vrx::dx12::slot {"]
     for interface, methods in selected.items():
         table = slots(source, interface)
@@ -67,6 +79,12 @@ def main():
             rows.append(f"constexpr unsigned {interface}_{method} = {table[method]};")
     rows.append("}")
     args.output.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    guards = ["// Generated extended command-list guards; define the EXT_* macros before inclusion."]
+    for interface, methods in extended.items():
+        guards.append(f"EXT_INTERFACE_BEGIN({interface})")
+        guards.extend(f"EXT_METHOD({interface}, {method})" for method in methods)
+        guards.append("EXT_INTERFACE_END()")
+    args.output.with_name("dx12_extended_guards.inc").write_text("\n".join(guards) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

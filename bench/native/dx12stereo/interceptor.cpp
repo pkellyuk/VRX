@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <atomic>
 #include <vector>
+#include <type_traits>
 
 namespace vrx::dx12 {
 using Microsoft::WRL::ComPtr;
@@ -287,6 +288,31 @@ void STDMETHODCALLTYPE Dispatch(ID3D12GraphicsCommandList* object,UINT x,UINT y,
     if(call.outer) mirror::Record(object,[&](auto* q,auto&){q->Dispatch(x,y,z);});
 }
 void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* object,UINT count,ID3D12CommandList* const* lists);
+// Preserve the exact SDK calling convention and parameter types. Querying an
+// extended interface alone is harmless; using an untranslated recording call
+// stops stereo while the original command continues to execute normally.
+const char* ExtendedReason(unsigned index) {
+    switch(index) {
+#define EXT_INTERFACE_BEGIN(Interface)
+#define EXT_METHOD(Interface,Name) case slot::Interface##_##Name: return #Name " is not mirrored yet";
+#define EXT_INTERFACE_END()
+#include "dx12_extended_guards.inc"
+#undef EXT_INTERFACE_BEGIN
+#undef EXT_METHOD
+#undef EXT_INTERFACE_END
+    default:return "untranslated extended command-list call";
+    }
+}
+template<unsigned Slot,class Signature> struct ExtendedGuard;
+template<unsigned Slot,class Interface,class Result,class... Args>
+struct ExtendedGuard<Slot,Result(STDMETHODCALLTYPE Interface::*)(Args...)> {
+    static_assert(std::is_same_v<Result,void>,"extended recording return type needs explicit handling");
+    static void STDMETHODCALLTYPE Invoke(Interface* object,Args... args) {
+        Call call;using Fn=void(STDMETHODCALLTYPE*)(Interface*,Args...);
+        Original<Fn>(object,Slot)(object,args...);
+        if(call.outer)mirror::Unsupported(object,ExtendedReason(Slot));
+    }
+};
 void List(ID3D12GraphicsCommandList* object) noexcept {
     try {
     auto& state = State(); std::lock_guard<std::recursive_mutex> lock(state.mutex);
@@ -312,6 +338,13 @@ void List(ID3D12GraphicsCommandList* object) noexcept {
     RECORD_HOOK(SetComputeRootDescriptorTable) RECORD_HOOK(SetComputeRootConstantBufferView)
     RECORD_HOOK(SetComputeRootShaderResourceView) RECORD_HOOK(SetComputeRootUnorderedAccessView)
 #undef RECORD_HOOK
+#define EXT_INTERFACE_BEGIN(Interface) { ComPtr<Interface> extended; if(SUCCEEDED(object->QueryInterface(IID_PPV_ARGS(&extended)))) { Lifetime(extended.Get()); mirror::Alias(object,extended.Get());
+#define EXT_METHOD(Interface,Name) { using Guard=ExtendedGuard<slot::Interface##_##Name,decltype(&Interface::Name)>; Add(state,extended.Get(),slot::Interface##_##Name,reinterpret_cast<void*>(&Guard::Invoke)); }
+#define EXT_INTERFACE_END() } }
+#include "dx12_extended_guards.inc"
+#undef EXT_INTERFACE_BEGIN
+#undef EXT_METHOD
+#undef EXT_INTERFACE_END
     if(MH_ApplyQueued() != MH_OK) ++state.failures;
     ++state.lists;
     } catch(...) { ++State().failures; }
@@ -359,7 +392,7 @@ HRESULT STDMETHODCALLTYPE CreateList(ID3D12Device* object,UINT node,D3D12_COMMAN
     const auto result = Original<Fn>(object,slot::ID3D12Device_CreateCommandList)(object,node,type,allocator,pipeline,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output) {
         ComPtr<ID3D12GraphicsCommandList> list;
-        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&list)))) { List(list.Get()); Lifetime(list.Get()); mirror::List(object,list.Get(),allocator,pipeline,node,type,false); }
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&list)))) { mirror::List(object,list.Get(),allocator,pipeline,node,type,false); List(list.Get()); Lifetime(list.Get()); mirror::Alias(list.Get(),static_cast<IUnknown*>(*output)); }
     }
     return result;
 }
@@ -370,9 +403,9 @@ HRESULT STDMETHODCALLTYPE CreateList1(ID3D12Device4* object,UINT node,D3D12_COMM
     if(call.outer && SUCCEEDED(result) && output && *output) {
         ComPtr<ID3D12GraphicsCommandList> list;
         if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&list)))) {
-            List(list.Get()); Lifetime(list.Get());
             if(flags!=D3D12_COMMAND_LIST_FLAG_NONE) mirror::Unsupported(object,"command list flags are unsupported");
             else mirror::List(object,list.Get(),nullptr,nullptr,node,type,true);
+            List(list.Get()); Lifetime(list.Get()); mirror::Alias(list.Get(),static_cast<IUnknown*>(*output));
         }
     }
     return result;

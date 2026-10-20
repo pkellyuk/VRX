@@ -239,8 +239,14 @@ slot generator checks this base-interface coverage at configure time. Stream-out
 calls currently forward natively and stop replay. Hardware/WARP tests verify
 that an unsupported stream-output binding still allows a native timestamp query
 to produce its GPU result and
-that the original game view continues after replay stops. Newer command-list
-interfaces are not yet comprehensively guarded and remain a compatibility gap.
+that the original game view continues after replay stops. Recording methods
+introduced by command-list interfaces 1 through 10 now have SDK-derived, typed
+guards. Merely querying those interfaces leaves stereo running; invoking an
+untranslated method forwards the original call and stops replay with its name.
+Hardware/WARP tests exercise extended immediate GPU writes and protected-session
+state, verify native timestamp/readback results and continued native rendering,
+and check object retirement. These guards expose missing coverage; they do not
+implement render passes, enhanced barriers, raytracing, mesh shaders or work graphs.
 Dynamic blend factors and stencil references are replayed. A dedicated
 hardware/WARP test renders through a stencil-equality test with changing
 references and blend constants, verifies native and right-eye colours and
