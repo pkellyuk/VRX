@@ -6,8 +6,9 @@ simulation frame and submits GPU copies on their rendering queue. The shared
 transport is also used by the local experimental Vulkan backend.
 
 **Status:** producer, transport and native command interception foundation
-implemented; command/resource mirroring and shader adjustment are not implemented
-here yet. Interception is tested with a fixture, not arbitrary real games.
+implemented, together with a GPU-tested shader-model-5 vertex rewrite library.
+Command/resource mirroring and DXIL rewriting are not implemented here yet.
+Interception and rewriting are tested with fixtures, not arbitrary real games.
 This does not enable the desktop DX12 button. The fixture supplies both views
 explicitly, so passing these tests does not prove stereo in an unmodified game.
 
@@ -114,12 +115,22 @@ replay, shader coverage, managed launch/cleanup and real-game validation.
 ### Vertex rewrite implementation notes
 
 A native compiler probe confirmed that `D3DAssemble` in the available Microsoft
-47 runtime rejects `vs_5_0` assembly produced by `D3DDisassemble`. The next step
-is token-level DXBC rewriting, preserving original signature/binding chunks and
-decoding operands so immediate data cannot be mistaken for register references.
-Redirect position writes to new temporary registers, and emit the stereo offset
-at each return. Convergence must have opposite signs for the two eyes. GPU tests
-must distinguish near/far disparity and unchanged HUD positions at W=1.
+47 runtime rejects `vs_5_0` assembly produced by `D3DDisassemble`. `dxbc_patch.cpp`
+therefore rewrites shader-model-5 tokens directly. It preserves signature and
+binding chunks, decodes immediate/relative/extended operands, redirects position
+register writes to spare temporaries, and applies the signed clip offset and
+convergence at each return. Stale debug, statistics and debug-hash chunks are
+removed. The original bytecode is never modified.
+
+Native GPU and WARP tests pass for 5.0 and 5.1 shaders with conditional control flow and
+non-position varyings. Observed disparity is 19.25 pixels at W=2 and 9.58 at W=4;
+the chosen convergence plane aligns, and W=1 HUD pixels match the original
+exactly. The HUD heuristic can be disabled for orthographic geometry. Zero
+calibration is pixel-identical to the original. Checks also cover signature
+preservation, output-looking immediate literals, missing temporary declarations,
+checksums and malformed bounds.
+The D3D12 debug layer is used when available. This library is not yet connected
+to app command mirroring; the proxy still forwards original graphics commands.
 
 Microsoft's public DXC source provides the token definitions and retail container
 hash implementation under its included University of Illinois/NCSA license.
@@ -131,8 +142,15 @@ The inspected revision is `194bb75bea2becb42810d72a16195089c1908e10`:
 | `include/dxc/Support/d3d12TokenizedProgramFormat.hpp` | `cf808b363406fce9387d7ec8daec19940175af966589c0d3e084a4c41c3f5060` |
 | `LICENSE.TXT` | `27a49e35d1da96eba18fba54bc882667ff0ff8c0254f16f2b6e165d605ba7df8` |
 
-Verify the hash against original compiler output before using it on rewritten
-containers, retain the upstream notices, and validate the result in a native
-pipeline with GPU readback. This has not yet been implemented. DXIL needs a
-separate implementation; unsupported shader formats must preserve native
-forwarding without advertising a stereo stream.
+The build fetches those pinned files and verifies their SHA-256 values. Tests
+confirm the retail hash matches original Microsoft compiler output and that
+rewritten programs create native pipelines and produce the expected GPU pixels.
+`DXC-Hash-LICENSE.txt` and `DXC-Hash-NOTICE.txt` accompany the test binary and must
+accompany binaries using that implementation. The hash is a container checksum,
+not an authentication mechanism. The transformer bounds container and operand
+access; the D3D12 runtime remains the shader semantic validator.
+
+DXIL, linkage/subroutines and unsupported position layouts need further work.
+Rejected transforms return no replacement bytecode, allowing native forwarding
+without advertising a stereo stream. W=1 is a heuristic and cannot identify
+every HUD or projection convention automatically.

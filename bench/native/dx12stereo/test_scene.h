@@ -25,8 +25,8 @@ struct Scene {
     ComPtr<ID3D12InfoQueue> messages;
     uint64_t value = 0;
     UINT width = 96, height = 64, increment = 0;
-    void Init() {
-        Hr(D3D12CreateDevice(nullptr,D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&device)));
+    void Init(IUnknown* adapter=nullptr) {
+        Hr(D3D12CreateDevice(adapter,D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&device)));
         device.As(&messages);
         D3D12_COMMAND_QUEUE_DESC q{}; q.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
         Hr(device->CreateCommandQueue(&q,IID_PPV_ARGS(&queue)));
