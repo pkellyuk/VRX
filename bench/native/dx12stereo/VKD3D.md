@@ -55,10 +55,11 @@ The default arguments include `-dx12 -norhithread -windowed -ResX=1280
 DX12 baseline. `-Preview` performs preflight without installation or launch.
 
 `-Stereo mirror -Shift 0.008 -Session UNIQUE_NAME` additionally enables the
-explicit VRX Vulkan layer, GPU sharing and live tuning. This is currently an
-unsuccessful compatibility test, not working geometry stereo. It disables
-opaque descriptor buffers/descriptor heaps and NVIDIA low-latency support in
-the translator, and requests `single_queue`, to meet the layer's existing
+explicit VRX Vulkan layer, GPU sharing and initial stereo tuning. This mirror
+backend reads its tuning file at startup; changing it requires a restart.
+It disables opaque descriptor buffers/descriptor heaps, NVIDIA low-latency
+support, shader identifiers, pipeline binaries and graphics pipeline libraries
+in the translator, and requests `single_queue`, to meet the layer's existing
 requirements. Translation-only mode does not apply those vkd3d restrictions.
 
 ## Results on System Shock / RTX 3090
@@ -96,3 +97,65 @@ Next backend work is to handle the translator's shader/address model correctly,
 including distinguishing unused helper pipelines from executed workloads,
 before assessing main-game stereo and performance. Removing the unsupported
 pointer guard would allow second-eye commands to access first-eye resources.
+
+## Pointer and transport fixes: subsequent trial
+
+The independently authored `common/spirv_push_addresses.h` now traces
+integer-to-pointer conversions and pointer bitcasts back to specific eight-byte
+push-constant fields. It accepts a proven address plus a numeric offset,
+bit-preserving conversions and single-store function locals. It also checks
+typed physical-pointer loads. Unknown GPU-loaded addresses, truncated addresses,
+sums of addresses, unsupported control flow and malformed instructions remain
+unsupported. Arbitrary integer fields are not scanned for address-like values.
+The existing typed push-field reflection and new integer origins are combined
+before recording private second-eye push constants. Caller memory stays intact.
+
+Both actual decompression helper shaders are accepted with relocated push
+fields at offsets **0, 8 and 24**. A GPU test writes through typed pointers and
+through integer-derived pointers to an interior buffer address. For each mode,
+three second-eye submissions complete while the native counter remains 1, 2, 3
+(it would be 2, 4, 6 if the second eye wrote the native buffer). The test wrapper
+requires successful replay in the layer log, so simply disabling mirroring does
+not pass the test.
+
+Further compatibility fixes in the locally supplied layer:
+
+- Accept supported normalized 10-bit swapchain formats and check Vulkan blit
+  capabilities before using the existing GPU conversion into shared RGBA8.
+  System Shock presents `VK_FORMAT_A2B10G10R10_UNORM_PACK32` (64).
+- Create the transport's D3D12 textures/fences with explicit **System32** D3D12
+  and DXGI modules. Resolving the game's translated DLLs produced incompatible
+  resource handles. The native-module helper is independently authored and has
+  also been tested with app-local translator DLLs loaded.
+- Keep presentation-timing configuration on the real swapchain. There is no
+  second presentation swapchain to configure.
+- Resolve translated scalar handles before checking whether replay is still
+  valid, so a failed lookup cannot subsequently pass a null handle to the driver.
+- Require shader bytecode for pipeline reflection. Identifier-only cache paths
+  are disabled in the trial launcher; the pointer guard remains enforced.
+
+With these changes, PID 29376 entered saved gameplay through vkd3d-proton and
+published full same-frame eye pairs. The user confirmed **gameplay visible in
+both eyes**. A diagnostic GPU readback of frame **4944/4944** contained the full
+room, weapon and HUD in both 1280x720 eyes (917515/917532 nonblack pixels).
+Its mean RGB eye difference was 0.400668/255 at strength 0.008. The user reported
+that depth was too weak, so this is not a comfort or calibrated-depth claim.
+The following run (PID 40428) uses strength **0.5**, convergence **0**. The user
+confirmed **clear depth and comfortable** in gameplay. Its diagnostic readback
+at frame **5096/5096** again contained the complete scene in both eyes
+(917967/917893 nonblack pixels; mean RGB eye difference 10.145988/255). The game
+and geometry headset viewer were left running at this setting. This validates
+one saved gameplay scene, not every effect or a sustained performance target.
+
+Targeted validation: **8/8 Release CTests**, **5/5 Debug fixture CTests**, plus
+typed/integer GPU isolation tests against the actual Debug layer. The 10-bit
+presentation regression checks ten same-frame pairs, moving geometry, color
+conversion and depth-dependent disparity. These are targeted checks, not a full
+game or performance certification. The existing source-only native D3D12 suite
+was not rerun for these Vulkan-specific changes.
+
+The adapted generator and mirroring backend remain a local external prototype:
+their redistribution permission is still unresolved (see
+`../xgstereo/MIRROR_ORIGIN.md`). Independently authored helpers, integration
+fixtures and launcher changes can be committed without publishing those adapted
+files. The native D3D12 chooser gate remains unchanged.

@@ -95,7 +95,8 @@ try {
         $start.Environment['VRX_XG_TUNING'] = $tuningPath
         # Opaque descriptor buffers are not supported by the current stereo layer.
         $disabled = @($start.Environment['VKD3D_DISABLE_EXTENSIONS'] -split '[,;]' | Where-Object { $_ })
-        $start.Environment['VKD3D_DISABLE_EXTENSIONS'] = (@($disabled + @('VK_EXT_descriptor_buffer','VK_EXT_descriptor_heap','VK_NV_low_latency2')) | Select-Object -Unique) -join ','
+        $start.Environment['VKD3D_DISABLE_EXTENSIONS'] = (@($disabled + @('VK_EXT_descriptor_buffer','VK_EXT_descriptor_heap','VK_NV_low_latency2',
+            'VK_EXT_shader_module_identifier','VK_KHR_pipeline_binary','VK_EXT_graphics_pipeline_library')) | Select-Object -Unique) -join ','
         # The current layer requires exactly one graphics queue. NVIDIA latency
         # support otherwise requests an additional out-of-band graphics queue.
         $config = @($start.Environment['VKD3D_CONFIG'] -split '[,;]' | Where-Object { $_ })

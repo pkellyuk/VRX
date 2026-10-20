@@ -49,7 +49,7 @@ struct Gpu {
 #define MEMBER(fn) PFN_##fn fn = nullptr;
     DEVICE_FUNCTIONS(MEMBER)
 #undef MEMBER
-    void Init(bool presentation = false, uint32_t graphicsQueues = 1, bool inlineShader = false, bool interop = false, bool maintenance6 = false)
+    void Init(bool presentation = false, uint32_t graphicsQueues = 1, bool inlineShader = false, bool interop = false, bool maintenance6 = false, bool integer64 = false)
     {
         loader = LoadLibraryExW(L"vulkan-1.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         Require(loader != nullptr, "Vulkan loader unavailable (install a graphics driver with Vulkan support)");
@@ -101,6 +101,7 @@ struct Gpu {
         q.queueFamilyIndex = family; q.queueCount = graphicsQueues; q.pQueuePriorities = priority;
         VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
         di.queueCreateInfoCount = 1; di.pQueueCreateInfos = &q;
+        VkPhysicalDeviceFeatures basic{}; basic.shaderInt64=integer64 ? VK_TRUE : VK_FALSE; di.pEnabledFeatures=&basic;
         VkPhysicalDeviceVulkan12Features features12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
         VkPhysicalDeviceVulkan13Features features13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
         features13.synchronization2 = VK_TRUE; features13.pNext = &features12;

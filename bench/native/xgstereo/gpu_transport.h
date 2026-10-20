@@ -5,6 +5,7 @@
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 #include <array>
+#include "../common/system_d3d12.h"
 
 namespace xg {
 using Microsoft::WRL::ComPtr;
@@ -62,8 +63,8 @@ public:
     {
         if (!ValidSession(session) || !GpuShape(w, h)) return false;
         ComPtr<IDXGIFactory4> factory; ComPtr<IDXGIAdapter> gpu;
-        if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || FAILED(factory->EnumAdapterByLuid(adapter, IID_PPV_ARGS(&gpu))) ||
-            FAILED(D3D12CreateDevice(gpu.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)))) return false;
+        if (FAILED(vrx::SystemDxgiFactory(IID_PPV_ARGS(&factory))) || FAILED(factory->EnumAdapterByLuid(adapter, IID_PPV_ARGS(&gpu))) ||
+            FAILED(vrx::SystemD3d12Device(gpu.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)))) return false;
         mutex_ = CreateMutexW(nullptr, FALSE, GpuName(session, L".lock").c_str());
         if (!mutex_) return false;
         mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(GpuHeader), GpuName(session, L".frames").c_str());

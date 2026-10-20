@@ -31,7 +31,7 @@ struct WindowSwapchain {
 #undef MEMBER
     PFN_vkDestroySurfaceKHR destroySurface = nullptr;
     explicit WindowSwapchain(Gpu& g) : gpu(g) {}
-    void Init()
+    void Init(bool tenBit=false)
     {
 #define LOAD(fn) fn = reinterpret_cast<PFN_##fn>(gpu.getDeviceProc(gpu.device, #fn)); Require(fn != nullptr, #fn);
         WSI_FUNCTIONS(LOAD)
@@ -59,8 +59,9 @@ struct WindowSwapchain {
         std::vector<VkSurfaceFormatKHR> available(count); Vk(formats(gpu.physical, surface, &count, available.data()), "surface formats");
         VkSurfaceFormatKHR chosen{};
         for (auto candidate : available)
-            if (candidate.format == VK_FORMAT_B8G8R8A8_UNORM || candidate.format == VK_FORMAT_B8G8R8A8_SRGB) { chosen = candidate; break; }
-        Require(chosen.format != VK_FORMAT_UNDEFINED, "BGRA8 format for swizzle validation");
+            if (tenBit ? (candidate.format==VK_FORMAT_A2B10G10R10_UNORM_PACK32 || candidate.format==VK_FORMAT_A2R10G10B10_UNORM_PACK32) :
+                (candidate.format == VK_FORMAT_B8G8R8A8_UNORM || candidate.format == VK_FORMAT_B8G8R8A8_SRGB)) { chosen = candidate; break; }
+        Require(chosen.format != VK_FORMAT_UNDEFINED, "requested surface format for export conversion validation");
         format = chosen.format;
         VkSwapchainCreateInfoKHR ci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
         ci.surface = surface; ci.minImageCount = std::max(2u, capabilities.minImageCount);
@@ -189,7 +190,8 @@ int main(int argc, char** argv)
         const bool serveMirror = argc == 2 && std::string(argv[1]).rfind("--serve-mirror-gpu=",0)==0;
         const bool serveGpu = serveMirror || argc == 2 && std::string(argv[1]).rfind("--serve-gpu=", 0) == 0;
         const bool contention = argc == 2 && std::string(argv[1]) == "--mirror-contention";
-        const bool mirror = contention || serveMirror || (argc == 2 && (std::string(argv[1]) == "--mirror" || std::string(argv[1]) == "--mirror-inline"));
+        const bool tenBit=argc==2 && std::string(argv[1])=="--mirror-ten";
+        const bool mirror = tenBit || contention || serveMirror || (argc == 2 && (std::string(argv[1]) == "--mirror" || std::string(argv[1]) == "--mirror-inline"));
         const bool gpuTransport = mirror || serveGpu || (argc == 2 && std::string(argv[1]) == "--gpu");
         const bool unsupported = argc == 2 && std::string(argv[1]) == "--unsupported-queues";
         const bool unsupportedShader = argc == 2 && std::string(argv[1]) == "--unsupported-shader";
@@ -225,7 +227,7 @@ int main(int argc, char** argv)
             if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) debug->EnableDebugLayer();
         }
         Gpu gpu; gpu.Init(true, unsupported ? 2 : 1, inlineShader);
-        WindowSwapchain wsi(gpu); wsi.Init();
+        WindowSwapchain wsi(gpu); wsi.Init(tenBit);
         if (gpuTransport)
         {
             VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
