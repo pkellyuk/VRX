@@ -260,13 +260,25 @@ void STDMETHODCALLTYPE Name Parameters { \
     Call call;Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name) Arguments; \
     if(call.outer)mirror::Unsupported(object,#Name " is not mirrored yet"); \
 }
-GUARDED(ResolveSubresource,(ID3D12GraphicsCommandList* object,ID3D12Resource* dst,UINT target,ID3D12Resource* src,UINT source,DXGI_FORMAT format),(object,dst,target,src,source,format))
 GUARDED(SOSetTargets,(ID3D12GraphicsCommandList* object,UINT start,UINT count,const D3D12_STREAM_OUTPUT_BUFFER_VIEW* views),(object,start,count,views))
-GUARDED(ClearUnorderedAccessViewUint,(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const UINT values[4],UINT count,const D3D12_RECT* rects),(object,gpu,cpu,resource,values,count,rects))
-GUARDED(ClearUnorderedAccessViewFloat,(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const FLOAT values[4],UINT count,const D3D12_RECT* rects),(object,gpu,cpu,resource,values,count,rects))
-GUARDED(DiscardResource,(ID3D12GraphicsCommandList* object,ID3D12Resource* resource,const D3D12_DISCARD_REGION* region),(object,resource,region))
 GUARDED(ExecuteIndirect,(ID3D12GraphicsCommandList* object,ID3D12CommandSignature* signature,UINT count,ID3D12Resource* buffer,UINT64 offset,ID3D12Resource* counter,UINT64 counterOffset),(object,signature,count,buffer,offset,counter,counterOffset))
 #undef GUARDED
+#define UAV_CLEAR(Name,T) \
+void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const T values[4],UINT count,const D3D12_RECT* rects){ \
+    Call call;Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name)(object,gpu,cpu,resource,values,count,rects); \
+    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto g=map.Gpu(gpu);auto c=map.Cpu(cpu);auto r=map.Resource(resource);if(map.Valid())q->Name(g,c,r,values,count,rects);}); \
+}
+UAV_CLEAR(ClearUnorderedAccessViewUint,UINT)
+UAV_CLEAR(ClearUnorderedAccessViewFloat,FLOAT)
+#undef UAV_CLEAR
+void STDMETHODCALLTYPE ResolveSubresource(ID3D12GraphicsCommandList* object,ID3D12Resource* dst,UINT target,ID3D12Resource* src,UINT source,DXGI_FORMAT format){
+    Call call;Original<decltype(&ResolveSubresource)>(object,slot::ID3D12GraphicsCommandList_ResolveSubresource)(object,dst,target,src,source,format);
+    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->ResolveSubresource(d,target,s,source,format);});
+}
+void STDMETHODCALLTYPE DiscardResource(ID3D12GraphicsCommandList* object,ID3D12Resource* resource,const D3D12_DISCARD_REGION* region){
+    Call call;Original<decltype(&DiscardResource)>(object,slot::ID3D12GraphicsCommandList_DiscardResource)(object,resource,region);
+    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto r=map.Resource(resource);if(map.Valid())q->DiscardResource(r,region);});
+}
 void STDMETHODCALLTYPE Dispatch(ID3D12GraphicsCommandList* object,UINT x,UINT y,UINT z) {
     Call call; Original<decltype(&Dispatch)>(object,slot::ID3D12GraphicsCommandList_Dispatch)(object,x,y,z);
     if(call.outer) mirror::Record(object,[&](auto* q,auto&){q->Dispatch(x,y,z);});
