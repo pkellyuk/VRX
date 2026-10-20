@@ -23,7 +23,7 @@ struct GpuHeader {
     GpuSlotInfo slots[GpuSlots]{};
 };
 static_assert(sizeof(GpuSlotInfo) == 40 && sizeof(GpuHeader) == 176, "GPU transport metadata ABI");
-inline bool GpuShape(uint32_t w, uint32_t h) { return w >= 2 && h >= 2 && w <= 4096 && h <= 4096 && !(w & 1) && !(h & 1); }
+inline bool GpuShape(uint32_t w, uint32_t h) { return w >= 2 && h >= 2 && w <= 4096 && h <= 4096; }
 inline std::wstring GpuName(const std::wstring& session, const wchar_t* suffix)
 { return L"Local\\VRX.xgstereo." + session + L".gpu" + suffix; }
 inline std::wstring GpuObjectName(const std::wstring& session, const GpuHeader& h, uint32_t slot, const wchar_t* suffix)

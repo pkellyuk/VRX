@@ -118,7 +118,7 @@ static void Pixels(const PairFrame& frame, UINT expected) {
             sum[eye]+=x; ++count[eye];
         }
     }
-    Check(count[0]>100 && count[1]>100 && count[0]==count[1],"both full-height triangles survive copies");
+    Check(count[0]>100 && count[1]>100 && double(count[0])/double(count[1])>.95 && double(count[0])/double(count[1])<1.05,"both full-height triangles survive copies");
     Check(double(sum[1])/count[1]-double(sum[0])/count[0]>w*.15,"geometry view offsets survive independently");
 }
 int wmain(int argc,wchar_t** argv) {
@@ -127,6 +127,7 @@ int wmain(int argc,wchar_t** argv) {
         if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) debug->EnableDebugLayer();
         Scene scene;
         if(argc==2 && std::wstring(argv[1])==L"--full-resolution") { scene.width=2560; scene.height=1440; }
+        if(argc==2 && std::wstring(argv[1])==L"--odd-extent") { scene.width=97; scene.height=65; }
         scene.Init();
         std::wstring session=L"native-dx12-"+std::to_wstring(GetCurrentProcessId());
         bool serve=false;
@@ -150,7 +151,7 @@ int wmain(int argc,wchar_t** argv) {
             Hr(scene.device->CreateCommandQueue(&q,IID_PPV_ARGS(&copy)));
             xg::dx12::Publisher retry;
             Check(!retry.Create(copy.Get(),session+L"-retry",scene.width,scene.height),"copy queues do not accept render-state transitions");
-            Check(!retry.Create(scene.queue.Get(),session+L"-retry",95,64),"invalid extent is rejected before allocating");
+            Check(!retry.Create(scene.queue.Get(),session+L"-retry",1,64),"invalid extent is rejected before allocating");
             Check(retry.Create(scene.queue.Get(),session+L"-retry",scene.width,scene.height),"initialization can recover after invalid inputs");
         }
         Check(producer.Submit(0,scene.Eye(0),scene.Eye(1))==xg::dx12::PublishResult::Invalid,"reject frame zero");

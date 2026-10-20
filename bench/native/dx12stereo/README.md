@@ -21,13 +21,24 @@ ctest --test-dir bench/native/dx12stereo/out -C Release --output-on-failure
 The tests draw a triangle into independent eye slices, move its projection in
 opposite directions, and encode the simulation frame in its color. They verify
 both eyes' pixels after sharing to another D3D12 device, at 96x64 and 2560x1440
-per eye. Repeated drawing checks restoration of input resource states. A stalled
+per eye, plus odd 97x65 extents. Repeated drawing checks restoration of input resource states. A stalled
 GPU queue verifies bounded allocation, nonblocking frame drops and recovery.
 The D3D12 debug layer is enabled when available; errors fail the tests.
 
 Additional transport tests exercise lease release, consumer GPU completion,
 metadata contention, stale/foreign streams, dimensions and atomic CPU pairs.
 Only diagnostic tests read image pixels back to the CPU.
+
+`d3d11_launch_fixture.exe` is a separate ordinary D3D11 application for the
+managed DXVK launcher integration test. It contains no VRX or Vulkan API calls.
+`--self-test` draws eight frames and exits; otherwise it runs until normally
+closed, with a two-minute safety limit. The opt-in desktop smoke extension
+`--smoke-test --geometry-launch-integration-test` copies it into a unique test
+directory, performs two DXVK restarts, checks distinct same-frame eyes and the
+VRX GPU consumer, then verifies temporary DLL cleanup. That extension requires
+the separately built experimental layer, DXVK cache, GPU snapshot utility and
+geometry-capable VRX engine. `VRX_GEOMETRY_TEST_ENGINE` can select an isolated
+engine build while another headset session is active.
 
 The producer can serve the local VRX geometry consumer with
 `dx12_publisher_test.exe --serve-gpu=SESSION`. With the experimental renderer
