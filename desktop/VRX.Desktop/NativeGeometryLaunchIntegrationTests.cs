@@ -19,7 +19,10 @@ internal static class NativeGeometryLaunchIntegrationTests
         string session=StereoPaths.Session(executable),literal="--fixture-token=space and \"quote\"";
         using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(100));var token=timeout.Token;
         var log=new List<string>();GeometryLaunch.Run? running=null;
-        string? previousRecord=Environment.GetEnvironmentVariable("VRX_DX12_RECORD_ONLY"),previousClone=Environment.GetEnvironmentVariable("VRX_DX12_CLONE_ONLY"),previousSkip=Environment.GetEnvironmentVariable("VRX_DX12_SKIP_COMMANDS");
+        var diagnosticEnvironment=new Dictionary<string,string>{
+            ["VRX_DX12_RECORD_ONLY"]="1",["VRX_DX12_CLONE_ONLY"]="1",["VRX_DX12_SKIP_COMMANDS"]="1",
+            ["VRX_DX12_SKIP_WORK"]="1",["VRX_DX12_STATE_ONLY"]="1",["VRX_DX12_RECORD_COMMANDS"]="SetPipelineState"};
+        var previousEnvironment=diagnosticEnvironment.Keys.ToDictionary(key=>key,Environment.GetEnvironmentVariable);
         void Check(bool ok,string reason){if(!ok)throw new Exception("Managed native DX12 integration: "+reason);}
         async Task<RunningApp> Window(GeometryLaunch.Run run){
             var until=Environment.TickCount64+10000;
@@ -46,7 +49,7 @@ internal static class NativeGeometryLaunchIntegrationTests
             }return own.DistinctBy(r=>(r.Pid,r.StartTicks)).ToList();
         }
         try{
-            Environment.SetEnvironmentVariable("VRX_DX12_RECORD_ONLY","1");Environment.SetEnvironmentVariable("VRX_DX12_CLONE_ONLY","1");Environment.SetEnvironmentVariable("VRX_DX12_SKIP_COMMANDS","1");
+            foreach(var item in diagnosticEnvironment)Environment.SetEnvironmentVariable(item.Key,item.Value);
             var start=new ProcessStartInfo(executable){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=root};start.ArgumentList.Add("--serve-gpu="+session);start.ArgumentList.Add(literal);
             foreach(string name in new[]{"VRX_DX12_INTERCEPT","VRX_DX12_MIRROR","VRX_DX12_TEST_TEN","VRX_DX12_TEST_BGRA","VRX_DX12_TEST_MODERN"})start.Environment[name]="0";
             using(var original=Process.Start(start)??throw new Exception("Ordinary DX12 fixture did not start"))running=new(original.Id,original.StartTime.ToUniversalTime().Ticks,executable,session);
@@ -75,7 +78,7 @@ internal static class NativeGeometryLaunchIntegrationTests
             GeometryLaunch.RecoverOwned(root);Check(!File.Exists(Path.Combine(root,"d3d12.dll")),"native bridge is removed after normal exit");
             File.WriteAllText(Path.Combine(output,"native-geometry-integration-pass.txt"),"PASS: ordinary native DX12 baseline; two managed restarts; literal arguments; matching diagnostics; backend isolation; distinct same-frame GPU pixels; actual VRX handoff without OpenXR; unsupported-command failure remains native; owned cleanup. Logs: "+root);
         }finally{
-            Environment.SetEnvironmentVariable("VRX_DX12_RECORD_ONLY",previousRecord);Environment.SetEnvironmentVariable("VRX_DX12_CLONE_ONLY",previousClone);Environment.SetEnvironmentVariable("VRX_DX12_SKIP_COMMANDS",previousSkip);
+            foreach(var item in previousEnvironment)Environment.SetEnvironmentVariable(item.Key,item.Value);
             foreach(var run in Owned())if(GeometryLaunch.IsRunning(run)){using var child=Process.GetProcessById(run.Pid);if(!child.CloseMainWindow() || !child.WaitForExit(5000)){child.Kill();child.WaitForExit(5000);}}
             GeometryLaunch.RecoverOwned(root);File.WriteAllLines(Path.Combine(root,"integration.log"),log);
         }

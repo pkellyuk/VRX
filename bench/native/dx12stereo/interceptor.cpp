@@ -110,21 +110,21 @@ void STDMETHODCALLTYPE Draw(ID3D12GraphicsCommandList* object,UINT vertices,UINT
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,UINT);
     if(call.outer) ++State().draws;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawInstanced)(object,vertices,instances,firstVertex,firstInstance);
-    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto&){ q->DrawInstanced(vertices,instances,firstVertex,firstInstance); },mirror::RecordKind::Work);
+    if(call.outer) mirror::Record(object,"DrawInstanced",[&](auto* q,auto&){ q->DrawInstanced(vertices,instances,firstVertex,firstInstance); },mirror::RecordKind::Work);
 }
 void STDMETHODCALLTYPE DrawIndexed(ID3D12GraphicsCommandList* object,UINT indices,UINT instances,UINT firstIndex,INT baseVertex,UINT firstInstance) {
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,INT,UINT);
     if(call.outer) ++State().indexed;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawIndexedInstanced)(object,indices,instances,firstIndex,baseVertex,firstInstance);
-    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto&){ q->DrawIndexedInstanced(indices,instances,firstIndex,baseVertex,firstInstance); },mirror::RecordKind::Work);
+    if(call.outer) mirror::Record(object,"DrawIndexedInstanced",[&](auto* q,auto&){ q->DrawIndexedInstanced(indices,instances,firstIndex,baseVertex,firstInstance); },mirror::RecordKind::Work);
 }
 void STDMETHODCALLTYPE Bundle(ID3D12GraphicsCommandList* object,ID3D12GraphicsCommandList* bundle) {
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,ID3D12GraphicsCommandList*);
     if(call.outer) ++State().bundles;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_ExecuteBundle)(object,bundle);
-    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){ auto right=map.Bundle(bundle); if(map.Valid()) q->ExecuteBundle(right); },mirror::RecordKind::Work);
+    if(call.outer) mirror::Record(object,"ExecuteBundle",[&](auto* q,auto& map){ auto right=map.Bundle(bundle); if(map.Valid()) q->ExecuteBundle(right); },mirror::RecordKind::Work);
 }
 // These calls carry only immutable values or immutable root-signature objects.
 #define SIMPLE(Name,Parameters,Native,Replay) \
