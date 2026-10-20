@@ -4,6 +4,7 @@
 #include "interceptor.h"
 #include "../xgstereo/pair_transport.h"
 #include <type_traits>
+#include <cstring>
 namespace vrx::dx12 {
 struct StatusFrame {
     uint32_t magic=0x53445856,version=1,bytes=sizeof(StatusFrame),pid=0;
@@ -50,7 +51,7 @@ public:
         xg::PairLock lock(mutex_,100);if(!lock.Ready() || !view_)return false;
         const auto frame=*view_;
         if(frame.magic!=0x53445856 || frame.version!=1 || frame.bytes!=sizeof(frame) || !frame.pid || !frame.updatedMs || frame.mirroring>1 || frame.reserved ||
-            frame.counts.bytes!=sizeof(Counts) || frame.counts.version!=4 || frame.counts.reason[sizeof(frame.counts.reason)-1] ||
+            frame.counts.bytes!=sizeof(Counts) || frame.counts.version!=4 || !std::memchr(frame.counts.reason,0,sizeof(frame.counts.reason)) ||
             frame.updatedMs>GetTickCount64() || (expectedPid && frame.pid!=expectedPid))return false;
         out=frame;return true;
     }

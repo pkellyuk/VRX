@@ -48,6 +48,9 @@ def main():
         "IDXGISwapChain3": ["ResizeBuffers1"],
         "ID3D12GraphicsCommandList": ["Close", "Reset", "DrawInstanced", "DrawIndexedInstanced", "ExecuteBundle", "ClearState", "SetPipelineState", "RSSetViewports", "RSSetScissorRects", "IASetPrimitiveTopology", "OMSetRenderTargets", "ClearRenderTargetView", "ResourceBarrier", "SetGraphicsRootSignature", "SetGraphicsRoot32BitConstant", "SetGraphicsRoot32BitConstants", "IASetIndexBuffer", "IASetVertexBuffers", "CopyResource", "CopyBufferRegion", "CopyTextureRegion", "SetDescriptorHeaps", "Dispatch", "ClearDepthStencilView", "SetGraphicsRootDescriptorTable", "SetGraphicsRootConstantBufferView", "SetGraphicsRootShaderResourceView", "SetGraphicsRootUnorderedAccessView", "SetPredication", "SetComputeRootSignature", "SetComputeRoot32BitConstant", "SetComputeRoot32BitConstants", "SetComputeRootDescriptorTable", "SetComputeRootConstantBufferView", "SetComputeRootShaderResourceView", "SetComputeRootUnorderedAccessView"],
     }
+    selected["ID3D12CommandQueue"] += ["UpdateTileMappings", "CopyTileMappings"]
+    selected["ID3D12GraphicsCommandList"] += ["CopyTiles"]
+    selected["ID3D12Device4"] += ["CreateReservedResource1"]
     rows = ["// Generated from Microsoft's installed d3d12.h; do not edit.", "#pragma once", "namespace vrx::dx12::slot {"]
     for interface, methods in selected.items():
         table = slots(source, interface)

@@ -16,6 +16,7 @@
 #include <array>
 #include <atomic>
 #include <new>
+#include <cstdio>
 #include <algorithm>
 
 namespace vrx::dx12::mirror {
@@ -196,6 +197,10 @@ D3D12_GPU_DESCRIPTOR_HANDLE Mapper::Gpu(D3D12_GPU_DESCRIPTOR_HANDLE original) {
 ID3D12DescriptorHeap* Mapper::Heap(ID3D12DescriptorHeap* original) {
     auto item=Mapped(original,Kind::Heap,context_); return item?item->heap.Get():nullptr;
 }
+ID3D12Heap* Mapper::Memory(ID3D12Heap* original) {
+    if(!original)return nullptr;
+    auto item=Mapped(original,Kind::MemoryHeap,context_);return item?item->memory.Get():nullptr;
+}
 void Device(ID3D12Device* device) noexcept {
     if(!IsEnabled()) return;
     try {
@@ -250,7 +255,10 @@ void Present(IDXGISwapChain* original,UINT flags) noexcept {
         auto resource=Mapped(left.Get(),Kind::Resource,item->context);if(!resource)return;
         if(!item->publisher) {
             const auto desc=left->GetDesc();
-            if(!xg::dx12::FormatConvert::Supported(desc.Format) || desc.Width>4096 || desc.Height>4096 || desc.SampleDesc.Count!=1) {Stop(item->context,"unsupported presentation format or extent");return;}
+            if(!xg::dx12::FormatConvert::Supported(desc.Format) || desc.Width>4096 || desc.Height>4096 || desc.SampleDesc.Count!=1) {
+                char reason[160]{};sprintf_s(reason,"unsupported presentation: format=%u, size=%llux%u, samples=%u",UINT(desc.Format),static_cast<unsigned long long>(desc.Width),desc.Height,desc.SampleDesc.Count);
+                Stop(item->context,reason);return;
+            }
             auto publisher=std::make_unique<xg::dx12::Publisher>();
             if(!publisher->Create(item->queue.Get(),session,UINT(desc.Width),desc.Height,desc.Format)) {Stop(item->context,"shared presentation stream creation failed");return;}
             item->publisher=std::move(publisher);
@@ -316,6 +324,14 @@ void PlacedResource(ID3D12Device* device,ID3D12Resource* original,ID3D12Heap* he
         if(FAILED(device->CreatePlacedResource(item->memory.Get(),offset,desc,initial,clear,IID_PPV_ARGS(&item->resource)))){Stop(context,"placed resource creation failed");return;}
         TrackResource(original,item);
     }catch(...){Failure(device,"placed resource observation failed");}
+}
+void ReservedResource(ID3D12Device* device,ID3D12Resource* original,const D3D12_RESOURCE_DESC* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear) noexcept {
+    try {
+        Lock lock(Registry().mutex);Drain();auto context=Owner(device);if(!context || !context->active)return;
+        auto item=New(Kind::Resource,context);item->description=*desc;
+        if(FAILED(device->CreateReservedResource(desc,initial,clear,IID_PPV_ARGS(&item->resource)))){Stop(context,"reserved resource creation failed");return;}
+        TrackResource(original,item);
+    }catch(...){Failure(device,"reserved resource observation failed");}
 }
 void Pipeline(ID3D12Device* device,ID3D12PipelineState* original,const D3D12_GRAPHICS_PIPELINE_STATE_DESC* desc) noexcept {
     try {
@@ -421,6 +437,10 @@ void Record(ID3D12GraphicsCommandList* original,Callback<ID3D12GraphicsCommandLi
 void Observe(ID3D12Device* device,Callback<ID3D12Device*,Mapper&> command) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(context && context->active) { Mapper map(context); command(device,map); } }
     catch(...) { Failure(device,"descriptor translation failed"); }
+}
+void QueueCommand(ID3D12CommandQueue* queue,Callback<ID3D12CommandQueue*,Mapper&> command) noexcept {
+    try { Lock lock(Registry().mutex);Drain();auto context=Owner(queue);if(context && context->active){Mapper map(context);command(queue,map);} }
+    catch(...){Failure(queue,"queue mapping translation failed");}
 }
 void Execute(ID3D12CommandQueue* queue,UINT count,ID3D12CommandList* const* lists,ExecuteFn execute) noexcept {
     try {

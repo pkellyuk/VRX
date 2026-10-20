@@ -11,9 +11,10 @@ int main(){try {
     Check(reader.Open(session),"open status without loading the bridge or a graphics device");vrx::dx12::StatusFrame snapshot;
     Check(!reader.Read(snapshot),"initial unpopulated counts are not advertised as current");
     {vrx::dx12::StatusWriter duplicate;Check(!duplicate.Create(session),"another writer cannot replace a live status channel");}
-    vrx::dx12::Counts counts;counts.draws=42;counts.mirrorStops=1;strcpy_s(counts.reason,"unsupported native call");Check(writer.Publish(counts),"publish whole diagnostic snapshot");
+    vrx::dx12::Counts counts;counts.draws=42;counts.mirrorStops=1;strcpy_s(counts.reason,"unsupported native call");counts.reason[sizeof(counts.reason)-1]='x';Check(writer.Publish(counts),"publish whole diagnostic snapshot with unused trailing bytes");
     Check(reader.Read(snapshot,GetCurrentProcessId()) && snapshot.counts.draws==42 && !std::strcmp(snapshot.counts.reason,counts.reason),"counts and stop reason read atomically with the owning PID");
     Check(!reader.Read(snapshot,GetCurrentProcessId()+1),"wrong game PID rejected");
+    const auto valid=counts;std::memset(counts.reason,'x',sizeof(counts.reason));Check(writer.Publish(counts) && !reader.Read(snapshot),"unterminated diagnostic strings are rejected");counts=valid;
     HANDLE mutex=OpenMutexW(SYNCHRONIZE|MUTEX_MODIFY_STATE,FALSE,vrx::dx12::StatusName(session,L".lock").c_str());Check(mutex!=nullptr,"open contention fixture");
     std::promise<void> held,release;auto done=release.get_future();std::thread owner([&]{xg::PairLock lock(mutex,1000);held.set_value();done.wait();});held.get_future().wait();
     const auto before=GetTickCount64();const bool dropped=!writer.Publish(counts);const auto elapsed=GetTickCount64()-before;release.set_value();owner.join();CloseHandle(mutex);

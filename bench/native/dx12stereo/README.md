@@ -258,8 +258,24 @@ A local System Shock Remake Steam build 22239093 test used native `-dx12` with
 this launcher. Observation recorded pipeline streams, placed resources and
 memory heaps with zero hook failures; the game exited normally and its bridge
 was removed. With mirroring requested, the game continued rendering but replay
-stopped at reserved/tiled resource creation. No stereo frames were published.
-This establishes a concrete missing feature, not native DX12 game compatibility.
+stopped at reserved/tiled resource creation. That attempt later produced an
+Unreal GPU-hang report (`DXGI_ERROR_DEVICE_HUNG`), despite zero recorded replays;
+the cause has not been established. After implementing sparse-resource mapping,
+a later attempt replayed three submissions, then rejected the presentation
+format/extent and exited normally when closed. A diagnostic retry identified a
+1280x720, single-sample `R10G10B10A2_UNORM` swapchain. No stereo frames were published.
+This establishes concrete compatibility gaps, not native DX12 game compatibility.
+
+Reserved resources created through Device/Device4 now have independent right-eye
+reservations. Queue `UpdateTileMappings` and `CopyTileMappings` translate both
+resource and physical-heap identities, preserving native tile indices, optional
+arrays and mapping flags. Command-list `CopyTiles` maps both resources. The twin
+heaps preserve shared physical pages when multiple resources/ranges alias them.
+Hardware and WARP tests verify actual GPU bytes after permuted mappings, copied
+mappings, reuse of a physical tile, skipped ranges, null mappings and copies in
+both directions. They also check native output, newer returned interfaces and
+complete retirement. Mapping changes retain the application's synchronization
+requirements; the bridge does not add cross-queue dependency management.
 
 ### Vertex rewrite implementation notes
 

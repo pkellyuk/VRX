@@ -207,6 +207,10 @@ void STDMETHODCALLTYPE SetDescriptorHeaps(ID3D12GraphicsCommandList* object,UINT
         if(map.Valid()) q->SetDescriptorHeaps(count,right);
     });
 }
+void STDMETHODCALLTYPE CopyTiles(ID3D12GraphicsCommandList* object,ID3D12Resource* tiled,const D3D12_TILED_RESOURCE_COORDINATE* start,const D3D12_TILE_REGION_SIZE* size,ID3D12Resource* buffer,UINT64 offset,D3D12_TILE_COPY_FLAGS flags) {
+    Call call;Original<decltype(&CopyTiles)>(object,slot::ID3D12GraphicsCommandList_CopyTiles)(object,tiled,start,size,buffer,offset,flags);
+    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto r=map.Resource(tiled),b=map.Resource(buffer);if(map.Valid())q->CopyTiles(r,start,size,b,offset,flags);});
+}
 void STDMETHODCALLTYPE ClearDepthStencilView(ID3D12GraphicsCommandList* object,D3D12_CPU_DESCRIPTOR_HANDLE handle,D3D12_CLEAR_FLAGS flags,FLOAT depth,UINT8 stencil,UINT count,const D3D12_RECT* rects) {
     Call call; Original<decltype(&ClearDepthStencilView)>(object,slot::ID3D12GraphicsCommandList_ClearDepthStencilView)(object,handle,flags,depth,stencil,count,rects);
     if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Cpu(handle); if(map.Valid()) q->ClearDepthStencilView(right,flags,depth,stencil,count,rects);});
@@ -257,7 +261,7 @@ void List(ID3D12GraphicsCommandList* object) noexcept {
     RECORD_HOOK(SetDescriptorHeaps) RECORD_HOOK(Dispatch)
     RECORD_HOOK(ClearDepthStencilView) RECORD_HOOK(SetGraphicsRootDescriptorTable)
     RECORD_HOOK(SetGraphicsRootConstantBufferView) RECORD_HOOK(SetGraphicsRootShaderResourceView) RECORD_HOOK(SetGraphicsRootUnorderedAccessView)
-    RECORD_HOOK(SetPredication)
+    RECORD_HOOK(SetPredication) RECORD_HOOK(CopyTiles)
     RECORD_HOOK(SetComputeRootSignature) RECORD_HOOK(SetComputeRoot32BitConstant) RECORD_HOOK(SetComputeRoot32BitConstants)
     RECORD_HOOK(SetComputeRootDescriptorTable) RECORD_HOOK(SetComputeRootConstantBufferView)
     RECORD_HOOK(SetComputeRootShaderResourceView) RECORD_HOOK(SetComputeRootUnorderedAccessView)
@@ -266,10 +270,20 @@ void List(ID3D12GraphicsCommandList* object) noexcept {
     ++state.lists;
     } catch(...) { ++State().failures; }
 }
+void STDMETHODCALLTYPE UpdateTileMappings(ID3D12CommandQueue* object,ID3D12Resource* resource,UINT regions,const D3D12_TILED_RESOURCE_COORDINATE* starts,const D3D12_TILE_REGION_SIZE* sizes,ID3D12Heap* heap,UINT ranges,const D3D12_TILE_RANGE_FLAGS* flags,const UINT* offsets,const UINT* counts,D3D12_TILE_MAPPING_FLAGS mapping) {
+    Call call;Original<decltype(&UpdateTileMappings)>(object,slot::ID3D12CommandQueue_UpdateTileMappings)(object,resource,regions,starts,sizes,heap,ranges,flags,offsets,counts,mapping);
+    if(call.outer)mirror::QueueCommand(object,[&](auto* q,auto& map){auto r=map.Resource(resource);auto h=map.Memory(heap);if(map.Valid())q->UpdateTileMappings(r,regions,starts,sizes,h,ranges,flags,offsets,counts,mapping);});
+}
+void STDMETHODCALLTYPE CopyTileMappings(ID3D12CommandQueue* object,ID3D12Resource* dst,const D3D12_TILED_RESOURCE_COORDINATE* to,ID3D12Resource* src,const D3D12_TILED_RESOURCE_COORDINATE* from,const D3D12_TILE_REGION_SIZE* size,D3D12_TILE_MAPPING_FLAGS flags) {
+    Call call;Original<decltype(&CopyTileMappings)>(object,slot::ID3D12CommandQueue_CopyTileMappings)(object,dst,to,src,from,size,flags);
+    if(call.outer)mirror::QueueCommand(object,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->CopyTileMappings(d,to,s,from,size,flags);});
+}
 void Queue(ID3D12CommandQueue* queue) noexcept {
     try {
         auto& state = State(); std::lock_guard<std::recursive_mutex> lock(state.mutex);
         Add(state,queue,slot::ID3D12CommandQueue_ExecuteCommandLists,reinterpret_cast<void*>(&Execute));
+        Add(state,queue,slot::ID3D12CommandQueue_UpdateTileMappings,reinterpret_cast<void*>(&UpdateTileMappings));
+        Add(state,queue,slot::ID3D12CommandQueue_CopyTileMappings,reinterpret_cast<void*>(&CopyTileMappings));
         if(MH_ApplyQueued() != MH_OK) ++state.failures;
         ++state.queues;
     } catch(...) { ++State().failures; }
@@ -374,7 +388,14 @@ HRESULT STDMETHODCALLTYPE CreatePlaced1(ID3D12Device8* object,ID3D12Heap* heap,U
 }
 HRESULT STDMETHODCALLTYPE CreateReserved(ID3D12Device* object,const D3D12_RESOURCE_DESC* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,REFIID iid,void** output) {
     Call call;const auto result=Original<decltype(&CreateReserved)>(object,slot::ID3D12Device_CreateReservedResource)(object,desc,initial,clear,iid,output);
-    if(call.outer && SUCCEEDED(result) && output && *output){++State().resources;mirror::Unsupported(object,"reserved/tiled resources require mapping translation");}return result;
+    if(call.outer && SUCCEEDED(result) && output && *output)ResourceCreated(object,*output,[&](auto* resource){mirror::ReservedResource(object,resource,desc,initial,clear);});return result;
+}
+HRESULT STDMETHODCALLTYPE CreateReserved1(ID3D12Device4* object,const D3D12_RESOURCE_DESC* desc,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,ID3D12ProtectedResourceSession* protectedSession,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreateReserved1)>(object,slot::ID3D12Device4_CreateReservedResource1)(object,desc,initial,clear,protectedSession,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){
+        ++State().modern;if(protectedSession)mirror::Unsupported(object,"protected reserved resources cannot be mirrored");
+        ResourceCreated(object,*output,[&](auto* resource){mirror::ReservedResource(object,resource,desc,initial,clear);});
+    }return result;
 }
 HRESULT STDMETHODCALLTYPE AllocatorReset(ID3D12CommandAllocator* object) {
     Call call; auto result=Original<decltype(&AllocatorReset)>(object,slot::ID3D12CommandAllocator_Reset)(object);
@@ -555,6 +576,7 @@ void Attach(ID3D12Device* device) noexcept {
             Add(state,newer.Get(),slot::ID3D12Device4_CreateCommandList1,reinterpret_cast<void*>(&CreateList1));
             Add(state,newer.Get(),slot::ID3D12Device4_CreateCommittedResource1,reinterpret_cast<void*>(&CreateResource1));
             Add(state,newer.Get(),slot::ID3D12Device4_CreateHeap1,reinterpret_cast<void*>(&CreateMemory1));
+            Add(state,newer.Get(),slot::ID3D12Device4_CreateReservedResource1,reinterpret_cast<void*>(&CreateReserved1));
         }
         if(SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&newest)))) {
             Add(state,newest.Get(),slot::ID3D12Device8_CreateCommittedResource2,reinterpret_cast<void*>(&CreateResource2));
