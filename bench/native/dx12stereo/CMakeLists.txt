@@ -42,3 +42,28 @@ if(VRX_DX12_ENGINE)
         -Engine "${VRX_DX12_ENGINE}" -Producer "$<TARGET_FILE:dx12_publisher_test>" -Gpu -SameFrame)
     set_tests_properties(native_dx12_engine_handoff PROPERTIES TIMEOUT 45)
 endif()
+# Independently authored fixtures can also check an externally built Vulkan
+# layer. The adapted mirror implementation is deliberately not vendored here.
+set(VRX_VULKAN_LAYER_DIRECTORY "" CACHE PATH "Optional external VRX Vulkan layer for presentation regressions")
+if(VRX_VULKAN_LAYER_DIRECTORY)
+    if(NOT EXISTS "${VRX_VULKAN_LAYER_DIRECTORY}/vrx_xgstereo.dll" OR NOT EXISTS "${VRX_VULKAN_LAYER_DIRECTORY}/VkLayer_vrx_xgstereo.json")
+        message(FATAL_ERROR "VRX_VULKAN_LAYER_DIRECTORY must contain the built layer DLL and manifest")
+    endif()
+    include(FetchContent)
+    FetchContent_Declare(vulkan_headers GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+        GIT_TAG 354fab82dbd91d2526a41ee4dbfff1012a623798)
+    FetchContent_Declare(spirv_headers GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Headers.git
+        GIT_TAG 04f10f650d514df88b76d25e83db360142c7b174)
+    FetchContent_MakeAvailable(vulkan_headers spirv_headers)
+    add_executable(vulkan_presentation_test ../xgstereo/present_test.cpp)
+    target_link_libraries(vulkan_presentation_test PRIVATE Vulkan::Headers SPIRV-Headers::SPIRV-Headers d3d12 dxgi dxguid user32)
+    target_compile_definitions(vulkan_presentation_test PRIVATE VK_NO_PROTOTYPES VK_USE_PLATFORM_WIN32_KHR WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(vulkan_presentation_test PRIVATE /W4 /WX /EHsc)
+    endif()
+    add_test(NAME external_vulkan_gpu_present COMMAND vulkan_presentation_test --gpu)
+    add_test(NAME external_vulkan_mirror COMMAND vulkan_presentation_test --mirror)
+    add_test(NAME external_vulkan_metadata_contention COMMAND vulkan_presentation_test --mirror-contention)
+    set_tests_properties(external_vulkan_gpu_present external_vulkan_mirror external_vulkan_metadata_contention
+        PROPERTIES ENVIRONMENT "VK_LAYER_PATH=${VRX_VULKAN_LAYER_DIRECTORY}" TIMEOUT 30)
+endif()

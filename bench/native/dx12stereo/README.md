@@ -65,3 +65,11 @@ copies before releasing their resources.
 The shared metadata carries one frame ID for both eye slices. It describes the
 producer's contract, not proof that a caller supplied correct simulation data.
 The draw and readback checks provide that evidence for the included fixture.
+
+`VRX_VULKAN_LAYER_DIRECTORY` optionally builds the independently authored Vulkan
+presentation fixtures against a separately supplied layer. The pinned Vulkan
+and SPIR-V headers are fetched only when this option is enabled. These checks
+cover GPU presentation, command mirroring and six real metadata-mutex holds
+followed by ten verified fresh pairs. The hold count has a deadline rather than
+a fixed number of rendered frames, because reservation observation depends on
+thread scheduling. The adapted mirror source itself is not included.
