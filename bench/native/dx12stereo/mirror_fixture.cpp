@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Paul Kelly. SPDX-License-Identifier: GPL-3.0-or-later
 #include "mirror_scene.h"
+#include "status.h"
 static void AliasCopies(Scene& scene) {
     constexpr UINT64 alignment=D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     D3D12_HEAP_DESC heap{};heap.Properties.Type=D3D12_HEAP_TYPE_DEFAULT;heap.SizeInBytes=3*alignment;heap.Flags=D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS;
@@ -33,6 +34,7 @@ int main(int argc,char** argv) {
         const auto module=GetModuleHandleW(L"d3d12.dll");
         counts=reinterpret_cast<CountsFn>(GetProcAddress(module,"VRX_DX12_GetCounts")); twin=reinterpret_cast<TwinFn>(GetProcAddress(module,"VRX_DX12_GetTwin")); scope=reinterpret_cast<ScopeFn>(GetProcAddress(module,"VRX_DX12_DiagnosticScope"));
         Check(counts && twin && scope,"local native mirror bridge loaded");
+        const auto session=L"native-mirror-status-"+std::to_wstring(GetCurrentProcessId());Check(SetEnvironmentVariableW(L"VRX_XG_SESSION",session.c_str())!=0,"set isolated diagnostics session");
         ComPtr<ID3D12Debug> debug; if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) debug->EnableDebugLayer();
         double distance[2]{};
         {
@@ -55,6 +57,9 @@ int main(int argc,char** argv) {
         Check(!result.mirrorLiveObjects,"all original identities and shadow objects retire after app release");
         if(modern)Check(result.streamPipelines>=2 && result.memoryHeaps>=7 && result.placedResources>=8 && result.modernResources>=5,"modern pipeline/resource factories were actually intercepted");
         if(unsupported)Check(std::strstr(result.reason,"predication")!=nullptr,"unsupported command has an actionable stop reason");
+        vrx::dx12::StatusReader status;vrx::dx12::StatusFrame frame;
+        Check(status.Open(session) && status.Read(frame,GetCurrentProcessId()) && frame.mirroring && frame.counts.mirrorReplays==result.mirrorReplays &&
+            frame.counts.streamPipelines==result.streamPipelines && !std::strcmp(frame.counts.reason,result.reason),"live bridge status exposes the same counts and stop reason over bounded IPC");
         std::printf("PASS: native DX12 command/resource mirror; 18 same-frame replays, disparity %.2f/%.2f; original output, HUD, lifetime cleanup%s%s\n",distance[1],distance[0],unsupported?", unsupported-command fallback":"",compute?", GPU compute-to-graphics dependencies":bindings?", SRV/CBV descriptors, root buffers and depth occlusion":"");
         return 0;
     } catch(const std::exception& e) { std::fprintf(stderr,"FAIL: %s\n",e.what()); return 1; }

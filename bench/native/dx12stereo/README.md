@@ -5,12 +5,12 @@ not load Vulkan or DXVK. `Publisher` accepts two eye resources from the same
 simulation frame and submits GPU copies on their rendering queue. The shared
 transport is also used by the local experimental Vulkan backend.
 
-**Status:** producer, transport and native command interception foundation
-implemented, together with a GPU-tested shader-model-5 vertex rewrite library.
-Command/resource mirroring and DXIL rewriting are not implemented here yet.
-Interception and rewriting are tested with fixtures, not arbitrary real games.
-This does not enable the desktop DX12 button. The fixture supplies both views
-explicitly, so passing these tests does not prove stereo in an unmodified game.
+**Status:** GPU transport, native command/resource replay, swapchain publication
+and a GPU-tested shader-model-5 vertex rewrite library are implemented for the
+subset described below. DXIL rewriting remains unsupported. Ordinary native
+fixtures render one view; the bridge creates the second eye from those commands.
+These checks do not establish compatibility with arbitrary games and do not
+enable the desktop DX12 button.
 
 Build and test on Windows x64 with the Visual Studio C++ tools and Windows SDK:
 
@@ -225,9 +225,41 @@ Upload buffers are copied in full at submission and need a scalable update
 strategy. Presentation currently requires one of those typed 8-bit formats, a single direct queue/node and
 blocking Present semantics; `DO_NOT_WAIT` stops the stream rather than reporting
 an unaccepted Present as a successful publication. HDR colour-space interpretation/conversion,
-managed launch/cleanup and real-game
-validation remain necessary. Multi-node devices and non-default command-list
+managed chooser launch/cleanup and real-game
+stereo validation remain necessary. Multi-node devices and non-default command-list
 flags are rejected. Existing games are not launched with this backend by the chooser.
+
+### Scoped native launch and live diagnostics
+
+`launch-native.ps1 -Executable PATH -Session TOKEN [-SteamAppId ID]` launches an
+x64 application with an app-local bridge. The launcher waits for exit, then
+removes only its unchanged DLL, provided no other instance is using that game
+directory. It preserves existing `d3d12.dll`, `d3d11.dll` and `dxgi.dll` files and
+refuses to overwrite them. Arguments are passed literally; the default Unreal
+arguments request DX12 in a 1280x720 window. Use `-GameArguments` for other engines.
+`-ObserveOnly` forwards native rendering without creating right-eye resources.
+Keep the launcher alive: its `out/native-GUID` directory records process/file
+ownership for recovery if the launcher is interrupted; startup recovery is not
+yet implemented. This CLI does not wire up the desktop chooser.
+
+`dx12_status.exe TOKEN [EXPECTED_PID]` reads bounded, process-owned JSON counters
+and the first replay-stop reason without loading a graphics device in the reader.
+The snapshot identifies observation versus mirroring mode, its PID and age.
+Native updates are throttled and drop rather than wait on a diagnostics reader.
+A live process, recent counters, actual publications and a verified GPU stream
+are all necessary before advertising a successful stereo connection; a launched
+process or a zero stop count alone is insufficient.
+
+The launcher integration test runs an ordinary native application from a path
+containing spaces/brackets, verifies live status in another process in both
+modes, stops it normally, and checks owned cleanup and existing-DLL preservation.
+
+A local System Shock Remake Steam build 22239093 test used native `-dx12` with
+this launcher. Observation recorded pipeline streams, placed resources and
+memory heaps with zero hook failures; the game exited normally and its bridge
+was removed. With mirroring requested, the game continued rendering but replay
+stopped at reserved/tiled resource creation. No stereo frames were published.
+This establishes a concrete missing feature, not native DX12 game compatibility.
 
 ### Vertex rewrite implementation notes
 

@@ -3,6 +3,7 @@
 #include "dxbc_patch.h"
 #include "publisher.h"
 #include "pipeline_stream.h"
+#include "interceptor.h"
 #include <wrl/client.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -108,6 +109,7 @@ void Stop(const std::shared_ptr<Context>& context,const char* reason) {
         strncpy_s(Registry().counts.reason,sizeof(Registry().counts.reason),reason,_TRUNCATE);
         for(const auto& entry:Registry().objects)
             if(entry.second->context==context && entry.second->publisher) entry.second->publisher->Close();
+        vrx::dx12::Report(true);
     }
 }
 void Failure(void* original,const char* reason) noexcept { try { Lock lock(Registry().mutex); Drain(); Stop(Owner(original),reason); } catch(...) {} }

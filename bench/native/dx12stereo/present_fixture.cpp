@@ -49,10 +49,12 @@ int main(int argc,char** argv) {
                 ComPtr<IDXGISwapChain1> base;Hr(factory->CreateSwapChainForHwnd(scene.queue.Get(),window.handle,&d,nullptr,nullptr,&base));Hr(base.As(&chain));
             }
             if(serve) {
-                struct Events {HANDLE ready[2]{};~Events(){for(auto event:ready)if(event)CloseHandle(event);}} events;
+                struct Events {HANDLE ready[2]{},stop=nullptr;~Events(){for(auto event:ready)if(event)CloseHandle(event);if(stop)CloseHandle(stop);}} events;
+                events.stop=CreateEventW(nullptr,TRUE,FALSE,(L"Local\\VRX.dx12."+session+L".fixture-stop").c_str());Check(events.stop!=nullptr,"create fixture stop event");
                 if(resizeServe)for(UINT i=0;i<2;++i){const auto name=L"Local\\VRX.geometry."+session+L".resize-check."+std::to_wstring(i);events.ready[i]=CreateEventW(nullptr,FALSE,FALSE,name.c_str());Check(events.ready[i]!=nullptr,"create resize handshake");}
                 UINT step=0;
                 for(UINT frame=1;frame<10000;++frame) {
+                    if(WaitForSingleObject(events.stop,0)==WAIT_OBJECT_0)break;
                     if(resizeServe && step<2 && WaitForSingleObject(events.ready[step],0)==WAIT_OBJECT_0) {
                         scene.Wait();scene.eyes.Reset();scene.width=step?97:129;scene.height=step?65:73;
                         if(bgra && step==1)format=DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -62,8 +64,10 @@ int main(int argc,char** argv) {
                     scene.device->CreateRenderTargetView(scene.eyes.Get(),nullptr,scene.rtv->GetCPUDescriptorHandleForHeapStart());
                     Frame(scene,frame%24,2,false,frame%3==0,nullptr,true);Hr(chain->Present(0,0));scene.DebugCheck();Sleep(5);
                 }
-                return 0;
+                scene.Wait();scene.eyes.Reset();chain.Reset();
+                vrx::dx12::Counts retired;Hr(counts(&retired,sizeof(retired)));
             }
+            else {
             for(UINT frame=1;frame<=18;++frame) {
                 if(frame==7 || frame==13) {
                     scene.Wait();scene.eyes.Reset();scene.width=frame==7?129:97;scene.height=frame==7?73:65;
@@ -94,9 +98,14 @@ int main(int argc,char** argv) {
             vrx::dx12::Counts retired;xg::GpuSlotInfo closed;const auto until=GetTickCount64()+5000;
             while(GetTickCount64()<until) {Hr(counts(&retired,sizeof(retired)));if(consumer->reader.Status(0,closed)==xg::PairRead::Closed)break;Sleep(1);}
             Check(consumer->reader.Status(0,closed)==xg::PairRead::Closed,"swapchain destruction closes the shared stream");
+            }
         }
         {Diagnostic diagnostic;consumer.reset();}
         vrx::dx12::Counts result;Hr(counts(&result,sizeof(result)));
+        if(serve) {
+            Check(!result.hookFailures && !result.mirrorStops && !result.mirrorLiveObjects,"serving fixture retires native and shadow objects cleanly");
+            std::puts("PASS: serving fixture shut down cleanly");return 0;
+        }
         Check(result.version==4 && !result.hookFailures && !result.mirrorStops,"presentation has no hook or replay failures");
         Check(result.swapchains==1 && result.presentations==18 && result.publications==18 && !result.presentDrops && result.resizes==2,"one publication per real Present and two resize transactions");
         Check(result.devices==1 && result.mirrorReplays==18 && result.draws==12 && result.indexedDraws==6,"the app renders once; internal publisher and consumer are excluded from interception");

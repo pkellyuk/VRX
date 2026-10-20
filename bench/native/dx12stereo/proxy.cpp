@@ -79,7 +79,7 @@ extern "C" HRESULT WINAPI D3D12CreateVersionedRootSignatureDeserializer(LPCVOID 
 }
 extern "C" HRESULT WINAPI VRX_DX12_GetCounts(vrx::dx12::Counts* output,UINT bytes) noexcept {
     if(!output || bytes!=sizeof(*output)) return E_INVALIDARG;
-    vrx::dx12::Snapshot(*output); return S_OK;
+    vrx::dx12::Snapshot(*output);vrx::dx12::Report(true);return S_OK;
 }
 extern "C" HRESULT WINAPI VRX_DX12_GetTwin(ID3D12Resource* resource,ID3D12Resource** output) noexcept {
     return vrx::dx12::mirror::Twin(resource,output);

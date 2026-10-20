@@ -4,6 +4,7 @@
 #include "interceptor.h"
 #include "dx12_slots.h"
 #include "mirror.h"
+#include "status.h"
 #include <MinHook.h>
 #include <wrl/client.h>
 #include <mutex>
@@ -278,7 +279,7 @@ void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* object,UINT count,ID3D12Comma
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*,UINT,ID3D12CommandList* const*);
     if(call.outer) ++State().submits;
     const auto execute=Original<Fn>(object,slot::ID3D12CommandQueue_ExecuteCommandLists);
-    if(call.outer) mirror::Execute(object,count,lists,execute); else execute(object,count,lists);
+    if(call.outer){mirror::Execute(object,count,lists,execute);Report();}else execute(object,count,lists);
 }
 HRESULT STDMETHODCALLTYPE CreateQueue(ID3D12Device* object,const D3D12_COMMAND_QUEUE_DESC* desc,REFIID iid,void** output) {
     Call call;
@@ -563,7 +564,7 @@ void Attach(ID3D12Device* device) noexcept {
         ++state.devices;
         lock.unlock();Lifetime(device);mirror::Device(device);
         for(auto* alias:{static_cast<IUnknown*>(streams.Get()),static_cast<IUnknown*>(newer.Get()),static_cast<IUnknown*>(newest.Get())})if(alias){Lifetime(alias);mirror::Alias(device,alias);}
-        PresentationHooks();
+        PresentationHooks();Report(true);
     } catch(...) { ++State().failures; }
 }
 void Snapshot(Counts& output) noexcept {
@@ -578,4 +579,18 @@ void Snapshot(Counts& output) noexcept {
 }
 void DiagnosticScope(bool enter) noexcept { if(enter) ++callDepth; else if(callDepth) --callDepth; }
 bool ApiOuter() noexcept {return callDepth==0;}
+void Report(bool force) noexcept {
+    static std::atomic<uint64_t> updated{0};thread_local bool reporting=false;if(reporting)return;
+    struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(reporting);
+    try {
+        static auto* writer=[]()->StatusWriter* {
+            wchar_t session[66]{};const auto length=GetEnvironmentVariableW(L"VRX_XG_SESSION",session,66);if(!length || length>=66)return nullptr;
+            wchar_t mode[3]{};const bool mirroring=GetEnvironmentVariableW(L"VRX_DX12_MIRROR",mode,3)==1 && mode[0]==L'1';
+            auto value=std::make_unique<StatusWriter>();if(!value->Create(session,mirroring))return nullptr;return value.release();
+        }();
+        if(!writer)return;const auto now=GetTickCount64();auto previous=updated.load();
+        if(!force && (now-previous<100 || !updated.compare_exchange_strong(previous,now)))return;
+        if(force)updated.store(now);Counts snapshot;Snapshot(snapshot);writer->Publish(snapshot);
+    }catch(...){} // Optional diagnostics must never prevent native rendering.
+}
 } // namespace vrx::dx12

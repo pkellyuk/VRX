@@ -19,4 +19,5 @@ void Attach(ID3D12Device* device) noexcept;
 void Snapshot(Counts& output) noexcept;
 void DiagnosticScope(bool enter) noexcept;
 bool ApiOuter() noexcept;
+void Report(bool force=false) noexcept;
 }
