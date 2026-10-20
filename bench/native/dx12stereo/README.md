@@ -53,8 +53,10 @@ handoff without starting OpenXR or AI inference.
 Call `Create` with a single-node DIRECT queue and a unique session name. After
 submitting both eyes' rendering, serialize `Submit` with other submissions to
 that queue. Supply the exact current states of the two subresources. Resources
-must belong to that queue's device. Only typed RGBA8, single-sample, one-mip 2D
-textures or array slices are currently accepted. Unsupported formats need
+must belong to that queue's device. The typed SDR formats listed below,
+single-sample, one-mip 2D textures or array slices are accepted. Direct publisher
+callers must establish the source's SDR interpretation; swapchain interception
+tracks colour-space changes. Unsupported formats need
 explicit conversion; they must not be reinterpreted as RGBA8.
 
 Input states are restored after the GPU copies. A GPU completion fence protects
@@ -200,6 +202,11 @@ These exercise the production reconnect and presentation functions without XR.
 ### Native 8-bit formats
 
 The publisher accepts typed RGBA8, BGRA8 and BGRX8, including their sRGB variants.
+It also converts SDR `R10G10B10A2_UNORM` using a compatible typeless staging
+resource and a normalized ten-bit view. The GPU explicitly rounds RGB to the
+nearest 8-bit value and preserves all four two-bit alpha levels. Pixel tests
+exercise every 10-bit RGB code and compare against integer reference rounding;
+they also verify the original packed bytes remain unchanged.
 RGBA uses a byte-preserving compatible-format copy. BGRA/BGRX first copy the two
 game views into a private typeless array, then a compute pass writes canonical
 RGBA8 directly into a UAV-capable shared texture. Thus the game backbuffer needs
@@ -214,7 +221,12 @@ hardware/WARP tests cover all six formats, every 8-bit channel value, odd extent
 nonzero array slices, alpha, untouched original resources, and pressure on all
 three in-flight slots. BGRA swapchain tests also change back to RGBA at resize;
 VRX handoff and automatic stereo/mono reconnect tests cover that format change.
-Only compatible format families are copied, following Microsoft's
+Swapchain colour spaces are tracked through successful `SetColorSpace1` calls.
+Only full-range SDR Rec.709 is published. PQ/HDR, linear and wide-gamut changes
+stop publication with a diagnostic instead of treating encoded HDR as SDR;
+failed native colour-space changes leave the active stream alone. The native
+10-bit swapchain tests verify disparity, same-frame identity, resizes and cleanup
+on hardware and WARP. Only compatible format families are copied, following Microsoft's
 [CopyTextureRegion requirements](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytextureregion).
 
 This remains a limited graphics/compute/presentation subset, not a game-ready DX12 route.
@@ -222,7 +234,7 @@ Predication and raytracing acceleration-structure views currently stop replay.
 Many commands and newer resource/pipeline creation APIs still need interception
 and translation; unobserved commands are not yet comprehensively rejected.
 Upload buffers are copied in full at submission and need a scalable update
-strategy. Presentation currently requires one of those typed 8-bit formats, a single direct queue/node and
+strategy. Presentation currently requires one of those typed SDR formats, a single direct queue/node and
 blocking Present semantics; `DO_NOT_WAIT` stops the stream rather than reporting
 an unaccepted Present as a successful publication. HDR colour-space interpretation/conversion,
 managed chooser launch/cleanup and real-game

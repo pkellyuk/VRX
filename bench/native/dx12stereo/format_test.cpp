@@ -10,6 +10,12 @@ constexpr UINT width=257,height=17,slices=3;
 std::array<uint8_t,4> Color(UINT frame,UINT slice,UINT x,UINT y,bool opaque=false) {
     return {uint8_t(x+slice*31+frame*17),uint8_t(x*5+y*13+slice*47+frame*7),uint8_t(x*3+y*5+frame*19+slice*11),uint8_t(opaque?255:x^y^(slice*53)^(frame*29))};
 }
+std::array<UINT,4> Ten(UINT frame,UINT slice,UINT x,UINT y){return {(x*4+frame+slice*31)%1024,(x*7+y*13+frame*19+slice*47)%1024,(x*11+y*5+frame*29+slice*53)%1024,(x+y+frame+slice)%4};}
+std::array<uint8_t,4> InputBytes(DXGI_FORMAT format,UINT frame,UINT slice,UINT x,UINT y){
+    auto bytes=Color(frame,slice,x,y);
+    if(format==DXGI_FORMAT_R10G10B10A2_UNORM){const auto c=Ten(frame,slice,x,y);const UINT packed=c[0]|c[1]<<10|c[2]<<20|c[3]<<30;std::memcpy(bytes.data(),&packed,4);}
+    else if(xg::dx12::FormatConvert::Needed(format))std::swap(bytes[0],bytes[2]);return bytes;
+}
 ComPtr<ID3D12Resource> Buffer(ID3D12Device* device,UINT64 bytes,D3D12_HEAP_TYPE type) {
     D3D12_HEAP_PROPERTIES heap{};heap.Type=type;D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;desc.Width=bytes;
     desc.Height=desc.DepthOrArraySize=desc.MipLevels=1;desc.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;desc.SampleDesc.Count=1;
@@ -19,16 +25,21 @@ xg::PairFrame Read(xg::gpu_test::Snapshot& snapshot) {
     xg::PairFrame pair;const auto until=GetTickCount64()+5000;while(!snapshot.Read(pair) && GetTickCount64()<until)Sleep(1);
     Check(!pair.rgba.empty(),"converted shared GPU pair arrived");return pair;
 }
-void Pixels(const xg::PairFrame& pair,UINT frame,uint64_t id,bool opaque) {
+void Pixels(const xg::PairFrame& pair,UINT frame,uint64_t id,bool opaque,DXGI_FORMAT format) {
     Check(pair.header.leftFrame==id && pair.header.rightFrame==id && pair.header.eyeWidth==width && pair.header.eyeHeight==height,"same-frame IDs and odd native extent survive conversion");
     for(UINT eye=0;eye<2;++eye)for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x) {
-        const auto expected=Color(frame,eye?0:2,x,y,opaque);const auto* pixel=pair.rgba.data()+(size_t(y)*width*2+eye*width+x)*4;
-        Check(!std::memcmp(expected.data(),pixel,4),"exact encoded RGB, alpha and nonzero input slice identity");
+        auto expected=Color(frame,eye?0:2,x,y,opaque);
+        if(format==DXGI_FORMAT_R10G10B10A2_UNORM){const auto c=Ten(frame,eye?0:2,x,y);for(UINT i=0;i<3;++i)expected[i]=uint8_t((c[i]*255+511)/1023);expected[3]=uint8_t(c[3]*85);}
+        const auto* pixel=pair.rgba.data()+(size_t(y)*width*2+eye*width+x)*4;
+        if(std::memcmp(expected.data(),pixel,4))throw std::runtime_error("format "+std::to_string(UINT(format))+" at "+std::to_string(x)+","+std::to_string(y)+": expected "+std::to_string(expected[0])+","+std::to_string(expected[1])+","+std::to_string(expected[2])+","+std::to_string(expected[3])+"; got "+std::to_string(pixel[0])+","+std::to_string(pixel[1])+","+std::to_string(pixel[2])+","+std::to_string(pixel[3]));
     }
 }
 void Format(IUnknown* adapter,DXGI_FORMAT format) {
     Scene scene;scene.Init(adapter);
-    const bool bgra=xg::dx12::FormatConvert::Needed(format),opaque=format==DXGI_FORMAT_B8G8R8X8_UNORM || format==DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
+    const bool opaque=format==DXGI_FORMAT_B8G8R8X8_UNORM || format==DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
+    Check(xg::dx12::FormatConvert::PresentationSupported(format,DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709) &&
+        !xg::dx12::FormatConvert::PresentationSupported(format,DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020) &&
+        !xg::dx12::FormatConvert::PresentationSupported(format,DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709),"SDR presentation accepted; PQ/HDR and linear colour spaces require a transform");
     D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;D3D12_RESOURCE_DESC desc{};
     desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=width;desc.Height=height;desc.DepthOrArraySize=slices;desc.MipLevels=1;
     desc.SampleDesc.Count=1;desc.Format=format;desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
@@ -43,7 +54,7 @@ void Format(IUnknown* adapter,DXGI_FORMAT format) {
     for(UINT frame=1;frame<=5;++frame) {
         scene.Wait();void* mapped=nullptr;Hr(upload->Map(0,nullptr,&mapped));
         for(UINT slice=0;slice<slices;++slice)for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x) {
-            auto color=Color(frame,slice,x,y);if(bgra)std::swap(color[0],color[2]);
+            auto color=InputBytes(format,frame,slice,x,y);
             std::memcpy(static_cast<uint8_t*>(mapped)+footprints[slice].Offset+size_t(y)*footprints[slice].Footprint.RowPitch+x*4,color.data(),4);
         }
         upload->Unmap(0,nullptr);Hr(scene.allocator->Reset());Hr(scene.commands->Reset(scene.allocator.Get(),nullptr));
@@ -56,7 +67,7 @@ void Format(IUnknown* adapter,DXGI_FORMAT format) {
         std::swap(b.Transition.StateBefore,b.Transition.StateAfter);scene.commands->ResourceBarrier(1,&b);Hr(scene.commands->Close());
         ID3D12CommandList* commands[]={scene.commands.Get()};scene.queue->ExecuteCommandLists(1,commands);
         Check(publisher.Submit(frame,{source.Get(),2,D3D12_RESOURCE_STATE_RENDER_TARGET},{source.Get(),0,D3D12_RESOURCE_STATE_RENDER_TARGET})==xg::dx12::PublishResult::Published,"publish current input slice data");
-        Pixels(Read(snapshot),frame,frame,opaque);scene.Wait();
+        Pixels(Read(snapshot),frame,frame,opaque,format);scene.Wait();
         // Read the game's original resource after the conversion and prove its
         // state was restored and none of its original encoded bytes changed.
         Hr(scene.allocator->Reset());Hr(scene.commands->Reset(scene.allocator.Get(),nullptr));
@@ -68,7 +79,7 @@ void Format(IUnknown* adapter,DXGI_FORMAT format) {
         std::swap(b.Transition.StateBefore,b.Transition.StateAfter);scene.commands->ResourceBarrier(1,&b);Hr(scene.commands->Close());scene.queue->ExecuteCommandLists(1,commands);scene.Wait();
         Hr(readback->Map(0,nullptr,&mapped));
         for(UINT slice=0;slice<slices;++slice)for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x) {
-            auto color=Color(frame,slice,x,y);if(bgra)std::swap(color[0],color[2]);
+            auto color=InputBytes(format,frame,slice,x,y);
             Check(!std::memcmp(color.data(),static_cast<uint8_t*>(mapped)+footprints[slice].Offset+size_t(y)*footprints[slice].Footprint.RowPitch+x*4,4),"source bytes and alpha remain unchanged");
         }
         readback->Unmap(0,nullptr);scene.DebugCheck();
@@ -78,7 +89,7 @@ void Format(IUnknown* adapter,DXGI_FORMAT format) {
     Hr(scene.device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&gate.fence)));Hr(scene.queue->Wait(gate.fence.Get(),1));
     for(UINT frame=10;frame<13;++frame)Check(publisher.Submit(frame,{source.Get(),2,D3D12_RESOURCE_STATE_RENDER_TARGET},{source.Get(),0,D3D12_RESOURCE_STATE_RENDER_TARGET})==xg::dx12::PublishResult::Published,"bounded in-flight conversion slots");
     const auto before=GetTickCount64();Check(publisher.Submit(13,{source.Get(),2,D3D12_RESOURCE_STATE_RENDER_TARGET},{source.Get(),0,D3D12_RESOURCE_STATE_RENDER_TARGET})==xg::dx12::PublishResult::Dropped && GetTickCount64()-before<100,"full conversion ring drops without GPU waiting");
-    Hr(gate.fence->Signal(1));scene.Wait();Pixels(Read(snapshot),5,12,opaque);scene.DebugCheck();
+    Hr(gate.fence->Signal(1));scene.Wait();Pixels(Read(snapshot),5,12,opaque,format);scene.DebugCheck();
     std::printf("PASS: native DX12 format %u, exact RGB/alpha, source preservation, eye slices and bounded GPU conversion\n",UINT(format));
 }
 }
@@ -86,7 +97,7 @@ int main(int argc,char** argv) {
     try {
         ComPtr<ID3D12Debug> debug;if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))debug->EnableDebugLayer();
         ComPtr<IDXGIAdapter> adapter;if(argc==2 && !std::strcmp(argv[1],"--warp")){ComPtr<IDXGIFactory4> factory;Hr(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));Hr(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)));}
-        for(const auto format:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,DXGI_FORMAT_B8G8R8X8_UNORM,DXGI_FORMAT_B8G8R8X8_UNORM_SRGB})Format(adapter.Get(),format);
+        for(const auto format:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,DXGI_FORMAT_B8G8R8X8_UNORM,DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,DXGI_FORMAT_R10G10B10A2_UNORM})Format(adapter.Get(),format);
         return 0;
     }catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }

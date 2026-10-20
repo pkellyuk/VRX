@@ -473,6 +473,10 @@ void STDMETHODCALLTYPE CopyDescriptors(ID3D12Device* object,UINT dstCount,const 
         if(map.Valid())d->CopyDescriptors(dstCount,target.data(),dstSizes,srcCount,source.data(),srcSizes,type);
     });
 }
+HRESULT STDMETHODCALLTYPE SetColorSpace1(IDXGISwapChain3* object,DXGI_COLOR_SPACE_TYPE color) {
+    Call call;const auto result=Original<decltype(&SetColorSpace1)>(object,slot::IDXGISwapChain3_SetColorSpace1)(object,color);
+    if(call.outer && SUCCEEDED(result))mirror::ColorSpace(object,color);return result;
+}
 HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* object,UINT sync,UINT flags) {
     Call call;if(call.outer)mirror::Present(object,flags);
     return Original<decltype(&Present)>(object,slot::IDXGISwapChain_Present)(object,sync,flags);
@@ -509,6 +513,7 @@ void Chain(IUnknown* device,IDXGISwapChain* chain) noexcept {
         if(newer) {
             Add(state,newer.Get(),slot::IDXGISwapChain1_Present1,reinterpret_cast<void*>(&Present1));
             Add(state,newer.Get(),slot::IDXGISwapChain3_ResizeBuffers1,reinterpret_cast<void*>(&ResizeBuffers1));
+            Add(state,newer.Get(),slot::IDXGISwapChain3_SetColorSpace1,reinterpret_cast<void*>(&SetColorSpace1));
         }
         if(MH_ApplyQueued()!=MH_OK)++state.failures;
     } catch(...) {++State().failures;mirror::Unsupported(chain,"swapchain hook installation failed");}

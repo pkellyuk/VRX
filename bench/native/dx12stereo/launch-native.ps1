@@ -71,6 +71,7 @@ try {
     $start.Environment['VRX_DX12_CONVERGENCE']=$Convergence.ToString('R',[Globalization.CultureInfo]::InvariantCulture)
     # Test-only fixture options must never leak into a selected ordinary game.
     $start.Environment.Remove('VRX_DX12_TEST_BGRA') > $null;$start.Environment.Remove('VRX_DX12_TEST_MODERN') > $null
+    $start.Environment.Remove('VRX_DX12_TEST_TEN') > $null
     if($SteamAppId){$start.Environment['SteamAppId']=$SteamAppId;$start.Environment['SteamGameId']=$SteamAppId}
     $child=[Diagnostics.Process]::Start($start);if(-not $child){throw 'Native DX12 app did not start'};$started=$true
     [pscustomobject]@{Pid=$child.Id;StartTicks=$child.StartTime.ToUniversalTime().Ticks;Executable=$application;Session=$Session;Backend='dx12';ObserveOnly=$ObserveOnly.IsPresent;Arguments=$GameArguments} |

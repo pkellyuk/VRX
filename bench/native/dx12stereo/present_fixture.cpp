@@ -23,7 +23,8 @@ int main(int argc,char** argv) {
         Check(legacy || serve || argument=="--present","known presentation fixture mode");
         Check(argc!=3 || warp,"known adapter option");
         wchar_t formatOption[3]{};const bool bgra=GetEnvironmentVariableW(L"VRX_DX12_TEST_BGRA",formatOption,3)==1 && formatOption[0]==L'1';
-        auto format=bgra?DXGI_FORMAT_B8G8R8A8_UNORM:DXGI_FORMAT_R8G8B8A8_UNORM;
+        const bool ten=GetEnvironmentVariableW(L"VRX_DX12_TEST_TEN",formatOption,3)==1 && formatOption[0]==L'1';
+        auto format=ten?DXGI_FORMAT_R10G10B10A2_UNORM:bgra?DXGI_FORMAT_B8G8R8A8_UNORM:DXGI_FORMAT_R8G8B8A8_UNORM;
         const auto module=GetModuleHandleW(L"d3d12.dll");
         counts=reinterpret_cast<CountsFn>(GetProcAddress(module,"VRX_DX12_GetCounts"));scope=reinterpret_cast<ScopeFn>(GetProcAddress(module,"VRX_DX12_DiagnosticScope"));
         Check(counts && scope,"native proxy diagnostics loaded");
@@ -48,6 +49,8 @@ int main(int argc,char** argv) {
                 d.SampleDesc.Count=1;d.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;d.BufferCount=2;d.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
                 ComPtr<IDXGISwapChain1> base;Hr(factory->CreateSwapChainForHwnd(scene.queue.Get(),window.handle,&d,nullptr,nullptr,&base));Hr(base.As(&chain));
             }
+            Hr(chain->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709));
+            Check(FAILED(chain->SetColorSpace1(DXGI_COLOR_SPACE_CUSTOM)),"native runtime rejects invalid color space without stopping replay");
             if(serve) {
                 struct Events {HANDLE ready[2]{},stop=nullptr;~Events(){for(auto event:ready)if(event)CloseHandle(event);if(stop)CloseHandle(stop);}} events;
                 events.stop=CreateEventW(nullptr,TRUE,FALSE,(L"Local\\VRX.dx12."+session+L".fixture-stop").c_str());Check(events.stop!=nullptr,"create fixture stop event");

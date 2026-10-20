@@ -52,6 +52,7 @@ struct Item {
     ComPtr<ID3D12CommandQueue> queue;
     std::unique_ptr<xg::dx12::Publisher> publisher;
     uint64_t frame=0;
+    DXGI_COLOR_SPACE_TYPE colorSpace=DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
 };
 struct State {
     // Native internal Release callbacks can re-enter while a shadow call runs.
@@ -240,6 +241,15 @@ void BackBuffer(IDXGISwapChain* chain,ID3D12Resource* original) noexcept {
         Resource(context->device,original,&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_PRESENT,nullptr);
     } catch(...) {Failure(chain,"backbuffer observation failed");}
 }
+void ColorSpace(IDXGISwapChain* original,DXGI_COLOR_SPACE_TYPE color) noexcept {
+    try {
+        Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || item->kind!=Kind::Swapchain)return;
+        item->colorSpace=color;
+        if(color!=DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709) {
+            char reason[128]{};sprintf_s(reason,"presentation color space %u requires explicit HDR/gamut conversion",UINT(color));Stop(item->context,reason);
+        }
+    }catch(...){Failure(original,"presentation color space observation failed");}
+}
 void Present(IDXGISwapChain* original,UINT flags) noexcept {
     if(flags&DXGI_PRESENT_TEST)return;
     try {
@@ -255,7 +265,7 @@ void Present(IDXGISwapChain* original,UINT flags) noexcept {
         auto resource=Mapped(left.Get(),Kind::Resource,item->context);if(!resource)return;
         if(!item->publisher) {
             const auto desc=left->GetDesc();
-            if(!xg::dx12::FormatConvert::Supported(desc.Format) || desc.Width>4096 || desc.Height>4096 || desc.SampleDesc.Count!=1) {
+            if(!xg::dx12::FormatConvert::PresentationSupported(desc.Format,item->colorSpace) || desc.Width>4096 || desc.Height>4096 || desc.SampleDesc.Count!=1) {
                 char reason[160]{};sprintf_s(reason,"unsupported presentation: format=%u, size=%llux%u, samples=%u",UINT(desc.Format),static_cast<unsigned long long>(desc.Width),desc.Height,desc.SampleDesc.Count);
                 Stop(item->context,reason);return;
             }

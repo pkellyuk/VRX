@@ -42,6 +42,7 @@ void Queue(ID3D12Device*,ID3D12CommandQueue*) noexcept;
 bool Swapchain(ID3D12CommandQueue*,IDXGISwapChain*) noexcept;
 void BackBuffer(IDXGISwapChain*,ID3D12Resource*) noexcept;
 void Present(IDXGISwapChain*,UINT flags) noexcept;
+void ColorSpace(IDXGISwapChain*,DXGI_COLOR_SPACE_TYPE) noexcept;
 void Resize(IDXGISwapChain*,UINT count=0,const UINT* nodes=nullptr,IUnknown* const* queues=nullptr) noexcept;
 void Allocator(ID3D12Device*,ID3D12CommandAllocator*,D3D12_COMMAND_LIST_TYPE) noexcept;
 void AllocatorReset(ID3D12CommandAllocator*) noexcept;

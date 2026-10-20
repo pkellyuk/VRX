@@ -51,6 +51,7 @@ def main():
     selected["ID3D12CommandQueue"] += ["UpdateTileMappings", "CopyTileMappings"]
     selected["ID3D12GraphicsCommandList"] += ["CopyTiles"]
     selected["ID3D12Device4"] += ["CreateReservedResource1"]
+    selected["IDXGISwapChain3"] += ["SetColorSpace1"]
     rows = ["// Generated from Microsoft's installed d3d12.h; do not edit.", "#pragma once", "namespace vrx::dx12::slot {"]
     for interface, methods in selected.items():
         table = slots(source, interface)
