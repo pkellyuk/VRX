@@ -556,6 +556,8 @@ public partial class MainWindow : Window
         StopButton.IsEnabled = running && !stopping;
         RecenterButton.IsEnabled = EasyRecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
         AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = StereoPathList.IsEnabled = !running && !starting;
+        // These select startup-only engine arguments, like the method chooser.
+        GeometryCheck.IsEnabled = GeometrySessionText.IsEnabled = !running && !starting && profile != null && !stopping;
         UpdateGameCard();
     }
 
