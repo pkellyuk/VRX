@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <thread>
 #include <future>
+#include <memory>
 
 static void Check(bool value, const char* reason) { if (!value) throw std::runtime_error(reason); }
 int main()
@@ -91,6 +92,22 @@ int main()
         writer.Close(); Check(reader.Status(1, frame) == xg::PairRead::Closed, "producer closure hides frames");
         UnmapViewOfFile(header); CloseHandle(mapping); CloseHandle(mutex);
         Check(xg::GpuShape(2560, 1440) && !xg::GpuShape(16384, 8192), "bounded full resolution GPU dimensions");
+        {
+            const auto resizedSession=session+L"-resize";
+            auto oldProducer=std::make_unique<xg::GpuWriter>();auto oldConsumer=std::make_unique<xg::GpuReader>();
+            Check(oldProducer->Create(resizedSession,device->GetAdapterLuid(),18,10,xg::GpuFrameKind::SameFrame),"initial resize generation");
+            Check(oldConsumer->Open(device.Get(),resizedSession),"old consumer keeps metadata alive");
+            oldProducer->Close();xg::GpuWriter replacement;
+            Check(replacement.Create(resizedSession,device->GetAdapterLuid(),23,13,xg::GpuFrameKind::SameFrame),"replace own closed generation while old mapping is held");
+            Check(oldConsumer->Status(0,frame)==xg::PairRead::Invalid,"old reader rejects new generation");
+            xg::GpuReader newConsumer;Check(newConsumer.Open(device.Get(),resizedSession),"new reader opens resized generation");
+            Check(newConsumer.Header().width==23 && newConsumer.Header().height==13,"new dimensions advertised");
+            oldConsumer.reset();oldProducer->Close();oldProducer.reset();
+            Check(newConsumer.Status(0,frame)==xg::PairRead::Empty,"old producer and consumer cleanup preserve the new generation");
+            {xg::GpuReader duplicate;Check(!duplicate.Open(device.Get(),resizedSession),"old consumer teardown does not detach the new consumer");}
+            {xg::GpuWriter duplicate;Check(!duplicate.Create(resizedSession,device->GetAdapterLuid(),23,13,xg::GpuFrameKind::SameFrame),"live resized producer remains exclusive");}
+            Check(newConsumer.Status(0,frame)==xg::PairRead::Empty,"failed replacement leaves active stream unchanged");
+        }
         std::puts("PASS: shared texture leases, GPU completion, nonblocking full ring, strict same-frame metadata, closure, stale/size/adapter rejection");
         return 0;
     }

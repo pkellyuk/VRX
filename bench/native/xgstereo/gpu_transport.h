@@ -49,6 +49,7 @@ class GpuWriter : public GpuMapping {
     ComPtr<ID3D12Device> device_;
     std::array<GpuObjects, GpuSlots> objects_;
     uint64_t sequence_ = 0;
+    uint64_t generation_ = 0;
     uint32_t nextSlot_ = 0;
     std::array<uint64_t, GpuSlots> pending_{};
     std::vector<HANDLE> handles_;
@@ -66,9 +67,15 @@ public:
         mutex_ = CreateMutexW(nullptr, FALSE, GpuName(session, L".lock").c_str());
         if (!mutex_) return false;
         mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(GpuHeader), GpuName(session, L".frames").c_str());
-        if (!mapping_ || GetLastError() == ERROR_ALREADY_EXISTS) return false;
+        if (!mapping_) return false;
+        const bool existing = GetLastError() == ERROR_ALREADY_EXISTS;
         view_ = static_cast<GpuHeader*>(MapViewOfFile(mapping_, FILE_MAP_WRITE, 0, 0, sizeof(GpuHeader)));
         if (!view_) return false;
+        PairLock lock(mutex_, 1000);
+        if (!lock.Ready()) return false;
+        // A resize can leave the closed metadata mapping alive in a consumer.
+        // Only the same producer process may replace its inactive generation.
+        if (existing && (!ValidGpuHeader(*view_) || view_->active || view_->pid != GetCurrentProcessId())) return false;
         GpuHeader header; header.pid = GetCurrentProcessId(); header.adapter = adapter; header.width = w; header.height = h; header.kind = uint32_t(kind);
         LARGE_INTEGER clock{}; QueryPerformanceCounter(&clock); header.generation = uint64_t(clock.QuadPart);
         D3D12_HEAP_PROPERTIES heap{}; heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -89,9 +96,7 @@ public:
                 handles_.push_back(handle);
             }
         }
-        PairLock lock(mutex_, 1000);
-        if (!lock.Ready()) return false;
-        *view_ = header;
+        *view_ = header; generation_ = header.generation;
         return true;
     }
     // Never wait for a consumer. A leased texture cannot be reused until the
@@ -99,7 +104,7 @@ public:
     int Reserve(uint64_t& sequence, uint64_t& releasedValue)
     {
         PairLock lock(mutex_);
-        if (!lock.Ready() || !view_ || !view_->active || sequence_ == UINT64_MAX) return -1;
+        if (!lock.Ready() || !view_ || !view_->active || !generation_ || view_->generation != generation_ || sequence_ == UINT64_MAX) return -1;
         for (uint32_t n = 0; n < GpuSlots; ++n)
         {
             const uint32_t i = (nextSlot_ + n) % GpuSlots;
@@ -118,13 +123,13 @@ public:
     {
         PairLock lock(mutex_);
         if (lock.Busy()) return GpuPublish::Busy;
-        if (!lock.Ready() || !view_ || slot >= GpuSlots || pending_[slot] != sequence || !left ||
+        if (!lock.Ready() || !view_ || !view_->active || !generation_ || view_->generation != generation_ || slot >= GpuSlots || pending_[slot] != sequence || !left ||
             right < left || right - left > 1 || (view_->kind == uint32_t(GpuFrameKind::SameFrame) && right != left)) return GpuPublish::Invalid;
         view_->slots[slot] = {sequence, left, right, GetTickCount64(), 0}; return GpuPublish::Published;
     }
     bool Publish(uint32_t slot, uint64_t sequence, uint64_t left, uint64_t right)
     { return TryPublish(slot, sequence, left, right) == GpuPublish::Published; }
-    void Close() { PairLock lock(mutex_, 1000); if (lock.Ready() && view_) view_->active = 0; }
+    void Close() { PairLock lock(mutex_, 1000); if (lock.Ready() && view_ && generation_ && view_->generation == generation_) view_->active = 0; }
 };
 
 class GpuReader : public GpuMapping {
@@ -168,7 +173,7 @@ public:
     ~GpuReader()
     {
         PairLock lock(mutex_);
-        if (registered_ && lock.Ready() && view_ && view_->consumer == GetCurrentProcessId()) view_->consumer = 0;
+        if (registered_ && lock.Ready() && view_ && view_->generation == header_.generation && view_->pid == header_.pid && view_->consumer == GetCurrentProcessId()) view_->consumer = 0;
         // Leases deliberately survive disconnect. Only completed GPU signals
         // permit reuse, including when a reader dies during a submission.
     }
