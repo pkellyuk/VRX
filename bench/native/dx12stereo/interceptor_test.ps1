@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard)
+param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[switch]$Passthrough,[switch]$Mirror,[switch]$Warp,[switch]$Unsupported,[switch]$Bindings,[switch]$Compute,[switch]$Present,[switch]$Legacy,[switch]$Bgra,[switch]$Modern,[switch]$Ten,[ValidateSet('write','protected')][string]$ExtendedGuard,[switch]$Vrs)
 $ErrorActionPreference='Stop'
 $temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $root=Join-Path $temporary ('VRX-DX12-interception-'+[Guid]::NewGuid().ToString('N'))
@@ -25,6 +25,7 @@ try {
     if(-not $child.WaitForExit(30000)) { $child.Kill(); $child.WaitForExit(); throw 'Native interceptor fixture timed out' }
     $output=$stdout.GetAwaiter().GetResult()+$stderr.GetAwaiter().GetResult()
     Write-Output $output
+    if($Vrs -and $child.ExitCode -eq 77 -and $output -match '^SKIP: native DX12'){exit 77}
     if($child.ExitCode -ne 0 -or $output -notmatch 'PASS: native DX12') { throw ('Native interceptor fixture failed with exit '+$child.ExitCode) }
 } finally {
     if($child) { if(-not $child.HasExited) { $child.Kill(); $child.WaitForExit() }; $child.Dispose() }

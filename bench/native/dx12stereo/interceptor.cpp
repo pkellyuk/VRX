@@ -313,6 +313,26 @@ struct ExtendedGuard<Slot,Result(STDMETHODCALLTYPE Interface::*)(Args...)> {
         if(call.outer)mirror::Unsupported(object,ExtendedReason(Slot));
     }
 };
+template<class Interface,class Replay>
+void ExtendedRecord(ID3D12GraphicsCommandList* object,const Replay& replay) {
+    mirror::Record(object,[&](auto* list,auto& map){
+        ComPtr<Interface> extended;
+        if(FAILED(list->QueryInterface(IID_PPV_ARGS(&extended))))mirror::Unsupported(object,"shadow command-list interface is unavailable");
+        else replay(extended.Get(),map);
+    });
+}
+template<>struct ExtendedGuard<slot::ID3D12GraphicsCommandList5_RSSetShadingRate,decltype(&ID3D12GraphicsCommandList5::RSSetShadingRate)> {
+    static void STDMETHODCALLTYPE Invoke(ID3D12GraphicsCommandList5* object,D3D12_SHADING_RATE rate,const D3D12_SHADING_RATE_COMBINER* combiners) {
+        Call call;Original<decltype(&Invoke)>(object,slot::ID3D12GraphicsCommandList5_RSSetShadingRate)(object,rate,combiners);
+        if(call.outer)ExtendedRecord<ID3D12GraphicsCommandList5>(object,[&](auto* list,auto&){list->RSSetShadingRate(rate,combiners);});
+    }
+};
+template<>struct ExtendedGuard<slot::ID3D12GraphicsCommandList5_RSSetShadingRateImage,decltype(&ID3D12GraphicsCommandList5::RSSetShadingRateImage)> {
+    static void STDMETHODCALLTYPE Invoke(ID3D12GraphicsCommandList5* object,ID3D12Resource* image) {
+        Call call;Original<decltype(&Invoke)>(object,slot::ID3D12GraphicsCommandList5_RSSetShadingRateImage)(object,image);
+        if(call.outer)ExtendedRecord<ID3D12GraphicsCommandList5>(object,[&](auto* list,auto& map){auto right=map.Resource(image);if(map.Valid())list->RSSetShadingRateImage(right);});
+    }
+};
 void List(ID3D12GraphicsCommandList* object) noexcept {
     try {
     auto& state = State(); std::lock_guard<std::recursive_mutex> lock(state.mutex);
