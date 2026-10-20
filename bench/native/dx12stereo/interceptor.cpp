@@ -116,6 +116,9 @@ SIMPLE(IASetPrimitiveTopology,(ID3D12GraphicsCommandList* object,D3D12_PRIMITIVE
 SIMPLE(SetGraphicsRootSignature,(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value),(object,value),(value))
 SIMPLE(SetGraphicsRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
 SIMPLE(SetGraphicsRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT index,UINT count,const void* data,UINT offset),(object,index,count,data,offset),(index,count,data,offset))
+SIMPLE(SetComputeRootSignature,(ID3D12GraphicsCommandList* object,ID3D12RootSignature* value),(object,value),(value))
+SIMPLE(SetComputeRoot32BitConstant,(ID3D12GraphicsCommandList* object,UINT index,UINT value,UINT offset),(object,index,value,offset),(index,value,offset))
+SIMPLE(SetComputeRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT index,UINT count,const void* data,UINT offset),(object,index,count,data,offset),(index,count,data,offset))
 #undef SIMPLE
 void STDMETHODCALLTYPE SetPipelineState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
     Call call; Original<decltype(&SetPipelineState)>(object,slot::ID3D12GraphicsCommandList_SetPipelineState)(object,value);
@@ -128,9 +131,10 @@ void STDMETHODCALLTYPE ClearState(ID3D12GraphicsCommandList* object,ID3D12Pipeli
 void STDMETHODCALLTYPE OMSetRenderTargets(ID3D12GraphicsCommandList* object,UINT count,const D3D12_CPU_DESCRIPTOR_HANDLE* values,BOOL contiguous,const D3D12_CPU_DESCRIPTOR_HANDLE* depth) {
     Call call; Original<decltype(&OMSetRenderTargets)>(object,slot::ID3D12GraphicsCommandList_OMSetRenderTargets)(object,count,values,contiguous,depth);
     if(call.outer) mirror::Record(object,[&](auto* q,auto& map){
-        if(depth || count>8 || (count && !values)) { mirror::Unsupported(object,"depth or invalid render target range"); return; }
+        if(count>8 || (count && !values)) { mirror::Unsupported(object,"invalid render target range"); return; }
         D3D12_CPU_DESCRIPTOR_HANDLE right[8]{}; for(UINT i=0;i<(contiguous && count?1:count);++i) right[i]=map.Cpu(values[i]);
-        if(map.Valid()) q->OMSetRenderTargets(count,count?right:nullptr,contiguous,nullptr);
+        const auto rightDepth=depth?map.Cpu(*depth):D3D12_CPU_DESCRIPTOR_HANDLE{};
+        if(map.Valid()) q->OMSetRenderTargets(count,count?right:nullptr,contiguous,depth?&rightDepth:nullptr);
     });
 }
 void STDMETHODCALLTYPE ClearRenderTargetView(ID3D12GraphicsCommandList* object,D3D12_CPU_DESCRIPTOR_HANDLE target,const FLOAT color[4],UINT count,const D3D12_RECT* rects) {
@@ -176,11 +180,43 @@ void STDMETHODCALLTYPE CopyTextureRegion(ID3D12GraphicsCommandList* object,const
 }
 void STDMETHODCALLTYPE SetDescriptorHeaps(ID3D12GraphicsCommandList* object,UINT count,ID3D12DescriptorHeap* const* heaps) {
     Call call; Original<decltype(&SetDescriptorHeaps)>(object,slot::ID3D12GraphicsCommandList_SetDescriptorHeaps)(object,count,heaps);
-    if(call.outer) mirror::Unsupported(object,"shader-visible descriptor heaps need additional translation");
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){
+        if(count>2 || (count && !heaps)) { mirror::Unsupported(object,"invalid shader-visible heap count"); return; }
+        ID3D12DescriptorHeap* right[2]{}; for(UINT i=0;i<count;++i) right[i]=map.Heap(heaps[i]);
+        if(map.Valid()) q->SetDescriptorHeaps(count,right);
+    });
+}
+void STDMETHODCALLTYPE ClearDepthStencilView(ID3D12GraphicsCommandList* object,D3D12_CPU_DESCRIPTOR_HANDLE handle,D3D12_CLEAR_FLAGS flags,FLOAT depth,UINT8 stencil,UINT count,const D3D12_RECT* rects) {
+    Call call; Original<decltype(&ClearDepthStencilView)>(object,slot::ID3D12GraphicsCommandList_ClearDepthStencilView)(object,handle,flags,depth,stencil,count,rects);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Cpu(handle); if(map.Valid()) q->ClearDepthStencilView(right,flags,depth,stencil,count,rects);});
+}
+void STDMETHODCALLTYPE SetGraphicsRootDescriptorTable(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_DESCRIPTOR_HANDLE handle) {
+    Call call; Original<decltype(&SetGraphicsRootDescriptorTable)>(object,slot::ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable)(object,index,handle);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Gpu(handle); if(map.Valid()) q->SetGraphicsRootDescriptorTable(index,right);});
+}
+void STDMETHODCALLTYPE SetComputeRootDescriptorTable(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_DESCRIPTOR_HANDLE handle) {
+    Call call; Original<decltype(&SetComputeRootDescriptorTable)>(object,slot::ID3D12GraphicsCommandList_SetComputeRootDescriptorTable)(object,index,handle);
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Gpu(handle); if(map.Valid()) q->SetComputeRootDescriptorTable(index,right);});
+}
+#define ROOT_ADDRESS(Name) \
+void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_VIRTUAL_ADDRESS address) { \
+    Call call; Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name)(object,index,address); \
+    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Address(address);if(map.Valid()) q->Name(index,right);}); \
+}
+ROOT_ADDRESS(SetGraphicsRootConstantBufferView)
+ROOT_ADDRESS(SetGraphicsRootShaderResourceView)
+ROOT_ADDRESS(SetGraphicsRootUnorderedAccessView)
+ROOT_ADDRESS(SetComputeRootConstantBufferView)
+ROOT_ADDRESS(SetComputeRootShaderResourceView)
+ROOT_ADDRESS(SetComputeRootUnorderedAccessView)
+#undef ROOT_ADDRESS
+void STDMETHODCALLTYPE SetPredication(ID3D12GraphicsCommandList* object,ID3D12Resource* resource,UINT64 offset,D3D12_PREDICATION_OP operation) {
+    Call call; Original<decltype(&SetPredication)>(object,slot::ID3D12GraphicsCommandList_SetPredication)(object,resource,offset,operation);
+    if(call.outer) mirror::Unsupported(object,"predication is not mirrored yet");
 }
 void STDMETHODCALLTYPE Dispatch(ID3D12GraphicsCommandList* object,UINT x,UINT y,UINT z) {
     Call call; Original<decltype(&Dispatch)>(object,slot::ID3D12GraphicsCommandList_Dispatch)(object,x,y,z);
-    if(call.outer) mirror::Unsupported(object,"compute dispatch is not mirrored yet");
+    if(call.outer) mirror::Record(object,[&](auto* q,auto&){q->Dispatch(x,y,z);});
 }
 void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* object,UINT count,ID3D12CommandList* const* lists);
 void List(ID3D12GraphicsCommandList* object) noexcept {
@@ -198,6 +234,12 @@ void List(ID3D12GraphicsCommandList* object) noexcept {
     RECORD_HOOK(ResourceBarrier) RECORD_HOOK(IASetIndexBuffer) RECORD_HOOK(IASetVertexBuffers)
     RECORD_HOOK(CopyResource) RECORD_HOOK(CopyBufferRegion) RECORD_HOOK(CopyTextureRegion)
     RECORD_HOOK(SetDescriptorHeaps) RECORD_HOOK(Dispatch)
+    RECORD_HOOK(ClearDepthStencilView) RECORD_HOOK(SetGraphicsRootDescriptorTable)
+    RECORD_HOOK(SetGraphicsRootConstantBufferView) RECORD_HOOK(SetGraphicsRootShaderResourceView) RECORD_HOOK(SetGraphicsRootUnorderedAccessView)
+    RECORD_HOOK(SetPredication)
+    RECORD_HOOK(SetComputeRootSignature) RECORD_HOOK(SetComputeRoot32BitConstant) RECORD_HOOK(SetComputeRoot32BitConstants)
+    RECORD_HOOK(SetComputeRootDescriptorTable) RECORD_HOOK(SetComputeRootConstantBufferView)
+    RECORD_HOOK(SetComputeRootShaderResourceView) RECORD_HOOK(SetComputeRootUnorderedAccessView)
 #undef RECORD_HOOK
     if(MH_ApplyQueued() != MH_OK) ++state.failures;
     ++state.lists;
@@ -297,6 +339,58 @@ void STDMETHODCALLTYPE CreateRtv(ID3D12Device* object,ID3D12Resource* resource,c
     Call call; Original<decltype(&CreateRtv)>(object,slot::ID3D12Device_CreateRenderTargetView)(object,resource,desc,handle);
     if(call.outer) mirror::Rtv(object,resource,desc,handle);
 }
+void STDMETHODCALLTYPE CreateDepthStencilView(ID3D12Device* object,ID3D12Resource* resource,const D3D12_DEPTH_STENCIL_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    Call call; Original<decltype(&CreateDepthStencilView)>(object,slot::ID3D12Device_CreateDepthStencilView)(object,resource,desc,handle);
+    if(call.outer) mirror::Observe(object,[&](auto* d,auto& map){auto r=map.Resource(resource);auto h=map.Cpu(handle);if(map.Valid()) d->CreateDepthStencilView(r,desc,h);});
+}
+HRESULT STDMETHODCALLTYPE CreateComputePipelineState(ID3D12Device* object,const D3D12_COMPUTE_PIPELINE_STATE_DESC* desc,REFIID iid,void** output) {
+    Call call;const auto result=Original<decltype(&CreateComputePipelineState)>(object,slot::ID3D12Device_CreateComputePipelineState)(object,desc,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output) {
+        ComPtr<ID3D12PipelineState> pipeline;
+        if(SUCCEEDED(static_cast<IUnknown*>(*output)->QueryInterface(IID_PPV_ARGS(&pipeline)))) {Lifetime(pipeline.Get());mirror::ComputePipeline(object,pipeline.Get());}
+    } return result;
+}
+void STDMETHODCALLTYPE CreateConstantBufferView(ID3D12Device* object,const D3D12_CONSTANT_BUFFER_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    Call call; Original<decltype(&CreateConstantBufferView)>(object,slot::ID3D12Device_CreateConstantBufferView)(object,desc,handle);
+    if(call.outer) mirror::Observe(object,[&](auto* d,auto& map){
+        D3D12_CONSTANT_BUFFER_VIEW_DESC right{}; if(desc){right=*desc;right.BufferLocation=map.Address(desc->BufferLocation);}
+        auto h=map.Cpu(handle);if(map.Valid())d->CreateConstantBufferView(desc?&right:nullptr,h);
+    });
+}
+void STDMETHODCALLTYPE CreateShaderResourceView(ID3D12Device* object,ID3D12Resource* resource,const D3D12_SHADER_RESOURCE_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    Call call; Original<decltype(&CreateShaderResourceView)>(object,slot::ID3D12Device_CreateShaderResourceView)(object,resource,desc,handle);
+    if(call.outer) mirror::Observe(object,[&](auto* d,auto& map){
+        if(desc && desc->ViewDimension==D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE) {mirror::Unsupported(object,"raytracing SRV is unsupported");return;}
+        auto r=map.Resource(resource);auto h=map.Cpu(handle);if(map.Valid())d->CreateShaderResourceView(r,desc,h);
+    });
+}
+void STDMETHODCALLTYPE CreateUnorderedAccessView(ID3D12Device* object,ID3D12Resource* resource,ID3D12Resource* counter,const D3D12_UNORDERED_ACCESS_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    Call call; Original<decltype(&CreateUnorderedAccessView)>(object,slot::ID3D12Device_CreateUnorderedAccessView)(object,resource,counter,desc,handle);
+    if(call.outer) mirror::Observe(object,[&](auto* d,auto& map){auto r=map.Resource(resource),c=map.Resource(counter);auto h=map.Cpu(handle);if(map.Valid())d->CreateUnorderedAccessView(r,c,desc,h);});
+}
+void STDMETHODCALLTYPE CreateSampler(ID3D12Device* object,const D3D12_SAMPLER_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+    Call call; Original<decltype(&CreateSampler)>(object,slot::ID3D12Device_CreateSampler)(object,desc,handle);
+    if(call.outer) mirror::Observe(object,[&](auto* d,auto& map){auto h=map.Cpu(handle);if(map.Valid())d->CreateSampler(desc,h);});
+}
+void STDMETHODCALLTYPE CopyDescriptorsSimple(ID3D12Device* object,UINT count,D3D12_CPU_DESCRIPTOR_HANDLE dst,D3D12_CPU_DESCRIPTOR_HANDLE src,D3D12_DESCRIPTOR_HEAP_TYPE type) {
+    Call call; Original<decltype(&CopyDescriptorsSimple)>(object,slot::ID3D12Device_CopyDescriptorsSimple)(object,count,dst,src,type);
+    if(call.outer && count) mirror::Observe(object,[&](auto* d,auto& map){
+        auto target=map.Cpu(dst),source=map.Cpu(src); const auto stride=d->GetDescriptorHandleIncrementSize(type);
+        map.Cpu({dst.ptr+SIZE_T(count-1)*stride});map.Cpu({src.ptr+SIZE_T(count-1)*stride});
+        if(map.Valid())d->CopyDescriptorsSimple(count,target,source,type);
+    });
+}
+void STDMETHODCALLTYPE CopyDescriptors(ID3D12Device* object,UINT dstCount,const D3D12_CPU_DESCRIPTOR_HANDLE* dst,const UINT* dstSizes,UINT srcCount,const D3D12_CPU_DESCRIPTOR_HANDLE* src,const UINT* srcSizes,D3D12_DESCRIPTOR_HEAP_TYPE type) {
+    Call call; Original<decltype(&CopyDescriptors)>(object,slot::ID3D12Device_CopyDescriptors)(object,dstCount,dst,dstSizes,srcCount,src,srcSizes,type);
+    if(call.outer) mirror::Observe(object,[&](auto* d,auto& map){
+        std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> target(dstCount),source(srcCount); const auto stride=d->GetDescriptorHandleIncrementSize(type);
+        const auto ranges=[&](UINT count,const D3D12_CPU_DESCRIPTOR_HANDLE* values,const UINT* sizes,auto& right){
+            for(UINT i=0;i<count;++i) {const auto size=sizes?sizes[i]:1; if(!size){right[i]=values[i];continue;}right[i]=map.Cpu(values[i]);map.Cpu({values[i].ptr+SIZE_T(size-1)*stride});}
+        };
+        ranges(dstCount,dst,dstSizes,target);ranges(srcCount,src,srcSizes,source);
+        if(map.Valid())d->CopyDescriptors(dstCount,target.data(),dstSizes,srcCount,source.data(),srcSizes,type);
+    });
+}
 } // namespace
 void Attach(ID3D12Device* device) noexcept {
     try {
@@ -309,6 +403,11 @@ void Attach(ID3D12Device* device) noexcept {
         Add(state,device,slot::ID3D12Device_CreateCommandAllocator,reinterpret_cast<void*>(&CreateAllocator));
         Add(state,device,slot::ID3D12Device_CreateDescriptorHeap,reinterpret_cast<void*>(&CreateHeap));
         Add(state,device,slot::ID3D12Device_CreateRenderTargetView,reinterpret_cast<void*>(&CreateRtv));
+#define DEVICE_HOOK(Name) Add(state,device,slot::ID3D12Device_##Name,reinterpret_cast<void*>(&Name));
+        DEVICE_HOOK(CreateDepthStencilView) DEVICE_HOOK(CreateConstantBufferView) DEVICE_HOOK(CreateShaderResourceView)
+        DEVICE_HOOK(CreateUnorderedAccessView) DEVICE_HOOK(CreateSampler) DEVICE_HOOK(CopyDescriptors) DEVICE_HOOK(CopyDescriptorsSimple)
+        DEVICE_HOOK(CreateComputePipelineState)
+#undef DEVICE_HOOK
         Add(state,device,slot::ID3D12Device_CreateCommandList,reinterpret_cast<void*>(&CreateList));
         Add(state,device,slot::ID3D12Device_CreateGraphicsPipelineState,reinterpret_cast<void*>(&CreatePipeline));
         Add(state,device,slot::ID3D12Device_CreateCommittedResource,reinterpret_cast<void*>(&CreateResource));

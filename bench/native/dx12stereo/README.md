@@ -116,7 +116,7 @@ and shader coverage, managed launch/cleanup and real-game validation.
 ### Same-frame command/resource replay
 
 `mirror.cpp` independently mirrors committed resources, command allocators,
-RTV heaps, compatible graphics pipelines and graphics command lists. The app
+descriptor heaps, compatible graphics pipelines and graphics/compute command lists. The app
 records its native left view once. A rewritten vertex pipeline records the
 right view into separate resources, and both lists are submitted in the same
 queue batch before the app's completion fence. Root constants and upload-buffer
@@ -130,11 +130,20 @@ checks the fixture geometry before replay. Final Release retirement uses identit
 tokens and a deferred queue, avoiding a backend lock inside driver Release
 callbacks and avoiding deletion of a newer object at a reused address. Fixtures
 check that all tracked identities and shadow objects retire after scene teardown.
-An unsupported descriptor-heap command stops replay while the original view
+An unsupported predication command stops replay while the original view
 continues rendering correctly.
 
-This is an offscreen graphics subset, not a game-ready DX12 route. Shader-visible
-descriptor heaps, depth targets and compute dispatch currently stop replay.
+Additional GPU and WARP fixtures cover SRV/CBV descriptor tables at nonzero heap
+offsets, simple/ranged descriptor copies, root CBV/SRV addresses, and separate
+depth targets with a deliberately occluded draw. A compute variant reads each
+frame's upload data through a root SRV, writes a separate per-eye UAV through a
+descriptor table, then transitions that output for sampling by the graphics
+pass. Both eyes must contain the current frame's exact colour and valid geometry
+disparity, and all shadows must retire after teardown. Compute pipelines share
+immutable native bytecode; bindings, resources and dispatches are replayed.
+
+This is an offscreen graphics/compute subset, not a game-ready DX12 route.
+Predication and raytracing acceleration-structure views currently stop replay.
 Many commands and newer resource/pipeline creation APIs still need interception
 and translation; unobserved commands are not yet comprehensively rejected.
 Upload buffers are copied in full at submission and need a scalable update

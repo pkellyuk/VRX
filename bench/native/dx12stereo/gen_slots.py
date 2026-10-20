@@ -33,11 +33,11 @@ def main():
     args = parser.parse_args()
     source = args.header.read_text(encoding="utf-8-sig")
     selected = {
-        "ID3D12Device": ["CreateCommandQueue", "CreateCommandAllocator", "CreateCommandList", "CreateGraphicsPipelineState", "CreateCommittedResource", "CreateDescriptorHeap", "CreateRenderTargetView"],
+        "ID3D12Device": ["CreateCommandQueue", "CreateCommandAllocator", "CreateCommandList", "CreateGraphicsPipelineState", "CreateCommittedResource", "CreateDescriptorHeap", "CreateRenderTargetView", "CreateDepthStencilView", "CreateConstantBufferView", "CreateShaderResourceView", "CreateUnorderedAccessView", "CreateSampler", "CopyDescriptors", "CopyDescriptorsSimple", "CreateComputePipelineState"],
         "ID3D12CommandAllocator": ["Reset"],
         "ID3D12Device4": ["CreateCommandList1"],
         "ID3D12CommandQueue": ["ExecuteCommandLists"],
-        "ID3D12GraphicsCommandList": ["Close", "Reset", "DrawInstanced", "DrawIndexedInstanced", "ExecuteBundle", "ClearState", "SetPipelineState", "RSSetViewports", "RSSetScissorRects", "IASetPrimitiveTopology", "OMSetRenderTargets", "ClearRenderTargetView", "ResourceBarrier", "SetGraphicsRootSignature", "SetGraphicsRoot32BitConstant", "SetGraphicsRoot32BitConstants", "IASetIndexBuffer", "IASetVertexBuffers", "CopyResource", "CopyBufferRegion", "CopyTextureRegion", "SetDescriptorHeaps", "Dispatch"],
+        "ID3D12GraphicsCommandList": ["Close", "Reset", "DrawInstanced", "DrawIndexedInstanced", "ExecuteBundle", "ClearState", "SetPipelineState", "RSSetViewports", "RSSetScissorRects", "IASetPrimitiveTopology", "OMSetRenderTargets", "ClearRenderTargetView", "ResourceBarrier", "SetGraphicsRootSignature", "SetGraphicsRoot32BitConstant", "SetGraphicsRoot32BitConstants", "IASetIndexBuffer", "IASetVertexBuffers", "CopyResource", "CopyBufferRegion", "CopyTextureRegion", "SetDescriptorHeaps", "Dispatch", "ClearDepthStencilView", "SetGraphicsRootDescriptorTable", "SetGraphicsRootConstantBufferView", "SetGraphicsRootShaderResourceView", "SetGraphicsRootUnorderedAccessView", "SetPredication", "SetComputeRootSignature", "SetComputeRoot32BitConstant", "SetComputeRoot32BitConstants", "SetComputeRootDescriptorTable", "SetComputeRootConstantBufferView", "SetComputeRootShaderResourceView", "SetComputeRootUnorderedAccessView"],
     }
     rows = ["// Generated from Microsoft's installed d3d12.h; do not edit.", "#pragma once", "namespace vrx::dx12::slot {"]
     for interface, methods in selected.items():

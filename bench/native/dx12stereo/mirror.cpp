@@ -40,6 +40,7 @@ struct Item {
     D3D12_RESOURCE_DESC description{};
     uint64_t leftAddress=0,rightAddress=0;
     D3D12_CPU_DESCRIPTOR_HANDLE leftCpu{},rightCpu{};
+    D3D12_GPU_DESCRIPTOR_HANDLE leftGpu{},rightGpu{};
     UINT descriptors=0,stride=0;
     bool closed=false;
 };
@@ -159,6 +160,19 @@ D3D12_GPU_VIRTUAL_ADDRESS Mapper::Address(D3D12_GPU_VIRTUAL_ADDRESS original) {
     }
     Stop(context_,"GPU virtual address is not tracked"); return 0;
 }
+D3D12_GPU_DESCRIPTOR_HANDLE Mapper::Gpu(D3D12_GPU_DESCRIPTOR_HANDLE original) {
+    if(!original.ptr) return {};
+    for(const auto& entry:Registry().objects) {
+        const auto& item=entry.second;
+        if(item->kind!=Kind::Heap || item->context!=context_ || !item->leftGpu.ptr || original.ptr<item->leftGpu.ptr) continue;
+        const auto delta=original.ptr-item->leftGpu.ptr;
+        if(item->stride && delta%item->stride==0 && delta/item->stride<item->descriptors) return {item->rightGpu.ptr+delta};
+    }
+    Stop(context_,"GPU descriptor handle is not tracked"); return {};
+}
+ID3D12DescriptorHeap* Mapper::Heap(ID3D12DescriptorHeap* original) {
+    auto item=Mapped(original,Kind::Heap,context_); return item?item->heap.Get():nullptr;
+}
 void Device(ID3D12Device* device) noexcept {
     if(!IsEnabled()) return;
     try {
@@ -220,8 +234,20 @@ void Heap(ID3D12Device* device,ID3D12DescriptorHeap* original,const D3D12_DESCRI
         auto item=New(Kind::Heap,context);
         if(FAILED(device->CreateDescriptorHeap(desc,IID_PPV_ARGS(&item->heap)))) { Stop(context,"descriptor heap creation failed"); return; }
         item->leftCpu=original->GetCPUDescriptorHandleForHeapStart(); item->rightCpu=item->heap->GetCPUDescriptorHandleForHeapStart();
+        if(desc->Flags&D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) {
+            item->leftGpu=original->GetGPUDescriptorHandleForHeapStart(); item->rightGpu=item->heap->GetGPUDescriptorHandleForHeapStart();
+        }
         item->descriptors=desc->NumDescriptors; item->stride=device->GetDescriptorHandleIncrementSize(desc->Type); Remember(original,item);
     } catch(...) { Failure(device,"descriptor heap observation failed"); }
+}
+void ComputePipeline(ID3D12Device* device,ID3D12PipelineState* original) noexcept {
+    try {
+        Lock lock(Registry().mutex); Drain();auto context=Owner(device);if(!context || !context->active) return;
+        auto item=New(Kind::Pipeline,context);item->pipelineAlias=original;
+        // Compute bytecode is immutable. Its root bindings and writable resources
+        // are translated on the replay list, including eye-specific GPU results.
+        Remember(original,item);++Registry().counts.pipelines;
+    } catch(...) {Failure(device,"compute pipeline observation failed");}
 }
 void Rtv(ID3D12Device* device,ID3D12Resource* resource,const D3D12_RENDER_TARGET_VIEW_DESC* desc,D3D12_CPU_DESCRIPTOR_HANDLE handle) noexcept {
     try {
@@ -261,6 +287,10 @@ void Close(ID3D12GraphicsCommandList* original) noexcept {
 void Record(ID3D12GraphicsCommandList* original,const std::function<void(ID3D12GraphicsCommandList*,Mapper&)>& command) noexcept {
     if(!FastFind(original)) return;
     try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(item && item->context->active) { Mapper map(item->context); command(item->list.Get(),map); } } catch(...) { Failure(original,"command translation failed"); }
+}
+void Observe(ID3D12Device* device,const std::function<void(ID3D12Device*,Mapper&)>& command) noexcept {
+    try { Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(context && context->active) { Mapper map(context); command(device,map); } }
+    catch(...) { Failure(device,"descriptor translation failed"); }
 }
 void Execute(ID3D12CommandQueue* queue,UINT count,ID3D12CommandList* const* lists,ExecuteFn execute) noexcept {
     try {
