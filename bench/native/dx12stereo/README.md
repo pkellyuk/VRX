@@ -271,6 +271,11 @@ Dynamic blend factors and stencil references are replayed. A dedicated
 hardware/WARP test renders through a stencil-equality test with changing
 references and blend constants, verifies native and right-eye colours and
 disparity, and checks complete retirement.
+Dynamic depth bounds are also replayed through command-list interface 1.
+Hardware/WARP fixtures enable the depth-bounds test in a streamed pipeline,
+alternate ranges above/below the stored depth to reject a wrong-colour overwrite,
+restore the full range on reuse, and verify stereo pixels and retirement in
+Release and Debug.
 Query heaps are cloned independently. Begin/end/resolve operations translate
 the query heap and output buffer, and GPU predication translates its buffer
 while preserving offsets and operations. Hardware/WARP tests cover binary

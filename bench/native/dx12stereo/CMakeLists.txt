@@ -193,6 +193,9 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         add_test(NAME native_dx12_vrs_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_vrs_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -Vrs ${extra})
         set_tests_properties(native_dx12_vrs_${adapter} PROPERTIES TIMEOUT 40 SKIP_RETURN_CODE 77)
+        add_test(NAME native_dx12_depth_bounds_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -DepthBounds ${extra})
+        set_tests_properties(native_dx12_depth_bounds_${adapter} PROPERTIES TIMEOUT 40 SKIP_RETURN_CODE 77)
     endforeach()
     foreach(mode write protected)
         foreach(adapter hw warp)

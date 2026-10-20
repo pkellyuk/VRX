@@ -321,6 +321,12 @@ void ExtendedRecord(ID3D12GraphicsCommandList* object,const Replay& replay) {
         else replay(extended.Get(),map);
     });
 }
+template<>struct ExtendedGuard<slot::ID3D12GraphicsCommandList1_OMSetDepthBounds,decltype(&ID3D12GraphicsCommandList1::OMSetDepthBounds)> {
+    static void STDMETHODCALLTYPE Invoke(ID3D12GraphicsCommandList1* object,FLOAT minimum,FLOAT maximum) {
+        Call call;Original<decltype(&Invoke)>(object,slot::ID3D12GraphicsCommandList1_OMSetDepthBounds)(object,minimum,maximum);
+        if(call.outer)ExtendedRecord<ID3D12GraphicsCommandList1>(object,[&](auto* list,auto&){list->OMSetDepthBounds(minimum,maximum);});
+    }
+};
 template<>struct ExtendedGuard<slot::ID3D12GraphicsCommandList5_RSSetShadingRate,decltype(&ID3D12GraphicsCommandList5::RSSetShadingRate)> {
     static void STDMETHODCALLTYPE Invoke(ID3D12GraphicsCommandList5* object,D3D12_SHADING_RATE rate,const D3D12_SHADING_RATE_COMBINER* combiners) {
         Call call;Original<decltype(&Invoke)>(object,slot::ID3D12GraphicsCommandList5_RSSetShadingRate)(object,rate,combiners);
