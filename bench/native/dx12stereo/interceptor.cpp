@@ -261,8 +261,11 @@ void STDMETHODCALLTYPE Name Parameters { \
     if(call.outer)mirror::Unsupported(object,#Name " is not mirrored yet"); \
 }
 GUARDED(SOSetTargets,(ID3D12GraphicsCommandList* object,UINT start,UINT count,const D3D12_STREAM_OUTPUT_BUFFER_VIEW* views),(object,start,count,views))
-GUARDED(ExecuteIndirect,(ID3D12GraphicsCommandList* object,ID3D12CommandSignature* signature,UINT count,ID3D12Resource* buffer,UINT64 offset,ID3D12Resource* counter,UINT64 counterOffset),(object,signature,count,buffer,offset,counter,counterOffset))
 #undef GUARDED
+void STDMETHODCALLTYPE ExecuteIndirect(ID3D12GraphicsCommandList* object,ID3D12CommandSignature* signature,UINT count,ID3D12Resource* buffer,UINT64 offset,ID3D12Resource* counter,UINT64 counterOffset){
+    Call call;Original<decltype(&ExecuteIndirect)>(object,slot::ID3D12GraphicsCommandList_ExecuteIndirect)(object,signature,count,buffer,offset,counter,counterOffset);
+    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto s=map.Signature(signature);auto b=map.Resource(buffer),c=map.Resource(counter);if(map.Valid())q->ExecuteIndirect(s,count,b,offset,c,counterOffset);});
+}
 #define UAV_CLEAR(Name,T) \
 void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const T values[4],UINT count,const D3D12_RECT* rects){ \
     Call call;Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name)(object,gpu,cpu,resource,values,count,rects); \
@@ -455,6 +458,12 @@ HRESULT STDMETHODCALLTYPE CreateAllocator(ID3D12Device* object,D3D12_COMMAND_LIS
         }
     } return result;
 }
+HRESULT STDMETHODCALLTYPE CreateCommandSignature(ID3D12Device* object,const D3D12_COMMAND_SIGNATURE_DESC* desc,ID3D12RootSignature* root,REFIID iid,void** output){
+    Call call;const auto result=Original<decltype(&CreateCommandSignature)>(object,slot::ID3D12Device_CreateCommandSignature)(object,desc,root,iid,output);
+    if(call.outer && SUCCEEDED(result) && output && *output){auto* original=static_cast<IUnknown*>(*output);ComPtr<ID3D12CommandSignature> signature;
+        if(SUCCEEDED(original->QueryInterface(IID_PPV_ARGS(&signature)))){Lifetime(signature.Get());Lifetime(original);mirror::CommandSignature(object,signature.Get(),desc);mirror::Alias(signature.Get(),original);}
+    }return result;
+}
 HRESULT STDMETHODCALLTYPE CreateQueryHeap(ID3D12Device* object,const D3D12_QUERY_HEAP_DESC* desc,REFIID iid,void** output) {
     Call call;const auto result=Original<decltype(&CreateQueryHeap)>(object,slot::ID3D12Device_CreateQueryHeap)(object,desc,iid,output);
     if(call.outer && SUCCEEDED(result) && output && *output){
@@ -620,6 +629,7 @@ void Attach(ID3D12Device* device) noexcept {
         DEVICE_HOOK(CreateUnorderedAccessView) DEVICE_HOOK(CreateSampler) DEVICE_HOOK(CopyDescriptors) DEVICE_HOOK(CopyDescriptorsSimple)
         DEVICE_HOOK(CreateComputePipelineState)
         DEVICE_HOOK(CreateQueryHeap)
+        DEVICE_HOOK(CreateCommandSignature)
 #undef DEVICE_HOOK
         Add(state,device,slot::ID3D12Device_CreateCommandList,reinterpret_cast<void*>(&CreateList));
         Add(state,device,slot::ID3D12Device_CreateGraphicsPipelineState,reinterpret_cast<void*>(&CreatePipeline));

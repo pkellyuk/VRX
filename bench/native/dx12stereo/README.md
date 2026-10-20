@@ -235,8 +235,8 @@ Raytracing acceleration-structure views currently stop replay.
 Several commands and newer resource/pipeline creation APIs still need
 translation. Base graphics-command-list calls now either replay or explicitly
 stop stereo; passive markers/events and COM bookkeeping are excluded. The SDK
-slot generator checks this base-interface coverage at configure time. Indirect
-and stream-output calls currently forward natively and stop replay. Hardware/WARP tests verify
+slot generator checks this base-interface coverage at configure time. Stream-output
+calls currently forward natively and stop replay. Hardware/WARP tests verify
 that an unsupported stream-output binding still allows a native timestamp query
 to produce its GPU result and
 that the original game view continues after replay stops. Newer command-list
@@ -261,6 +261,15 @@ GPU bytes for exact uint patterns, float clears through staged descriptors,
 partial rectangles in a nonzero array slice, four-sample resolves, and repeated
 discard/reinitialization. Clear ordering barriers and resource states are
 checked by the D3D12 debug layer when available.
+Indirect draw, indexed-draw and dispatch signatures share their immutable native
+signature while argument/count resources map to the right-eye copies. Argument
+and counter offsets and maximum command counts are preserved. Signatures that
+embed GPU addresses or other unsupported arguments stop replay when used; their
+creation alone does not stop an otherwise compatible scene. Hardware/WARP tests
+generate arguments and count buffers on the GPU, verify visible and suppressed
+draws, dispatch results and both eyes' pixels, and exercise safe native fallback
+for an address-bearing vertex-buffer signature. Binding-bearing arguments still
+need GPU address translation before they can be replayed.
 Upload buffers are copied in full at submission and need a scalable update
 strategy. Presentation currently requires one of those typed SDR formats, a single direct queue/node and
 blocking Present semantics; `DO_NOT_WAIT` stops the stream rather than reporting
@@ -315,6 +324,11 @@ no VRX DLL or hooks loaded (Windows System32 DirectX modules verified). The
 underlying game/driver failure is unresolved; the control establishes that it
 can reproduce outside stereo replay. The tested local adapter was an RTX 3090
 with driver 617.42. No system/driver settings were changed for those controls.
+A launch-only `-norhithread` control subsequently reached the title screen and
+exited normally; a bridge run with the same option continued rendering beyond
+the earlier failure window but stopped replay at indirect execution. This is a
+promising diagnostic observation, not gameplay/comfort validation or a default
+argument. The game controls were left to the user.
 This establishes concrete compatibility gaps, not native DX12 game compatibility.
 
 Reserved resources created through Device/Device4 now have independent right-eye
