@@ -591,3 +591,12 @@ Unmodified graphics pipelines also lose the right-eye title-screen 3D scene
 (frame 41560/41560). This rules out the shader stereo offset as the source of
 that failure. Native validation is now being used to inspect command/resource
 replay; a visible 2D menu alone does not prove the right-eye scene is correct.
+
+GPU-based validation also reproduces this loss (frame 627/627) without reporting
+D3D12 errors. This is evidence of incomplete rendering, not a successful stereo
+result. The mesh fixture separately tests placed DEFAULT-heap vertex/index and
+camera buffers, nonzero buffer/view offsets and base vertices, a COPY queue
+upload dependency, and alternating camera depth/frame colors. Hardware/WARP,
+legacy/streamed PSOs and zero separation verify actual native/right pixels over
+12 frames and complete resource retirement. These comparisons pass, narrowing
+the game failure beyond this basic mesh-upload and camera-binding sequence.
