@@ -246,12 +246,16 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         set_tests_properties(native_dx12_debug_gpu_${adapter} PROPERTIES TIMEOUT 60)
 
 
-        foreach(mesh_mode shifted zero stream)
+        foreach(mesh_mode shifted zero stream probes probes_fallback)
             set(mesh_args)
             if(mesh_mode STREQUAL zero)
                 list(APPEND mesh_args -ZeroShift)
             elseif(mesh_mode STREQUAL stream)
                 list(APPEND mesh_args -Modern)
+            elseif(mesh_mode STREQUAL probes)
+                list(APPEND mesh_args -ReplayProbes)
+            elseif(mesh_mode STREQUAL probes_fallback)
+                list(APPEND mesh_args -ReplayProbes -Unsupported)
             endif()
             add_test(NAME native_dx12_mesh_${mesh_mode}_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
                 "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_mesh_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror ${mesh_args} ${extra})

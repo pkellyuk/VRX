@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Paul Kelly. SPDX-License-Identifier: GPL-3.0-or-later
 #include "mirror.h"
 #include "native_debug.h"
+#include "replay_probe.h"
 #include "dxbc_patch.h"
 #include "publisher.h"
 #include "pipeline_stream.h"
@@ -33,6 +34,7 @@ struct Context {
     dxbc::Options calibration{.25f,0,true}; // native left, shifted right
     std::string recordCommands; // diagnostic comma-delimited allowlist
     std::string reason;
+    uint64_t probeCount=0,nextProbePresentation=0,probeOrdinal=0,previousIndexed=1;
 };
 namespace {
 enum class Kind { Device,Queue,Allocator,Resource,Pipeline,Heap,List,Swapchain,MemoryHeap,QueryHeap,Signature };
@@ -53,6 +55,8 @@ struct Item {
     ComPtr<ID3D12CommandAllocator> allocator;
     ComPtr<ID3D12GraphicsCommandList> list;
     ComPtr<ID3D12CommandAllocator> listAllocator;
+    std::vector<std::shared_ptr<diagnostic::ReplayProbe>> probes;
+    D3D12_COMMAND_LIST_TYPE listType=D3D12_COMMAND_LIST_TYPE_DIRECT;
     D3D12_HEAP_TYPE heapType=D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC description{};
     uint64_t leftAddress=0,rightAddress=0;
@@ -77,6 +81,7 @@ struct State {
     std::atomic<Pending*> retired{nullptr};
     std::atomic<bool> trackingLost{false};
     Counts counts;
+    std::vector<std::shared_ptr<diagnostic::ReplayProbe>> pendingProbes;
 };
 State& Registry() { static auto* state=new State; return *state; }
 using Lock=std::lock_guard<std::recursive_mutex>;
@@ -96,6 +101,8 @@ void Index(void* p,const std::shared_ptr<Item>& item,const std::shared_ptr<Item>
     std::atomic_store(&target,std::shared_ptr<const State::Bucket>(next));
 }
 void Drain() {
+    auto& probes=Registry().pendingProbes;
+    for(auto it=probes.begin();it!=probes.end();){if((*it)->Poll()){(*it)->pending=false;it=probes.erase(it);}else ++it;}
     if(Registry().trackingLost.load()) {
         for(const auto& entry:Registry().objects) {
             auto& context=entry.second->context;
@@ -287,6 +294,7 @@ void Present(IDXGISwapChain* original,UINT flags) noexcept {
     try {
         Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || item->kind!=Kind::Swapchain || !item->context->active)return;
         if(item->context->recordOnly)return;
+        item->context->previousIndexed=std::max(uint64_t(1),item->context->probeOrdinal);item->context->probeOrdinal=0;
         if(flags&DXGI_PRESENT_DO_NOT_WAIT) {Stop(item->context,"nonblocking presentation needs a publication transaction");return;}
         wchar_t session[66]{};const auto length=GetEnvironmentVariableW(L"VRX_XG_SESSION",session,66);
         // Offscreen interception tests need no named stream. A launcher supplies
@@ -483,7 +491,7 @@ void Rtv(ID3D12Device* device,ID3D12Resource* resource,const D3D12_RENDER_TARGET
 void List(ID3D12Device* device,ID3D12GraphicsCommandList* original,ID3D12CommandAllocator* allocator,ID3D12PipelineState* pipeline,UINT node,D3D12_COMMAND_LIST_TYPE type,bool closed) noexcept {
     try {
         Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(!context || !context->active) return;
-        auto item=New(Kind::List,context); item->closed=closed;
+        auto item=New(Kind::List,context); item->closed=closed;item->listType=type;
         if(!closed) {
             auto allocation=Mapped(allocator,Kind::Allocator,context); Mapper map(context); auto pso=map.Pipeline(pipeline);
             if(!allocation || !map.Valid()) return;
@@ -503,11 +511,28 @@ void Reset(ID3D12GraphicsCommandList* original,ID3D12CommandAllocator* allocator
         auto allocation=Mapped(allocator,Kind::Allocator,item->context); Mapper map(item->context); auto pso=map.Pipeline(pipeline);
         if(!allocation || !map.Valid()) return;
         if(FAILED(item->list->Reset(allocation->allocator.Get(),pso))) { Stop(item->context,"command list reset failed"); return; }
-        item->listAllocator=allocation->allocator; item->closed=false;
+        item->listAllocator=allocation->allocator; item->closed=false;item->probes.clear();
     } catch(...) { }
 }
 void Close(ID3D12GraphicsCommandList* original) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(item && item->context->active) { if(FAILED(item->list->Close())) Stop(item->context,"command list close failed"); else item->closed=true; } } catch(...) { }
+}
+std::shared_ptr<void> BeginProbe(ID3D12GraphicsCommandList* original) noexcept {
+    static const bool requested=diagnostic::ProbesRequested();if(!requested)return {};
+    try {
+        Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item || item->kind!=Kind::List || item->closed || item->listType!=D3D12_COMMAND_LIST_TYPE_DIRECT)return {};
+        const auto& context=item->context;
+        const auto ordinal=++context->probeOrdinal;
+        if(!context->active || context->recordOnly || context->probeCount>=64 || Registry().counts.presentations<context->nextProbePresentation)return {};
+        if(ordinal!=1+(context->probeCount*37)%context->previousIndexed)return {};
+        context->nextProbePresentation=Registry().counts.presentations+30;
+        auto probe=diagnostic::ReplayProbe::Create(context->device,++context->probeCount);if(!probe)return {};
+        item->probes.push_back(probe);probe->Begin(original,item->list.Get());return probe;
+    }catch(...){diagnostic::Write(nullptr,1,0,"VRX replay probe begin failed");return {};}
+}
+void EndProbe(ID3D12GraphicsCommandList* original,const std::shared_ptr<void>& token) noexcept {
+    if(!token)return;
+    try {Lock lock(Registry().mutex);auto item=Find(original);if(item)std::static_pointer_cast<diagnostic::ReplayProbe>(token)->End(original,item->list.Get());}catch(...){diagnostic::Write(nullptr,1,0,"VRX replay probe end failed");}
 }
 void Record(ID3D12GraphicsCommandList* original,const char* name,Callback<ID3D12GraphicsCommandList*,Mapper&> command,RecordKind kind) noexcept {
     if(!FastFind(original)) return;
@@ -530,17 +555,26 @@ void QueueCommand(ID3D12CommandQueue* queue,Callback<ID3D12CommandQueue*,Mapper&
 void Execute(ID3D12CommandQueue* queue,UINT count,ID3D12CommandList* const* lists,ExecuteFn execute) noexcept {
     try {
         Lock lock(Registry().mutex); Drain(); auto context=Owner(queue);
-        if(!context || !context->active || !count || count>65536 || !lists) { execute(queue,count,lists); return; }
+        if(!context || !count || count>65536 || !lists) { execute(queue,count,lists); return; }
         std::vector<ID3D12CommandList*> paired(lists,lists+count);
-        for(UINT i=0;i<count;++i) {
+        for(UINT i=0;context->active && i<count;++i) {
             auto list=Mapped(lists[i],Kind::List,context);
             if(!list || !list->closed) { Stop(context,"untracked or open command list submitted"); break; }
             paired.push_back(list->list.Get());
         }
         // GPU-read-only upload inputs are shared. No CPU reads or whole-buffer
         // copies at submission; app fences follow both lists before CPU reuse.
-        if(context->active && !context->recordOnly) { execute(queue,UINT(paired.size()),paired.data()); Registry().counts.replays+=count; }
-        else execute(queue,count,lists);
+        size_t probes=0;if(context->probeCount)for(UINT i=0;i<count;++i){auto item=Find(lists[i]);if(item)probes+=item->probes.size();}
+        Registry().pendingProbes.reserve(Registry().pendingProbes.size()+probes);
+        const bool pairedExecution=context->active && !context->recordOnly;
+        if(pairedExecution) {
+            execute(queue,UINT(paired.size()),paired.data()); Registry().counts.replays+=count;
+        }else execute(queue,count,lists);
+        if(probes)for(UINT i=0;i<count;++i){auto item=Find(lists[i]);if(item)for(const auto& probe:item->probes){
+                probe->paired=probe->paired && pairedExecution;
+                ++probe->submitted;if(FAILED(queue->Signal(probe->fence.Get(),probe->submitted))){probe->failed=true;diagnostic::Write(nullptr,1,0,"VRX replay probe fence signal failed");}
+                if(!probe->pending){Registry().pendingProbes.push_back(probe);probe->pending=true;}
+        }}
     } catch(...) { Failure(queue,"submission translation failed"); execute(queue,count,lists); }
 }
 std::shared_ptr<void> BeforeRelease(void* original) noexcept { try { return FastFind(original); } catch(...) { return {}; } }

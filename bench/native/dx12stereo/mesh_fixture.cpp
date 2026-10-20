@@ -3,6 +3,7 @@
 #include "mirror_scene.h"
 int main(int argc,char** argv){try {
     const bool warp=argc==3 && !std::strcmp(argv[2],"--warp");Check(argc==2 || warp,"known mesh fixture adapter");
+    const bool unsupported=argc>=2 && !std::strcmp(argv[1],"--unsupported");
     const auto module=GetModuleHandleW(L"d3d12.dll");counts=reinterpret_cast<CountsFn>(GetProcAddress(module,"VRX_DX12_GetCounts"));twin=reinterpret_cast<TwinFn>(GetProcAddress(module,"VRX_DX12_GetTwin"));scope=reinterpret_cast<ScopeFn>(GetProcAddress(module,"VRX_DX12_DiagnosticScope"));Check(counts && twin && scope,"mesh diagnostics loaded");
     ComPtr<ID3D12Debug> debug;if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))debug->EnableDebugLayer();
     {
@@ -38,9 +39,10 @@ float4 PS():SV_Target{return float4(color,1);}
             Hr(scene.allocator->Reset());Hr(scene.commands->Reset(scene.allocator.Get(),nullptr));scene.commands->SetPipelineState(scene.pipeline.Get());scene.commands->SetGraphicsRootSignature(scene.root.Get());scene.commands->SetGraphicsRootConstantBufferView(0,camera->GetGPUVirtualAddress()+256);
             D3D12_VIEWPORT viewport{0,0,float(scene.width),float(scene.height),0,1};D3D12_RECT rect{0,0,LONG(scene.width),LONG(scene.height)};scene.commands->RSSetViewports(1,&viewport);scene.commands->RSSetScissorRects(1,&rect);scene.commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             const D3D12_VERTEX_BUFFER_VIEW vertex{mesh->GetGPUVirtualAddress()+64,UINT(sizeof(vertices)),12};const D3D12_INDEX_BUFFER_VIEW index{mesh->GetGPUVirtualAddress()+256,UINT(sizeof(indices)),DXGI_FORMAT_R32_UINT};scene.commands->IASetVertexBuffers(0,1,&vertex);scene.commands->IASetIndexBuffer(&index);
-            const auto target=scene.rtv->GetCPUDescriptorHandleForHeapStart();const float black[]={0,0,0,1};scene.commands->ClearRenderTargetView(target,black,0,nullptr);scene.commands->OMSetRenderTargets(1,&target,FALSE,nullptr);scene.commands->DrawIndexedInstanced(3,1,1,1,0);Hr(scene.commands->Close());ID3D12CommandList* rendered[]={scene.commands.Get()};scene.queue->ExecuteCommandLists(1,rendered);scene.Wait();
+            const auto target=scene.rtv->GetCPUDescriptorHandleForHeapStart();const float black[]={0,0,0,1};scene.commands->ClearRenderTargetView(target,black,0,nullptr);scene.commands->OMSetRenderTargets(1,&target,FALSE,nullptr);scene.commands->DrawIndexedInstanced(3,1,1,1,0);if(unsupported)scene.commands->SOSetTargets(0,0,nullptr);Hr(scene.commands->Close());ID3D12CommandList* rendered[]={scene.commands.Get()};scene.queue->ExecuteCommandLists(1,rendered);scene.Wait();
+            if(unsupported){Pixels(scene,Capture(scene,false),frame,true);scene.DebugCheck();break;}
             const auto pixels=Capture(scene);const auto shift=Pixels(scene,pixels,frame);wchar_t zero[8]{};const bool identical=(GetEnvironmentVariableW(L"VRX_DX12_SHIFT",zero,8)==1 && zero[0]==L'0') || frame%2!=0;Check(identical?std::abs(shift)<.1:shift>7,"mesh replay has calibrated disparity");if(identical)Pixels(scene,pixels,frame,true);scene.DebugCheck();
         }
     }
-    vrx::dx12::Counts result;Hr(counts(&result,sizeof(result)));Check(result.mirrorReplays==24 && !result.mirrorStops && !result.hookFailures && !result.mirrorLiveObjects,"mesh copy/direct batches replay and retire");std::puts("PASS: native DX12 placed mesh buffers, COPY queue dependencies, GPU camera CBVs, 12 same-frame pixel comparisons and retirement");return 0;
+    vrx::dx12::Counts result;Hr(counts(&result,sizeof(result)));Check(result.mirrorReplays==(unsupported?1u:24u) && result.mirrorStops==(unsupported?1u:0u) && !result.hookFailures && !result.mirrorLiveObjects,"mesh copy/direct batches replay and retire");std::puts("PASS: native DX12 placed mesh buffers, COPY queue dependencies, GPU camera CBVs, 12 same-frame pixel comparisons and retirement");return 0;
 }catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}

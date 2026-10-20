@@ -115,10 +115,12 @@ void STDMETHODCALLTYPE Draw(ID3D12GraphicsCommandList* object,UINT vertices,UINT
 }
 void STDMETHODCALLTYPE DrawIndexed(ID3D12GraphicsCommandList* object,UINT indices,UINT instances,UINT firstIndex,INT baseVertex,UINT firstInstance) {
     Call call;
+    auto probe=call.outer?mirror::BeginProbe(object):std::shared_ptr<void>{};
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,INT,UINT);
     if(call.outer) ++State().indexed;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawIndexedInstanced)(object,indices,instances,firstIndex,baseVertex,firstInstance);
     if(call.outer) mirror::Record(object,"DrawIndexedInstanced",[&](auto* q,auto&){ q->DrawIndexedInstanced(indices,instances,firstIndex,baseVertex,firstInstance); },mirror::RecordKind::Work);
+    mirror::EndProbe(object,probe);
 }
 void STDMETHODCALLTYPE Bundle(ID3D12GraphicsCommandList* object,ID3D12GraphicsCommandList* bundle) {
     Call call;

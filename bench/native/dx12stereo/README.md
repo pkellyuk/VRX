@@ -606,3 +606,23 @@ prototype and completes the Release suite: 129 passed, one unsupported WARP VRS
 skip, zero failures (298.74 seconds). The new mesh and debug/GPU-validation
 comparisons also pass in Debug; managed smoke/native restart integration passes.
 This regression evidence does not resolve System Shock's missing right-eye world.
+
+`launch-native.ps1 -ReplayProbes` enables bounded paired pipeline-statistics
+queries (and implies the debug layer). It samples indexed draws on DIRECT lists,
+at most once per 30 presentations, rotating the draw ordinal using the preceding
+frame's draw count. The first 64 samples report native/right IA, vertex-shader,
+clipping and pixel-shader counters. Results are mapped only after a queue fence
+completes; there is no CPU fence wait or frame-pixel readback. Query storage stays
+alive across list reset/release until queued work retires. Ordinary launches
+strip this diagnostic setting. Hardware/WARP mesh tests validate equal populated
+GPU counters alongside equal native/right pixels for the sampled draw.
+Fallback comparisons stop stereo after recording the probe but before submission:
+the native scene remains valid, and the probe's native work is still fenced and
+retired without reading an unsubmitted right-eye result.
+
+In System Shock's zero-separation startup comparison, the varied samples have
+matching native/right counters, including populated pixel-shader invocations.
+These early samples do not establish correctness of later gameplay draws. A
+subsequent gameplay readback (frame 2756/2756) still shows the full scene on the
+left and HUD-only on the right. Render-target contents and later compositing
+remain under investigation; pipeline work counts alone cannot establish them.

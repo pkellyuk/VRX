@@ -20,7 +20,7 @@ internal static class NativeGeometryLaunchIntegrationTests
         using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(100));var token=timeout.Token;
         var log=new List<string>();GeometryLaunch.Run? running=null;
         var diagnosticEnvironment=new Dictionary<string,string>{
-            ["VRX_DX12_GPU_VALIDATION"]="1",["VRX_DX12_DEBUG_LAYER"]="1",["VRX_DX12_DEBUG_LOG"]="unwanted-debug.log",
+            ["VRX_DX12_REPLAY_PROBES"]="1",["VRX_DX12_GPU_VALIDATION"]="1",["VRX_DX12_DEBUG_LAYER"]="1",["VRX_DX12_DEBUG_LOG"]="unwanted-debug.log",
             ["VRX_DX12_RECORD_ONLY"]="1",["VRX_DX12_CLONE_ONLY"]="1",["VRX_DX12_SKIP_COMMANDS"]="1",
             ["VRX_DX12_SKIP_WORK"]="1",["VRX_DX12_STATE_ONLY"]="1",["VRX_DX12_RECORD_COMMANDS"]="SetPipelineState"};
         var previousEnvironment=diagnosticEnvironment.Keys.ToDictionary(key=>key,Environment.GetEnvironmentVariable);
