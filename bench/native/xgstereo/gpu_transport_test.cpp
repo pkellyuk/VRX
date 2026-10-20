@@ -97,9 +97,12 @@ int main()
             auto oldProducer=std::make_unique<xg::GpuWriter>();auto oldConsumer=std::make_unique<xg::GpuReader>();
             Check(oldProducer->Create(resizedSession,device->GetAdapterLuid(),18,10,xg::GpuFrameKind::SameFrame),"initial resize generation");
             Check(oldConsumer->Open(device.Get(),resizedSession),"old consumer keeps metadata alive");
+            Check(!oldConsumer->ReplacementAvailable(),"current live generation is not a replacement");
             oldProducer->Close();xg::GpuWriter replacement;
             Check(replacement.Create(resizedSession,device->GetAdapterLuid(),23,13,xg::GpuFrameKind::SameFrame),"replace own closed generation while old mapping is held");
+            Check(oldConsumer->ReplacementAvailable(),"replacement detected without releasing old GPU objects");
             Check(oldConsumer->Status(0,frame)==xg::PairRead::Invalid,"old reader rejects new generation");
+            {xg::GpuReader wrongOwner;Check(!wrongOwner.Open(device.Get(),resizedSession,GetCurrentProcessId()+1),"expected producer PID checked before registering a replacement consumer");}
             xg::GpuReader newConsumer;Check(newConsumer.Open(device.Get(),resizedSession),"new reader opens resized generation");
             Check(newConsumer.Header().width==23 && newConsumer.Header().height==13,"new dimensions advertised");
             oldConsumer.reset();oldProducer->Close();oldProducer.reset();

@@ -4,6 +4,9 @@
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 #include "../openxr/geometry_copy.h"
+#include "../openxr/geometry_fit.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -39,14 +42,15 @@ static ComPtr<ID3D12Resource> Buffer(ID3D12Device* device, UINT64 bytes, D3D12_H
     return result;
 }
 
-int main()
+int main(int argc,char** argv)
 {
     try
     {
         ComPtr<ID3D12Debug> debug;
         if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) debug->EnableDebugLayer();
-        ComPtr<ID3D12Device> device;
-        Hr(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)), "create D3D12 device");
+        ComPtr<ID3D12Device> device;ComPtr<IDXGIAdapter> adapter;
+        if(argc==2 && !std::strcmp(argv[1],"--warp")){ComPtr<IDXGIFactory4> factory;Hr(CreateDXGIFactory1(IID_PPV_ARGS(&factory)),"factory");Hr(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)),"WARP adapter");}
+        Hr(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)), "create D3D12 device");
         ComPtr<ID3D12InfoQueue> messages;
         device.As(&messages);
         D3D12_COMMAND_QUEUE_DESC qd{}; qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -144,6 +148,32 @@ int main()
                             "eye identity, edge pixels, row pitch, alpha and mono lighting preserved");
                     }
             readback->Unmap(0, nullptr);
+        }
+        UINT64 completed=3;
+        const UINT sizes[][2]={{13,13},{37,11},{3,5},{W,H}};
+        for(const auto& size:sizes) {
+            GeometryFit fit;ID3D12Resource* inputs[]={source.Get(),source.Get()};
+            Check(fit.Create(device.Get(),inputs,2,size[0],size[1]),"create eye-isolated GPU fit");
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};UINT64 bytes=0;const auto desc=fit.Output()->GetDesc();
+            device->GetCopyableFootprints(&desc,0,1,0,&footprint,nullptr,nullptr,&bytes);auto result=Buffer(device.Get(),bytes,D3D12_HEAP_TYPE_READBACK);
+            Hr(allocator->Reset(),"reset fit allocator");Hr(cl->Reset(allocator.Get(),nullptr),"reset fit list");
+            Check(!fit.Record(cl.Get(),2,false),"reject invalid source ring slot");Check(fit.Record(cl.Get(),1,false),"fit a complete stereo pair");
+            GeometryBarrier(cl.Get(),fit.Output(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_COPY_SOURCE);
+            D3D12_TEXTURE_COPY_LOCATION src{},dst{};src.pResource=fit.Output();src.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            dst.pResource=result.Get();dst.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;dst.PlacedFootprint=footprint;cl->CopyTextureRegion(&dst,0,0,0,&src,nullptr);
+            GeometryBarrier(cl.Get(),fit.Output(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_COMMON);Hr(cl->Close(),"close fit list");
+            ID3D12CommandList* lists[]={cl.Get()};queue->ExecuteCommandLists(1,lists);Hr(queue->Signal(fence.Get(),++completed),"signal fit completion");
+            const auto until=GetTickCount64()+5000;while(fence->GetCompletedValue()<completed && GetTickCount64()<until)Sleep(1);
+            Check(fence->GetCompletedValue()==completed,"fit GPU completed");uint8_t* mapped=nullptr;Hr(result->Map(0,nullptr,reinterpret_cast<void**>(&mapped)),"read fitted pair");
+            const double scale=std::min(double(size[0])/W,double(size[1])/H),dx=(size[0]-W*scale)/2,dy=(size[1]-H*scale)/2;
+            for(UINT eye=0;eye<2;++eye)for(UINT y=0;y<size[1];++y)for(UINT x=0;x<size[0];++x) {
+                const auto* pixel=mapped+footprint.Offset+size_t(y)*footprint.Footprint.RowPitch+(eye*size[0]+x)*4;
+                const double px=x+.5-dx,py=y+.5-dy;const bool inside=px>=0 && py>=0 && px<W*scale && py<H*scale;
+                const auto green=std::clamp(px/scale-.5,0.,double(W-1)),blue=std::clamp(py/scale-.5,0.,double(H-1))*17;
+                Check(pixel[3]==255 && pixel[0]==(inside?(eye?13:241):0),"letterbox alpha and strict eye isolation");
+                Check(std::abs(int(pixel[1])-int(std::lround(inside?green:0)))<=1 && std::abs(int(pixel[2])-int(std::lround(inside?blue:0)))<=1,"GPU fit matches independent linear-ramp reference");
+            }
+            result->Unmap(0,nullptr);
         }
         if (messages)
             for (UINT64 i = 0; i < messages->GetNumStoredMessages(); ++i)

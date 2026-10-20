@@ -141,16 +141,16 @@ class GpuReader : public GpuMapping {
     uint64_t pendingSequence_ = 0;
 public:
     const GpuHeader& Header() const { return header_; }
-    bool Open(ID3D12Device* device, const std::wstring& session)
+    bool Open(ID3D12Device* device, const std::wstring& session, uint32_t expectedPid = 0)
     {
-        if (!device || !ValidSession(session)) return false;
+        if (!device || !ValidSession(session) || mutex_ || mapping_ || view_) return false;
         mutex_ = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, GpuName(session, L".lock").c_str());
         mapping_ = OpenFileMappingW(FILE_MAP_WRITE, FALSE, GpuName(session, L".frames").c_str());
         if (!mutex_ || !mapping_) return false;
         view_ = static_cast<GpuHeader*>(MapViewOfFile(mapping_, FILE_MAP_WRITE, 0, 0, sizeof(GpuHeader)));
         if (!view_) return false;
         PairLock lock(mutex_, 1000);
-        if (!lock.Ready() || !ValidGpuHeader(*view_) || !view_->active || view_->consumer) return false;
+        if (!lock.Ready() || !ValidGpuHeader(*view_) || !view_->active || view_->consumer || (expectedPid && view_->pid != expectedPid)) return false;
         const LUID luid = device->GetAdapterLuid();
         if (luid.LowPart != view_->adapter.LowPart || luid.HighPart != view_->adapter.HighPart) return false;
         header_ = *view_;
@@ -169,6 +169,12 @@ public:
         view_->consumer = GetCurrentProcessId();
         registered_ = true;
         return true;
+    }
+    bool ReplacementAvailable() const {
+        PairLock lock(mutex_);
+        return lock.Ready() && !tainted_ && view_ && view_->active && ValidGpuHeader(*view_) &&
+            view_->pid == header_.pid && view_->generation != header_.generation &&
+            view_->adapter.LowPart == header_.adapter.LowPart && view_->adapter.HighPart == header_.adapter.HighPart;
     }
     ~GpuReader()
     {

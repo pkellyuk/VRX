@@ -149,8 +149,19 @@ static void TestConcurrentReaders()
         (unsigned long long)drops.load());
 }
 
+static void TestGenerationReset()
+{
+    SourceRing<2> ring;auto frame=ring.Reserve(0,0,0);const auto sequence=frame->seq;ring.Publish(frame,5,0);
+    ring.MarkRead(frame,SourceRing<2>::Reader::Graphics,8);ring.MarkRead(frame,SourceRing<2>::Reader::Model,9);ring.MarkRead(frame,SourceRing<2>::Reader::Transfer,10);
+    Check(!ring.Reset(100,100,100,100),"resize cannot discard a held CPU source reference");frame.reset();
+    Check(!ring.Reset(4,8,9,10) && !ring.Reset(5,7,9,10) && !ring.Reset(5,8,8,10) && !ring.Reset(5,8,9,9),"resize waits for all four GPU timelines");
+    Check(!ring.Reset(UINT64_MAX,100,100,100),"removed device cannot authorize resource destruction");
+    Check(ring.Reset(5,8,9,10) && !ring.Latest(),"quiescent source ring resets its latest picture");
+    auto next=ring.Reserve(5,8,9,10);Check(next && next->seq>sequence,"new source generation retains monotonic identities");
+}
 int main()
 {
+    TestGenerationReset();
     TestTransferTimeline();
     TestOwnershipAndFences();
     TestLongLivedPairedFrame();

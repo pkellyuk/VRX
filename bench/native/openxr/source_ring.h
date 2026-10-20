@@ -71,6 +71,20 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         return latest_;
     }
+    // Replacement of source textures requires every CPU reader and GPU timeline
+    // to have retired. Sequence numbers remain monotonic across generations.
+    bool Reset(uint64_t producerDone, uint64_t graphicsDone, uint64_t modelDone, uint64_t transferDone = 0)
+    {
+        constexpr auto removed = std::numeric_limits<uint64_t>::max();
+        if(producerDone==removed || graphicsDone==removed || modelDone==removed || transferDone==removed)return false;
+        std::lock_guard<std::mutex> lock(mutex_);
+        for(const auto& slot:slots_) {
+            if(slot.producer>producerDone || slot.graphics>graphicsDone || slot.model>modelDone || slot.transfer>transferDone)return false;
+            auto frame=slot.frame.lock();
+            if(frame && frame.use_count()>(frame==latest_?2:1))return false;
+        }
+        latest_.reset();slots_={};next_=0;return true;
+    }
 
     // Register queued work BEFORE releasing the CPU reference. The texture stays
     // unavailable until the corresponding GPU fence completes, even if all CPU
