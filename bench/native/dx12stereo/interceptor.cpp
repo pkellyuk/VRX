@@ -110,27 +110,27 @@ void STDMETHODCALLTYPE Draw(ID3D12GraphicsCommandList* object,UINT vertices,UINT
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,UINT);
     if(call.outer) ++State().draws;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawInstanced)(object,vertices,instances,firstVertex,firstInstance);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto&){ q->DrawInstanced(vertices,instances,firstVertex,firstInstance); },mirror::RecordKind::Work);
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto&){ q->DrawInstanced(vertices,instances,firstVertex,firstInstance); },mirror::RecordKind::Work);
 }
 void STDMETHODCALLTYPE DrawIndexed(ID3D12GraphicsCommandList* object,UINT indices,UINT instances,UINT firstIndex,INT baseVertex,UINT firstInstance) {
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,UINT,UINT,UINT,INT,UINT);
     if(call.outer) ++State().indexed;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_DrawIndexedInstanced)(object,indices,instances,firstIndex,baseVertex,firstInstance);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto&){ q->DrawIndexedInstanced(indices,instances,firstIndex,baseVertex,firstInstance); },mirror::RecordKind::Work);
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto&){ q->DrawIndexedInstanced(indices,instances,firstIndex,baseVertex,firstInstance); },mirror::RecordKind::Work);
 }
 void STDMETHODCALLTYPE Bundle(ID3D12GraphicsCommandList* object,ID3D12GraphicsCommandList* bundle) {
     Call call;
     using Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*,ID3D12GraphicsCommandList*);
     if(call.outer) ++State().bundles;
     Original<Fn>(object,slot::ID3D12GraphicsCommandList_ExecuteBundle)(object,bundle);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){ auto right=map.Bundle(bundle); if(map.Valid()) q->ExecuteBundle(right); },mirror::RecordKind::Work);
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){ auto right=map.Bundle(bundle); if(map.Valid()) q->ExecuteBundle(right); },mirror::RecordKind::Work);
 }
 // These calls carry only immutable values or immutable root-signature objects.
 #define SIMPLE(Name,Parameters,Native,Replay) \
 void STDMETHODCALLTYPE Name Parameters { \
     Call call; Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name) Native; \
-    if(call.outer) mirror::Record(object,[&](auto* q,auto&){q->Name Replay;}); \
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto&){q->Name Replay;}); \
 }
 SIMPLE(RSSetViewports,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_VIEWPORT* values),(object,count,values),(count,values))
 SIMPLE(RSSetScissorRects,(ID3D12GraphicsCommandList* object,UINT count,const D3D12_RECT* values),(object,count,values),(count,values))
@@ -146,15 +146,15 @@ SIMPLE(SetComputeRoot32BitConstants,(ID3D12GraphicsCommandList* object,UINT inde
 #undef SIMPLE
 void STDMETHODCALLTYPE SetPipelineState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
     Call call; Original<decltype(&SetPipelineState)>(object,slot::ID3D12GraphicsCommandList_SetPipelineState)(object,value);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->SetPipelineState(right);});
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->SetPipelineState(right);});
 }
 void STDMETHODCALLTYPE ClearState(ID3D12GraphicsCommandList* object,ID3D12PipelineState* value) {
     Call call; Original<decltype(&ClearState)>(object,slot::ID3D12GraphicsCommandList_ClearState)(object,value);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->ClearState(right);});
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Pipeline(value); if(map.Valid()) q->ClearState(right);});
 }
 void STDMETHODCALLTYPE OMSetRenderTargets(ID3D12GraphicsCommandList* object,UINT count,const D3D12_CPU_DESCRIPTOR_HANDLE* values,BOOL contiguous,const D3D12_CPU_DESCRIPTOR_HANDLE* depth) {
     Call call; Original<decltype(&OMSetRenderTargets)>(object,slot::ID3D12GraphicsCommandList_OMSetRenderTargets)(object,count,values,contiguous,depth);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){
         if(count>8 || (count && !values)) { mirror::Unsupported(object,"invalid render target range"); return; }
         D3D12_CPU_DESCRIPTOR_HANDLE right[8]{}; for(UINT i=0;i<(contiguous && count?1:count);++i) right[i]=map.Cpu(values[i]);
         const auto rightDepth=depth?map.Cpu(*depth):D3D12_CPU_DESCRIPTOR_HANDLE{};
@@ -163,11 +163,11 @@ void STDMETHODCALLTYPE OMSetRenderTargets(ID3D12GraphicsCommandList* object,UINT
 }
 void STDMETHODCALLTYPE ClearRenderTargetView(ID3D12GraphicsCommandList* object,D3D12_CPU_DESCRIPTOR_HANDLE target,const FLOAT color[4],UINT count,const D3D12_RECT* rects) {
     Call call; Original<decltype(&ClearRenderTargetView)>(object,slot::ID3D12GraphicsCommandList_ClearRenderTargetView)(object,target,color,count,rects);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Cpu(target); if(map.Valid()) q->ClearRenderTargetView(right,color,count,rects);},mirror::RecordKind::Transfer);
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Cpu(target); if(map.Valid()) q->ClearRenderTargetView(right,color,count,rects);},mirror::RecordKind::Transfer);
 }
 void STDMETHODCALLTYPE ResourceBarrier(ID3D12GraphicsCommandList* object,UINT count,const D3D12_RESOURCE_BARRIER* values) {
     Call call; Original<decltype(&ResourceBarrier)>(object,slot::ID3D12GraphicsCommandList_ResourceBarrier)(object,count,values);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){
         std::vector<D3D12_RESOURCE_BARRIER> right(values,values+count);
         for(auto& b:right) {
             if(b.Type==D3D12_RESOURCE_BARRIER_TYPE_TRANSITION) b.Transition.pResource=map.Resource(b.Transition.pResource);
@@ -180,11 +180,11 @@ void STDMETHODCALLTYPE ResourceBarrier(ID3D12GraphicsCommandList* object,UINT co
 }
 void STDMETHODCALLTYPE IASetIndexBuffer(ID3D12GraphicsCommandList* object,const D3D12_INDEX_BUFFER_VIEW* value) {
     Call call; Original<decltype(&IASetIndexBuffer)>(object,slot::ID3D12GraphicsCommandList_IASetIndexBuffer)(object,value);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){D3D12_INDEX_BUFFER_VIEW right{}; if(value){right=*value;right.BufferLocation=map.Address(value->BufferLocation);} if(map.Valid()) q->IASetIndexBuffer(value?&right:nullptr);});
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){D3D12_INDEX_BUFFER_VIEW right{}; if(value){right=*value;right.BufferLocation=map.Address(value->BufferLocation);} if(map.Valid()) q->IASetIndexBuffer(value?&right:nullptr);});
 }
 void STDMETHODCALLTYPE IASetVertexBuffers(ID3D12GraphicsCommandList* object,UINT start,UINT count,const D3D12_VERTEX_BUFFER_VIEW* values) {
     Call call; Original<decltype(&IASetVertexBuffers)>(object,slot::ID3D12GraphicsCommandList_IASetVertexBuffers)(object,start,count,values);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){
         if(!values) { q->IASetVertexBuffers(start,count,nullptr); return; }
         std::vector<D3D12_VERTEX_BUFFER_VIEW> right(values,values+count); for(auto& view:right) view.BufferLocation=map.Address(view.BufferLocation);
         if(map.Valid()) q->IASetVertexBuffers(start,count,right.data());
@@ -192,19 +192,19 @@ void STDMETHODCALLTYPE IASetVertexBuffers(ID3D12GraphicsCommandList* object,UINT
 }
 void STDMETHODCALLTYPE CopyResource(ID3D12GraphicsCommandList* object,ID3D12Resource* dst,ID3D12Resource* src) {
     Call call; Original<decltype(&CopyResource)>(object,slot::ID3D12GraphicsCommandList_CopyResource)(object,dst,src);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->CopyResource(d,s);},mirror::RecordKind::Transfer);
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->CopyResource(d,s);},mirror::RecordKind::Transfer);
 }
 void STDMETHODCALLTYPE CopyBufferRegion(ID3D12GraphicsCommandList* object,ID3D12Resource* dst,UINT64 offset,ID3D12Resource* src,UINT64 source,UINT64 bytes) {
     Call call; Original<decltype(&CopyBufferRegion)>(object,slot::ID3D12GraphicsCommandList_CopyBufferRegion)(object,dst,offset,src,source,bytes);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->CopyBufferRegion(d,offset,s,source,bytes);},mirror::RecordKind::Transfer);
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->CopyBufferRegion(d,offset,s,source,bytes);},mirror::RecordKind::Transfer);
 }
 void STDMETHODCALLTYPE CopyTextureRegion(ID3D12GraphicsCommandList* object,const D3D12_TEXTURE_COPY_LOCATION* dst,UINT x,UINT y,UINT z,const D3D12_TEXTURE_COPY_LOCATION* src,const D3D12_BOX* box) {
     Call call; Original<decltype(&CopyTextureRegion)>(object,slot::ID3D12GraphicsCommandList_CopyTextureRegion)(object,dst,x,y,z,src,box);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto d=*dst,s=*src;d.pResource=map.Resource(dst->pResource);s.pResource=map.Resource(src->pResource);if(map.Valid())q->CopyTextureRegion(&d,x,y,z,&s,box);},mirror::RecordKind::Transfer);
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto d=*dst,s=*src;d.pResource=map.Resource(dst->pResource);s.pResource=map.Resource(src->pResource);if(map.Valid())q->CopyTextureRegion(&d,x,y,z,&s,box);},mirror::RecordKind::Transfer);
 }
 void STDMETHODCALLTYPE SetDescriptorHeaps(ID3D12GraphicsCommandList* object,UINT count,ID3D12DescriptorHeap* const* heaps) {
     Call call; Original<decltype(&SetDescriptorHeaps)>(object,slot::ID3D12GraphicsCommandList_SetDescriptorHeaps)(object,count,heaps);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){
         if(count>2 || (count && !heaps)) { mirror::Unsupported(object,"invalid shader-visible heap count"); return; }
         ID3D12DescriptorHeap* right[2]{}; for(UINT i=0;i<count;++i) right[i]=map.Heap(heaps[i]);
         if(map.Valid()) q->SetDescriptorHeaps(count,right);
@@ -212,24 +212,24 @@ void STDMETHODCALLTYPE SetDescriptorHeaps(ID3D12GraphicsCommandList* object,UINT
 }
 void STDMETHODCALLTYPE CopyTiles(ID3D12GraphicsCommandList* object,ID3D12Resource* tiled,const D3D12_TILED_RESOURCE_COORDINATE* start,const D3D12_TILE_REGION_SIZE* size,ID3D12Resource* buffer,UINT64 offset,D3D12_TILE_COPY_FLAGS flags) {
     Call call;Original<decltype(&CopyTiles)>(object,slot::ID3D12GraphicsCommandList_CopyTiles)(object,tiled,start,size,buffer,offset,flags);
-    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto r=map.Resource(tiled),b=map.Resource(buffer);if(map.Valid())q->CopyTiles(r,start,size,b,offset,flags);},mirror::RecordKind::Transfer);
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto& map){auto r=map.Resource(tiled),b=map.Resource(buffer);if(map.Valid())q->CopyTiles(r,start,size,b,offset,flags);},mirror::RecordKind::Transfer);
 }
 void STDMETHODCALLTYPE ClearDepthStencilView(ID3D12GraphicsCommandList* object,D3D12_CPU_DESCRIPTOR_HANDLE handle,D3D12_CLEAR_FLAGS flags,FLOAT depth,UINT8 stencil,UINT count,const D3D12_RECT* rects) {
     Call call; Original<decltype(&ClearDepthStencilView)>(object,slot::ID3D12GraphicsCommandList_ClearDepthStencilView)(object,handle,flags,depth,stencil,count,rects);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Cpu(handle); if(map.Valid()) q->ClearDepthStencilView(right,flags,depth,stencil,count,rects);},mirror::RecordKind::Transfer);
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Cpu(handle); if(map.Valid()) q->ClearDepthStencilView(right,flags,depth,stencil,count,rects);},mirror::RecordKind::Transfer);
 }
 void STDMETHODCALLTYPE SetGraphicsRootDescriptorTable(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&SetGraphicsRootDescriptorTable)>(object,slot::ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable)(object,index,handle);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Gpu(handle); if(map.Valid()) q->SetGraphicsRootDescriptorTable(index,right);});
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Gpu(handle); if(map.Valid()) q->SetGraphicsRootDescriptorTable(index,right);});
 }
 void STDMETHODCALLTYPE SetComputeRootDescriptorTable(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_DESCRIPTOR_HANDLE handle) {
     Call call; Original<decltype(&SetComputeRootDescriptorTable)>(object,slot::ID3D12GraphicsCommandList_SetComputeRootDescriptorTable)(object,index,handle);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Gpu(handle); if(map.Valid()) q->SetComputeRootDescriptorTable(index,right);});
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Gpu(handle); if(map.Valid()) q->SetComputeRootDescriptorTable(index,right);});
 }
 #define ROOT_ADDRESS(Name) \
 void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,UINT index,D3D12_GPU_VIRTUAL_ADDRESS address) { \
     Call call; Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name)(object,index,address); \
-    if(call.outer) mirror::Record(object,[&](auto* q,auto& map){auto right=map.Address(address);if(map.Valid()) q->Name(index,right);}); \
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto& map){auto right=map.Address(address);if(map.Valid()) q->Name(index,right);}); \
 }
 ROOT_ADDRESS(SetGraphicsRootConstantBufferView)
 ROOT_ADDRESS(SetGraphicsRootShaderResourceView)
@@ -240,19 +240,19 @@ ROOT_ADDRESS(SetComputeRootUnorderedAccessView)
 #undef ROOT_ADDRESS
 void STDMETHODCALLTYPE SetPredication(ID3D12GraphicsCommandList* object,ID3D12Resource* resource,UINT64 offset,D3D12_PREDICATION_OP operation) {
     Call call; Original<decltype(&SetPredication)>(object,slot::ID3D12GraphicsCommandList_SetPredication)(object,resource,offset,operation);
-    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto r=map.Resource(resource);if(map.Valid())q->SetPredication(r,offset,operation);});
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto& map){auto r=map.Resource(resource);if(map.Valid())q->SetPredication(r,offset,operation);});
 }
 #define QUERY(Name) \
 void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT index){ \
     Call call;Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name)(object,heap,type,index); \
-    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto h=map.Query(heap);if(map.Valid())q->Name(h,type,index);},mirror::RecordKind::Transfer); \
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto& map){auto h=map.Query(heap);if(map.Valid())q->Name(h,type,index);},mirror::RecordKind::Transfer); \
 }
 QUERY(BeginQuery)
 QUERY(EndQuery)
 #undef QUERY
 void STDMETHODCALLTYPE ResolveQueryData(ID3D12GraphicsCommandList* object,ID3D12QueryHeap* heap,D3D12_QUERY_TYPE type,UINT first,UINT count,ID3D12Resource* buffer,UINT64 offset){
     Call call;Original<decltype(&ResolveQueryData)>(object,slot::ID3D12GraphicsCommandList_ResolveQueryData)(object,heap,type,first,count,buffer,offset);
-    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto h=map.Query(heap);auto r=map.Resource(buffer);if(map.Valid())q->ResolveQueryData(h,type,first,count,r,offset);},mirror::RecordKind::Transfer);
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto& map){auto h=map.Query(heap);auto r=map.Resource(buffer);if(map.Valid())q->ResolveQueryData(h,type,first,count,r,offset);},mirror::RecordKind::Transfer);
 }
 // Forward the native call exactly, but never submit a second eye whose command
 // stream silently omits state, clears, queries or GPU-generated arguments.
@@ -265,27 +265,27 @@ GUARDED(SOSetTargets,(ID3D12GraphicsCommandList* object,UINT start,UINT count,co
 #undef GUARDED
 void STDMETHODCALLTYPE ExecuteIndirect(ID3D12GraphicsCommandList* object,ID3D12CommandSignature* signature,UINT count,ID3D12Resource* buffer,UINT64 offset,ID3D12Resource* counter,UINT64 counterOffset){
     Call call;Original<decltype(&ExecuteIndirect)>(object,slot::ID3D12GraphicsCommandList_ExecuteIndirect)(object,signature,count,buffer,offset,counter,counterOffset);
-    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto s=map.Signature(signature);auto b=map.Resource(buffer),c=map.Resource(counter);if(map.Valid())q->ExecuteIndirect(s,count,b,offset,c,counterOffset);},mirror::RecordKind::Work);
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto& map){auto s=map.Signature(signature);auto b=map.Resource(buffer),c=map.Resource(counter);if(map.Valid())q->ExecuteIndirect(s,count,b,offset,c,counterOffset);},mirror::RecordKind::Work);
 }
 #define UAV_CLEAR(Name,T) \
 void STDMETHODCALLTYPE Name(ID3D12GraphicsCommandList* object,D3D12_GPU_DESCRIPTOR_HANDLE gpu,D3D12_CPU_DESCRIPTOR_HANDLE cpu,ID3D12Resource* resource,const T values[4],UINT count,const D3D12_RECT* rects){ \
     Call call;Original<decltype(&Name)>(object,slot::ID3D12GraphicsCommandList_##Name)(object,gpu,cpu,resource,values,count,rects); \
-    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto g=map.Gpu(gpu);auto c=map.Cpu(cpu);auto r=map.Resource(resource);if(map.Valid())q->Name(g,c,r,values,count,rects);},mirror::RecordKind::Transfer); \
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto& map){auto g=map.Gpu(gpu);auto c=map.Cpu(cpu);auto r=map.Resource(resource);if(map.Valid())q->Name(g,c,r,values,count,rects);},mirror::RecordKind::Transfer); \
 }
 UAV_CLEAR(ClearUnorderedAccessViewUint,UINT)
 UAV_CLEAR(ClearUnorderedAccessViewFloat,FLOAT)
 #undef UAV_CLEAR
 void STDMETHODCALLTYPE ResolveSubresource(ID3D12GraphicsCommandList* object,ID3D12Resource* dst,UINT target,ID3D12Resource* src,UINT source,DXGI_FORMAT format){
     Call call;Original<decltype(&ResolveSubresource)>(object,slot::ID3D12GraphicsCommandList_ResolveSubresource)(object,dst,target,src,source,format);
-    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->ResolveSubresource(d,target,s,source,format);},mirror::RecordKind::Transfer);
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto& map){auto d=map.Resource(dst),s=map.Resource(src);if(map.Valid())q->ResolveSubresource(d,target,s,source,format);},mirror::RecordKind::Transfer);
 }
 void STDMETHODCALLTYPE DiscardResource(ID3D12GraphicsCommandList* object,ID3D12Resource* resource,const D3D12_DISCARD_REGION* region){
     Call call;Original<decltype(&DiscardResource)>(object,slot::ID3D12GraphicsCommandList_DiscardResource)(object,resource,region);
-    if(call.outer)mirror::Record(object,[&](auto* q,auto& map){auto r=map.Resource(resource);if(map.Valid())q->DiscardResource(r,region);},mirror::RecordKind::Transfer);
+    if(call.outer)mirror::Record(object,__func__,[&](auto* q,auto& map){auto r=map.Resource(resource);if(map.Valid())q->DiscardResource(r,region);},mirror::RecordKind::Transfer);
 }
 void STDMETHODCALLTYPE Dispatch(ID3D12GraphicsCommandList* object,UINT x,UINT y,UINT z) {
     Call call; Original<decltype(&Dispatch)>(object,slot::ID3D12GraphicsCommandList_Dispatch)(object,x,y,z);
-    if(call.outer) mirror::Record(object,[&](auto* q,auto&){q->Dispatch(x,y,z);},mirror::RecordKind::Work);
+    if(call.outer) mirror::Record(object,__func__,[&](auto* q,auto&){q->Dispatch(x,y,z);},mirror::RecordKind::Work);
 }
 void STDMETHODCALLTYPE Execute(ID3D12CommandQueue* object,UINT count,ID3D12CommandList* const* lists);
 // Preserve the exact SDK calling convention and parameter types. Querying an
@@ -314,8 +314,8 @@ struct ExtendedGuard<Slot,Result(STDMETHODCALLTYPE Interface::*)(Args...)> {
     }
 };
 template<class Interface,class Replay>
-void ExtendedRecord(ID3D12GraphicsCommandList* object,const Replay& replay) {
-    mirror::Record(object,[&](auto* list,auto& map){
+void ExtendedRecord(ID3D12GraphicsCommandList* object,const char* name,const Replay& replay) {
+    mirror::Record(object,name,[&](auto* list,auto& map){
         ComPtr<Interface> extended;
         if(FAILED(list->QueryInterface(IID_PPV_ARGS(&extended))))mirror::Unsupported(object,"shadow command-list interface is unavailable");
         else replay(extended.Get(),map);
@@ -324,19 +324,19 @@ void ExtendedRecord(ID3D12GraphicsCommandList* object,const Replay& replay) {
 template<>struct ExtendedGuard<slot::ID3D12GraphicsCommandList1_OMSetDepthBounds,decltype(&ID3D12GraphicsCommandList1::OMSetDepthBounds)> {
     static void STDMETHODCALLTYPE Invoke(ID3D12GraphicsCommandList1* object,FLOAT minimum,FLOAT maximum) {
         Call call;Original<decltype(&Invoke)>(object,slot::ID3D12GraphicsCommandList1_OMSetDepthBounds)(object,minimum,maximum);
-        if(call.outer)ExtendedRecord<ID3D12GraphicsCommandList1>(object,[&](auto* list,auto&){list->OMSetDepthBounds(minimum,maximum);});
+        if(call.outer)ExtendedRecord<ID3D12GraphicsCommandList1>(object,"OMSetDepthBounds",[&](auto* list,auto&){list->OMSetDepthBounds(minimum,maximum);});
     }
 };
 template<>struct ExtendedGuard<slot::ID3D12GraphicsCommandList5_RSSetShadingRate,decltype(&ID3D12GraphicsCommandList5::RSSetShadingRate)> {
     static void STDMETHODCALLTYPE Invoke(ID3D12GraphicsCommandList5* object,D3D12_SHADING_RATE rate,const D3D12_SHADING_RATE_COMBINER* combiners) {
         Call call;Original<decltype(&Invoke)>(object,slot::ID3D12GraphicsCommandList5_RSSetShadingRate)(object,rate,combiners);
-        if(call.outer)ExtendedRecord<ID3D12GraphicsCommandList5>(object,[&](auto* list,auto&){list->RSSetShadingRate(rate,combiners);});
+        if(call.outer)ExtendedRecord<ID3D12GraphicsCommandList5>(object,"RSSetShadingRate",[&](auto* list,auto&){list->RSSetShadingRate(rate,combiners);});
     }
 };
 template<>struct ExtendedGuard<slot::ID3D12GraphicsCommandList5_RSSetShadingRateImage,decltype(&ID3D12GraphicsCommandList5::RSSetShadingRateImage)> {
     static void STDMETHODCALLTYPE Invoke(ID3D12GraphicsCommandList5* object,ID3D12Resource* image) {
         Call call;Original<decltype(&Invoke)>(object,slot::ID3D12GraphicsCommandList5_RSSetShadingRateImage)(object,image);
-        if(call.outer)ExtendedRecord<ID3D12GraphicsCommandList5>(object,[&](auto* list,auto& map){auto right=map.Resource(image);if(map.Valid())list->RSSetShadingRateImage(right);});
+        if(call.outer)ExtendedRecord<ID3D12GraphicsCommandList5>(object,"RSSetShadingRate",[&](auto* list,auto& map){auto right=map.Resource(image);if(map.Valid())list->RSSetShadingRateImage(right);});
     }
 };
 void List(ID3D12GraphicsCommandList* object) noexcept {

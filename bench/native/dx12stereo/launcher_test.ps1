@@ -12,10 +12,11 @@ function StartLauncher([string]$Command){
     return [Diagnostics.Process]::Start($start)
 }
 try {
-    foreach($mode in @('mirror','observe','record','clone','queues','no-work','state')) {
-        $observe=$mode -eq 'observe';$recordOnly=$mode -in @('record','queues','no-work','state');$cloneOnly=$mode -eq 'clone';$skipCommands=$mode -eq 'queues';$skipWork=$mode -eq 'no-work';$stateOnly=$mode -eq 'state'
+    foreach($mode in @('mirror','observe','record','clone','queues','no-work','state','pipeline')) {
+        $observe=$mode -eq 'observe';$recordOnly=$mode -in @('record','queues','no-work','state','pipeline');$cloneOnly=$mode -eq 'clone';$skipCommands=$mode -eq 'queues';$skipWork=$mode -eq 'no-work';$stateOnly=$mode -eq 'state';$recordCommands=$(if($mode -eq 'pipeline'){'SetPipelineState'}else{''})
         $session='launch-'+[Guid]::NewGuid().ToString('N');$stop=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,'Local\VRX.dx12.'+$session+'.fixture-stop')
         $command='& '+(Quote $launcher)+' -Executable '+(Quote $application)+' -Proxy '+(Quote $bridge)+' -Session '+(Quote $session)+' -GameArguments @('+(Quote ('--serve-gpu='+$session))+')'+$(if($observe){' -ObserveOnly'}elseif($recordOnly){' -RecordOnly'}elseif($cloneOnly){' -CloneOnly'}else{''})
+        if($recordCommands){$command+=' -RecordCommands '+(Quote $recordCommands)}
         if($stateOnly){$command+=' -RecordStateOnly'}
         if($skipWork){$command+=' -SkipRecordingWork'}
         if($skipCommands){$command+=' -SkipCommandRecording'}
@@ -41,7 +42,7 @@ try {
             if(Test-Path -LiteralPath (Join-Path $root 'd3d12.dll')){throw 'Launcher left its unchanged bridge installed'}
             $match=[regex]::Match($output,'run ([^\r\n]+)');if(-not $match.Success){throw 'Missing owned native run record'}
             $run=Get-Content -LiteralPath (Join-Path $match.Groups[1].Value 'run.json') -Raw|ConvertFrom-Json
-            if($run.Executable -ne $application -or $run.Arguments.Count -ne 1 -or $run.Arguments[0] -ne ('--serve-gpu='+$session) -or $run.ObserveOnly -ne $observe -or $run.RecordOnly -ne $recordOnly -or $run.CloneOnly -ne $cloneOnly -or $run.SkipCommandRecording -ne $skipCommands -or $run.SkipRecordingWork -ne $skipWork -or $run.RecordStateOnly -ne $stateOnly){throw 'Owned run identity or literal arguments differ'}
+            if($run.Executable -ne $application -or $run.Arguments.Count -ne 1 -or $run.Arguments[0] -ne ('--serve-gpu='+$session) -or $run.ObserveOnly -ne $observe -or $run.RecordOnly -ne $recordOnly -or $run.CloneOnly -ne $cloneOnly -or $run.SkipCommandRecording -ne $skipCommands -or $run.SkipRecordingWork -ne $skipWork -or $run.RecordStateOnly -ne $stateOnly -or $run.RecordCommands -ne $recordCommands){throw 'Owned run identity or literal arguments differ'}
         }finally{
             $null=$stop.Set();if($game -and -not $game.HasExited){$game.Kill();$game.WaitForExit()};if(-not $child.HasExited -and -not $child.WaitForExit(3000)){$child.Kill();$child.WaitForExit()}
             if($game){$game.Dispose()};$child.Dispose();$stop.Dispose()

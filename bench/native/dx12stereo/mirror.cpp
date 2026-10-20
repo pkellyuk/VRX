@@ -30,6 +30,7 @@ struct Context {
     bool skipWork=false; // diagnostic: record state/transfers without GPU work
     bool skipCommands=false; // diagnostic: retain queue mappings, omit recording
     dxbc::Options calibration{.25f,0,true}; // native left, shifted right
+    std::string recordCommands; // diagnostic comma-delimited allowlist
     std::string reason;
 };
 namespace {
@@ -231,6 +232,11 @@ void Device(ID3D12Device* device) noexcept {
         context->skipCommands=context->cloneOnly || (context->recordOnly && GetEnvironmentVariableW(L"VRX_DX12_SKIP_COMMANDS",diagnostic,3)==1 && diagnostic[0]==L'1');
         context->skipWork=context->recordOnly && GetEnvironmentVariableW(L"VRX_DX12_SKIP_WORK",diagnostic,3)==1 && diagnostic[0]==L'1';
         context->stateOnly=context->recordOnly && GetEnvironmentVariableW(L"VRX_DX12_STATE_ONLY",diagnostic,3)==1 && diagnostic[0]==L'1';
+        if(context->recordOnly){
+            char names[2049]{};const auto size=GetEnvironmentVariableA("VRX_DX12_RECORD_COMMANDS",names,sizeof(names));
+            if(size>=sizeof(names))Stop(context,"diagnostic recording allowlist is too long");
+            else if(size)context->recordCommands=std::string(",")+names+",";
+        }
         if(device->GetNodeCount()!=1) Stop(context,"multiple GPU nodes are unsupported");
         context->calibration.shift=Calibration(L"VRX_DX12_SHIFT",.25f,64);
         context->calibration.convergence=Calibration(L"VRX_DX12_CONVERGENCE",0,.25f);
@@ -491,9 +497,15 @@ void Reset(ID3D12GraphicsCommandList* original,ID3D12CommandAllocator* allocator
 void Close(ID3D12GraphicsCommandList* original) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(item && item->context->active) { if(FAILED(item->list->Close())) Stop(item->context,"command list close failed"); else item->closed=true; } } catch(...) { }
 }
-void Record(ID3D12GraphicsCommandList* original,Callback<ID3D12GraphicsCommandList*,Mapper&> command,RecordKind kind) noexcept {
+void Record(ID3D12GraphicsCommandList* original,const char* name,Callback<ID3D12GraphicsCommandList*,Mapper&> command,RecordKind kind) noexcept {
     if(!FastFind(original)) return;
-    try { Lock lock(Registry().mutex); Drain(); auto item=Find(original); if(item && item->context->active && !item->context->skipCommands && !(kind==RecordKind::Work && item->context->skipWork) && !(kind!=RecordKind::State && item->context->stateOnly)) { Mapper map(item->context); command(item->list.Get(),map); } } catch(...) { Failure(original,"command translation failed"); }
+    try {
+        Lock lock(Registry().mutex);Drain();auto item=Find(original);if(!item)return;
+        const auto& context=item->context;
+        if(!context->active || context->skipCommands || (kind==RecordKind::Work && context->skipWork) || (kind!=RecordKind::State && context->stateOnly))return;
+        if(!context->recordCommands.empty() && context->recordCommands.find(std::string(",")+name+",")==std::string::npos)return;
+        Mapper map(context);command(item->list.Get(),map);
+    } catch(...) { Failure(original,"command translation failed"); }
 }
 void Observe(ID3D12Device* device,Callback<ID3D12Device*,Mapper&> command) noexcept {
     try { Lock lock(Registry().mutex); Drain(); auto context=Owner(device); if(context && context->active) { Mapper map(context); command(device,map); } }

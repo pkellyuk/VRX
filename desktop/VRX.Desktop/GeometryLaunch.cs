@@ -282,6 +282,7 @@ public static class GeometryLaunch
         start.Environment.Remove("VRX_DX12_SKIP_COMMANDS");
         start.Environment.Remove("VRX_DX12_SKIP_WORK");
         start.Environment.Remove("VRX_DX12_STATE_ONLY");
+        start.Environment.Remove("VRX_DX12_RECORD_COMMANDS");
         if(plan.Backend==StereoPaths.Dx12) {
             start.Environment["VRX_DX12_INTERCEPT"]="1";start.Environment["VRX_DX12_MIRROR"]="1";
             start.Environment["VRX_DX12_SHIFT"]=profile.GeometrySeparation.ToString("R",CultureInfo.InvariantCulture);

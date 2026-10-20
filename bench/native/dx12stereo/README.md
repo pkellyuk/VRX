@@ -496,3 +496,9 @@ second eye; normal managed launches strip the diagnostic child environment.
 System Shock still loses its world scene with second-eye work recording omitted.
 `-RecordOnly -RecordStateOnly` further excludes copies, clears, barriers and
 queries while retaining pipeline/root bindings and other draw state.
+
+The state-only comparison also reproduces the missing System Shock world.
+`-RecordOnly -RecordCommands SetPipelineState` restricts recording to one exact
+API name; a comma-separated list permits further bisection without rebuilding.
+The allowlist is accepted only in record-only diagnostics and is removed from
+normal managed launches. Original game commands are always forwarded.

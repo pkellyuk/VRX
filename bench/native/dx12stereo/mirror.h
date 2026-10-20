@@ -64,7 +64,7 @@ void Reset(ID3D12GraphicsCommandList*,ID3D12CommandAllocator*,ID3D12PipelineStat
 void Close(ID3D12GraphicsCommandList*) noexcept;
 enum class RecordKind { State,Transfer,Work };
 // Diagnostic filtering never submits or publishes incomplete command lists.
-void Record(ID3D12GraphicsCommandList*,Callback<ID3D12GraphicsCommandList*,Mapper&>,RecordKind kind=RecordKind::State) noexcept;
+void Record(ID3D12GraphicsCommandList*,const char* name,Callback<ID3D12GraphicsCommandList*,Mapper&>,RecordKind kind=RecordKind::State) noexcept;
 void Observe(ID3D12Device*,Callback<ID3D12Device*,Mapper&>) noexcept;
 void QueueCommand(ID3D12CommandQueue*,Callback<ID3D12CommandQueue*,Mapper&>) noexcept;
 // Executes originals and replays in one batch. Caller supplies the trampoline.
