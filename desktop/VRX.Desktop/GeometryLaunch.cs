@@ -123,7 +123,7 @@ public static class GeometryLaunch
             if(run!=null && run.Stereo=="mirror" && run.Pid==app.Pid && Same(run.Executable,app.FullPath) && IsRunning(run)) {
                 // A ready DXVK stream must not silently satisfy a native Vulkan choice.
                 string backend=string.IsNullOrEmpty(run.Backend) && Path.GetFileName(folder).StartsWith("dx11-",StringComparison.OrdinalIgnoreCase) ? StereoPaths.Dxvk : run.Backend;
-                if(StereoPaths.Valid(backend) && backend!=profile.EffectiveStereoBackend) return null;
+                if(StereoPaths.Valid(backend) && profile.EffectiveStereoBackend!=StereoPaths.GeometryAuto && backend!=profile.EffectiveStereoBackend) return null;
                 candidates.Add(run.Session);
             }
         }
@@ -310,7 +310,9 @@ public static class GeometryLaunch
     // Unit preflight does not load the DLL; supply a fixture layer directory so
     // standard desktop smoke checks remain independent of optional native builds.
     internal static async Task<Plan> PrepareWithLayer(RunningApp app,Profile profile,string dataRoot,Action<string> status,CancellationToken token,string layer,string[]? launchArguments=null) {
-        if(!StereoPaths.Geometry(profile.EffectiveStereoBackend)) throw new InvalidOperationException(Loc.Get("ErrorGeometryNotChosen"));
+        if(!profile.GeometryStereo) throw new InvalidOperationException(Loc.Get("ErrorGeometryNotChosen"));
+        // The automatic renderer could not tell the game's graphics API: say so, never guess.
+        if(!StereoPaths.Geometry(profile.EffectiveStereoBackend)) throw new InvalidOperationException(GraphicsApi.Explain(GraphicsApi.Detect(app.FullPath)));
         if(!IsX64(app.FullPath)) throw new InvalidOperationException(Loc.Get("ErrorGeometryX64"));
 #if DEBUG
         if(profile.EffectiveStereoBackend==StereoPaths.Dx12) ValidateNativeRuntime(layer);

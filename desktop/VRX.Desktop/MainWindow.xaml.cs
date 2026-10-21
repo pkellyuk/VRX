@@ -370,6 +370,7 @@ public partial class MainWindow : Window
             foreach (ComboBoxItem item in StereoPathList.Items) if ((string)item.Tag == selected) StereoPathList.SelectedItem = item;
             foreach (ComboBoxItem item in GeometryRendererList.Items) if ((string)item.Tag == profile.SelectedGeometryRenderer) GeometryRendererList.SelectedItem = item;
             GeometryRendererPanel.Visibility = selected == StereoPaths.GeometryAuto ? Visibility.Visible : Visibility.Collapsed;
+            ShowDetectedRenderer();
             // A tested profile is only a suggestion next to the geometry choice; Auto stays depth.
             TestedHint.Visibility = profile.GeometryProfileId == TestedStereoProfiles.SystemShock ? Visibility.Visible : Visibility.Collapsed;
             loading = wasLoading;
@@ -379,6 +380,23 @@ public partial class MainWindow : Window
         if(StereoCheck!=null) StereoCheck.IsEnabled=!geometry;
         StrengthSlider.IsEnabled = !geometry;
         DesktopAwayCheck.IsEnabled = !geometry;
+    }
+    // With the automatic geometry renderer: what the game's graphics API is and which route that
+    // means, or why VRX will not guess.
+    private void ShowDetectedRenderer()
+    {
+        if (RendererDetected == null) return;
+        if (profile == null || !profile.GeometryStereo || profile.SelectedGeometryRenderer != StereoPaths.GeometryAuto || profile.GeometryProfileId == TestedStereoProfiles.SystemShock)
+        {
+            RendererDetected.Visibility = Visibility.Collapsed;
+            RendererDetected.Text = "";
+            return;
+        }
+        var detection = GraphicsApi.Detect(profile.ExecutablePath);
+        RendererDetected.Text = detection.Renderer.Length > 0 ?
+            Loc.Format("RendererDetected", string.Join(", ", detection.Apis), StereoPaths.Label(detection.Renderer)) : GraphicsApi.Explain(detection);
+        RendererDetected.Visibility = Visibility.Visible;
+        System.Diagnostics.Debug.WriteLine($"[MainWindow] ShowDetectedRenderer: {profile.ExecutablePath}: '{detection.Renderer}' from {string.Join(", ", detection.Apis)}");
     }
     private void StereoPathSelected(object sender, SelectionChangedEventArgs e)
     {
@@ -1378,6 +1396,7 @@ public partial class MainWindow : Window
     {
         GeometryTuningHint.Text=Loc.Get(profile==null || TryGeometryTuning(out _,out _)?"GeometryTuningLive":"ErrorGeometryTuning");
         UpdateGeometryTuningHint();
+        ShowDetectedRenderer();
         System.Diagnostics.Debug.WriteLine($"[MainWindow] RefreshLanguage enter: pseudo {Loc.Pseudo}");
         Title = Loc.Format("WindowTitle", VersionText.Text);
         Subtitle.Text = Loc.Get(appSettings.IsExpert ? "SubtitleExpert" : "SubtitleEasy");
@@ -2690,7 +2709,7 @@ public partial class MainWindow : Window
             if (node is FrameworkElement element && element.ToolTip is string tip && !tip.StartsWith('['))
                 problems.Add($"tooltip of {element.Name}: {tip[..Math.Min(40, tip.Length)]}");
             if (node is TextBlock block && !string.IsNullOrWhiteSpace(block.Text) && !block.Text.StartsWith('['))
-                problems.Add($"text '{block.Text}'");
+                problems.Add($"text '{block.Text}'{(block.Name.Length > 0 ? " (" + block.Name + ")" : "")}");
             for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Walk(VisualTreeHelper.GetChild(node, i));
         }
         Walk(this);

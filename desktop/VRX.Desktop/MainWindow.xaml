@@ -98,6 +98,7 @@
         <ComboBoxItem Tag="dxvk" Content="{l:Tr PathDxvk}"/>
         <ComboBoxItem Tag="vkd3d" Content="{l:Tr PathVkd3d}"/>
        </ComboBox>
+       <TextBlock x:Name="RendererDetected" Style="{StaticResource Hint}" Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
        </StackPanel>
        <TextBlock x:Name="PathLabel" Text="{l:Tr PathChoose}" Style="{StaticResource Hint}" Margin="0,8,0,4"/>
        <TextBlock Text="{l:Tr GameHint}" Style="{StaticResource Hint}"/>

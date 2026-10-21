@@ -349,7 +349,11 @@ You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="PathVkd3d" xml:space="preserve"><value>DirectX 12 → Vulkan (vkd3d-proton)</value></data>
   <data name="PathAutoTip" xml:space="preserve"><value>Uses estimated depth. VRX never turns on true geometry by itself: choose it for a game yourself in Expert.</value></data>
   <data name="GeometryAdvanced" xml:space="preserve"><value>Advanced geometry settings</value></data>
-  <data name="RendererAuto" xml:space="preserve"><value>Automatic renderer</value></data>
+  <data name="RendererAuto" xml:space="preserve"><value>Automatic (from the game's graphics API)</value></data>
+  <data name="ErrorGeometryApiSeveral" xml:space="preserve"><value>This game can use several graphics APIs ({0}), so VRX will not guess. Choose a geometry renderer (Expert), or use estimated depth.</value></data>
+  <data name="ErrorGeometryApiUnsupported" xml:space="preserve"><value>This game uses {0}. True geometry supports DirectX 11, DirectX 12 and Vulkan games; use estimated depth for this one.</value></data>
+  <data name="ErrorGeometryApiUnknown" xml:space="preserve"><value>VRX could not tell which graphics API this game uses, so it will not guess a true-geometry renderer. Choose one under Geometry renderer (Expert), or use estimated depth.</value></data>
+  <data name="RendererDetected" xml:space="preserve"><value>This game uses {0}: {1}.</value></data>
   <data name="GeometryRenderer" xml:space="preserve"><value>Geometry renderer</value></data>
   <data name="TestedSystemShock" xml:space="preserve"><value>Tested true-geometry settings are available for this game. They are used only if you choose true geometry.</value></data>
   <data name="GeometryChooserNotice" xml:space="preserve"><value>Geometry stereo is experimental and may need a game restart and temporary graphics DLLs. Use only games that permit graphics layers; anti-cheat may block them. Review the restart details before proceeding.</value></data>

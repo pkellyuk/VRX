@@ -20,8 +20,11 @@ public sealed class Profile
     // Explicit methods determine the input type. Keep the old checkbox only
     // as a migration fallback for profiles without a method choice.
     private bool legacyGeometryStereo;
+    // True when true geometry is chosen for this game (a specific renderer, or the automatic
+    // one even when it cannot tell the game's graphics API: that is reported, never silently
+    // turned into depth).
     public bool GeometryStereo {
-        get => StereoPaths.Geometry(EffectiveStereoBackend);
+        get => SelectedStereoBackend == StereoPaths.GeometryAuto || StereoPaths.Geometry(SelectedStereoBackend);
         set => legacyGeometryStereo=value;
     }
     // Empty migrates legacy profiles from the geometry checkbox. New choices
@@ -41,11 +44,15 @@ public sealed class Profile
         : legacyGeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
     // Auto always means estimated depth: true geometry changes how the game draws, so it is
     // only ever used when it was chosen for this game. A tested profile is a suggestion shown
-    // with the geometry choice, never a reason to pick geometry by itself.
+    // with the geometry choice, never a reason to pick geometry by itself. The automatic
+    // geometry renderer follows the game's graphics API (GraphicsApi); when that cannot be
+    // told it stays GeometryAuto, which launching reports instead of guessing.
     [System.Text.Json.Serialization.JsonIgnore]
     public string EffectiveStereoBackend => SelectedStereoBackend switch {
         StereoPaths.Auto => StereoPaths.Depth,
-        StereoPaths.GeometryAuto => GeometryProfileId == TestedStereoProfiles.SystemShock ? StereoPaths.Vkd3d : StereoPaths.Vulkan,
+        StereoPaths.GeometryAuto => GeometryProfileId == TestedStereoProfiles.SystemShock ? StereoPaths.Vkd3d :
+            string.IsNullOrEmpty(ExecutablePath) ? StereoPaths.GeometryAuto :
+            GraphicsApi.Detect(ExecutablePath).Renderer is { Length: > 0 } detected ? detected : StereoPaths.GeometryAuto,
         var backend => backend
     };
     public string GeometryProfileId { get; set; } = "";

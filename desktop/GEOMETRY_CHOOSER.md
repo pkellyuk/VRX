@@ -11,9 +11,15 @@ settings. Background auto-attach only connects an existing stereo stream or uses
 depth: it never closes a game or installs a graphics DLL.
 
 Advanced geometry settings offers Automatic renderer, Native Vulkan, DirectX 11
-through DXVK, and DirectX 12 through vkd3d-proton. The DXVK installer currently
-supports D3D11, not D3D9/10. Unknown games' automatic geometry renderer tries native
-Vulkan. Native D3D12 command replay remains developer-only.
+through DXVK, and DirectX 12 through vkd3d-proton. The automatic renderer reads the
+game executable's PE import and delay-load tables (and, when they name no graphics
+API, `UnityPlayer.dll`'s imports or well-known Unreal, CryEngine and Source renderer
+modules next to it): Direct3D 11 uses DXVK, Direct3D 12 vkd3d-proton, Vulkan the plain
+layer. Unreal executables (`-Shipping.exe`) with several APIs use DXVK with `-dx11`
+(then `-dx12`, then `-vulkan`). Direct3D 9/10 and OpenGL are reported as unsupported
+(the DXVK installer copies only D3D11/DXGI), and an unknown or ambiguous API is
+reported instead of guessed: launching says so at once rather than failing after the
+first-frame wait. Native D3D12 command replay remains developer-only.
 
 The main window keeps these levels separate: Stereo method has Auto, Depth
 estimate and Geometry stereo. Geometry stereo reveals a secondary Geometry

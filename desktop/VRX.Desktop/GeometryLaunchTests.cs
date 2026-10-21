@@ -9,6 +9,55 @@ namespace VRX.Desktop;
 // never closes a real game, starts a renderer, or installs a real game DLL.
 internal static class GeometryLaunchTests
 {
+    // A minimal x64 PE image with the given import and delay-load import tables (never run).
+    internal static void FakePe(string path,string[] imports,string[] delayImports)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        byte[] pe=new byte[0x400];
+        void U16(int at,int v)=>BinaryPrimitives.WriteUInt16LittleEndian(pe.AsSpan(at),(ushort)v);
+        void U32(int at,uint v)=>BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(at),v);
+        U16(0,0x5A4D); U32(0x3C,0x40); U32(0x40,0x4550); U16(0x44,0x8664); U16(0x46,1); U16(0x54,240);
+        const int optional=0x58, section=optional+240, raw=0x200; const uint va=0x1000;
+        U16(optional,0x20B); U32(optional+108,16);
+        int descriptors=raw, delays=descriptors+20*(imports.Length+1), names=delays+32*(delayImports.Length+1);
+        uint Rva(int offset)=>(uint)(offset-raw)+va;
+        int Write(string text) { int at=names; foreach(char c in text) pe[names++]=(byte)c; pe[names++]=0; return at; }
+        for(int i=0;i<imports.Length;i++) U32(descriptors+20*i+12,Rva(Write(imports[i])));
+        for(int i=0;i<delayImports.Length;i++) { U32(delays+32*i,1); U32(delays+32*i+4,Rva(Write(delayImports[i]))); }
+        if(imports.Length>0) { U32(optional+112+8,Rva(descriptors)); U32(optional+112+12,(uint)(20*(imports.Length+1))); }
+        if(delayImports.Length>0) { U32(optional+112+13*8,Rva(delays)); U32(optional+112+13*8+4,(uint)(32*(delayImports.Length+1))); }
+        for(int i=0;i<5;i++) pe[section+i]=(byte)".text"[i];
+        U32(section+8,0x200); U32(section+12,va); U32(section+16,0x200); U32(section+20,raw);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path,pe);
+    }
+
+    // Automatic renderer: the API from the executable's imports (or a known engine DLL), the
+    // route that follows, and no guess when it is unknown, unsupported or ambiguous.
+    private static void GraphicsApiChecks(string root,ProfileStore store,Action<bool,string> Check)
+    {
+        System.Diagnostics.Debug.WriteLine("[Smoke] GraphicsApiChecks enter");
+        string api=Path.Combine(root,"api");
+        string Exe(string name,string[] imports,string[]? delay=null) { string p=Path.Combine(api,name,name+".exe"); FakePe(p,imports,delay ?? []); return p; }
+        string dx11=Exe("dx11",["KERNEL32.dll","dxgi.dll","d3d11.dll"]), dx12=Exe("dx12",["d3d12.dll","dxgi.dll"]), vk=Exe("vk",["vulkan-1.dll"]);
+        string dx9=Exe("dx9",["d3d9.dll"]), dxgiOnly=Exe("dxgi",["dxgi.dll"]), both=Exe("both",[],["d3d11.dll","d3d12.dll"]);
+        string unreal=Path.Combine(api,"ue","Game-Win64-Shipping.exe"); FakePe(unreal,["KERNEL32.dll"],["d3d11.dll","d3d12.dll"]);
+        string unity=Exe("unity",["KERNEL32.dll"]); FakePe(Path.Combine(api,"unity","UnityPlayer.dll"),["d3d11.dll","dxgi.dll"],[]);
+        Check(GraphicsApi.Imports(dx11).Contains("d3d11.dll") && GraphicsApi.Imports(both).SequenceEqual(new[]{"d3d11.dll","d3d12.dll"}),"PE import and delay-load tables are read");
+        Check(GraphicsApi.Detect(dx11).Renderer==StereoPaths.Dxvk && GraphicsApi.Detect(dx12).Renderer==StereoPaths.Vkd3d && GraphicsApi.Detect(vk).Renderer==StereoPaths.Vulkan,"Direct3D 11 uses DXVK, Direct3D 12 vkd3d-proton, Vulkan the plain layer");
+        Check(GraphicsApi.Detect(unity).Renderer==StereoPaths.Dxvk && GraphicsApi.Detect(unreal).Renderer==StereoPaths.Dxvk,"a Unity player DLL and an Unreal executable with several APIs are recognised");
+        Check(GraphicsApi.Detect(dx9).Renderer=="" && GraphicsApi.Explain(GraphicsApi.Detect(dx9)).Contains(GraphicsApi.D3D9),"Direct3D 9 is reported as unsupported");
+        Check(GraphicsApi.Detect(dxgiOnly).Renderer=="" && GraphicsApi.Detect(both).Renderer=="" && GraphicsApi.Detect(Path.Combine(api,"missing.exe")).Renderer=="","an unknown or ambiguous API is not guessed");
+        var auto=new Profile{ExecutablePath=dx11}; auto.SelectStereoBackend(StereoPaths.GeometryAuto);
+        Check(auto.GeometryStereo && auto.EffectiveStereoBackend==StereoPaths.Dxvk,"automatic geometry on a Direct3D 11 game resolves to DXVK");
+        var unknown=new Profile{ExecutablePath=dxgiOnly}; unknown.SelectStereoBackend(StereoPaths.GeometryAuto);
+        Check(unknown.GeometryStereo && unknown.EffectiveStereoBackend==StereoPaths.GeometryAuto,"an unknown API stays geometry-chosen but unresolved, never depth or Vulkan");
+        bool explained=false;
+        try { GeometryLaunch.PrepareWithLayer(new RunningApp(0,"dxgi.exe",dxgiOnly,[],null),unknown,root,_=>{},CancellationToken.None,root,[]).GetAwaiter().GetResult(); }
+        catch(InvalidOperationException ex) { explained=ex.Message==GraphicsApi.Explain(GraphicsApi.Detect(dxgiOnly)); }
+        Check(explained,"launching with an unknown API says so instead of failing after 45 s");
+        System.Diagnostics.Debug.WriteLine("[Smoke] GraphicsApiChecks exit");
+    }
+
     // Crash-proof cleanup: the manifest's intent records, the guard (in process and as the real
     // detached --geometry-guard process) and run-folder pruning. Fixture files only.
     private static async Task GuardAndCleanupChecks(string root,string exe,string sources,Action<bool,string> Check)
@@ -196,6 +245,7 @@ internal static class GeometryLaunchTests
         GeometryLaunch.Cleanup(nextRun);
         Check(!Directory.GetFiles(Path.GetDirectoryName(exe)!,"*.vrx-*.tmp").Any(),"a rolled-back install leaves no temporary copies");
         await GuardAndCleanupChecks(root,exe,sources,Check);
+        GraphicsApiChecks(root,store,Check);
         string translator=Path.Combine(root,"translator"); Directory.CreateDirectory(translator);
         foreach(string name in new[]{"d3d12.dll","d3d12core.dll"}) File.WriteAllText(Path.Combine(translator,name),"translator fixture; never loaded");
         string translatedRun=Path.Combine(root,"translated-run"); Directory.CreateDirectory(translatedRun);
