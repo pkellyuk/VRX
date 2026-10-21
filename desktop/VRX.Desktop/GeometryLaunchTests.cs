@@ -126,6 +126,24 @@ internal static class GeometryLaunchTests
         Check(GeometryLaunch.ApiArguments(["-vulkan","--save=a b"],StereoPaths.Dxvk,true).SequenceEqual(new[]{"--save=a b","-dx11"}),"DXVK retains unrelated arguments");
         Check(GeometryLaunch.ApiArguments(["--custom-renderer=vk"],StereoPaths.Vulkan,false).SequenceEqual(new[]{"--custom-renderer=vk"}),"unknown engines do not receive invented switches");
         Check(GeometryLaunch.ApiArguments(["-dx12","--custom"],StereoPaths.Vulkan,false).SequenceEqual(new[]{"-dx12","--custom"}),"unknown engines preserve existing API switches for review");
+        // The fixed Steam launcher: which Launch Options are old direct ones, which copies may
+        // take Steam launches, and reading Launch Options from a Steam-shaped localconfig.vdf.
+        Check(SteamLauncher.IsDirectOption(@"""C:\dev\VRX\desktop\VRX.Desktop\bin\Release\net10.0-windows\VRX.Desktop.exe"" --steam-game 482400 -- %command%"),"a Launch Option naming a VRX folder is direct");
+        Check(!SteamLauncher.IsDirectOption(@"""C:\Users\u\AppData\Local\VRX\launcher\vrx-steam-launch.exe"" --steam-game 482400 -- %command%"),"the fixed launcher is not direct");
+        Check(!SteamLauncher.IsDirectOption("-novid -dx11") && !SteamLauncher.IsDirectOption(null),"other Launch Options are left alone");
+        string copy=Path.Combine(root,"copy"); Directory.CreateDirectory(Path.Combine(copy,"geometry","layer"));
+        string copyExe=Path.Combine(copy,"VRX.Desktop.exe"); File.WriteAllText(copyExe,"fixture");
+        Check(!SteamLauncher.CanTakeLaunches(copyExe,copy),"a copy without the launcher and runtime does not take Steam launches");
+        File.WriteAllText(Path.Combine(copy,SteamLauncher.FileName),"fixture");
+        File.WriteAllText(Path.Combine(copy,"geometry","layer",GeometryRuntime.LayerLibrary),"fixture");
+        File.WriteAllText(Path.Combine(copy,"geometry","layer",GeometryRuntime.LayerManifest),"{}");
+        Check(SteamLauncher.CanTakeLaunches(copyExe,copy),"a complete copy takes Steam launches");
+        Check(!SteamLauncher.CanTakeLaunches(Path.Combine(copy,"other.exe"),copy),"only VRX.Desktop.exe takes Steam launches");
+        string steamRoot=Path.Combine(root,"steam"), config=Path.Combine(steamRoot,"userdata","12345","config");
+        Directory.CreateDirectory(config);
+        File.WriteAllText(Path.Combine(config,"localconfig.vdf"),"\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t\t\"Valve\"\n\t\t{\n\t\t\t\"Steam\"\n\t\t\t{\n\t\t\t\t\"apps\"\n\t\t\t\t{\n\t\t\t\t\t\"482400\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"\\\"C:\\\\VRX\\\\VRX.Desktop.exe\\\" --steam-game 482400 -- %command%\"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n");
+        Check(SteamLibrary.LaunchOptionsFor("482400",steamRoot)=="\"C:\\VRX\\VRX.Desktop.exe\" --steam-game 482400 -- %command%","Steam's saved Launch Options are read");
+        Check(SteamLibrary.LaunchOptionsFor("570",steamRoot)==null && SteamLibrary.LaunchOptionsFor("bad",steamRoot)==null,"absent games and bad ids read as none");
         var legacy=new Profile{GeometryStereo=true}; Check(legacy.EffectiveStereoBackend==StereoPaths.Vulkan,"old geometry profile migrates");
         var p=new Profile{ExecutablePath=exe}; Check(p.EffectiveStereoBackend==StereoPaths.Depth,"old profiles default to depth estimate");
         p.SelectStereoBackend(StereoPaths.Dxvk); p.GeometrySeparation=.8f; p.GeometryLaunchArguments="-dx11 -windowed";

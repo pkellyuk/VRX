@@ -25,7 +25,7 @@ $toSign = Join-Path $OutputRoot 'to-sign'
 # VRX's own programs: the files VRX signs. Everything else is signed by Microsoft or Valve,
 # except the geometry runtime's DXVK and vkd3d-proton DLLs, which ship exactly as their
 # projects release them (unsigned) and are pinned by hash instead (release\vendor).
-$ownPrograms = 'VRX.Desktop.exe', 'VRX.Desktop.dll', 'engine\xrplayer.exe', 'geometry\layer\vrx_xgstereo.dll'
+$ownPrograms = 'VRX.Desktop.exe', 'VRX.Desktop.dll', 'vrx-steam-launch.exe', 'engine\xrplayer.exe', 'geometry\layer\vrx_xgstereo.dll'
 # The geometry runtime's third-party DLLs: the official release archives, checked by these
 # pinned SHA-256s, and each extracted DLL by release\vendor\geometry-runtime.sha256.
 $geometryArchives = @(
@@ -177,6 +177,9 @@ function Build-Payload
         # d3dcompiler_47.dll: the Windows SDK redistributable (copied by build.bat), loaded
         # app-local so that every PC compiles with the compiler the shader cache was built by.
         Copy-Item "$nativeOutput\xrplayer.exe","$nativeOutput\openxr_loader.dll","$nativeOutput\d3dcompiler_47.dll" $engine
+        # The fixed Steam Launch Options entry point (statically linked; VRX copies it to
+        # %LOCALAPPDATA%\VRX\launcher at start-up, see desktop\VRX.Desktop\SteamLauncher.cs).
+        Copy-Item "$nativeOutput\vrx-steam-launch.exe" $payload
         # The OpenXR loader must be the pinned, Valve-signed one (release\vendor\README.txt).
         $loader = Join-Path $engine 'openxr_loader.dll'
         if ((Get-FileHash -LiteralPath $loader -Algorithm SHA256).Hash -ne '9DAE7F85DCFF14352DF31D699153CEA72100D39BA3F3BA86C236291EF9265BAF') { throw 'openxr_loader.dll is not the pinned release\vendor copy' }

@@ -383,9 +383,12 @@ VRX is still running. The details were saved in {1}.</value></data>
   <data name="SteamSelectExecutable" xml:space="preserve"><value>Select the game's rendering executable for geometry stereo</value></data>
   <data name="SteamWindowTimeout" xml:space="preserve"><value>Steam has not opened a game window within two minutes. Check Steam for a launch choice, update, or error, then select the running window.</value></data>
   <data name="SteamSetupTitle" xml:space="preserve"><value>Steam geometry setup</value></data>
+  <data name="SteamSetupReplace" xml:space="preserve"><value>Steam still starts {0} through an older VRX path, which stops working when VRX moves. In Steam, open {0} → Properties → General → Launch Options and replace the VRX part (everything before %command%) with the line below. Keep any launch arguments after %command%.
+
+The new line names VRX's launcher, not a VRX folder, so it keeps working if you move, reinstall or uninstall VRX.</value></data>
   <data name="SteamSetupInfo" xml:space="preserve"><value>In Steam, open {0} → Properties → General → Launch Options. Add the line below. If you already have launch arguments, keep them after %command%. If you already use a wrapper, cancel and review its compatibility first.
 
-This lets Steam start the game with VRX's saved geometry settings. VRX does not edit Steam's configuration. Before you move or uninstall VRX, remove this line again (Expert → 3D: true geometry → Steam launch setups…); otherwise Steam cannot start the game.</value></data>
+This lets Steam start the game with VRX's saved geometry settings. VRX does not edit Steam's configuration. The line names VRX's launcher, not a VRX folder, so it keeps working if you move, reinstall or uninstall VRX (without VRX, the game simply starts normally).</value></data>
   <data name="SteamCopyOptions" xml:space="preserve"><value>Copy launch options</value></data>
   <data name="SteamSetupLaunch" xml:space="preserve"><value>I've added these options — launch through Steam</value></data>
   <data name="SteamUsePublishedApp" xml:space="preserve"><value>Run the VRX desktop executable to configure Steam geometry launches.</value></data>
@@ -421,7 +424,7 @@ This lets Steam start the game with VRX's saved geometry settings. VRX does not 
   <data name="SteamRemoveSetups" xml:space="preserve"><value>Steam launch setups…</value></data>
   <data name="SteamRemoveSetupsTip" xml:space="preserve"><value>Lists the Steam games that start through VRX. Remove their VRX launch options in Steam before you move or uninstall VRX.</value></data>
   <data name="SteamRemoveTitle" xml:space="preserve"><value>Remove Steam launch setup</value></data>
-  <data name="SteamRemoveInfo" xml:space="preserve"><value>These Steam games start through VRX. Before you move or uninstall VRX, open each game's Properties → General → Launch Options in Steam and delete the VRX part shown below (keep anything after %command%). Otherwise Steam cannot start them.</value></data>
+  <data name="SteamRemoveInfo" xml:space="preserve"><value>These Steam games start through VRX's launcher. They keep working if you move, reinstall or uninstall VRX: without VRX, the launcher starts the game normally. To stop starting them through VRX, open each game's Properties → General → Launch Options in Steam and delete the VRX part shown below (keep anything after %command%).</value></data>
   <data name="SteamRemoveNone" xml:space="preserve"><value>No Steam games start through VRX. Nothing needs removing before you move or uninstall VRX.</value></data>
   <data name="SteamRemoveDone" xml:space="preserve"><value>I've removed them in Steam</value></data>
   <data name="SteamRemoveClose" xml:space="preserve"><value>Close</value></data>

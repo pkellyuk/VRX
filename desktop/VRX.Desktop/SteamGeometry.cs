@@ -16,6 +16,10 @@ internal static class SteamGeometry
     private static string RequestFile(string root,string id) => SteamLibrary.ValidId(id)?Path.Combine(root,"steam",id+".pending.json"):throw new InvalidDataException(Loc.Get("SteamInvalidId"));
     public static string LaunchOptions(string id) {
         if(!SteamLibrary.ValidId(id)) throw new InvalidDataException(Loc.Get("SteamInvalidId"));
+        // The fixed launcher (SteamLauncher): Launch Options that survive moving or reinstalling VRX.
+        SteamLauncher.Refresh();
+        if(SteamLauncher.Available && SteamLauncher.Target()!=null) return GeometryLaunch.QuoteArgument(SteamLauncher.InstalledPath)+" --steam-game "+id+" -- %command%";
+        Debug.WriteLine("[Steam setup] LaunchOptions: no fixed launcher; naming this VRX copy directly");
         string executable=Environment.ProcessPath ?? throw new InvalidOperationException(Loc.Get("ErrorVrxPathUnavailable"));
         if(!Path.GetFileNameWithoutExtension(executable).Equals("VRX.Desktop",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException(Loc.Get("SteamUsePublishedApp"));
         return GeometryLaunch.QuoteArgument(executable)+" --steam-game "+id+" -- %command%";
@@ -49,12 +53,25 @@ internal static class SteamGeometry
         }
         Debug.WriteLine("[Steam setup] ShowRemoval exit: marked removed");
     }
+    // True when Steam still starts this game through a VRX install folder named directly
+    // (an older setup, or a development build): those must be replaced with the fixed launcher.
+    public static bool NeedsUpdate(SteamLibrary.Game game) {
+        ArgumentNullException.ThrowIfNull(game);
+        string? current=SteamLibrary.LaunchOptionsFor(game.AppId);
+        bool stale=SteamLauncher.IsDirectOption(current);
+        Debug.WriteLine($"[Steam setup] NeedsUpdate {game.AppId}: {stale}");
+        return stale;
+    }
     public static bool Setup(Window owner,SteamLibrary.Game game) {
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(game);
         string options=LaunchOptions(game.AppId);
+        bool replacing=NeedsUpdate(game);
+        Debug.WriteLine($"[Steam setup] Setup {game.AppId}: replacing {replacing}");
         var window=new Window {Title=Loc.Get("SteamSetupTitle"),Owner=owner,Width=650,SizeToContent=SizeToContent.Height,WindowStartupLocation=WindowStartupLocation.CenterOwner,ShowInTaskbar=false};
         window.Background=(System.Windows.Media.Brush)owner.FindResource("Page"); window.Foreground=(System.Windows.Media.Brush)owner.FindResource("Ink");
         var body=new StackPanel {Margin=new Thickness(24)}; window.Content=body;
-        body.Children.Add(new TextBlock {Text=Loc.Format("SteamSetupInfo",game.Title),TextWrapping=TextWrapping.Wrap});
+        body.Children.Add(new TextBlock {Text=Loc.Format(replacing?"SteamSetupReplace":"SteamSetupInfo",game.Title),TextWrapping=TextWrapping.Wrap});
         body.Children.Add(new TextBox {Text=options,IsReadOnly=true,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,12)});
         var copy=new Button {Content=Loc.Get("SteamCopyOptions"),Margin=new Thickness(0,0,0,12)};
         copy.Click+=(_,_)=>Clipboard.SetText(options); body.Children.Add(copy);

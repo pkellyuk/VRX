@@ -1,10 +1,10 @@
 // Version information for the engine, xrplayer.exe (and the bench build, xrapp5.exe).
+// The numbers are in version.h, shared with vrx-steam-launch.rc.
 // Code signing requires every signed file to name its product and version: keep these in
 // step with desktop\VRX.Desktop\VRX.Desktop.csproj <Version> and release\VRX.iss.
 #include <winver.h>
 
-#define VRX_VERSION_BINARY 1,8,0,0
-#define VRX_VERSION_TEXT   "1.8.0"
+#include "version.h"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION    VRX_VERSION_BINARY

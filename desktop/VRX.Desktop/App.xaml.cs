@@ -43,6 +43,8 @@ public partial class App : Application
         if(!smokeTest) {
             desktopInstance=new DesktopInstance();
             if(!desktopInstance.IsOwner) {Shutdown();return;}
+            // Steam true-geometry launches go to the copy started last (SteamLauncher).
+            SteamLauncher.Refresh();
         }
         // Before any window exists, so every string is transformed from the start.
         if (e.Args.Contains("--pseudo-locale")) Loc.SetPseudo(true);

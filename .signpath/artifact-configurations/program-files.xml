@@ -12,6 +12,9 @@
     <pe-file path="VRX.Desktop.dll" product-name="VRX">
       <authenticode-sign />
     </pe-file>
+    <pe-file path="vrx-steam-launch.exe" product-name="VRX">
+      <authenticode-sign />
+    </pe-file>
     <pe-file path="engine/xrplayer.exe" product-name="VRX">
       <authenticode-sign />
     </pe-file>

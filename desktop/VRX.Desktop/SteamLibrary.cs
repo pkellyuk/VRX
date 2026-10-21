@@ -58,6 +58,36 @@ public static class SteamLibrary
         }
         return Read(0,false);
     }
+    // The Launch Options Steam has saved for one game (userdata\<account>\config\localconfig.vdf,
+    // the most recently written account that has the game), or null when none can be read.
+    // Read-only: Steam rewrites that file itself, so VRX never edits it. Steam saves it on its
+    // own schedule, so a change just made in Steam may not show here until later.
+    public static string? LaunchOptionsFor(string appId,string? steamRoot=null)
+    {
+        if(!ValidId(appId)) return null;
+        steamRoot ??= Root();
+        if(string.IsNullOrEmpty(steamRoot)) return null;
+        string userdata=Path.Combine(steamRoot,"userdata");
+        if(!Directory.Exists(userdata)) return null;
+        var configs=Directory.EnumerateDirectories(userdata)
+            .Select(d=>new FileInfo(Path.Combine(d,"config","localconfig.vdf")))
+            .Where(f=>f.Exists).OrderByDescending(f=>f.LastWriteTimeUtc);
+        foreach(var config in configs) {
+            try {
+                var steam=Parse(File.ReadAllText(config.FullName)).Children.GetValueOrDefault("UserLocalConfigStore")
+                    ?.Children.GetValueOrDefault("Software")?.Children.GetValueOrDefault("Valve")?.Children.GetValueOrDefault("Steam");
+                var app=steam?.Children.GetValueOrDefault("apps")?.Children.GetValueOrDefault(appId);
+                if(app==null) continue;
+                string options=app.Value("LaunchOptions");
+                Debug.WriteLine($"[Steam] LaunchOptionsFor {appId}: '{options}' in {config.FullName}");
+                return options;
+            }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or InvalidDataException) {
+                Debug.WriteLine($"[Steam] LaunchOptionsFor {appId}: {config.FullName} unreadable: {ex.Message}");
+            }
+        }
+        return null;
+    }
     public static bool ValidId(string id) => id.Length is >0 and <=10 && id.All(char.IsAsciiDigit) && uint.TryParse(id,out uint n) && n>0;
     public static bool Inside(string path,string directory) => Path.GetFullPath(path).StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);
     public static string? Root() {

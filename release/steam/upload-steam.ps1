@@ -36,7 +36,7 @@ if ((Get-Item -LiteralPath $payload) -is [IO.FileInfo])
 }
 # The depot is the whole payload (depot_build.vdf maps it recursively), so geometry\ - the
 # Vulkan layer, DXVK and vkd3d-proton - goes up with it; check it is there.
-foreach ($required in 'VRX.Desktop.exe', 'engine\xrplayer.exe', 'BUILD.txt', 'LICENSE', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'FILES.sha256.txt',
+foreach ($required in 'VRX.Desktop.exe', 'vrx-steam-launch.exe', 'engine\xrplayer.exe','BUILD.txt', 'LICENSE', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'FILES.sha256.txt',
     'geometry\layer\vrx_xgstereo.dll', 'geometry\layer\VkLayer_vrx_xgstereo.json', 'geometry\dxvk\d3d11.dll', 'geometry\dxvk\dxgi.dll',
     'geometry\vkd3d\d3d12.dll', 'geometry\vkd3d\d3d12core.dll', 'licenses\vkd3d-proton-LICENSE.txt', 'licenses\vrdual-NOTICE.txt')
 {

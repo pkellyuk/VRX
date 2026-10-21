@@ -101,6 +101,21 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo.
+echo === building vrx-steam-launch (fixed Steam Launch Options entry point) ===
+rem Statically linked (/MT): VRX copies it on its own to %LOCALAPPDATA%\VRX\launcher.
+rc /nologo /fo "%OUT%\vrx-steam-launch.res" "%~dp0vrx-steam-launch.rc"
+if errorlevel 1 (
+  echo BUILD FAILED ^(vrx-steam-launch.rc^)
+  exit /b 1
+)
+cl /nologo /std:c++20 /EHsc /O2 /W3 /MT /DUNICODE /D_UNICODE /Fo"%OUT%\\" /Fe"%OUT%\vrx-steam-launch.exe" "%~dp0vrx-steam-launch.cpp" "%OUT%\vrx-steam-launch.res" ^
+   /link /SUBSYSTEM:WINDOWS shell32.lib ole32.lib
+if errorlevel 1 (
+  echo BUILD FAILED ^(vrx-steam-launch^)
+  exit /b 1
+)
+
 copy /y "%ORTLIB%\onnxruntime.dll" "%OUT%\" >nul
 for /d %%D in ("%USERPROFILE%\.nuget\packages\microsoft.ai.directml\*") do set DMLPKG2=%%D
 if defined DMLPKG2 if exist "!DMLPKG2!\runtimes\win-x64\native\DirectML.dll" copy /y "!DMLPKG2!\runtimes\win-x64\native\DirectML.dll" "%OUT%\" >nul
