@@ -157,20 +157,19 @@ public static class GeometryLaunch
         if(unreal) result.Add(backend switch {StereoPaths.Vulkan=>"-vulkan",StereoPaths.Dx12 or StereoPaths.Vkd3d=>"-dx12",_=>"-dx11"});
         return result.ToArray();
     }
-    internal static async Task<string[]> ProcessArguments(int pid,CancellationToken token) {
-        string powershell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");
-        var start=new ProcessStartInfo(powershell){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8};
-        foreach(string arg in new[]{"-NoProfile","-NonInteractive","-Command",$"[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-CimInstance Win32_Process -Filter 'ProcessId={pid.ToString(CultureInfo.InvariantCulture)}').CommandLine"}) start.ArgumentList.Add(arg);
-        using var p=Process.Start(start) ?? throw new InvalidOperationException(Loc.Get("ErrorLaunchArguments"));
-        var output=p.StandardOutput.ReadToEndAsync(token); var error=p.StandardError.ReadToEndAsync(token);
-        try { await p.WaitForExitAsync(token).WaitAsync(TimeSpan.FromSeconds(10),token); }
-        catch { if(!p.HasExited) p.Kill(); throw; }
-        string command=(await output).Trim(); await error;
-        if(p.ExitCode!=0 || command.Length==0) throw new InvalidOperationException(Loc.Get("ErrorLaunchArguments"));
+    // A running process's arguments (argv[0] dropped), read natively: no PowerShell window,
+    // no WMI. Throws InvalidOperationException when they cannot be read.
+    internal static Task<string[]> ProcessArguments(int pid,CancellationToken token) {
+        token.ThrowIfCancellationRequested();
+        string command=ProcessCommandLine.Read(pid) ?? throw new InvalidOperationException(Loc.Get("ErrorLaunchArguments"));
+        if(command.Length==0) throw new InvalidOperationException(Loc.Get("ErrorLaunchArguments"));
         // ParseArguments treats the dummy executable as argv[0]; here discard the
         // actual argv[0] too, retaining every literal game argument.
-        return ParseArguments(command).Skip(1).ToArray();
+        return Task.FromResult(ParseArguments(command).Skip(1).ToArray());
     }
+    // Arguments as saved in a profile: credential-like ones (sign-in codes, tokens) never are.
+    internal static string SavedArguments(IEnumerable<string> arguments) =>
+        string.Join(' ',ProcessCommandLine.WithoutCredentials(arguments).Select(QuoteArgument));
     public static string FindSteamAppId(string executable) {
         for(var dir=new DirectoryInfo(Path.GetDirectoryName(executable)!);dir?.Parent!=null;dir=dir.Parent) {
             if(!dir.Parent.Name.Equals("common",StringComparison.OrdinalIgnoreCase) || dir.Parent.Parent is not {} steamapps) continue;

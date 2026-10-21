@@ -27,6 +27,12 @@ internal static class GameHistoryTests
         var app=new RunningApp(self.Id,"fixture",Environment.ProcessPath!,[new GameWindow(42,"Recorded game")],null);
         await captured.Record(app,app.Windows[0],new Profile{ExecutablePath=app.FullPath},CancellationToken.None);
         Check(captured.Load().Single().Arguments.Contains("--smoke-test"),"a successful attachment records the real launch command for a later geometry launch");
+        var raw=ProcessCommandLine.Read(self.Id);
+        Check(raw!=null && raw.Contains("--smoke-test") && ProcessCommandLine.Parent(self.Id)>0,"the command line and parent are read natively, without PowerShell");
+        string[] launcher=["-AUTH_LOGIN=unused","-AUTH_PASSWORD=abc123","-AUTH_TYPE=exchangecode","-epicapp=Game","-epicusername=\"Someone\"","-epicuserid=42","-epicsandboxid=x","-windowed",
+            "-token","secret-value","--session=abc","-ResX=2560","/AccessToken:xyz","-EAAuthCode=1","-uplay_steam_mode","-epiclocale=en"];
+        var kept=ProcessCommandLine.WithoutCredentials(launcher);
+        Check(kept.SequenceEqual(new[]{"-epicapp=Game","-windowed","-ResX=2560","-epiclocale=en"}),"credential-like launch arguments are never stored: "+string.Join(' ',kept));
         var profileStore=new ProfileStore(root);
         var profile=new Profile{ExecutablePath=first.Executable,PreferredWindowTitle=first.Title}; profileStore.Save(profile);
         ProfileStore.AtomicWrite(Path.Combine(root,"last-game.txt"),first.Executable);

@@ -843,7 +843,7 @@ public partial class MainWindow : Window
                     if(plan.SteamAppId!=game.AppId) throw new InvalidDataException(Loc.Get("ErrorGeometrySteamId"));
                     saved.GeometrySeparation=dialog.Separation; saved.GeometryConvergence=dialog.Convergence;
                 }
-                saved.GeometryLaunchArguments=string.Join(' ',plan.Arguments.Select(GeometryLaunch.QuoteArgument)); saved.GeometryWorkingDirectory=plan.WorkingDirectory;
+                saved.GeometryLaunchArguments=GeometryLaunch.SavedArguments(plan.Arguments); saved.GeometryWorkingDirectory=plan.WorkingDirectory;
                 saved.GeometrySession=plan.Session; store.Save(saved);
                 if(picked.ReviewSteamSetup || SteamLibrary.LoadBinding(store.Root,game)?.WrapperConfigured!=true) {
                     if(!SteamGeometry.Setup(this,game)) return;
@@ -911,7 +911,7 @@ public partial class MainWindow : Window
                     var dialog=new GeometryLaunchWindow(plan,saved){Owner=this};
                     if(dialog.ShowDialog()!=true) { Status.Text=Loc.Get("StatusGeometryCancelled"); return; }
                     plan=dialog.Plan;
-                    saved.GeometryLaunchArguments=string.Join(' ',plan.Arguments.Select(GeometryLaunch.QuoteArgument));
+                    saved.GeometryLaunchArguments=GeometryLaunch.SavedArguments(plan.Arguments);
                     saved.GeometryWorkingDirectory=plan.WorkingDirectory; saved.GeometrySteamAppId=plan.SteamAppId;
                     saved.GeometrySeparation=dialog.Separation; saved.GeometryConvergence=dialog.Convergence;
                     saved.GeometrySession=plan.Session; store.Save(saved);
@@ -978,7 +978,7 @@ public partial class MainWindow : Window
                     var dialog = new GeometryLaunchWindow(plan,profile) { Owner = this };
                     if (dialog.ShowDialog() != true) { Status.Text = Loc.Get("StatusGeometryCancelled"); return false; }
                     plan = dialog.Plan;
-                    profile.GeometryLaunchArguments = string.Join(' ',plan.Arguments.Select(GeometryLaunch.QuoteArgument));
+                    profile.GeometryLaunchArguments = GeometryLaunch.SavedArguments(plan.Arguments);
                     profile.GeometryWorkingDirectory = plan.WorkingDirectory; profile.GeometrySteamAppId = plan.SteamAppId;
                     profile.GeometrySeparation = dialog.Separation; profile.GeometryConvergence = dialog.Convergence;
                     profile.GeometrySession = plan.Session; GeometrySessionText.Text = plan.Session; store.Save(profile);

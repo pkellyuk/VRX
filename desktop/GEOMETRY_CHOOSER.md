@@ -36,7 +36,10 @@ Running Steam windows retain their Steam identity for that restart path. DWM
 thumbnails hide when their containing group is collapsed.
 
 Recent games appears within Launch. A successful attachment records its
-title, executable, launch arguments and Steam identity in `recent-games.json`.
+title, executable, launch arguments and Steam identity in `recent-games.json`. The
+command line is read natively (NtQueryInformationProcess, no PowerShell), and
+credential-like arguments (Epic `-AUTH_*`, `-epicuser*`, tokens, passwords, tickets,
+sessions, EA and Ubisoft codes) are never stored there or in a profile.
 History keeps 24 entries, deduplicated by executable, and imports an existing
 user's last game on first use. Panels retain their method/renderer settings after
 the game closes; missing executables remain visible with launch controls disabled.

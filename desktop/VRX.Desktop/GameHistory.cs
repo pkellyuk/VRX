@@ -48,6 +48,8 @@ public sealed class GameHistory(string root)
         string[] args=previous?.Arguments ?? GeometryLaunch.ParseArguments(profile.GeometryLaunchArguments ?? "");
         try { args=await GeometryLaunch.ProcessArguments(app.Pid,token); }
         catch(Exception ex) when(ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception) { Debug.WriteLine(ex.Message); }
+        // Only what is needed to start the game again: never sign-in codes or tokens.
+        args=ProcessCommandLine.WithoutCredentials(args);
         Remember(new(app.FullPath,MainWindow.GameDisplayName(window.Title,app.Name),args,
             string.IsNullOrEmpty(profile.GeometryWorkingDirectory)?Path.GetDirectoryName(app.FullPath)!:profile.GeometryWorkingDirectory,
             string.IsNullOrEmpty(profile.GeometrySteamAppId)?GeometryLaunch.FindSteamAppId(app.FullPath):profile.GeometrySteamAppId,DateTimeOffset.UtcNow));
