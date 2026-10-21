@@ -104,7 +104,8 @@ An experimental second stereo backend is being developed on `xgstereo`:
 [geometry stereo prototype](docs/XGSTEREO.md). It includes a Windows Vulkan shader
 layer with alternate-frame and same-frame command/resource mirroring, shared GPU
 textures, paired input in the renderer, and per-window stereo method buttons in
-the chooser (Depth estimate, Vulkan, DXVK; DX12 is unavailable). The choice is
+the chooser (Depth estimate, Vulkan, DXVK, and DX12 through a locally supplied
+vkd3d-proton build; the native DX12 proxy is not offered). The choice is
 remembered per game and is also available in Expert. Geometry methods reuse a
 ready stream or show a restart dialog with the captured arguments and Steam ID;
 auto-attach never restarts games. System

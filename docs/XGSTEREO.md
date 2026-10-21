@@ -73,16 +73,32 @@ the earlier failure point.
 `mirror_backend.h` uses generated Vulkan dispatch/translation wrappers from the
 pinned `vk.xml`. App handles always refer to the left resources. Deep translations
 replace nested handles in right-eye calls. Swapchain twins are ordinary offscreen
-images, with PRESENT layout translated to GENERAL on the right. Acquire signals
-separate right-eye synchronization; presentation consumes both eyes' completion
-semaphores before the shared-texture copies and the monitor present. The monitor
-shows the left eye continuously. Unsupported commands or translations stop the
-stereo stream and retain application forwarding.
+images, with PRESENT layout translated to GENERAL on the right. The monitor shows
+the left eye continuously. Unsupported commands or translations stop the stereo
+stream and retain application forwarding.
+
+Synchronisation. The layer submits only from inside the app's own
+`vkQueueSubmit*`/`vkQueuePresentKHR` calls, where the app holds the queue's
+external synchronisation. Acquisition submits nothing (an earlier version
+signalled the right-eye twins of the acquire semaphore/fence with an extra
+`vkQueueSubmit` inside `vkAcquireNextImageKHR`, racing the app's own use of that
+queue). Right-eye work renders into offscreen twins, so a right-eye wait on an
+acquire semaphore is translated into a wait on the per-queue *layer timeline*
+value of the export copy that last read that twin (or dropped if the twin was
+never exported). Every right-eye submission and every export copy signals its
+queue's layer timeline. Swapchain teardown, transport replacement and the
+release after a stop wait on these timelines instead of `vkDeviceWaitIdle`
+(which would need every queue's external synchronisation).
 
 CPU-written host mappings are synchronized before each submission. Non-cached
 upload mappings use Win32 write-watch shadows: only dirty pages need comparison
 and copying into both allocations. Cached mappings retain the application's real
-left pointer for GPU readbacks. When the application observes fence or timeline
+left pointer for GPU readbacks. A shadow holds only what the app wrote; when the
+app calls `vkInvalidateMappedMemoryRanges` on a shadowed range (its request to
+read GPU results) the shadow is refreshed from the left allocation first. Reads
+of non-cached coherent memory without an invalidate still see only the app's own
+writes; D3D12 upload heaps (vkd3d) cannot be GPU-written and DXVK reads back
+through cached memory, so this is documented rather than shadow-free. When the application observes fence or timeline
 completion, the corresponding right work must also finish before it can reuse
 inputs. The gameplay run logged approximately 0.5 ms of memory synchronization
 per submit after write tracking, compared with 17–20 ms for full-allocation scans.
@@ -90,30 +106,81 @@ These are diagnostic averages, not an FPS benchmark; rendering twice still costs
 GPU time and duplicates resource memory.
 
 DXVK 2.7.1 requires buffer addresses even with descriptor buffers disabled.
-The backend records original/twin buffer address ranges and reflects typed
-physical pointers in SPIR-V push-constant blocks. Only those declared fields are
-translated, preserving buffer offsets and leaving ordinary constants untouched.
-Graphics and compute bindings have independent reflection state. Unknown pointers,
-partial pointer writes and integer-computed pointers stop stereo instead of
-reading the wrong eye's allocation. Opaque descriptor-buffer replay is unsupported;
+The backend records original/twin buffer address ranges in an interval map
+(`mirror_addresses.h`: ordered map with binary search under a shared lock, not a
+linear scan under a global mutex) and reflects typed physical pointers in
+SPIR-V push-constant blocks. Only those declared fields are translated,
+preserving buffer offsets and leaving ordinary constants untouched. Push data
+persists across pipeline binds, so `vkCmdPushConstants` only records the raw
+bytes per command buffer; the right eye receives them at the next draw or
+dispatch, translated for the pipeline actually bound then, pushed with the
+latest push layout and stage flags split per overlapping range. Unchanged state
+costs one lookup per draw. Unknown pointers, partial pointer writes and
+integer-computed pointers stop stereo instead of reading the wrong eye's
+allocation. Opaque descriptor-buffer replay is unsupported;
 the scoped DXVK config sets `dxvk.enableDescriptorBuffer = False` and disables
 pipeline libraries and NV low-latency integration for this test path.
 
-Mirror separation and convergence are currently read **at launch**. Use the VRX
-stereo switch / `--no-warp` for immediate identical eye images; restart the game
-to change mirror separation or convergence. `tune.ps1` rejects a mirror run rather
-than claiming a live update happened. Live tuning remains supported in alternate
-mode. Swapchain recreation, protected resources, external application resources,
-shader objects, mesh/tessellation/geometry stereo and arbitrary pointer data-flow
-are outside this first mirror implementation.
+Mirror separation and convergence are read at launch **and applied live**: the
+layer polls the tuning file (`VRX_XG_TUNING`, at most five times a second) and
+writes both eyes' values with one GPU-ordered transfer between frames, so cached
+command buffers pick them up and a pair never mixes settings (`tune.ps1` works for
+mirror runs; regression `mirror_live_stereo_tuning`). The VRX stereo switch /
+`--no-warp` still gives identical eye images immediately.
+
+Swapchain recreation through `oldSwapchain` (resize, mode change) is supported:
+the old swapchain is retired (its images present without export) and a new
+transport generation starts at the new size. A second, simultaneous swapchain
+still stops stereo. Protected resources, shader objects, mesh/task shaders and
+arbitrary pointer data-flow are outside this mirror implementation.
+
+Stop and fallback. When stereo stops (any unsupported command, translation,
+extension use or failure), the left eye's shaders remain patched, so at the next
+submission on the graphics queue the layer writes {0, 0} into both eye offset
+buffers with a GPU-ordered transfer: the game renders unshifted (mono), including
+cached command buffers (regression `mirror_stop_fallback`). Right-eye work is
+then drained on the layer timelines and right-eye memory, swapchain twins and
+the shared transport are released; later app destroys still destroy the
+remaining right-eye objects (generated destroy wrappers), shadows of unmapped
+memory are freed and new maps return the app's own pointer, so VRAM and CPU
+cost return to normal.
+
+Device support. At `vkCreateDevice` every enabled extension is checked against
+an allowlist: all non-platform, non-provisional device extensions of the pinned
+registry (generated by `gen_mirror.py`; their commands are wrapped, left-eye
+only, hand-written or stopping stubs) plus reviewed Windows extensions
+(`VK_KHR_external_memory_win32`, `VK_KHR_external_semaphore_win32` (imports stop
+stereo), `VK_KHR_external_fence_win32`, `VK_KHR_win32_keyed_mutex`,
+`VK_NV_win32_keyed_mutex`, `VK_NV_external_memory_win32`,
+`VK_EXT_full_screen_exclusive`). Any other extension, or an API version newer
+than the registry, keeps ordinary rendering for that device and logs the name.
 
 ## Current implementation
 
 An explicit Windows x64 Vulkan layer, `VK_LAYER_VRX_xgstereo`, patches supported
-vertex Position outputs with an eye-dependent clip-X offset. Perspective division
+Position outputs with an eye-dependent clip-X offset. Perspective division
 makes nearby geometry shift more than distant geometry. Direct BuiltIn Position
-outputs and Position members of output blocks work. W exactly 1 is skipped as a
-basic HUD/fullscreen-pass heuristic. The clip rewrite is original VRX code; the mirror backend includes the attributed
+outputs and Position members of output blocks work. The rewrite is
+
+```
+offset = clamp(shift - convergence * w, -0.25 * |w|, +0.25 * |w|)
+x      = |w - 1| <= 1e-4 ? x : x + offset
+```
+
+i.e. the per-eye screen (NDC) shift `shift / w - convergence` is clamped to
+±0.25 (one eighth of the eye's width; equal to the largest accepted convergence,
+so far-field shifts are never clipped), and W within 1e-4 of 1 is treated as a
+HUD/full-screen pass (an exact `w == 1` test missed values like 0.99999994).
+The same limits apply to the DXBC rewrite (`dx12stereo/dxbc_patch.cpp`).
+
+In mirror mode the shift is applied in the *last pre-rasterisation stage*:
+geometry if present, otherwise tessellation evaluation, otherwise vertex
+(geometry shaders are rewritten before every vertex emission). Earlier patched
+stages of such a pipeline get their original code, so Position is never shifted
+twice. If the last stage cannot be patched the vertex shift is kept (correct
+only when Position passes through) and logged; mesh/task pipelines are not
+shifted and are logged as flat. Fixed/alternate modes shift the vertex stage only
+and log pipelines with later stages. The clip rewrite is original VRX code; the mirror backend includes the attributed
 vrdual adaptations described above.
 
 Both ordinary shader modules and inline vertex modules passed to
@@ -133,9 +200,16 @@ The eye flips after each successful presentation, so a cached command buffer
 still renders the appropriate eye. Left and right are consecutive game frames,
 not two views of precisely the same simulation time.
 
-With GPU transport, presentation schedules a blit into a shared GPU array texture
-and returns without a host fence wait. UNORM BGRA8/RGBA8 are supported; sRGB is
-currently declined to avoid an unintended gamma conversion. The CPU diagnostic
+With GPU transport, presentation schedules a transfer into a shared GPU array
+texture and returns without a host fence wait. The shared textures are RGBA8
+UNORM holding display-referred sRGB-encoded bytes. In mirror mode UNORM BGRA8/
+RGBA8 and 10-bit UNORM (A2B10G10R10/A2R10G10B10) swapchains are blitted (format
+and channel conversion only); RGBA8 sRGB is copied byte-for-byte and BGRA8 sRGB
+is copied into a BGRA8 UNORM staging image and then blitted, so no path decodes
+gamma. Only `VK_COLOR_SPACE_SRGB_NONLINEAR_KHR` is exported: HDR/wide-gamut
+colour spaces and float formats stop stereo with a logged reason. Alternate mode
+with GPU transport accepts only UNORM BGRA8/RGBA8 in that colour space; sRGB is
+declined there. The CPU diagnostic
 transport instead copies into a host-visible buffer and exports complete RGBA
 pairs through bounded shared memory (including sRGB byte formats).
 The copy consumes the app's present semaphores; the original present waits on
@@ -155,13 +229,13 @@ also requires timeline semaphores, external-memory/semaphore Win32 extensions,
 and a valid single-node adapter LUID; only copied feature/extension structures
 are changed to enable those capabilities.
 
-The exporter supports one swapchain, one layer, even per-eye dimensions of
-2..4096 with GPU transport (2..2048 for the CPU reference), and transfer-source
-support. Unsupported
-formats, protected swapchains, another present queue, multiple swapchains,
-recreation or presentation failure stop export. Subsequent control submissions
-restore the shader offset to zero. Stop VR, then restart the game after resizing or otherwise
-recreating its swapchain. This is deliberately a narrow first implementation.
+The exporter supports one swapchain, one layer, per-eye dimensions of 2..4096
+with GPU transport (even 2..2048 for the CPU reference), and transfer-source
+support. Unsupported formats, protected swapchains, another present queue,
+multiple simultaneous swapchains or presentation failure stop export; both modes
+then restore the shader offset to zero. Mirror mode follows swapchain recreation
+(new transport generation); alternate mode still requires a game restart after
+resizing or recreating its swapchain.
 
 VRX accepts the stream with `--geometry-session=NAME`. It bypasses model loading,
 AI inference and stereo warping, copies each eye into the existing picture
@@ -211,6 +285,39 @@ For a layer-only build without SPIRV-Tools, configure with
 `-DVRX_XG_VALIDATE_SPIRV=OFF` and build target `vrx_xgstereo`. Re-enable it for
 full shader validation.
 
+Release layer (what packaging ships) — Release configuration, diagnostics off:
+
+```powershell
+cmake -S bench/native/xgstereo -B bench/native/xgstereo/out -A x64 -DVRX_XG_VALIDATE_SPIRV=OFF -DVRX_XG_DIAGNOSTICS=OFF
+cmake --build bench/native/xgstereo/out --config Release --target vrx_xgstereo
+```
+
+Outputs: `bench/native/xgstereo/out/Release/vrx_xgstereo.dll`, its manifest
+`VkLayer_vrx_xgstereo.json` (relative `library_path`, keep both together) and
+`vrx_xgstereo.pdb` (symbols, not needed at run time).
+
+Diagnostic switches (`VRX_XG_MIRROR_TRACE`, `VRX_XG_MIRROR_FAIL_AT`,
+`VRX_XG_SHADOW`, `VRX_XG_TRANSIENT_MAPS`) are compiled only into Debug builds or
+with `-DVRX_XG_DIAGNOSTICS=ON`; a release layer ignores those variables. The
+DX12 project likewise compiles its replay diagnostics (`VRX_DX12_RECORD_ONLY`,
+`CLONE_ONLY`, `SKIP_WORK`, `SKIP_COMMANDS`, `STATE_ONLY`, `RECORD_COMMANDS`,
+`REPLAY_PROBES`, pixel traces) only in Debug or with `-DVRX_DX12_DIAGNOSTICS=ON`
+(`VRX_DX12_TEST_*` are read by the test fixtures only), and builds the native
+proxy (`d3d12.dll` + MinHook) only with `-DVRX_DX12_BUILD_INTERCEPTOR=ON`.
+
+Pipeline caches. Patched shaders embed the eye buffer's device address as a
+constant, which changes between runs, so driver and DXVK/vkd3d pipeline caches
+miss for patched pre-rasterisation shaders on every launch. A stable mechanism
+was evaluated and not adopted: an appended push-constant range or a reserved
+descriptor set must be added to every pipeline layout and rebound after every
+app bind, which collides with vkd3d's root-constant push ranges (up to the
+device limit) and DXVK's descriptor layouts; a fixed device address needs
+capture/replay addresses that cannot be chosen freely; a specialization
+constant still changes the compiled code. The address constant is therefore
+kept. Right-eye pipelines compile synchronously inside the app's creation call;
+their cost is measured and logged (calls over 100 ms, then a summary every 500
+pipelines, and the total at device close).
+
 ## Try a compatible application
 
 Close the game first. From PowerShell, launch a **native Vulkan x64** application
@@ -243,7 +350,7 @@ fixed-eye diagnostic mode and do not export a stream.
 The left eye adds the offset, the right subtracts it. This is not a calibrated
 IPD: for an ordinary perspective projection the magnitude is
 `P00 × IPD × worldUnitsPerMetre / 2`, where `P00 = 1 / tan(horizontalFov / 2)`.
-Use the launcher's `-Shift` option and restart the game to change it. Cinema-screen
+Set it with the launcher's `-Shift` option; DX11/managed runs can also change it live (`tune.ps1`, desktop). Cinema-screen
 convergence and game-specific FOV/world scale need further calibration.
 
 The default assumes metre-scale world units. Unreal games commonly use centimetres:
@@ -295,7 +402,7 @@ The per-run config disables graphics pipeline libraries, descriptor buffers and
 NV low-latency integration; inline module handling remains necessary.
 
 The DX11 launcher also creates `stereo.txt` and sets `VRX_XG_TUNING` for its child.
-In **alternate mode**, adjust separation/convergence without restarting:
+In **alternate and mirror modes**, adjust separation/convergence without restarting:
 
 ```powershell
 ./bench/native/xgstereo/tune.ps1 -Session game -Shift 0.8 -Convergence 0.002
@@ -311,7 +418,8 @@ so an exported pair never mixes different tuning settings. Invalid, partial,
 non-finite or out-of-range input retains the previous values. The shader uses
 `x += signedShift - signedConvergence * w`, while retaining the W=1 HUD heuristic.
 For ordinary perspective projection the zero-parallax clip W is
-`Shift / Convergence`; with this game's centimetre scale, 0.8/0.002 places it
+`Shift / Convergence`, subject to the ±0.25 NDC clamp and the HUD tolerance
+described above; with this game's centimetre scale, 0.8/0.002 places it
 roughly four metres away. Zero convergence keeps the zero-parallax plane at
 infinity. This does not move a real game camera or correct screen-space effects.
 
@@ -319,9 +427,9 @@ In VRX, select the game's actual window and enable Geometry stereo/session
 `game`, then Attach / Play. SteamVR must be running for headset presentation.
 Startup clears and unsupported shaders leave the transport empty until a
 supported vertex shader appears; an initial loading screen no longer permanently
-disables export. Avoid resizing or changing fullscreen mode during this test:
-presentation failure or swapchain recreation requires stopping VRX and restarting
-the game. Close VRX's stream before relaunching the game with the same session.
+disables export. In mirror mode a resize or fullscreen change recreates the
+transport at the new size; in alternate mode it requires stopping VRX and
+restarting the game. Close VRX's stream before relaunching the game with the same session.
 
 Verified on 2026-10-20: game startup through DXVK, supported inline shaders patched,
 1920x1080 per-eye pairs delivered into VRX's D3D12 eye textures, a focused SteamVR
@@ -445,28 +553,44 @@ validated. A reader claims a completed slot under the metadata mutex; the writer
 cannot reuse it until the consumer's GPU release fence completes. Rotation keeps
 other complete pairs available while the next slot is being written. A full ring
 drops the entire incoming pair instead of waiting or overwriting a leased image.
-Consumer death cannot release an unfinished GPU lease; restart the session after
-an interrupted consumer. Texture ownership transfers use external queue-family
+
+The consumer's PID and process creation time are stored in a 16-byte trailer
+after the unchanged 176-byte v1 header (`GpuConsumerLease`; readers of the v1
+header, including the desktop, are unaffected; mapping created by an older
+producer reads as "start time unknown"). A registered consumer whose process has
+exited (or whose PID now belongs to another process) no longer blocks `Open`, and
+the producer revokes its leases (probed at most every 250 ms, only while a slot
+is blocked) instead of running with fewer slots. When a consumer is *terminated*
+Windows completes the shared fences with `UINT64_MAX`; the producer then reports
+the generation lost and mirror mode publishes a replacement generation after
+waiting for its own copies, so a restarted engine re-attaches without
+restarting the game (`WaitForGpuPair` waits for it). Alternate mode stops with a
+logged reason in that case. Regression: `gpu_transport_leases` (exited and
+killed consumer processes). Texture ownership transfers use external queue-family
 barriers and D3D12 shared timeline fences. See the primary API contracts for
 [external memory](https://docs.vulkan.org/guide/latest/extensions/external.html),
 [D3D12-resource import allocation sizes](https://docs.vulkan.org/refpages/latest/refpages/source/VkMemoryAllocateInfo.html),
 and [D3D12 shared handles](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-createsharedhandle).
 
-W=1 is a heuristic: some geometry has W=1 and some HUDs do not. Shifting Position
+W≈1 is a heuristic: some geometry has W near 1 and some HUDs do not. Shifting Position
 does not update camera uniforms, so shadows, reflections, screen-space effects,
 TAA and motion vectors can disagree with the geometry. Alternating eyes adds
 one game frame of temporal difference and can smear fast motion or temporal effects.
 Unsupported vertex modules pass through unchanged; if no supported vertex
-module was observed, the stream stays empty. Shader objects and
-geometry/tessellation/mesh stages need additional handling. DirectX needs a
-separate translator such as the experimental DXVK bridge above; there is no
-native DirectX backend. OpenGL, 32-bit applications and dual-GPU mirroring are
+module was observed, the stream stays empty. Shader objects and mesh/task stages
+are not shifted (logged); tessellation/geometry stages are shifted in mirror mode
+only. DirectX needs a separate translator such as the experimental DXVK bridge
+above or vkd3d-proton; the native DirectX 12 proxy (`dx12stereo`) is an
+experiment that is not built or shipped by default. OpenGL, 32-bit applications and dual-GPU mirroring are
 not supported.
 
 ### Desktop chooser and managed launch
 
-Each window preview offers Depth estimate, Vulkan and DXVK. DX12 is disabled
-because there is no native DirectX 12 stereo backend. Clicking a preview uses
+Each window preview offers Depth estimate, Vulkan, DXVK and DirectX 12 →
+Vulkan through vkd3d-proton (a locally supplied vkd3d-proton build in
+`geometry/vkd3d` or `VRX_VKD3D_DIRECTORY`; see
+[VKD3D.md](../bench/native/dx12stereo/VKD3D.md)). The native DX12 proxy route is
+not offered. Clicking a preview uses
 that executable's saved method; displays continue to use depth estimation.
 Expert also has a stereo method selector. Applying general settings to all games
 preserves their individual launch methods and calibration.
@@ -504,6 +628,6 @@ transport retains its original even-size restriction. Managed file cleanup is
 serialized per executable and retires old manifests, including installation
 rollback, so a delayed observer cannot delete a subsequent run's identical DLLs.
 
-Next work: extend mirror pointer/command coverage and ordered live tuning;
-validate more games and performance; calibrate convergence; support swapchain
-recreation and more rendering paths; package the optional layer for releases.
+Next work: extend mirror pointer/command coverage; validate more games and
+performance; calibrate convergence; more rendering paths (mesh shaders, shader
+objects); package the optional layer for releases.
