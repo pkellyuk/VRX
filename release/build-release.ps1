@@ -11,7 +11,7 @@ param(
     [string]$SignedFiles = ''
 )
 $ErrorActionPreference = 'Stop'
-$version = '1.7.9'
+$version = '1.8.0'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 if (!$OutputRoot)
 {
