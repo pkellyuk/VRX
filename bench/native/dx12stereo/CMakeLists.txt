@@ -14,7 +14,17 @@ if(MSVC)
     target_compile_options(dx12_shader_patch_test PRIVATE /W4 /WX /EHsc)
 endif()
 dxbc_copy_license(dx12_shader_patch_test)
-option(VRX_DX12_BUILD_INTERCEPTOR "Build the opt-in native D3D12 interception prototype" ON)
+# The native D3D12 proxy (app-local d3d12.dll + MinHook, DXBC-only) is an
+# experiment and must not appear in release output; enable it explicitly.
+option(VRX_DX12_BUILD_INTERCEPTOR "Build the opt-in native D3D12 interception prototype (not for release)" OFF)
+# Diagnostic replay switches (VRX_DX12_RECORD_ONLY/CLONE_ONLY/SKIP_*/STATE_ONLY/
+# RECORD_COMMANDS, replay probes and pixel traces) are compiled into Debug
+# builds, and into other configurations only with this option.
+option(VRX_DX12_DIAGNOSTICS "Compile diagnostic replay switches into non-Debug builds" OFF)
+set(vrx_dx12_diagnostic_test)
+if(NOT VRX_DX12_DIAGNOSTICS)
+    set(vrx_dx12_diagnostic_test CONFIGURATIONS Debug)
+endif()
 if(VRX_DX12_BUILD_INTERCEPTOR)
     enable_language(ASM_MASM)
     include(FetchContent)
@@ -40,7 +50,8 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set_property(TARGET minhook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_include_directories(vrx_dx12_proxy PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_definitions(vrx_dx12_proxy PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_definitions(vrx_dx12_proxy PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX
+        "VRX_DX12_DIAGNOSTICS=$<IF:$<OR:$<CONFIG:Debug>,$<BOOL:${VRX_DX12_DIAGNOSTICS}>>,1,0>")
     target_link_libraries(vrx_dx12_proxy PRIVATE minhook vrx_dxbc_patch dxguid dxgi d3dcompiler)
     dxbc_copy_license(vrx_dx12_proxy)
     if(MSVC)
@@ -210,26 +221,26 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         add_test(NAME native_dx12_depth_bounds_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -DepthBounds ${extra})
         set_tests_properties(native_dx12_depth_bounds_${adapter} PROPERTIES TIMEOUT 40 SKIP_RETURN_CODE 77)
-        add_test(NAME native_dx12_record_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+        add_test(NAME native_dx12_record_only_${adapter} ${vrx_dx12_diagnostic_test} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly ${extra})
-        add_test(NAME native_dx12_present_record_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+        add_test(NAME native_dx12_present_record_only_${adapter} ${vrx_dx12_diagnostic_test} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_present_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -Present -RecordOnly ${extra})
         set_tests_properties(native_dx12_record_only_${adapter} native_dx12_present_record_only_${adapter} PROPERTIES TIMEOUT 40)
-        add_test(NAME native_dx12_clone_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+        add_test(NAME native_dx12_clone_only_${adapter} ${vrx_dx12_diagnostic_test} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -CloneOnly ${extra})
-        add_test(NAME native_dx12_present_clone_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+        add_test(NAME native_dx12_present_clone_only_${adapter} ${vrx_dx12_diagnostic_test} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_present_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -Present -CloneOnly ${extra})
         set_tests_properties(native_dx12_clone_only_${adapter} native_dx12_present_clone_only_${adapter} PROPERTIES TIMEOUT 40)
-        add_test(NAME native_dx12_queue_only_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+        add_test(NAME native_dx12_queue_only_${adapter} ${vrx_dx12_diagnostic_test} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly -SkipCommandRecording ${extra})
         set_tests_properties(native_dx12_queue_only_${adapter} PROPERTIES TIMEOUT 40)
-        add_test(NAME native_dx12_record_no_work_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+        add_test(NAME native_dx12_record_no_work_${adapter} ${vrx_dx12_diagnostic_test} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly -SkipRecordingWork ${extra})
         set_tests_properties(native_dx12_record_no_work_${adapter} PROPERTIES TIMEOUT 40)
-        add_test(NAME native_dx12_record_state_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+        add_test(NAME native_dx12_record_state_${adapter} ${vrx_dx12_diagnostic_test} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly -RecordStateOnly ${extra})
         set_tests_properties(native_dx12_record_state_${adapter} PROPERTIES TIMEOUT 40)
-        add_test(NAME native_dx12_record_pipeline_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+        add_test(NAME native_dx12_record_pipeline_${adapter} ${vrx_dx12_diagnostic_test} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -RecordOnly -RecordCommands SetPipelineState ${extra})
         set_tests_properties(native_dx12_record_pipeline_${adapter} PROPERTIES TIMEOUT 40)
         add_test(NAME native_dx12_null_blend_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
@@ -244,13 +255,17 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
         add_test(NAME native_dx12_debug_gpu_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -GpuValidation ${extra})
         set_tests_properties(native_dx12_debug_gpu_${adapter} PROPERTIES TIMEOUT 60)
-        add_test(NAME native_dx12_compute_trace_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+        add_test(NAME native_dx12_compute_trace_${adapter} ${vrx_dx12_diagnostic_test} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
             "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_mirror_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -ComputeTrace ${extra})
         set_tests_properties(native_dx12_compute_trace_${adapter} PROPERTIES TIMEOUT 40)
 
 
         foreach(mesh_mode shifted zero stream probes probes_stream probes_nonindexed probes_fallback)
             set(mesh_args)
+            set(mesh_diagnostic)
+            if(mesh_mode MATCHES "^probes")
+                set(mesh_diagnostic ${vrx_dx12_diagnostic_test})
+            endif()
             if(mesh_mode STREQUAL zero)
                 list(APPEND mesh_args -ZeroShift)
             elseif(mesh_mode STREQUAL stream)
@@ -264,12 +279,16 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
             elseif(mesh_mode STREQUAL probes_fallback)
                 list(APPEND mesh_args -ReplayProbes -Unsupported)
             endif()
-            add_test(NAME native_dx12_mesh_${mesh_mode}_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            add_test(NAME native_dx12_mesh_${mesh_mode}_${adapter} ${mesh_diagnostic} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
                 "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_mesh_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror ${mesh_args} ${extra})
             set_tests_properties(native_dx12_mesh_${mesh_mode}_${adapter} PROPERTIES TIMEOUT 40)
         endforeach()
         foreach(output_state late record_blend record_stencil record_both record_initial)
             set(state_args -LatePipeline)
+            set(state_diagnostic)
+            if(output_state MATCHES "^record_")
+                set(state_diagnostic ${vrx_dx12_diagnostic_test})
+            endif()
             if(output_state MATCHES "^record_")
                 list(APPEND state_args -RecordOnly -RecordCommands)
                 if(output_state STREQUAL record_blend)
@@ -283,16 +302,20 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
             if(output_state STREQUAL record_initial)
                 list(REMOVE_ITEM state_args -LatePipeline)
             endif()
-            add_test(NAME native_dx12_state_${output_state}_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            add_test(NAME native_dx12_state_${output_state}_${adapter} ${state_diagnostic} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
                 "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror ${state_args} ${extra})
             set_tests_properties(native_dx12_state_${output_state}_${adapter} PROPERTIES TIMEOUT 40)
-            add_test(NAME native_dx12_state_${output_state}_stream_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            add_test(NAME native_dx12_state_${output_state}_stream_${adapter} ${state_diagnostic} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
                 "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_state_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror -Modern ${state_args} ${extra})
             set_tests_properties(native_dx12_state_${output_state}_stream_${adapter} PROPERTIES TIMEOUT 40)
         endforeach()
 
         foreach(filter selected partial first last unfiltered ordinary)
             set(filter_args -RecordOnly -FilterProbe hit)
+            set(filter_diagnostic ${vrx_dx12_diagnostic_test})
+            if(filter STREQUAL ordinary)
+                set(filter_diagnostic)
+            endif()
             if(filter STREQUAL selected)
                 list(APPEND filter_args -RecordCommands SetPipelineState)
             elseif(filter STREQUAL partial)
@@ -304,7 +327,7 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
             elseif(filter STREQUAL ordinary)
                 set(filter_args -FilterProbe hit -RecordCommands SetPipelineStateSuffix)
             endif()
-            add_test(NAME native_dx12_record_filter_${filter}_${adapter} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
+            add_test(NAME native_dx12_record_filter_${filter}_${adapter} ${filter_diagnostic} COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
                 "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_record_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -Mirror ${filter_args} ${extra})
             set_tests_properties(native_dx12_record_filter_${filter}_${adapter} PROPERTIES TIMEOUT 40)
         endforeach()
@@ -331,7 +354,8 @@ if(VRX_DX12_BUILD_INTERCEPTOR)
     add_test(NAME native_dx12_interception COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
         "${CMAKE_CURRENT_SOURCE_DIR}/interceptor_test.ps1" -Fixture "$<TARGET_FILE:dx12_interceptor_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>")
     add_test(NAME native_dx12_launcher COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File
-        "${CMAKE_CURRENT_SOURCE_DIR}/launcher_test.ps1" -Fixture "$<TARGET_FILE:dx12_present_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -StatusTool "$<TARGET_FILE:dx12_status>")
+        "${CMAKE_CURRENT_SOURCE_DIR}/launcher_test.ps1" -Fixture "$<TARGET_FILE:dx12_present_fixture>" -Proxy "$<TARGET_FILE:vrx_dx12_proxy>" -StatusTool "$<TARGET_FILE:dx12_status>"
+        -Diagnostics "$<IF:$<OR:$<CONFIG:Debug>,$<BOOL:${VRX_DX12_DIAGNOSTICS}>>,1,0>")
     set_tests_properties(native_dx12_launcher PROPERTIES TIMEOUT 45)
     foreach(mode hw warp unsupported unsupported_warp)
         set(extra)

@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[Parameter(Mandatory)][string]$StatusTool)
+param([Parameter(Mandatory)][string]$Fixture,[Parameter(Mandatory)][string]$Proxy,[Parameter(Mandatory)][string]$StatusTool,[ValidateSet('0','1')][string]$Diagnostics='1')
 $ErrorActionPreference='Stop'
 $temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath());$root=Join-Path $temporary ('VRX-native-launch-'+[Guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $root
@@ -12,7 +12,9 @@ function StartLauncher([string]$Command){
     return [Diagnostics.Process]::Start($start)
 }
 try {
-    foreach($mode in @('mirror','observe','record','clone','queues','no-work','state','pipeline','debug')) {
+    # Record/clone/skip modes exist only in diagnostic proxy builds (Debug or VRX_DX12_DIAGNOSTICS).
+    $modes=if($Diagnostics -eq '1'){@('mirror','observe','record','clone','queues','no-work','state','pipeline','debug')}else{@('mirror','observe')}
+    foreach($mode in $modes) {
         $debugLayer=$mode -eq 'debug';$observe=$mode -eq 'observe';$recordOnly=$mode -in @('record','queues','no-work','state','pipeline','debug');$cloneOnly=$mode -eq 'clone';$skipCommands=$mode -eq 'queues';$skipWork=$mode -eq 'no-work';$stateOnly=$mode -eq 'state';$recordCommands=$(if($mode -eq 'pipeline'){'SetPipelineState'}else{''})
         $session='launch-'+[Guid]::NewGuid().ToString('N');$stop=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,'Local\VRX.dx12.'+$session+'.fixture-stop')
         $command='& '+(Quote $launcher)+' -Executable '+(Quote $application)+' -Proxy '+(Quote $bridge)+' -Session '+(Quote $session)+' -GameArguments @('+(Quote ('--serve-gpu='+$session))+')'+$(if($observe){' -ObserveOnly'}elseif($recordOnly){' -RecordOnly'}elseif($cloneOnly){' -CloneOnly'}else{''})
