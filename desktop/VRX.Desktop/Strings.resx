@@ -335,7 +335,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorGeometryNoStream" xml:space="preserve"><value>The game did not produce a matching geometry stream. You can choose depth estimate for its window. Diagnostic logs: {0}</value></data>
   <data name="ErrorGeometryFolder" xml:space="preserve"><value>Choose an existing working folder.</value></data>
   <data name="ErrorGeometrySteamId" xml:space="preserve"><value>The Steam App ID must be empty or contain digits only.</value></data>
-  <data name="ErrorGeometryTuning" xml:space="preserve"><value>Separation must be greater than 0 and at most 64; convergence must be between 0 and 0.25.</value></data>
+  <data name="ErrorGeometryTuning" xml:space="preserve"><value>3D strength must be between 0.001 and 4, and screen depth between 0 and 0.01.</value></data>
   <data name="StatusGeometryManualRestart" xml:space="preserve"><value>This saved stereo method needs a game restart. Use Choose or Attach / Play to review it; auto-attach will not restart your game.</value></data>
   <data name="StatusGeometryPreparing" xml:space="preserve"><value>Preparing the geometry stereo attempt…</value></data>
   <data name="StatusGeometryCancelled" xml:space="preserve"><value>Game restart cancelled. The game was left running.</value></data>
@@ -346,14 +346,14 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorGeometryNativeStopped" xml:space="preserve"><value>Native DX12 stereo stopped: {0}
 You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="ErrorGeometryNativeCoverage" xml:space="preserve"><value>The bridge could not establish complete native stereo interception.</value></data>
-  <data name="PathAuto" xml:space="preserve"><value>Auto · recommended</value></data>
+  <data name="PathAuto" xml:space="preserve"><value>Auto (estimated depth)</value></data>
   <data name="PathGeometry" xml:space="preserve"><value>Geometry stereo</value></data>
   <data name="PathVkd3d" xml:space="preserve"><value>DirectX 12 → Vulkan (vkd3d-proton)</value></data>
-  <data name="PathAutoTip" xml:space="preserve"><value>Use a tested game profile when available; otherwise use depth estimation. Automatic attachment never restarts a game or installs graphics components.</value></data>
+  <data name="PathAutoTip" xml:space="preserve"><value>Uses estimated depth. VRX never turns on true geometry by itself: choose it for a game yourself in Expert.</value></data>
   <data name="GeometryAdvanced" xml:space="preserve"><value>Advanced geometry settings</value></data>
   <data name="RendererAuto" xml:space="preserve"><value>Automatic renderer</value></data>
   <data name="GeometryRenderer" xml:space="preserve"><value>Geometry renderer</value></data>
-  <data name="TestedSystemShock" xml:space="preserve"><value>Tested: System Shock · D3D12 → Vulkan</value></data>
+  <data name="TestedSystemShock" xml:space="preserve"><value>Tested true-geometry settings are available for this game. They are used only if you choose true geometry.</value></data>
   <data name="GeometryChooserNotice" xml:space="preserve"><value>Geometry stereo is experimental and may need a game restart and temporary graphics DLLs. Use only games that permit graphics layers; anti-cheat may block them. Review the restart details before proceeding.</value></data>
   <data name="ErrorVkd3dMissing" xml:space="preserve"><value>The x64 vkd3d-proton runtime is missing. Install d3d12.dll and d3d12core.dll in geometry/vkd3d, or set VRX_VKD3D_DIRECTORY to the local build folder.</value></data>
   <data name="ErrorPreviousGeometryStop" xml:space="preserve"><value>The previous game viewer did not stop. Close its VR session, then try Attach / Play again.</value></data>

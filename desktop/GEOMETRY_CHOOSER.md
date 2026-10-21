@@ -3,11 +3,12 @@
 Each game window offers Auto, Depth estimate and Geometry stereo. Clicking the
 picture keeps that executable's saved selection. Whole displays use depth capture.
 
-Auto uses a built-in tested profile when available; unknown games use depth.
-Background auto-attach only connects an existing stereo stream or uses depth: it
-never closes a game or installs a graphics DLL. Manual Play can show the concrete
-restart review for an available tested profile. Missing local components fall back
-to depth in Auto. Explicit Geometry can prepare DXVK and then show that review.
+Auto always means estimated depth, for every game, including games with a built-in
+tested geometry profile: true geometry is only used when it was chosen for that game.
+A tested profile is shown as a suggestion next to the geometry choice ("Tested
+true-geometry settings are available for this game") and only fills in the geometry
+settings. Background auto-attach only connects an existing stereo stream or uses
+depth: it never closes a game or installs a graphics DLL.
 
 Advanced geometry settings offers Automatic renderer, Native Vulkan, DirectX 11
 through DXVK, and DirectX 12 through vkd3d-proton. The DXVK installer currently
@@ -85,7 +86,11 @@ keeps the current session, and choosing a replacement stops that viewer before
 attaching or reviewing a geometry restart.
 
 The System Shock remake Steam profile (482400) uses vkd3d-proton with separation
-0.5, convergence 0, and `-dx12 -norhithread`. Resolution and display mode come from
+0.5, convergence 0.002, and `-dx12 -norhithread`. The layer shifts clip space by
+`x += shift - convergence * w`, so the screen plane (zero parallax) sits at
+`w = shift / convergence` = 250 units, about 2.5 m in Unreal's centimetres; the
+earlier convergence 0 put the screen plane at infinity and the unshifted HUD behind
+the scene. Profiles seeded with v3's convergence 0 move to 0.002 once. Resolution and display mode come from
 the game's saved settings; the earlier 1280×720 and forced-windowed test defaults
 are migrated away without changing custom launch arguments.
 The System Shock child process also uses `HIGHDPIAWARE` compatibility so a scaled

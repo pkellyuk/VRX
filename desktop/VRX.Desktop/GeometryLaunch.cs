@@ -201,15 +201,6 @@ public static class GeometryLaunch
             if(folder.Length>0 && new[]{"d3d12.dll","d3d12core.dll"}.All(n=>File.Exists(Vkd3dFile(folder,n)) && IsX64(Vkd3dFile(folder,n)))) return folder;
         throw new FileNotFoundException(Loc.Get("ErrorVkd3dMissing"));
     }
-    // Auto never downloads components. A manual geometry choice can prepare them
-    // and then present the concrete restart review.
-    internal static bool AutoRuntimeAvailable(string dataRoot) {
-        try {
-            _=LayerDirectory(); _=Vkd3dDirectory(); string root=EngineSession.RepositoryRoot();
-            return new[]{Path.Combine(root,"geometry","dxvk","x64"),Path.Combine(root,"bench","native","xgstereo","out","dxvk-"+DxvkVersion,"x64"),Path.Combine(dataRoot,"geometry","dxvk-"+DxvkVersion,"x64")}
-                .Any(d=>new[]{"d3d11.dll","dxgi.dll"}.All(n=>File.Exists(Path.Combine(d,n)) && IsX64(Path.Combine(d,n))));
-        } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException) { return false; }
-    }
     private static async Task<string> DxvkDirectory(string dataRoot,Action<string> status,CancellationToken token) {
         string root=EngineSession.RepositoryRoot();
         string cache=Path.Combine(dataRoot,"geometry","dxvk-"+DxvkVersion,"x64");

@@ -54,10 +54,15 @@ internal static class GeometryLaunchTests
         Directory.CreateDirectory(Path.GetDirectoryName(shockExe)!);
         File.WriteAllText(Path.Combine(shockApps,"appmanifest_482400.acf"),"\"appid\" \"482400\"\n\"installdir\" \"System Shock\"");
         var tested=store.Load(shockExe);
-        Check(tested.SelectedStereoBackend==StereoPaths.Auto && tested.EffectiveStereoBackend==StereoPaths.Vkd3d && tested.GeometrySeparation==.5f && tested.GeometryConvergence==0 && tested.GeometryLaunchArguments!.Contains("-norhithread"),"Auto seeds the tested System Shock route and calibration");
-        tested.GeometrySeparation=.35f; tested.GeometryConvergence=.02f; store.Save(tested);
+        // Auto is always estimated depth, even for a game with tested geometry settings.
+        Check(tested.SelectedStereoBackend==StereoPaths.Auto && tested.EffectiveStereoBackend==StereoPaths.Depth && !tested.GeometryStereo,"a new System Shock profile resolves to depth");
+        Check(tested.GeometryProfileId==TestedStereoProfiles.SystemShock && tested.GeometrySeparation==TestedStereoProfiles.SystemShockSeparation &&
+            tested.GeometryConvergence==TestedStereoProfiles.SystemShockConvergence && tested.GeometryConvergence>0 && tested.GeometryLaunchArguments!.Contains("-norhithread"),"the tested System Shock calibration is only a suggestion, with the screen plane in front of infinity");
+        var chosen=store.Load(shockExe); chosen.SelectStereoBackend(StereoPaths.GeometryAuto);
+        Check(chosen.EffectiveStereoBackend==StereoPaths.Vkd3d,"choosing geometry for System Shock uses its tested renderer");
+        tested.GeometrySeparation=.35f; tested.GeometryConvergence=.004f; store.Save(tested);
         var remembered=store.Load(shockExe);
-        Check(remembered.GeometrySeparation==.35f && remembered.GeometryConvergence==.02f && remembered.SelectedStereoBackend==StereoPaths.Auto,"reloading Auto preserves user calibration");
+        Check(remembered.GeometrySeparation==.35f && remembered.GeometryConvergence==.004f && remembered.SelectedStereoBackend==StereoPaths.Auto,"reloading Auto preserves user calibration");
         Check(!remembered.GeometryLaunchArguments!.Contains("-Res") && !remembered.GeometryLaunchArguments.Contains("-windowed"),"the game controls its saved resolution and display mode");
         remembered.GeometryProfileId="system-shock-vkd3d-v1";
         remembered.GeometryLaunchArguments="-norhithread -windowed -ResX=1280 -ResY=720 -dx12";
@@ -65,7 +70,15 @@ internal static class GeometryLaunchTests
         Check(remembered.GeometryProfileId==TestedStereoProfiles.SystemShock && remembered.GeometrySeparation==.35f && remembered.GeometryLaunchArguments=="-dx12 -norhithread","migrate the old test resolution without changing stereo tuning");
         remembered.GeometryProfileId="system-shock-vkd3d-v2"; remembered.GeometryLaunchArguments="-norhithread -windowed -dx12";
         store.Save(remembered); remembered=store.Load(shockExe);
-        Check(remembered.GeometryLaunchArguments=="-dx12 -norhithread" && remembered.GeometryConvergence==.02f,"remove the v2 forced window mode while preserving calibration");
+        Check(remembered.GeometryLaunchArguments=="-dx12 -norhithread" && remembered.GeometryConvergence==.004f,"remove the v2 forced window mode while preserving calibration");
+        remembered.GeometryProfileId="system-shock-vkd3d-v3"; remembered.GeometryConvergence=0; store.Save(remembered); remembered=store.Load(shockExe);
+        Check(remembered.GeometryProfileId==TestedStereoProfiles.SystemShock && remembered.GeometryConvergence==TestedStereoProfiles.SystemShockConvergence && remembered.GeometrySeparation==.35f,"the v3 seed's convergence 0 (HUD behind the scene) moves to the tested screen plane once");
+        remembered.GeometryConvergence=0; store.Save(remembered);
+        Check(store.Load(shockExe).GeometryConvergence==0,"a convergence the player sets after the migration is kept");
+        var unsafeTuning=store.Load(shockExe); unsafeTuning.GeometrySeparation=40; unsafeTuning.GeometryConvergence=.2f; store.Save(unsafeTuning);
+        Check(store.Load(shockExe).GeometrySeparation==Profile.MaxGeometrySeparation && store.Load(shockExe).GeometryConvergence==Profile.MaxGeometryConvergence,"saved tuning outside the safe range is clamped when it loads");
+        Check(!Profile.SafeGeometryTuning(5,.001f) && !Profile.SafeGeometryTuning(.5f,.02f) && !Profile.SafeGeometryTuning(0,0) && Profile.SafeGeometryTuning(.5f,0),"typed tuning outside the safe range is refused");
+        remembered.GeometryConvergence=.004f; store.Save(remembered);
         remembered.GeometryProfileId="system-shock-vkd3d-v2"; remembered.GeometryLaunchArguments="-dx12 -norhithread -windowed -ResX=2560 -ResY=1440";
         store.Save(remembered); remembered=store.Load(shockExe);
         Check(remembered.GeometryLaunchArguments!.Contains("-ResX=2560"),"explicit custom launch settings survive the default-profile migration");

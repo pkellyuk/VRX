@@ -89,6 +89,7 @@
         <ComboBoxItem Tag="depth" Content="{l:Tr PathDepth}"/>
         <ComboBoxItem Tag="geometry" Content="{l:Tr PathGeometry}"/>
        </ComboBox>
+       <TextBlock x:Name="TestedHint" Text="{l:Tr TestedSystemShock}" Style="{StaticResource Hint}" Margin="0,6,0,0" Visibility="Collapsed"/>
        <StackPanel x:Name="GeometryRendererPanel" Visibility="Collapsed">
        <TextBlock Text="{l:Tr GeometryRenderer}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
        <ComboBox x:Name="GeometryRendererList" SelectionChanged="GeometryRendererSelected">
@@ -240,7 +241,7 @@
         <StackPanel Grid.Column="2">
          <TextBlock Text="{l:Tr GeometryConvergence}" Style="{StaticResource Label}"/>
          <TextBox x:Name="GeometryConvergenceText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
-         <Slider x:Name="GeometryConvergenceSlider" Minimum="0" Maximum="0.05" SmallChange="0.0005" LargeChange="0.005" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
+         <Slider x:Name="GeometryConvergenceSlider" Minimum="0" Maximum="0.01" SmallChange="0.0002" LargeChange="0.001" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
         </StackPanel>
        </Grid>
        <TextBlock x:Name="GeometryTuningHint" Text="{l:Tr GeometryTuningLive}" Style="{StaticResource Hint}" Margin="0,6,0,0"/>

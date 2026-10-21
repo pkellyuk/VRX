@@ -370,6 +370,8 @@ public partial class MainWindow : Window
             foreach (ComboBoxItem item in StereoPathList.Items) if ((string)item.Tag == selected) StereoPathList.SelectedItem = item;
             foreach (ComboBoxItem item in GeometryRendererList.Items) if ((string)item.Tag == profile.SelectedGeometryRenderer) GeometryRendererList.SelectedItem = item;
             GeometryRendererPanel.Visibility = selected == StereoPaths.GeometryAuto ? Visibility.Visible : Visibility.Collapsed;
+            // A tested profile is only a suggestion next to the geometry choice; Auto stays depth.
+            TestedHint.Visibility = profile.GeometryProfileId == TestedStereoProfiles.SystemShock ? Visibility.Visible : Visibility.Collapsed;
             loading = wasLoading;
         }
         GeometryContent.Visibility = geometry ? Visibility.Visible : Visibility.Collapsed;
@@ -411,8 +413,9 @@ public partial class MainWindow : Window
     private bool TryGeometryTuning(out float separation,out float convergence)
     {
         separation=convergence=0;
-        return float.TryParse(GeometrySeparationText?.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out separation) && float.IsFinite(separation) && separation>0 && separation<=64 &&
-            float.TryParse(GeometryConvergenceText?.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out convergence) && float.IsFinite(convergence) && convergence>=0 && convergence<=.25f;
+        return float.TryParse(GeometrySeparationText?.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out separation) &&
+            float.TryParse(GeometryConvergenceText?.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out convergence) &&
+            Profile.SafeGeometryTuning(separation,convergence);
     }
     private bool geometryTuningSyncing;
     private void SyncGeometryTuningSliders(bool resetRange=false)
@@ -423,7 +426,7 @@ public partial class MainWindow : Window
             // Normal ranges give useful precision in a headset. Existing or
             // typed larger values expand the range without clamping a profile.
             GeometrySeparationSlider.Maximum=Math.Max(resetRange?2:GeometrySeparationSlider.Maximum,separation);
-            GeometryConvergenceSlider.Maximum=Math.Max(resetRange ? .05 : GeometryConvergenceSlider.Maximum,convergence);
+            GeometryConvergenceSlider.Maximum=Profile.MaxGeometryConvergence;
             GeometrySeparationSlider.Value=separation;GeometryConvergenceSlider.Value=convergence;
         } finally {geometryTuningSyncing=false;}
     }
@@ -784,7 +787,7 @@ public partial class MainWindow : Window
             await GeometrySessionLifecycle.ReleasePrevious(picked.App,store.Root,token);
             EngineSession.EnsureAvailable();
             var running=SteamLibrary.Running(game,RunningApps.List(false));
-            bool geometry=saved.GeometryStereo && !(saved.SelectedStereoBackend==StereoPaths.Auto && !GeometryLaunch.AutoRuntimeAvailable(store.Root));
+            bool geometry=saved.GeometryStereo;
             if(geometry && (picked.ReviewSteamSetup || running==null || GeometryLaunch.ExistingSession(running,saved,store.Root)==null)) {
                 string executable=SteamLibrary.LoadBinding(store.Root,game)?.Executable ?? "";
                 if(executable.Length==0) {
@@ -879,8 +882,7 @@ public partial class MainWindow : Window
             cold=running==null;
             if(cold) {
                 Status.Text=Loc.Format("StatusHistoryLaunching",entry.Title);
-                bool geometry=saved.GeometryStereo && !(saved.SelectedStereoBackend==StereoPaths.Auto && !GeometryLaunch.AutoRuntimeAvailable(store.Root));
-                if(geometry) {
+                if(saved.GeometryStereo) {
                     var plan=await GeometryLaunch.Prepare(picked.App with {Pid=0},saved,store.Root,text=>Status.Text=text,token,entry.Arguments);
                     var dialog=new GeometryLaunchWindow(plan,saved){Owner=this};
                     if(dialog.ShowDialog()!=true) { Status.Text=Loc.Get("StatusGeometryCancelled"); return; }
@@ -935,10 +937,9 @@ public partial class MainWindow : Window
             await GeometrySessionLifecycle.ReleasePrevious(app,store.Root,startCancellation.Token);
             EngineSession.EnsureAvailable();
             if (profile!.EffectiveStereoBackend == StereoPaths.Dx12) throw new InvalidOperationException(Loc.Get("PathDx12Unavailable"));
+            // Auto is estimated depth, so geometry here was chosen for this game.
             string? existingGeometry = profile.GeometryStereo ? GeometryLaunch.ExistingSession(app,profile,store.Root) : null;
-            bool autoDepthFallback = profile.SelectedStereoBackend == StereoPaths.Auto && profile.GeometryStereo && existingGeometry==null &&
-                (automatic || !GeometryLaunch.AutoRuntimeAvailable(store.Root));
-            if (profile.GeometryStereo && !autoDepthFallback) {
+            if (profile.GeometryStereo) {
                 if (window.Monitor >= 0) throw new InvalidOperationException(Loc.Get("ErrorGeometryNeedsGame"));
                 string? existing = existingGeometry;
                 if (existing != null) { profile.GeometrySession = existing; GeometrySessionText.Text = existing; store.Save(profile); }
@@ -974,10 +975,6 @@ public partial class MainWindow : Window
             playing = false;
             shown = SourceShown.Game;
             var runtimeProfile=profile!;
-            if(autoDepthFallback) {
-                runtimeProfile=System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(profile))!;
-                runtimeProfile.SelectStereoBackend(StereoPaths.Depth);
-            }
             engine.Start(app, window, runtimeProfile, store.Root);
             sessionWindow = window.Handle; started = true;
             Status.Text = Loc.Format("StatusStarting", app.Name);
@@ -1789,23 +1786,25 @@ public partial class MainWindow : Window
         if(ReadProfile().EffectiveStereoBackend!=StereoPaths.Vkd3d || ReadProfile().GeometrySeparation!=.5f)
             throw new Exception("Returning to Geometry stereo must restore renderer and calibration");
         GeometrySeparationText.Text=.65f.ToString("R",CultureInfo.CurrentCulture);
-        GeometryConvergenceText.Text=.015f.ToString("R",CultureInfo.CurrentCulture);
-        if(!SaveAndApply() || store.Load(one.ExecutablePath).GeometrySeparation!=.65f || store.Load(one.ExecutablePath).GeometryConvergence!=.015f)
+        GeometryConvergenceText.Text=.005f.ToString("R",CultureInfo.CurrentCulture);
+        if(!SaveAndApply() || store.Load(one.ExecutablePath).GeometrySeparation!=.65f || store.Load(one.ExecutablePath).GeometryConvergence!=.005f)
             throw new Exception("Desktop geometry tuning must save both values in the selected game's profile");
-        if(Math.Abs(GeometrySeparationSlider.Value-.65)>1e-6 || Math.Abs(GeometryConvergenceSlider.Value-.015)>1e-6)
+        if(Math.Abs(GeometrySeparationSlider.Value-.65)>1e-6 || Math.Abs(GeometryConvergenceSlider.Value-.005)>1e-6)
             throw new Exception("Geometry sliders must follow typed numeric values");
-        GeometrySeparationSlider.Value=.7;GeometryConvergenceSlider.Value=.02;
-        if(!SaveAndApply() || store.Load(one.ExecutablePath).GeometrySeparation!=.7f || store.Load(one.ExecutablePath).GeometryConvergence!=.02f)
+        GeometrySeparationSlider.Value=.7;GeometryConvergenceSlider.Value=.006;
+        if(!SaveAndApply() || store.Load(one.ExecutablePath).GeometrySeparation!=.7f || store.Load(one.ExecutablePath).GeometryConvergence!=.006f)
             throw new Exception("Geometry sliders must use the same save/live-update path as numeric fields");
-        GeometrySeparationText.Text="4";GeometryConvergenceText.Text=.1f.ToString("R",CultureInfo.CurrentCulture);
-        if(GeometrySeparationSlider.Maximum<4 || GeometryConvergenceSlider.Maximum<.1f || ReadProfile().GeometrySeparation!=4)
+        GeometrySeparationText.Text="4";GeometryConvergenceText.Text=.01f.ToString("R",CultureInfo.CurrentCulture);
+        if(GeometrySeparationSlider.Maximum<4 || GeometryConvergenceSlider.Maximum<.01f || ReadProfile().GeometrySeparation!=4)
             throw new Exception("Geometry sliders must expand to retain larger numeric calibrations");
-        GeometrySeparationText.Text=.65f.ToString("R",CultureInfo.CurrentCulture);GeometryConvergenceText.Text=.015f.ToString("R",CultureInfo.CurrentCulture);SaveAndApply();PutProfile(profile);
+        GeometrySeparationText.Text="4.5";
+        if(TryGeometryTuning(out _,out _)) throw new Exception("Geometry separation above the safe range must be refused");
+        GeometrySeparationText.Text=.65f.ToString("R",CultureInfo.CurrentCulture);GeometryConvergenceText.Text=.005f.ToString("R",CultureInfo.CurrentCulture);SaveAndApply();PutProfile(profile);
         GeometrySeparationText.Text="NaN";
         if(TryGeometryTuning(out _,out _) || store.Load(one.ExecutablePath).GeometrySeparation!=.65f)
             throw new Exception("Invalid geometry typing must not replace saved tuning");
         GeometryTuningLostFocus(GeometrySeparationText,new RoutedEventArgs());
-        if(!TryGeometryTuning(out float restoredSeparation,out float restoredConvergence) || restoredSeparation!=.65f || restoredConvergence!=.015f)
+        if(!TryGeometryTuning(out float restoredSeparation,out float restoredConvergence) || restoredSeparation!=.65f || restoredConvergence!=.005f)
             throw new Exception("Leaving invalid geometry input must restore the saved calibration");
         var tuningCulture=CultureInfo.CurrentCulture;
         try {
@@ -1813,7 +1812,7 @@ public partial class MainWindow : Window
             GeometrySeparationText.Text="0,5"; GeometryConvergenceText.Text="0,01";
             if(!TryGeometryTuning(out float localSeparation,out float localConvergence) || localSeparation!=.5f || localConvergence!=.01f)
                 throw new Exception("Geometry tuning must accept the user's decimal separator");
-            GeometryConvergenceText.Text="0,3";
+            GeometryConvergenceText.Text="0,03";
             if(TryGeometryTuning(out _,out _)) throw new Exception("Out-of-range convergence must be rejected");
         } finally { CultureInfo.CurrentCulture=tuningCulture; PutProfile(profile); }
         GeometrySeparationText.Text=.5f.ToString("R",CultureInfo.CurrentCulture); GeometryConvergenceText.Text="0"; SaveAndApply();

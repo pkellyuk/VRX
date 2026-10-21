@@ -45,8 +45,8 @@ public sealed class GeometryLaunchWindow : Window
             try {
                 if(!Directory.Exists(working.Text)) throw new InvalidDataException(Loc.Get("ErrorGeometryFolder"));
                 if(steam.Text.Any(c=>!char.IsAsciiDigit(c))) throw new InvalidDataException(Loc.Get("ErrorGeometrySteamId"));
-                if(!float.TryParse(separation.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out float shift)||!float.IsFinite(shift)||shift<=0||shift>64 ||
-                    !float.TryParse(convergence.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out float anchor)||!float.IsFinite(anchor)||anchor<0||anchor>.25f)
+                if(!float.TryParse(separation.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out float shift) ||
+                    !float.TryParse(convergence.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out float anchor) || !Profile.SafeGeometryTuning(shift,anchor))
                     throw new InvalidDataException(Loc.Get("ErrorGeometryTuning"));
                 Plan=plan with {Arguments=GeometryLaunch.ParseArguments(arguments.Text),WorkingDirectory=Path.GetFullPath(working.Text),SteamAppId=steam.Text};
                 Separation=shift; Convergence=anchor; DialogResult=true;
