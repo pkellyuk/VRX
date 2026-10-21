@@ -110,12 +110,13 @@ Base settings and Apply to all never copy another game's renderer or calibration
 The translated route needs the Vulkan layer, matching DXVK D3D11/DXGI DLLs, and x64
 vkd3d-proton `d3d12.dll` and `d3d12core.dll`. A release looks only in its own folder:
 `geometry\layer\vrx_xgstereo.dll` and `VkLayer_vrx_xgstereo.json`, `geometry\dxvk\d3d11.dll`
-and `dxgi.dll` (DXVK 2.7.1), `geometry\vkd3d\d3d12.dll` and `d3d12core.dll`. Nothing is
+and `dxgi.dll` (DXVK 2.7.1), `geometry\vkd3d\d3d12.dll` and `d3d12core.dll` (vkd3d-proton
+3.0.1). Nothing is
 downloaded. Before use, and again right before a copy into a game folder, every
 third-party DLL is checked against the pinned SHA-256 table in `GeometryRuntime.cs`;
 the layer is checked against the release's `FILES.sha256.txt`. A missing or mismatched
-file refuses geometry with a "reinstall VRX" message (the vkd3d-proton pins are still a
-TODO for the packaging, so a release refuses DirectX 12 geometry until they are set).
+file refuses geometry with a "reinstall VRX" message. The table must match
+`release\vendor\geometry-runtime.sha256`, which the release build checks.
 Development builds (DEBUG) also find the bench builds, `VRX_VKD3D_DIRECTORY` and the
 sibling `vkd3d-proton/build-win-local/libs` build. The native DX12 proxy, the
 smoke-test fixture switches, the bench trial record and verbose vkd3d logging exist only

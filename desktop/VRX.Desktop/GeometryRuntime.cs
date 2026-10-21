@@ -17,14 +17,16 @@ internal static class GeometryRuntime
 {
     public const string DxvkVersion = "2.7.1";
 
-    // Unknown until the packaging pins a vkd3d-proton release (release\vendor). While null a
-    // release refuses the DirectX 12 route instead of loading an unverified DLL.
-    // TODO(packaging): set these to the SHA-256 of the pinned vkd3d-proton d3d12.dll and
-    // d3d12core.dll that release\build-release.ps1 copies to geometry\vkd3d.
-    public const string? Vkd3dD3d12Sha256 = null, Vkd3dD3d12CoreSha256 = null;
+    // vkd3d-proton 3.0.1's x64 d3d12.dll and d3d12core.dll (official vkd3d-proton-3.0.1.tar.zst,
+    // archive SHA-256 3CF23155...AA2F0C), as pinned by the packaging in
+    // release\vendor\geometry-runtime.sha256. They must stay identical to that file: a release
+    // refuses the DirectX 12 route when a shipped DLL does not match (or a pin is null).
+    public const string? Vkd3dD3d12Sha256 = "AED51497C0EFA76C9FFC30386FF0957197824CD4734CE64B4E962D3551FBA43C",
+        Vkd3dD3d12CoreSha256 = "68B8BC7B32F9B1B1B0526E9E2E769731DD8DA9AF0F2B40F76012385B9D5721DF";
 
     // The one table of pinned hashes, by file name within its component folder. DXVK's are
-    // the x64 DLLs of the official dxvk-2.7.1.tar.gz (archive SHA-256 D85CE7C7...13CE87).
+    // the x64 DLLs of the official dxvk-2.7.1.tar.gz (archive SHA-256 D85CE7C7...13CE87),
+    // checked here against that archive.
     private static readonly Dictionary<string, string?> Pinned = new(StringComparer.OrdinalIgnoreCase)
     {
         [@"dxvk\d3d11.dll"] = "523DA2CD765DD51D99FE1644B24F9EE7EE6247E4C98953BCC449CE84CD303405",
@@ -111,8 +113,8 @@ internal static class GeometryRuntime
         throw new FileNotFoundException(Loc.Format("ErrorGeometryLayerMissing", Path.Combine("geometry", "dxvk")));
     }
 
-    // vkd3d-proton's folder, every DLL verified against the pin. A release refuses while the
-    // pin is unknown; a development build accepts a local build without one (and logs it).
+    // vkd3d-proton's folder, every DLL verified against the pin. A development build also
+    // accepts a local vkd3d-proton build outside the bundled folder (and logs it).
     public static string Vkd3dDirectory()
     {
         Debug.WriteLine("[Geometry runtime] Vkd3dDirectory enter");
@@ -152,8 +154,8 @@ internal static class GeometryRuntime
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentException.ThrowIfNullOrEmpty(file);
 #if DEBUG
-        // A development build may use a local, unpinned vkd3d-proton build (see Vkd3dDirectory).
-        if (PinnedHash(component, name) == null && !IsInside(file, Root))
+        // A development build may use a local vkd3d-proton build (see Vkd3dDirectory).
+        if (component == "vkd3d" && !IsInside(file, Root))
         {
             Debug.WriteLine($"[Geometry runtime] VerifySource: {file} is a development build without a pin");
             return;
