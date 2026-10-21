@@ -11,7 +11,10 @@ Developer part. **Start with true geometry** starts the selected game through VR
 Steam game through its Steam launch and setup dialog, another through the direct launch
 with its saved arguments and working folder, using its recent-games entry when there is
 one); it needs the toggle on and a game VRX can start (an existing executable, or a Steam
-game bound to one). For a running game not started by VRX with true geometry it reads
+game bound to one). For a Steam game, **Review Steam launch setup…** beside it does the
+same start but always shows the launch review and Steam's setup dialog (the Launch Options
+line and its copy button), even when Steam is already set up; it is the only place that
+review is offered (the chooser's tiles no longer have it). For a running game not started by VRX with true geometry it reads
 **Restart with true geometry** and runs the same flow as the status line's link. For a
 whole display, or a game VRX cannot start (an unbound Steam game, a missing executable),
 the section is disabled with one line saying why.
@@ -19,21 +22,27 @@ the section is disabled with one line saying why.
 There is no Game & window section any more. The main window owns one selected game (and
 window): the chooser sets it (clicking a tile plays as before; the small ⚙ Settings button
 on every Expert tile - running windows, recent and Steam games, displays - selects it
-without starting VR, and a running window is then what Attach / Play uses), and so do
+without starting VR, and a running window is then what Attach / Play uses; VRX then comes
+to the front, the status line says "Showing settings for <game> (VR not started)" and the
+game card's name lights up in the accent colour, fading back over about 1.5 s), and so do
 auto-attach and VRX's own launches. At start-up the last game is selected, running or not.
 A selected game that closes stays selected (not running); one that starts is picked up by
 the five-second refresh. The game card shows it, with its executable in the name's
 tooltip. While VR plays only the playing game can be selected. An unbound Steam game's
-settings stay in memory and become its executable's on its first play. Auto-attach and its
-countdown are in SteamVR & shortcuts; an old `"Game"` section state in `app-settings.json`
-is ignored and dropped on the next save. Easy has no ⚙ buttons.
+settings stay in memory and become its executable's on its first play. In Expert,
+auto-attach and its countdown sit on one row directly under the game card, always in view
+(outside the scrolling sections); Easy keeps auto-attach on and does not show them. An old
+`"Game"` section state in `app-settings.json` is ignored and dropped on the next save.
+Easy has no ⚙ buttons.
 
-In **Expert**, each stopped game's tile (recent games, installed Steam games) offers
-launching with Estimated depth or True geometry (experimental); clicking the picture
-launches with that executable's saved selection, and reads "Play with true geometry"
-when that is true geometry. In **Easy** the tiles have no method buttons, renderer list
-or Steam setup review: a pick plays with estimated depth now, without changing the
-game's saved method, and Attach / Play and auto-attach also use depth. True geometry is
+In **Expert**, clicking a stopped game's tile (recent games, installed Steam games)
+launches it the way it is set up: with true geometry only when its saved setting says so
+(the anti-cheat check and the red warning come first), otherwise with estimated depth. The
+tile reads "Play with true geometry →" when it is set, else "Launch game →". Tiles have
+no per-tile method buttons, renderer list or Steam setup review: the tile's ⚙ opens the
+game's settings, where the true-geometry section holds the setting, the renderer and the
+Steam launch setup review. In **Easy** a pick plays with estimated depth now, without
+changing the game's saved method, and Attach / Play and auto-attach also use depth. True geometry is
 only reachable in Expert, per game, never as a global default. Whole displays use depth
 capture.
 
@@ -51,7 +60,7 @@ restart dialog (a Steam game restarts through its Steam launch). An attach never
 the restart dialog. The toggle's hint says this in one line.
 
 True geometry shows a prominent red warning every time it is turned on for a game
-(the toggle in the main window, or a chooser tile) and before every geometry launch
+(the toggle in the main window) and before every geometry launch
 or restart, Steam launches included: use it with offline games; online games with
 anti-cheat may detect it and the account can be banned. The geometry section keeps a red
 banner while the toggle is on. Before the warning, VRX looks for anti-cheat in the
@@ -70,8 +79,8 @@ settings. Background auto-attach follows the attach rule above: it only connects
 geometry stream or uses depth, and never closes, restarts or launches a game or
 installs a graphics DLL.
 
-Advanced geometry settings offers Automatic renderer, Native Vulkan, DirectX 11
-through DXVK, and DirectX 12 through vkd3d-proton. The automatic renderer reads the
+The geometry renderer list (Expert → 3D: true geometry) offers Automatic renderer, Native
+Vulkan, DirectX 11 through DXVK, and DirectX 12 through vkd3d-proton. The automatic renderer reads the
 game executable's PE import and delay-load tables (and, when they name no graphics
 API, `UnityPlayer.dll`'s imports or well-known Unreal, CryEngine and Source renderer
 modules next to it): Direct3D 11 uses DXVK, Direct3D 12 vkd3d-proton, Vulkan the plain
@@ -83,8 +92,7 @@ first-frame wait. Native D3D12 command replay remains developer-only.
 
 The main window keeps these levels separate: the toggle (the one control that turns
 geometry on) and, under it, the Geometry renderer dropdown with what was detected. The
-per-game renderer is remembered while the toggle is off, and is shared with the window
-chooser's advanced geometry selection. Depth settings stay usable with the toggle on:
+per-game renderer is remembered while the toggle is off. Depth settings stay usable with the toggle on:
 attaching to a running game uses them.
 
 The chooser separates **Launch a game** from **Attach to something running**.
@@ -98,13 +106,19 @@ started it with true geometry. DWM thumbnails hide when their containing group i
 collapsed.
 
 Recent games appears within Launch. A successful attachment records its
-title, executable, launch arguments and Steam identity in `recent-games.json`. The
+title, executable, launch arguments and Steam identity in `recent-games.json`. Programs
+that are clearly not games are never recorded (`GameHistory.IsNotAGame`): auto-attach's
+exclusions (VRX, Steam and SteamVR, Windows' shell, overlays, terminals), web browsers,
+and common desktop apps such as Teams, Outlook, Visual Studio and VS Code, Notepad,
+Claude, ChatGPT, Slack, Discord, WhatsApp, Telegram, Office, Acrobat, Paint and Photos.
+Whole displays are not recorded; Steam games always are, whatever their executable is
+called. Such entries saved earlier are dropped when the list loads (their profiles stay). The
 command line is read natively (NtQueryInformationProcess, no PowerShell), and
 credential-like arguments (Epic `-AUTH_*`, `-epicuser*`, tokens, passwords, tickets,
 sessions, EA and Ubisoft codes) are never stored there or in a profile.
 History keeps 24 entries, deduplicated by executable, and imports an existing
-user's last game on first use. Panels retain their method/renderer settings after
-the game closes; missing executables remain visible with launch controls disabled.
+user's last game on first use. Tiles keep launching with the game's saved setting after
+it closes; missing executables remain visible with their tile disabled.
 
 Installed Steam games is populated locally from Steam's registered installation,
 `steamapps/libraryfolders.vdf` and each library's `appmanifest_*.acf` files.
@@ -114,8 +128,8 @@ No account login, API key or Steam configuration writes are involved. Reopening
 the chooser refreshes the list. SteamVR and the shared redistributables entry are
 excluded. This discovers installed applications, not ownership or compatibility.
 
-Each installed card has Auto, Depth estimate and Geometry stereo, plus the saved
-geometry renderer. Executable profiles and recent games seed the Steam-to-exe
+Each installed card launches with the game's saved setting, like a recent game's
+tile. Executable profiles and recent games seed the Steam-to-exe
 binding, preserving existing calibration (including System Shock). Before an
 executable is known, choices use an App-ID-specific provisional profile. A normal
 Steam launch discovers the game window inside its installation and binds its real

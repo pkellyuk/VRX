@@ -12,16 +12,21 @@ namespace VRX.Desktop;
 // snapshot of the display taken as the chooser opens. Clicking a tile picks it.
 public sealed partial class ChooserWindow : Window
 {
+    // A pick never carries a stereo method: the game's saved setting decides (true geometry
+    // only when it is on for that game, in Expert).
+    // ReviewSteamSetup: the true-geometry section's "Review Steam launch setup..." - show the
+    // launch review and Steam's setup dialog again before a Steam geometry launch (never from
+    // a tile here).
     // DepthOnly: Easy mode's pick - play with estimated depth now, whatever this game's saved
     // method is (and without changing it). True geometry is only reachable in Expert.
     // Restart: "Restart with true geometry" for a running Steam game (never from a tile here:
     // running windows only attach).
     // Settings: a tile's Settings button - select this game for the Expert sections, without
     // starting VR.
-    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null, string? Renderer = null, GameHistory.Entry? History = null, SteamLibrary.Game? Steam = null, bool ReviewSteamSetup = false, bool DepthOnly = false, bool Restart = false, bool Settings = false);
+    public sealed record Choice(RunningApp App, GameWindow Window, GameHistory.Entry? History = null, SteamLibrary.Game? Steam = null, bool ReviewSteamSetup = false, bool DepthOnly = false, bool Restart = false, bool Settings = false);
 
-    // Expert shows each tile's Settings button, and stopped games' stereo method buttons and
-    // geometry options; Easy shows tiles that just play with estimated depth.
+    // Expert shows each tile's Settings button (the way to change a game's true-geometry
+    // setting); Easy shows tiles that just play with estimated depth.
     private readonly bool expert;
 
     // What was picked; null when the chooser was closed without a pick.
@@ -49,7 +54,9 @@ public sealed partial class ChooserWindow : Window
     // The size it was left at, for next time (AppSettings.ChooserWindow); set when it closes.
     public WindowPlace? Place { get; private set; }
 
-    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null, Func<RunningApp, string>? backendFor = null, Func<RunningApp, string>? rendererFor = null,IReadOnlyList<GameHistory.Entry>? history = null, IReadOnlyList<SteamLibrary.Game>? steamGames = null, string? dataRoot = null, string? steamWarning = null, bool expert = true)
+    // backendFor: a game's saved stereo method; a stopped game whose method is true geometry
+    // reads "Play with true geometry" in Expert.
+    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null, Func<RunningApp, string>? backendFor = null, IReadOnlyList<GameHistory.Entry>? history = null, IReadOnlyList<SteamLibrary.Game>? steamGames = null, string? dataRoot = null, string? steamWarning = null, bool expert = true)
     {
         ArgumentNullException.ThrowIfNull(apps);
         ArgumentNullException.ThrowIfNull(screens);
@@ -72,7 +79,7 @@ public sealed partial class ChooserWindow : Window
                 new RunningApp(0,System.IO.Path.GetFileName(entry.Executable),entry.Executable,[],RunningApps.IconFor(entry.Executable));
             var window=app.Windows.FirstOrDefault(RunningApps.IsChooserWindow) ?? new GameWindow(0,entry.Title);
             if(app.Pid>0) continue; // Running games belong only in Attach.
-            HistoryTiles.Children.Add(MakeTile(new Choice(app,window,backendFor?.Invoke(app) ?? StereoPaths.Auto,rendererFor?.Invoke(app),entry),null,false));
+            HistoryTiles.Children.Add(MakeTile(new Choice(app,window,entry),null,false,SavedGeometry(backendFor,app)));
         }
         HistoryHeader.Visibility=HistoryTiles.Children.Count>0?Visibility.Visible:Visibility.Collapsed;
         foreach(var game in steamGames ?? []) {
@@ -80,7 +87,7 @@ public sealed partial class ChooserWindow : Window
             var app=SteamLibrary.Running(game,apps) ?? new RunningApp(0,game.Title,key,[],System.IO.File.Exists(key)?RunningApps.IconFor(key):null);
             if(app.Pid>0) continue;
             var window=app.Windows.FirstOrDefault(RunningApps.IsChooserWindow) ?? new GameWindow(0,game.Title);
-            SteamTiles.Children.Add(MakeTile(new Choice(app,window,backendFor?.Invoke(app) ?? StereoPaths.Auto,rendererFor?.Invoke(app),Steam:game),null,false));
+            SteamTiles.Children.Add(MakeTile(new Choice(app,window,Steam:game),null,false,SavedGeometry(backendFor,app)));
         }
         SteamHeader.Visibility=steamGames!=null?Visibility.Visible:Visibility.Collapsed;
         SteamHint.Visibility=SteamHeader.Visibility;
@@ -129,11 +136,22 @@ public sealed partial class ChooserWindow : Window
     public int ScreenTileCount => ScreenTiles.Children.Count;
     public bool SteamSectionShown => SteamHeader.Visibility == Visibility.Visible;
 
-    private FrameworkElement MakeTile(Choice choice, ScreenSource? screen, bool current)
+    // Whether a game's saved stereo method is true geometry (Auto and Depth are estimated depth).
+    private static bool SavedGeometry(Func<RunningApp, string>? backendFor, RunningApp app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        if (backendFor == null) return false;
+        string backend = backendFor(app) ?? StereoPaths.Auto;
+        bool geometry = StereoPaths.Mode(backend) == StereoPaths.GeometryAuto;
+        System.Diagnostics.Debug.WriteLine($"[Chooser] SavedGeometry: {app.FullPath} saved '{backend}' -> geometry {geometry}");
+        return geometry;
+    }
+
+    // savedGeometry: the stopped game's saved setting is true geometry (its caption says so in
+    // Expert; the launch itself follows the saved setting, with the warning first).
+    private FrameworkElement MakeTile(Choice choice, ScreenSource? screen, bool current, bool savedGeometry = false)
     {
         ArgumentNullException.ThrowIfNull(choice);
-        string selected=choice.Backend ?? StereoPaths.Auto;
-        string renderer=StereoPaths.Renderer(choice.Renderer)?choice.Renderer!:StereoPaths.Renderer(selected)?selected:StereoPaths.GeometryAuto;
         var picture = new Grid { Width = PictureWidth, Height = PictureHeight, Background = (Brush)FindResource("Well") };
         // Behind the live picture (and in its place when there is none, such as a minimized
         // window): the app's icon, large.
@@ -158,7 +176,7 @@ public sealed partial class ChooserWindow : Window
         caption.Children.Add(new TextBlock { Text = detail, FontSize = 12, Foreground = (Brush)FindResource("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
         bool launches=screen==null && choice.App.Pid==0 && (choice.History!=null || choice.Steam!=null);
         // Expert: a stopped game whose saved method is true geometry launches with it.
-        bool launchesGeometry=launches && expert && StereoPaths.Mode(selected)==StereoPaths.GeometryAuto;
+        bool launchesGeometry=launches && expert && savedGeometry;
         string action=Loc.Get(screen!=null?"ChooserAttachDisplay":launchesGeometry?"ChooserLaunchGeometryAction":launches?"ChooserLaunchAction":"ChooserAttachAction");
         caption.Children.Add(new TextBlock {Text=action,Foreground=(Brush)FindResource("Accent"),FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,8,0,0)});
         var content = new StackPanel();
@@ -167,13 +185,16 @@ public sealed partial class ChooserWindow : Window
         var button = new Button { Style = (Style)FindResource("Tile"), Content = content, Tag = current ? "Current" : null };
         if(missing) { button.IsEnabled=false; button.ToolTip=Loc.Get("ErrorHistoryMissing"); }
         System.Windows.Automation.AutomationProperties.SetName(button, action+": "+title);
+        // Easy: a game or window plays with estimated depth now. Expert: a running window
+        // attaches and a stopped game launches the way it is set up - true geometry only when
+        // its saved setting says so (StartFromHistory / StartFromSteam show the anti-cheat
+        // check and the red warning first), else estimated depth. The tile's ⚙ changes that.
         if (!expert)
-            button.Click += (_, _) => Pick(screen==null?choice with {Backend=null,Renderer=null,DepthOnly=true}:choice);
-        else if (!launches)
-            button.Click += (_, _) => Pick(choice with {Backend=null,Renderer=null});   // attach: the saved method decides
+            button.Click += (_, _) => Pick(screen==null?choice with {DepthOnly=true}:choice);
         else
-            button.Click += (_, _) => Pick(choice with {Backend=StereoPaths.Mode(selected)==StereoPaths.GeometryAuto?renderer:choice.Backend,Renderer=renderer});
+            button.Click += (_, _) => Pick(choice);
         tiles.Add(new Tile { Choice = choice, Picture = picture, Screen = screen, Snapshot = snapshot });
+        System.Diagnostics.Debug.WriteLine($"[Chooser] MakeTile: '{title}', launches {launches}, geometry caption {launchesGeometry}, missing {missing}, expert {expert}");
         if (!expert) return button;
         // Separate sibling buttons: input controls must never sit inside a tile Button. The
         // Settings button sits over the tile's caption (a window's live picture is drawn by DWM
@@ -182,53 +203,7 @@ public sealed partial class ChooserWindow : Window
         button.Margin = new Thickness(0);
         holder.Children.Add(button);
         holder.Children.Add(SettingsButton(choice, title));
-        // Only stopped games have method buttons: a running window cannot be restarted from here.
-        if (screen != null || !launches) return holder;
-        holder.Margin = new Thickness(0);
-        var card = new StackPanel { Width = PictureWidth + 24, Margin = new Thickness(0,0,14,14) };
-        card.Children.Add(holder);
-        // Expert only: launch this stopped game with estimated depth or true geometry. Geometry
-        // still shows the red warning (and refuses games with anti-cheat) before the launch.
-        var routes = new Grid { Margin = new Thickness(2,5,2,0) };
-        for(int i=0;i<2;++i) routes.ColumnDefinitions.Add(new ColumnDefinition());
-        Button? geometryButton=null;
-        int column=0;
-        foreach (string mode in new[] { StereoPaths.Depth, StereoPaths.GeometryAuto }) {
-            var route = new Button {
-                Content = new TextBlock { Text = Loc.Get("ChooserRouteLaunch")+"\n"+StereoPaths.Label(mode), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }, Padding = new Thickness(4,6,4,6), Margin = new Thickness(2), FontSize = 12,
-                Tag = mode==StereoPaths.GeometryAuto?renderer:mode,
-                IsEnabled = !missing,
-                ToolTip = Loc.Get(mode==StereoPaths.Depth?"PathDepthTip":"PathGeometryTip"),
-                FontWeight = StereoPaths.Mode(selected)==mode || (mode==StereoPaths.Depth && selected==StereoPaths.Auto) ? FontWeights.Bold : FontWeights.Normal
-            };
-            System.Windows.Automation.AutomationProperties.SetName(route, action+": "+Loc.Format("PathForWindow", StereoPaths.Label(mode), title));
-            Grid.SetColumn(route,column++);
-            route.Click += (_,_) => Pick(choice with { Backend = (string)route.Tag, Renderer=renderer }); routes.Children.Add(route);
-            if(mode==StereoPaths.GeometryAuto) geometryButton=route;
-        }
-        card.Children.Add(routes);
-        var advanced=new Expander { Header=Loc.Get("GeometryAdvanced"), Margin=new Thickness(6,5,6,0) };
-        var options=new StackPanel();
-        // Tested settings are a suggestion inside the geometry choice, never a reason to use it.
-        if(TestedStereoProfiles.Matches(choice.App.FullPath)) options.Children.Add(new TextBlock {
-            Text=Loc.Get("TestedSystemShock"), FontSize=12, Foreground=(Brush)FindResource("Muted"), TextWrapping=TextWrapping.Wrap, Margin=new Thickness(0,4,0,0)
-        });
-        var list=new ComboBox { Margin=new Thickness(0,5,0,5),IsEnabled=!missing };
-        foreach(string backend in new[]{StereoPaths.GeometryAuto,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Vkd3d}) {
-            var item=new ComboBoxItem { Tag=backend, Content=new TextBlock { Text=backend==StereoPaths.GeometryAuto?Loc.Get("RendererAuto"):StereoPaths.Label(backend),TextWrapping=TextWrapping.Wrap,MaxWidth=210 } };
-            list.Items.Add(item); if(backend==renderer) list.SelectedItem=item;
-        }
-        System.Windows.Automation.AutomationProperties.SetName(list,Loc.Get("GeometryRenderer"));
-        list.SelectionChanged+=(_,_)=> { if(list.SelectedItem is ComboBoxItem item) geometryButton!.Tag=renderer=(string)item.Tag; };
-        options.Children.Add(list);
-        options.Children.Add(GeometryWarning.Panel(Loc.Get("GeometryWarningText")));
-        if(choice.Steam!=null) {
-            var setup=new Button {Content=Loc.Get("SteamReviewSetup"),Margin=new Thickness(0,8,0,0)};
-            setup.Click+=(_,_)=>Pick(choice with {Backend=renderer,Renderer=renderer,ReviewSteamSetup=true});
-            options.Children.Add(setup);
-        }
-        advanced.Content=options; card.Children.Add(advanced);
-        return card;
+        return holder;
     }
 
     // Expert: a tile's small Settings (gear) button. It selects the tile's game, window or
@@ -244,7 +219,7 @@ public sealed partial class ChooserWindow : Window
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 10, 10),
         };
         System.Windows.Automation.AutomationProperties.SetName(gear, Loc.Format("ChooserSettingsFor", title));
-        gear.Click += (_, _) => Pick(choice with { Backend = null, Renderer = null, ReviewSteamSetup = false, DepthOnly = false, Restart = false, Settings = true });
+        gear.Click += (_, _) => Pick(choice with { ReviewSteamSetup = false, DepthOnly = false, Restart = false, Settings = true });
         System.Diagnostics.Debug.WriteLine($"[Chooser] SettingsButton: {choice.App.FullPath} '{title}'");
         return gear;
     }
@@ -254,7 +229,7 @@ public sealed partial class ChooserWindow : Window
 
     private void Pick(Choice choice)
     {
-        System.Diagnostics.Debug.WriteLine($"[Chooser] picked {choice.App.Name} '{choice.Window.Title}' monitor {choice.Window.Monitor}, settings only {choice.Settings}");
+        System.Diagnostics.Debug.WriteLine($"[Chooser] picked {choice.App.Name} '{choice.Window.Title}' monitor {choice.Window.Monitor}, recent {choice.History != null}, Steam {choice.Steam?.AppId ?? "-"}, depth only {choice.DepthOnly}, settings only {choice.Settings}");
         Picked = choice;
         DialogResult = true;
     }

@@ -194,6 +194,7 @@ Settings are saved separately for each executable.</value><comment>{0} = the gam
   <data name="StatusReadyFor" xml:space="preserve"><value>Ready · settings for {0}</value><comment>{0} = game executable</comment></data>
   <data name="StatusSettingsFor" xml:space="preserve"><value>Settings for {0} · not running</value><comment>{0} = game name</comment></data>
   <data name="StatusSettingsWhilePlaying" xml:space="preserve"><value>Stop VR first to show another game's settings.</value></data>
+  <data name="StatusSettingsShowing" xml:space="preserve"><value>Showing settings for {0} (VR not started)</value><comment>{0} = game, window or display name. After a chooser tile's Settings button.</comment></data>
   <data name="StatusSavedPlaying" xml:space="preserve"><value>Playing · saved for {0}</value><comment>{0} = game executable</comment></data>
   <data name="StatusSaved" xml:space="preserve"><value>Saved for {0}</value><comment>{0} = game executable</comment></data>
   <data name="StatusStarting" xml:space="preserve"><value>Starting VR · {0}</value><comment>{0} = game executable</comment></data>
@@ -262,14 +263,13 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ChooserSettingsTip" xml:space="preserve"><value>Show this game's settings in VRX without starting VR</value></data>
   <data name="ChooserSettingsFor" xml:space="preserve"><value>Settings for {0}</value><comment>{0} = game, window or display name</comment></data>
   <data name="ChooserLaunchSection" xml:space="preserve"><value>Launch a game</value></data>
-  <data name="ChooserLaunchHint" xml:space="preserve"><value>These games are not running. Launch starts the game with the selected stereo method, then connects VRX.</value></data>
+  <data name="ChooserLaunchHint" xml:space="preserve"><value>These games are not running. Clicking one starts it the way it is set up, then connects VRX.</value></data>
   <data name="ChooserAttachSection" xml:space="preserve"><value>Attach to something running</value></data>
   <data name="ChooserAttachHint" xml:space="preserve"><value>Connect to a window or display that is already running. A running game plays with estimated depth unless VRX started it with true geometry.</value></data>
   <data name="ChooserLaunchAction" xml:space="preserve"><value>Launch game →</value></data>
   <data name="ChooserLaunchGeometryAction" xml:space="preserve"><value>Play with true geometry →</value></data>
   <data name="ChooserAttachAction" xml:space="preserve"><value>Attach to window →</value></data>
   <data name="ChooserAttachDisplay" xml:space="preserve"><value>Attach to display →</value></data>
-  <data name="ChooserRouteLaunch" xml:space="preserve"><value>Launch:</value></data>
   <data name="ChooserSteamAllRunning" xml:space="preserve"><value>Your installed Steam games are already running. Find their windows in the attach section.</value></data>
   <data name="ChooserWindows" xml:space="preserve"><value>Windows</value></data>
   <data name="ChooserNoWindows" xml:space="preserve"><value>No windows to show. Start your game, then choose again.</value></data>
@@ -307,9 +307,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="PathDxvk" xml:space="preserve"><value>DirectX 11 → Vulkan (DXVK)</value></data>
   <data name="PathDx12" xml:space="preserve"><value>DX12 · unavailable</value></data>
   <data name="PathDx12Unavailable" xml:space="preserve"><value>Native DirectX 12 geometry stereo is under development and is not available in this chooser yet. Choose depth estimation or DirectX 12 → Vulkan for a DX12 game.</value></data>
-  <data name="PathDepthTip" xml:space="preserve"><value>Launch the game and play it with VRX's estimated depth. Works with every game.</value></data>
   <data name="PathGeometryTip" xml:space="preserve"><value>Experimental: VRX starts the game and the game draws both eyes itself. Shows a warning first; games with anti-cheat are refused.</value></data>
-  <data name="PathForWindow" xml:space="preserve"><value>{0} for {1}</value></data>
   <data name="GeometryRestartTitle" xml:space="preserve"><value>Try {0} stereo</value></data>
   <data name="GeometryRestartIntro" xml:space="preserve"><value>Restart {0} to try {1} geometry stereo?</value></data>
   <data name="GeometryRestartSave" xml:space="preserve"><value>Save your progress first. VRX will close this game normally and restart it with the selected stereo path. Other games keep running.</value></data>
@@ -346,7 +344,6 @@ You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="PathAuto" xml:space="preserve"><value>Auto (estimated depth)</value></data>
   <data name="PathGeometry" xml:space="preserve"><value>True geometry (experimental)</value></data>
   <data name="PathVkd3d" xml:space="preserve"><value>DirectX 12 → Vulkan (vkd3d-proton)</value></data>
-  <data name="GeometryAdvanced" xml:space="preserve"><value>Advanced geometry settings</value></data>
   <data name="RendererAuto" xml:space="preserve"><value>Automatic (from the game's graphics API)</value></data>
   <data name="ErrorGeometryApiSeveral" xml:space="preserve"><value>This game can use several graphics APIs ({0}), so VRX will not guess. Choose a geometry renderer (Expert), or use estimated depth.</value></data>
   <data name="ErrorGeometryApiUnsupported" xml:space="preserve"><value>This game uses {0}. True geometry supports DirectX 11, DirectX 12 and Vulkan games; use estimated depth for this one.</value></data>
@@ -375,6 +372,7 @@ VRX is still running. The details were saved in {1}.</value></data>
   <data name="GeometryLaunchInfo" xml:space="preserve"><value>The selected graphics components will be prepared before the game starts. Your saved stereo tuning will be used.</value></data>
   <data name="ChooserNoWindowsHistory" xml:space="preserve"><value>No running game windows. You can launch a game above.</value></data>
   <data name="SteamReviewSetup" xml:space="preserve"><value>Review Steam launch setup…</value></data>
+  <data name="SteamReviewSetupTip" xml:space="preserve"><value>Shows the Launch Options line that lets Steam start this game through VRX, with a copy button, then starts the game with true geometry. Shows the warning first; games with anti-cheat are refused.</value></data>
   <data name="ChooserSteam" xml:space="preserve"><value>Installed Steam games</value></data>
   <data name="SteamLibraryHint" xml:space="preserve"><value>Launch through Steam with your saved stereo settings. Geometry needs a one-time Steam launch-options setup.</value></data>
   <data name="SteamDiscoveryPartial" xml:space="preserve"><value>Some Steam library files could not be read. Available installed games are shown; reopen the chooser to refresh.</value></data>

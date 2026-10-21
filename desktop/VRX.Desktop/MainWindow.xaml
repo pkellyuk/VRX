@@ -51,6 +51,16 @@
      </WrapPanel>
     </Grid>
    </Border>
+   <!-- Expert: auto-attach and its countdown, always in view under the game card (outside
+        the scrolling sections). App-wide, so usable with no game chosen. Easy keeps it on
+        and does not show it (SetMode). -->
+   <Grid x:Name="AutoAttachPanel" Margin="4,-4,4,12" ToolTip="{l:Tr AutoAttachTip}">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*" MinWidth="90" MaxWidth="320"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <CheckBox x:Name="AutoAttachCheck" Content="{l:Tr AutoAttachCheck}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,18,0" Checked="AutoAttachChanged" Unchecked="AutoAttachChanged"/>
+    <TextBlock Grid.Column="1" Text="{l:Tr AutoAttachCountdown}" VerticalAlignment="Center" Foreground="{StaticResource Soft}" Margin="0,0,10,0"/>
+    <Slider Grid.Column="2" x:Name="AutoAttachSlider" Minimum="3" Maximum="30" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" Margin="0" ValueChanged="AutoAttachSecondsChanged" AutomationProperties.Name="{l:Tr AutoAttachCountdown}"/>
+    <TextBlock Grid.Column="3" x:Name="AutoAttachValue" Style="{StaticResource Value}" MinWidth="36" VerticalAlignment="Center" Margin="10,0,0,0"/>
+   </Grid>
   </StackPanel>
 
   <!-- Easy: a few hints; everything else is hidden -->
@@ -190,7 +200,11 @@
         <TextBlock Text="{l:Tr GeometryWarningText}" Foreground="{StaticResource WarningInk}" FontWeight="SemiBold" TextWrapping="Wrap"/>
        </Border>
        <TextBlock x:Name="TestedHint" Text="{l:Tr TestedSystemShock}" Style="{StaticResource Hint}" Margin="0,6,0,0" Visibility="Collapsed"/>
-       <WrapPanel Margin="0,8,0,0"><Button x:Name="GeometryStartButton" Content="{l:Tr GeometryStartButton}" ToolTip="{l:Tr GeometryStartTip}" Click="GeometryStartClick" IsEnabled="False"/></WrapPanel>
+       <WrapPanel Margin="0,8,0,0">
+        <Button x:Name="GeometryStartButton" Content="{l:Tr GeometryStartButton}" ToolTip="{l:Tr GeometryStartTip}" Click="GeometryStartClick" IsEnabled="False"/>
+        <!-- Steam games only: the launch review and Steam's setup dialog, shown again. -->
+        <Button x:Name="SteamReviewSetupButton" Content="{l:Tr SteamReviewSetup}" ToolTip="{l:Tr SteamReviewSetupTip}" Click="SteamReviewSetupClick" IsEnabled="False" Visibility="Collapsed"/>
+       </WrapPanel>
        <!-- The settings below are used only while the toggle is on. -->
        <StackPanel x:Name="GeometryContent" Margin="0,10,0,0" IsEnabled="False">
         <TextBlock Text="{l:Tr GeometryHint}" Style="{StaticResource Hint}"/>
@@ -244,15 +258,6 @@
     <!-- 6 SteamVR & shortcuts -->
     <Expander x:Name="SteamVrSection" Header="{l:Tr SectionSteamVr}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel>
-      <!-- App-wide (not per game), so it stays usable with no game chosen. -->
-      <StackPanel x:Name="AutoAttachPanel" Margin="0,0,0,10" ToolTip="{l:Tr AutoAttachTip}">
-       <CheckBox x:Name="AutoAttachCheck" Content="{l:Tr AutoAttachCheck}" FontWeight="SemiBold" Checked="AutoAttachChanged" Unchecked="AutoAttachChanged"/>
-       <DockPanel Margin="26,0,0,0">
-        <TextBlock x:Name="AutoAttachValue" DockPanel.Dock="Right" Style="{StaticResource Value}" MinWidth="36" VerticalAlignment="Center"/>
-        <TextBlock DockPanel.Dock="Left" Text="{l:Tr AutoAttachCountdown}" VerticalAlignment="Center" Margin="0,0,12,0"/>
-        <Slider x:Name="AutoAttachSlider" Minimum="3" Maximum="30" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" Margin="0" ValueChanged="AutoAttachSecondsChanged"/>
-       </DockPanel>
-      </StackPanel>
       <StackPanel x:Name="SteamVrContent">
        <CheckBox x:Name="DismissCheck" Content="{l:Tr DismissOnStart}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
        <CheckBox x:Name="DesktopAwayCheck" Content="{l:Tr DesktopWhenAway}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>

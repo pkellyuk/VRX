@@ -54,7 +54,7 @@ internal static class SteamLibraryTests
             "a Steam launch attaches to the bound executable, or the game rather than its launcher");
         string[] merged=SteamGeometry.MergeArguments(["--bundle-dir","data","literal space","-dx11"],new Profile {ExecutablePath="game-Shipping.exe",StereoBackend=StereoPaths.Vkd3d,GeometryLaunchArguments="-dx12 -norhithread"});
         Check(merged.Contains("literal space") && merged.Take(2).SequenceEqual(new[]{"--bundle-dir","data"}) && !merged.Contains("-dx11") && merged.Count(a=>a=="-dx12")==1,"Steam arguments retained literally while the selected Unreal renderer is applied");
-        var chooser=new ChooserWindow([],[],null,0,null,_=>StereoPaths.Vkd3d,_=>StereoPaths.Vkd3d,[],[game],store.Root) {
+        var chooser=new ChooserWindow([],[],null,0,null,_=>StereoPaths.Vkd3d,[],[game],store.Root) {
             Owner=owner,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
         };
         static IEnumerable<Button> Buttons(DependencyObject node) {
@@ -66,12 +66,19 @@ internal static class SteamLibraryTests
             var image=new RenderTargetBitmap((int)chooser.ActualWidth,(int)chooser.ActualHeight,96,96,PixelFormats.Pbgra32); image.Render(chooser);
             var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));
             using(var file=File.Create(Path.Combine(output,"ui-chooser-steam.png"))) encoder.Save(file);
-            Buttons(chooser).First(b=>b.Tag is string tag && tag==StereoPaths.Vkd3d).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            // No per-tile routes or Steam setup review: the tile launches the way the game is set
+            // up (here vkd3d true geometry, so it says so), and its ⚙ changes that.
+            Check(!Buttons(chooser).Any(b=>b.Tag is string tag && StereoPaths.Valid(tag)) && !Buttons(chooser).Any(b=>Equals(b.Content,Loc.Get("SteamReviewSetup"))),
+                "Steam tiles have no stereo method buttons or Steam setup review");
+            var tile=Buttons(chooser).First(b=>b.Style==chooser.FindResource("Tile"));
+            Check(System.Windows.Automation.AutomationProperties.GetName(tile).StartsWith(Loc.Get("ChooserLaunchGeometryAction"),StringComparison.Ordinal),"a Steam game set to true geometry reads Play with true geometry");
+            tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }));
-        Check(chooser.ShowDialog()==true && chooser.SteamSectionShown && chooser.SteamTileCount==1 && chooser.Picked?.Steam==game && chooser.Picked.Backend==StereoPaths.Vkd3d && chooser.Picked.App.FullPath==exe,"installed card launches without a running window and returns the saved stereo route");
+        Check(chooser.ShowDialog()==true && chooser.SteamSectionShown && chooser.SteamTileCount==1 && chooser.Picked?.Steam==game && !chooser.Picked.ReviewSteamSetup && !chooser.Picked.DepthOnly &&
+            chooser.Picked.App.FullPath==exe,"installed card launches without a running window, the way the game is set up");
         var runningApp=new RunningApp(123,"game.exe",exe,[new GameWindow(42,"Test gameplay")],null);
         var recent=new GameHistory.Entry(exe,game.Title,[],game.Directory,game.AppId,DateTimeOffset.UtcNow);
-        var attachChooser=new ChooserWindow([runningApp],[],null,0,null,_=>StereoPaths.Depth,_=>StereoPaths.Vkd3d,[recent],[game],store.Root) {
+        var attachChooser=new ChooserWindow([runningApp],[],null,0,null,_=>StereoPaths.Depth,[recent],[game],store.Root) {
             Owner=owner,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
         };
         _=owner.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>{
@@ -86,7 +93,7 @@ internal static class SteamLibraryTests
             tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }));
         Check(attachChooser.ShowDialog()==true && attachChooser.HistoryTileCount==0 && attachChooser.SteamTileCount==0 && attachChooser.WindowTileCount==1 && attachChooser.Picked?.App.Pid==123 &&
-            attachChooser.Picked.Steam==null && attachChooser.Picked.Backend==null && !attachChooser.Picked.Restart,"running games appear only under Attach and only attach (the saved method decides; never a Steam restart)");
+            attachChooser.Picked.Steam==null && !attachChooser.Picked.Restart && !attachChooser.Picked.ReviewSteamSetup,"running games appear only under Attach and only attach (the saved method decides; never a Steam restart)");
 #if DEBUG
         // Exercise the actual Steam-wrapper entry point and literal argument
         // forwarding, with a harmless child fixture rather than a real game.

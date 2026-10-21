@@ -233,7 +233,7 @@ public partial class MainWindow : Window
         if (geometryRestartTarget is { } offered && (app.Pid != offered.App.Pid || !SamePath(app.FullPath, offered.App.FullPath)))
             HideGeometryRestartHint();
         // Only what identifies the game is kept: how it was picked is not.
-        selection = choice with { Backend = null, Renderer = null, ReviewSteamSetup = false, DepthOnly = false, Restart = false, Settings = false };
+        selection = choice with { ReviewSteamSetup = false, DepthOnly = false, Restart = false, Settings = false };
         if (app.FullPath.Length > 0)
         {
             try
@@ -565,6 +565,11 @@ public partial class MainWindow : Window
         GeometryStartButton.Content = Loc.Get(restart ? "GeometryRestartLink" : "GeometryStartButton");
         GeometryStartButton.IsEnabled = profile?.GeometryStereo == true && geometryBlock == GeometryBlock.None && !starting && !stopping && !choosing &&
             !(engine.Running && sessionGeometry);
+        // "Review Steam launch setup...": a Steam game only, usable when Start is.
+        if (SteamReviewSetupButton == null) return;
+        bool steamGame = SelectedSteamAppId() != null;
+        SteamReviewSetupButton.Visibility = steamGame ? Visibility.Visible : Visibility.Collapsed;
+        SteamReviewSetupButton.IsEnabled = steamGame && GeometryStartButton.IsEnabled;
     }
 
     // With the automatic geometry renderer: what the game's graphics API is and which route that
@@ -1020,7 +1025,7 @@ public partial class MainWindow : Window
             choices[app.FullPath]=saved; return saved;
         }
         var chooser = new ChooserWindow(apps, screens, ScreenSources.App(store.Root, screens), SelectedWindow?.Handle ?? 0,
-            appSettings.ChooserWindow, app=>ChoiceProfile(app).SelectedStereoBackend, app=>ChoiceProfile(app).SelectedGeometryRenderer,history.Load(),
+            appSettings.ChooserWindow, app=>ChoiceProfile(app).SelectedStereoBackend,history.Load(),
             steam.Installed ? steam.Games : null,store.Root,string.Join("\n",steam.Errors),appSettings.IsExpert) { Owner = this };
         bool chose = chooser.ShowDialog() == true;
         if (chooser.Place != null)
@@ -1048,12 +1053,7 @@ public partial class MainWindow : Window
             return;
         }
         if (!SelectChoice(picked)) { Status.Text = Loc.Get("StatusChoiceGone"); return; }
-        System.Diagnostics.Debug.WriteLine($"[Chooser] starting {picked.App.Name} '{picked.Window.Title}', backend {picked.Backend ?? "saved"}, depth only {picked.DepthOnly}");
-        if (profile != null && picked.Backend != null && !picked.DepthOnly) {
-            profile.SelectStereoBackend(picked.Backend);
-            if(StereoPaths.Renderer(picked.Renderer)) profile.GeometryRenderer=picked.Renderer!;
-            PutProfile(profile); SaveAndApply();
-        }
+        System.Diagnostics.Debug.WriteLine($"[Chooser] starting {picked.App.Name} '{picked.Window.Title}' with its saved method, depth only {picked.DepthOnly}");
         await StartSession(depthOnly: picked.DepthOnly);
     }
 
@@ -1089,9 +1089,7 @@ public partial class MainWindow : Window
             // An unbound game's settings edited here live only in memory (SaveAndApply): use them.
             var saved=profile!=null && SamePath(profile.ExecutablePath,key) && SteamLibrary.IsPlaceholder(store.Root,key) ?
                 System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(profile))! : store.Load(key);
-            if(picked.Backend!=null && !depthOnly) saved.SelectStereoBackend(picked.Backend);
-            if(StereoPaths.Renderer(picked.Renderer)) saved.GeometryRenderer=picked.Renderer!;
-            // Before the real executable is known the choice stays in memory: no placeholder profile.
+            // Before the real executable is known the settings stay in memory: no placeholder profile.
             if(binding!=null) store.Save(saved);
             await GeometrySessionLifecycle.ReleasePrevious(picked.App,store.Root,token);
             EngineSession.EnsureAvailable();
@@ -1199,8 +1197,6 @@ public partial class MainWindow : Window
         try {
             var token=startCancellation.Token;
             var saved=store.Load(entry.Executable);
-            if(picked.Backend!=null && !depthOnly) saved.SelectStereoBackend(picked.Backend);
-            if(StereoPaths.Renderer(picked.Renderer)) saved.GeometryRenderer=picked.Renderer!;
             if(string.IsNullOrEmpty(saved.GeometryWorkingDirectory)) saved.GeometryWorkingDirectory=entry.WorkingDirectory;
             if(string.IsNullOrEmpty(saved.GeometrySteamAppId)) saved.GeometrySteamAppId=entry.SteamAppId;
             store.Save(saved);
@@ -1426,11 +1422,13 @@ public partial class MainWindow : Window
     // game): stops a depth session, then restarts the game through the geometry launch review -
     // Steam's launch for an installed Steam game, else VRX's own. A game VRX already started
     // with true geometry is attached to, not restarted (StartSession's attach rule).
-    private async Task RestartWithGeometryFlow(RunningApp app, GameWindow window)
+    // reviewSteamSetup: "Review Steam launch setup..." - a Steam game shows its launch review
+    // and Steam's setup dialog again.
+    private async Task RestartWithGeometryFlow(RunningApp app, GameWindow window, bool reviewSteamSetup = false)
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(window);
-        System.Diagnostics.Debug.WriteLine($"[Session] RestartWithGeometryFlow enter: {app.FullPath}, pid {app.Pid}");
+        System.Diagnostics.Debug.WriteLine($"[Session] RestartWithGeometryFlow enter: {app.FullPath}, pid {app.Pid}, review Steam setup {reviewSteamSetup}");
         if (engine.Running)
         {
             await StopSession();
@@ -1456,7 +1454,7 @@ public partial class MainWindow : Window
             if (SteamLibrary.LoadBinding(store.Root, game) == null && !SteamLibrary.IsLauncher(app.FullPath))
                 SteamLibrary.SaveBinding(store.Root, game, new(app.FullPath, false));
             System.Diagnostics.Debug.WriteLine($"[Session] RestartWithGeometryFlow exit: restarting through Steam app {game.AppId}");
-            await StartFromSteam(new ChooserWindow.Choice(app, window, Steam: game, Restart: true));
+            await StartFromSteam(new ChooserWindow.Choice(app, window, Steam: game, Restart: true, ReviewSteamSetup: reviewSteamSetup));
             return;
         }
         if (!SelectChoice(new ChooserWindow.Choice(app, window)))
@@ -1476,12 +1474,48 @@ public partial class MainWindow : Window
     // come first, as before every geometry launch.
     private async void GeometryStartClick(object sender, RoutedEventArgs e)
     {
+        System.Diagnostics.Debug.WriteLine("[Geometry] GeometryStartClick enter");
+        await StartWithGeometry(reviewSteamSetup: false);
+        System.Diagnostics.Debug.WriteLine("[Geometry] GeometryStartClick exit");
+    }
+
+    // Expert, 3D: true geometry, "Review Steam launch setup..." (Steam games only): the same
+    // start as above, but the launch review and Steam's setup dialog (the Launch Options line
+    // with its copy button) are always shown, even when Steam is already set up.
+    private async void SteamReviewSetupClick(object sender, RoutedEventArgs e)
+    {
+        System.Diagnostics.Debug.WriteLine($"[Geometry] SteamReviewSetupClick enter: Steam game {SelectedSteamAppId() ?? "none"}");
+        if (SelectedSteamAppId() == null)
+        {
+            System.Diagnostics.Debug.WriteLine("[Geometry] SteamReviewSetupClick exit: not a Steam game");
+            return;
+        }
+        await StartWithGeometry(reviewSteamSetup: true);
+        System.Diagnostics.Debug.WriteLine("[Geometry] SteamReviewSetupClick exit");
+    }
+
+    // The selected game's Steam App ID, or null when it is not a Steam game: from its Steam
+    // tile, its recent-games entry or its saved settings.
+    private string? SelectedSteamAppId()
+    {
+        var chosen = selection;
+        if (chosen == null) return null;
+        string? id = chosen.Steam?.AppId;
+        if (string.IsNullOrEmpty(id)) id = chosen.History?.SteamAppId;
+        if (string.IsNullOrEmpty(id)) id = profile?.GeometrySteamAppId;
+        return string.IsNullOrEmpty(id) ? null : id;
+    }
+
+    // Starts (or, running, restarts) the selected game with true geometry; reviewSteamSetup
+    // always shows a Steam game's launch review and setup dialog.
+    private async Task StartWithGeometry(bool reviewSteamSetup)
+    {
         var chosen = selection;
         var saved = profile;
-        System.Diagnostics.Debug.WriteLine($"[Geometry] GeometryStartClick enter: {chosen?.App.FullPath ?? "nothing"}, pid {chosen?.App.Pid}, block {geometryBlock}");
+        System.Diagnostics.Debug.WriteLine($"[Geometry] StartWithGeometry enter: {chosen?.App.FullPath ?? "nothing"}, pid {chosen?.App.Pid}, block {geometryBlock}, review Steam setup {reviewSteamSetup}");
         if (chosen == null || saved?.GeometryStereo != true || geometryBlock != GeometryBlock.None || starting || stopping || choosing)
         {
-            System.Diagnostics.Debug.WriteLine("[Geometry] GeometryStartClick exit: not available");
+            System.Diagnostics.Debug.WriteLine("[Geometry] StartWithGeometry exit: not available");
             return;
         }
         try
@@ -1489,8 +1523,8 @@ public partial class MainWindow : Window
             if (SelectedWindow is { } window)
             {
                 HideGeometryRestartHint();
-                await RestartWithGeometryFlow(chosen.App, window);
-                System.Diagnostics.Debug.WriteLine("[Geometry] GeometryStartClick exit: restart flow");
+                await RestartWithGeometryFlow(chosen.App, window, reviewSteamSetup);
+                System.Diagnostics.Debug.WriteLine("[Geometry] StartWithGeometry exit: restart flow");
                 return;
             }
             if (!SaveAndApply()) return;
@@ -1498,11 +1532,12 @@ public partial class MainWindow : Window
             try { steam = await Task.Run(() => SteamLibrary.Discover()); }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine("[Geometry] GeometryStartClick: Steam discovery failed: " + ex.Message);
+                System.Diagnostics.Debug.WriteLine("[Geometry] StartWithGeometry: Steam discovery failed: " + ex.Message);
                 steam = new([], [ex.Message], false);
             }
-            var launch = chosen;
-            if (chosen.Steam == null && chosen.History == null) launch = chosen with { History = LaunchEntryFor(saved, chosen) };
+            var launch = chosen with { ReviewSteamSetup = reviewSteamSetup };
+            if (chosen.Steam == null && chosen.History == null) launch = launch with { History = LaunchEntryFor(saved, chosen) };
+            System.Diagnostics.Debug.WriteLine($"[Geometry] StartWithGeometry: launching (Steam {launch.Steam?.AppId ?? "-"}, recent {launch.History != null})");
             await StartPicked(launch, steam);
         }
         catch (Exception ex)
@@ -1510,7 +1545,7 @@ public partial class MainWindow : Window
             App.LogUnexpected("geometry start", ex);
             Status.Text = ex.Message;
         }
-        System.Diagnostics.Debug.WriteLine("[Geometry] GeometryStartClick exit");
+        System.Diagnostics.Debug.WriteLine("[Geometry] StartWithGeometry exit");
     }
 
     // A direct launch for a game with no recent-games entry: its executable with its saved
@@ -1531,7 +1566,9 @@ public partial class MainWindow : Window
 
     // A tile's Settings button in the chooser: selects that game, window or display for the
     // Expert sections without starting VR (a running window is then also what Attach / Play
-    // uses). While VR plays, only the game playing can be selected.
+    // uses), brings VRX to the front, says so in the status line and briefly lights up the
+    // game card's name, so the click visibly did something. While VR plays, only the game
+    // playing can be selected.
     private void ShowSettingsFor(ChooserWindow.Choice picked)
     {
         ArgumentNullException.ThrowIfNull(picked);
@@ -1544,8 +1581,60 @@ public partial class MainWindow : Window
         }
         bool running = picked.App.Pid > 0 || ScreenSources.IsScreen(picked.App);
         if (!running) Select(picked);
-        else if (!SelectChoice(picked)) Status.Text = Loc.Get("StatusChoiceGone");
-        System.Diagnostics.Debug.WriteLine($"[Chooser] ShowSettingsFor exit: profile {(profile != null)}, running {SelectedWindow != null}");
+        else if (!SelectChoice(picked))
+        {
+            Status.Text = Loc.Get("StatusChoiceGone");
+            System.Diagnostics.Debug.WriteLine("[Chooser] ShowSettingsFor exit: the window or display has gone");
+            return;
+        }
+        BringToFront();
+        // Select may have reported a problem (unusable settings): that message stays.
+        if (profile != null) Status.Text = Loc.Format("StatusSettingsShowing", SelectionName());
+        FlashCardName();
+        System.Diagnostics.Debug.WriteLine($"[Chooser] ShowSettingsFor exit: profile {(profile != null)}, running {SelectedWindow != null}, status '{Status.Text}'");
+    }
+
+    // VRX's window to the front (restored when minimized). The smoke test's off-screen window
+    // is never activated, so it does not take the focus from the desktop.
+    private void BringToFront()
+    {
+        System.Diagnostics.Debug.WriteLine($"[MainWindow] BringToFront enter: state {WindowState}, active {IsActive}, smoke {smoke}");
+        if (smoke)
+        {
+            System.Diagnostics.Debug.WriteLine("[MainWindow] BringToFront exit: smoke test, not activated");
+            return;
+        }
+        if (WindowState == WindowState.Minimized) WindowState = restoreMaximized ? WindowState.Maximized : WindowState.Normal;
+        bool activated = Activate();
+        System.Diagnostics.Debug.WriteLine($"[MainWindow] BringToFront exit: activated {activated}");
+    }
+
+    // The game card's name shows in the accent colour, then fades back to its own: about 1.5 s.
+    internal static readonly Duration CardFlashDuration = new(TimeSpan.FromMilliseconds(1250));
+    private void FlashCardName()
+    {
+        if (CardName == null) return;
+        if (TryFindResource("Accent") is not SolidColorBrush accent || TryFindResource("Ink") is not SolidColorBrush ink)
+        {
+            System.Diagnostics.Debug.WriteLine("[MainWindow] FlashCardName: theme brushes not found; no flash");
+            return;
+        }
+        System.Diagnostics.Debug.WriteLine($"[MainWindow] FlashCardName enter: '{CardName.Text}', {accent.Color} -> {ink.Color}");
+        var brush = new SolidColorBrush(accent.Color);
+        var fade = new System.Windows.Media.Animation.ColorAnimation(accent.Color, ink.Color, CardFlashDuration)
+        {
+            BeginTime = TimeSpan.FromMilliseconds(250),
+            EasingFunction = new System.Windows.Media.Animation.QuadraticEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseIn },
+        };
+        fade.Completed += (_, _) =>
+        {
+            // Back to the inherited colour, unless another flash has started since.
+            if (ReferenceEquals(CardName.Foreground, brush)) CardName.ClearValue(TextBlock.ForegroundProperty);
+            System.Diagnostics.Debug.WriteLine("[MainWindow] FlashCardName: done");
+        };
+        CardName.Foreground = brush;
+        brush.BeginAnimation(SolidColorBrush.ColorProperty, fade);
+        System.Diagnostics.Debug.WriteLine("[MainWindow] FlashCardName exit: started");
     }
 
     // The run VRX just launched: wait (up to a minute, showing the time left) for a fresh frame
@@ -1629,7 +1718,7 @@ public partial class MainWindow : Window
     private void SetMode(bool expert)
     {
         System.Diagnostics.Debug.WriteLine($"[Mode] SetMode enter: expert {expert}, was {appSettings.Mode}, auto-attach {appSettings.AutoAttach}");
-        if (EasyMode == null || ExpertMode == null || SettingsScroll == null) return;
+        if (EasyMode == null || ExpertMode == null || SettingsScroll == null || AutoAttachPanel == null) return;
         modeLoading = true;
         EasyMode.IsChecked = !expert;
         ExpertMode.IsChecked = expert;
@@ -1639,6 +1728,8 @@ public partial class MainWindow : Window
         EasyIntro.Visibility = easyOnly;
         EasyRecenterButton.Visibility = easyOnly;
         SettingsScroll.Visibility = expert ? Visibility.Visible : Visibility.Collapsed;
+        // Auto-attach is always on in Easy, so only Expert shows its switch and countdown.
+        AutoAttachPanel.Visibility = expert ? Visibility.Visible : Visibility.Collapsed;
         Subtitle.Text = Loc.Get(expert ? "SubtitleExpert" : "SubtitleEasy");
         bool remembered = ApplyWindowMode(expert);
 
@@ -2713,10 +2804,15 @@ public partial class MainWindow : Window
         if (SectionList().Any(s => s.Name == "Game") || Loc.NeutralStrings().ContainsKey("SectionGame"))
             throw new Exception("The Game & window section and its strings must be gone");
 
-        // Auto-attach: in SteamVR & shortcuts, outside the per-game settings, so it stays usable
-        // with no game chosen.
-        if (!Within(AutoAttachPanel, SteamVrSection) || Within(AutoAttachPanel, SteamVrContent))
-            throw new Exception("Auto-attach must live in SteamVR & shortcuts, outside the per-game settings");
+        // Auto-attach: always in view in Expert, directly under the game card and outside the
+        // scrolling sections (never inside a collapsible one), and usable with no game chosen.
+        if (!Within(AutoAttachPanel, TopArea) || Within(AutoAttachPanel, SettingsScroll) || Within(AutoAttachPanel, SteamVrSection) ||
+            TopArea.Children.IndexOf(AutoAttachPanel) != TopArea.Children.IndexOf(GameCard) + 1)
+            throw new Exception("Auto-attach must sit directly under the game card, outside the scrolling sections");
+        if (!Within(AutoAttachCheck, AutoAttachPanel) || !Within(AutoAttachSlider, AutoAttachPanel) || !Within(AutoAttachValue, AutoAttachPanel) ||
+            Grid.GetRow(AutoAttachCheck) != Grid.GetRow(AutoAttachSlider))
+            throw new Exception("Auto-attach's checkbox and countdown must be on one row");
+        if (appSettings.IsExpert && !AutoAttachPanel.IsVisible) throw new Exception("Auto-attach must always be visible in Expert");
         SetSettingsEnabled(false);
         if (!AutoAttachPanel.IsEnabled || !AutoAttachCheck.IsEnabled || SteamVrContent.IsEnabled) throw new Exception("Auto-attach must stay usable with no game chosen");
         UpdateButtons();
@@ -2778,6 +2874,8 @@ public partial class MainWindow : Window
             throw new Exception("Turning true geometry on must warn and save the method");
         if (!GeometryStartButton.IsEnabled || GeometryStartButton.Content as string != Loc.Get("GeometryStartButton"))
             throw new Exception("Start with true geometry must be offered for a stopped game VRX can start");
+        if (SteamReviewSetupButton.Visibility == Visibility.Visible || SteamReviewSetupButton.IsEnabled)
+            throw new Exception("Review Steam launch setup is only for Steam games");
         starting = true; UpdateButtons();
         bool busyEnabled = GeometryStartButton.IsEnabled;
         starting = false; UpdateButtons();
@@ -2832,7 +2930,7 @@ public partial class MainWindow : Window
         if (File.Exists(bindingFile)) File.Delete(bindingFile);
         string placeholder = SteamLibrary.ProfileKey(store.Root, steamGame);
         Select(new ChooserWindow.Choice(new RunningApp(0, steamGame.Title, placeholder, [], null), new GameWindow(0, steamGame.Title), Steam: steamGame));
-        if (geometryBlock != GeometryBlock.UnknownGame || GeometryStartButton.IsEnabled || CardName.ToolTip as string != Loc.Get("CardSteamUnknownTip"))
+        if (geometryBlock != GeometryBlock.UnknownGame || GeometryStartButton.IsEnabled || CardName.ToolTip as string != Loc.Get("CardSteamUnknownTip") || SteamReviewSetupButton.IsEnabled)
             throw new Exception("An unbound Steam game must show true geometry unavailable");
         WidthSlider.Value = 6.1;
         if (!SaveAndApply() || store.HasProfile(placeholder) || profile?.Width != 6.1)
@@ -2843,6 +2941,10 @@ public partial class MainWindow : Window
             Select(new ChooserWindow.Choice(new RunningApp(0, steamGame.Title, SteamLibrary.ProfileKey(store.Root, steamGame), [], null), new GameWindow(0, steamGame.Title), Steam: steamGame));
             if (geometryBlock != GeometryBlock.None || profile?.GeometryStereo != true || !GeometryStartButton.IsEnabled)
                 throw new Exception("A Steam game bound to its executable must offer Start with true geometry");
+            // The Steam launch setup review (no longer on the chooser's tiles) lives here.
+            if (SteamReviewSetupButton.Visibility != Visibility.Visible || !SteamReviewSetupButton.IsEnabled || !Within(SteamReviewSetupButton, GeometryPanel) ||
+                SteamReviewSetupButton.Content as string != Loc.Get("SteamReviewSetup"))
+                throw new Exception("A bound Steam game with true geometry on must offer Review Steam launch setup in the true-geometry section");
         }
         finally { File.Delete(bindingFile); }
 
@@ -2954,8 +3056,11 @@ public partial class MainWindow : Window
             EasyPanel.Visibility == Visibility.Visible || EasyIntro.Visibility == Visibility.Visible || EasyRecenterButton.Visibility == Visibility.Visible)
             throw new Exception("Expert must show the sections and hide the Easy panel");
         if (store.LoadAppSettings().AutoAttach) throw new Exception("Auto-attach should be off before switching to Easy");
+        if (!AutoAttachPanel.IsVisible || !AutoAttachCheck.IsVisible || !AutoAttachSlider.IsVisible)
+            throw new Exception("Expert must show auto-attach and its countdown under the game card");
         EasyMode.IsChecked = true;
         UpdateLayout();
+        if (AutoAttachPanel.IsVisible) throw new Exception("Easy keeps auto-attach on and must not show its switch");
         var easySaved = store.LoadAppSettings();
         if (appSettings.IsExpert || easySaved.Mode != AppSettings.EasyMode || !easySaved.AutoAttach || AutoAttachCheck.IsChecked != true || !appSettings.AutoAttach)
             throw new Exception("Easy must turn auto-attach on and be remembered");
@@ -3214,7 +3319,7 @@ public partial class MainWindow : Window
         string launchExe = Path.Combine(output, "chooser-launch", "LaunchFixture.exe");
         GeometryLaunchTests.FakePe(launchExe, ["d3d11.dll"], []);
         var launchEntry = new GameHistory.Entry(launchExe, "Launch fixture", [], Path.GetDirectoryName(launchExe)!, "", DateTimeOffset.UtcNow);
-        var chooser = new ChooserWindow(apps, screens, screenApp, display.Handle, new WindowPlace { Width = 820, Height = 560 }, null, null, [launchEntry])
+        var chooser = new ChooserWindow(apps, screens, screenApp, display.Handle, new WindowPlace { Width = 820, Height = 560 }, null, [launchEntry])
         {
             Owner = this, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = -20000
         };
@@ -3227,15 +3332,14 @@ public partial class MainWindow : Window
             if (chooser.ScreenTileCount != screens.Count || chooser.WindowTileCount != expectedWindows)
                 throw new Exception($"Chooser tiles: {chooser.WindowTileCount} windows (expected {expectedWindows}), {chooser.ScreenTileCount} displays (expected {screens.Count})");
             if (chooser.Picked != null) throw new Exception("The chooser must start with nothing picked");
-            // Running windows only attach (no method buttons, no restart); a stopped game has
-            // launch choices for depth and geometry in Expert. (The launch group starts collapsed
-            // when windows exist; open it so its tiles are built.)
+            // No tile has per-tile stereo method buttons, a renderer list, a geometry options
+            // expander or a Steam setup review: running windows only attach, a stopped game
+            // launches the way it is set up, and its ⚙ is how that is changed. (The launch group
+            // starts collapsed when windows exist; open it so its tiles are built.)
             chooser.LaunchSection.IsExpanded = true; chooser.UpdateLayout();
-            var paths=PathButtons(chooser).ToArray();
-            if(PathButtons(chooser.WindowTiles).Any() || Controls<Expander>(chooser.WindowTiles).Any())
-                throw new Exception("Running windows must only attach: no stereo method buttons or geometry options on them");
-            if(chooser.HistoryTileCount!=1 || paths.Length!=2 || paths.Any(b=>!b.IsEnabled || (string)b.Tag==StereoPaths.Dx12))
-                throw new Exception($"A stopped game must have depth and geometry launch choices in Expert; native DX12 is developer-only (history tiles {chooser.HistoryTileCount}, choices {string.Join(",", paths.Select(b => (string)b.Tag + (b.IsEnabled ? "" : " disabled")))})");
+            if(chooser.HistoryTileCount!=1 || PathButtons(chooser).Any() || Controls<Expander>(chooser.Sections).Any(x=>x!=chooser.LaunchSection && x!=chooser.AttachSection) ||
+                Controls<ComboBox>(chooser).Any() || Controls<Button>(chooser).Any(b=>Equals(b.Content,Loc.Get("SteamReviewSetup"))))
+                throw new Exception($"Tiles must have no stereo method buttons, renderer list, geometry options or Steam setup review (history tiles {chooser.HistoryTileCount}, method buttons {PathButtons(chooser).Count()})");
             // Expert: every tile (running windows, recent games, displays) has a Settings button.
             int gears = Controls<Button>(chooser).Count(b => Equals(b.Tag, ChooserWindow.SettingsTag));
             if (gears != chooser.WindowTileCount + chooser.HistoryTileCount + chooser.ScreenTileCount)
@@ -3253,14 +3357,14 @@ public partial class MainWindow : Window
         // Easy: tiles only, no stereo method buttons or geometry options; a pick plays with depth
         // without changing the game's saved method. No Steam section without Steam.
         {
-            var easyChooser=new ChooserWindow(apps.Where(a=>a.CanAttach).Take(3).ToList(),[],null,0,null,_=>StereoPaths.GeometryAuto,_=>StereoPaths.Vkd3d,[launchEntry],null,store.Root,null,expert:false) {
+            var easyChooser=new ChooserWindow(apps.Where(a=>a.CanAttach).Take(3).ToList(),[],null,0,null,_=>StereoPaths.GeometryAuto,[launchEntry],null,store.Root,null,expert:false) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             bool easyChecked=false;
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
                 easyChooser.UpdateLayout();
                 easyChecked=PathButtons(easyChooser).Count()==0 && !easyChooser.SteamSectionShown &&
-                    !Controls<Expander>(easyChooser).Any(x=>Equals(x.Header,Loc.Get("GeometryAdvanced"))) &&
+                    !Controls<ComboBox>(easyChooser).Any() &&
                     !Controls<Button>(easyChooser).Any(b=>Equals(b.Content,Loc.Get("SteamReviewSetup"))) &&
                     !Controls<TextBlock>(easyChooser).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction")) && easyChooser.HistoryTileCount==1 &&
                     !Controls<Button>(easyChooser).Any(b=>Equals(b.Tag,ChooserWindow.SettingsTag));
@@ -3269,14 +3373,14 @@ public partial class MainWindow : Window
                 tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
             bool easyPicked=easyChooser.ShowDialog()==true;
-            if(!easyChecked || !easyPicked || easyChooser.Picked?.DepthOnly!=true || easyChooser.Picked.Backend!=null)
+            if(!easyChecked || !easyPicked || easyChooser.Picked?.DepthOnly!=true || easyChooser.Picked.Settings)
                 throw new Exception("Easy's chooser must show only tiles that play with depth (launch tiles too), no Settings buttons, and no Steam section without Steam");
         }
         // A tile's Settings button picks the game for its settings only: VRX selects it (the
         // Expert sections edit its profile, nothing is saved) without starting VR or the game.
         {
             if (File.Exists(store.FileFor(launchExe))) File.Delete(store.FileFor(launchExe));
-            var gearTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.GeometryAuto,null,[launchEntry]) {
+            var gearTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.GeometryAuto,[launchEntry]) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
@@ -3285,12 +3389,18 @@ public partial class MainWindow : Window
                 if(gear==null || gear.ToolTip as string!=Loc.Get("ChooserSettingsTip") || AutomationProperties.GetName(gear)!=Loc.Format("ChooserSettingsFor","Launch fixture")) { gearTest.Close(); return; }
                 gear.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
-            if(gearTest.ShowDialog()!=true || gearTest.Picked is not { Settings: true, Backend: null, Renderer: null, History: not null } gearPick)
+            if(gearTest.ShowDialog()!=true || gearTest.Picked is not { Settings: true, DepthOnly: false, ReviewSteamSetup: false, History: not null } gearPick)
                 throw new Exception("A tile's Settings button must pick the game for its settings only");
+            CardName.ClearValue(TextBlock.ForegroundProperty);
             ShowSettingsFor(gearPick);
             if(engine.Running || starting || selection?.History!=launchEntry || !SamePath(profile?.ExecutablePath,launchExe) || SelectedWindow!=null ||
                 store.HasProfile(launchExe) || CardName.Text!="Launch fixture" || geometryBlock!=GeometryBlock.None || GeometryToggle.IsChecked!=false || !SettingsEnabled)
                 throw new Exception("A stopped game's Settings button must select it for the Expert sections without saving or starting anything");
+            // ...and visibly so: the status line says whose settings these are (VR not started)
+            // and the card's name lights up in the accent colour, fading back.
+            if(Status.Text!=Loc.Format("StatusSettingsShowing","Launch fixture") || CardName.ReadLocalValue(TextBlock.ForegroundProperty) is not SolidColorBrush flash ||
+                !flash.HasAnimatedProperties || CardFlashDuration.TimeSpan.TotalSeconds is < 1 or > 2)
+                throw new Exception($"The Settings button must say whose settings are shown and highlight the card's name (status '{Status.Text}')");
             ShowSettingsFor(new ChooserWindow.Choice(screenApp, display, Settings: true));
             if(engine.Running || starting || !ScreenSources.IsScreen(selection?.App) || SelectedWindow?.Monitor!=display.Monitor || geometryBlock!=GeometryBlock.Display)
                 throw new Exception("A display's Settings button must select the display without starting VR");
@@ -3302,26 +3412,46 @@ public partial class MainWindow : Window
                     throw new Exception("A running window's Settings button must select it for a later Attach / Play without starting VR");
             }
         }
-        // A stopped game whose saved method is true geometry: "Play with true geometry", with the
-        // saved DXVK renderer highlighted and returned.
+        // A stopped game whose saved method is true geometry (DXVK here): its tile reads "Play
+        // with true geometry", and clicking it launches the way it is set up - the pick carries
+        // no method of its own (StartFromHistory reads the saved one, warning first).
         {
-            var pickTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Dxvk,null,[launchEntry]) {
+            var pickTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Dxvk,[launchEntry]) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
                 pickTest.LaunchSection.IsExpanded=true; pickTest.UpdateLayout();
                 bool geometryCaption=Controls<TextBlock>(pickTest.HistoryTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction"));
-                var button=PathButtons(pickTest.HistoryTiles).First(b=>(string)b.Tag==StereoPaths.Dxvk);
-                if(button.FontWeight!=FontWeights.Bold || !geometryCaption || PathButtons(pickTest.WindowTiles).Any()) { pickTest.Close(); return; }
-                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var tile=Controls<Button>(pickTest.HistoryTiles).FirstOrDefault(b=>b.Style==pickTest.FindResource("Tile"));
+                if(tile==null || !geometryCaption || PathButtons(pickTest).Any() ||
+                    !AutomationProperties.GetName(tile).StartsWith(Loc.Get("ChooserLaunchGeometryAction"),StringComparison.Ordinal)) { pickTest.Close(); return; }
+                tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
-            if(pickTest.ShowDialog()!=true || pickTest.Picked?.Backend!=StereoPaths.Dxvk || pickTest.Picked.History==null || pickTest.Picked.Restart)
-                throw new Exception("The chooser must offer Play with true geometry for a stopped geometry game and return its saved DXVK selection");
+            if(pickTest.ShowDialog()!=true || pickTest.Picked is not { History: not null, Restart: false, DepthOnly: false, ReviewSteamSetup: false, Settings: false })
+                throw new Exception("A stopped true-geometry game's tile must read Play with true geometry and launch it the way it is set up");
+        }
+        // A stopped game set to estimated depth: the normal launch caption, and the same pick.
+        {
+            var depthTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Depth,[launchEntry]) {
+                Owner=this,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
+            };
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
+                depthTest.LaunchSection.IsExpanded=true; depthTest.UpdateLayout();
+                bool depthCaption=Controls<TextBlock>(depthTest.HistoryTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchAction")) &&
+                    !Controls<TextBlock>(depthTest.HistoryTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction"));
+                var tile=Controls<Button>(depthTest.HistoryTiles).FirstOrDefault(b=>b.Style==depthTest.FindResource("Tile"));
+                if(tile==null || !depthCaption) { depthTest.Close(); return; }
+                var bitmap=new RenderTargetBitmap((int)depthTest.ActualWidth,(int)depthTest.ActualHeight,96,96,PixelFormats.Pbgra32);
+                bitmap.Render(depthTest); SavePng(bitmap,Path.Combine(output,"ui-chooser-launch.png"));
+                tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }));
+            if(depthTest.ShowDialog()!=true || depthTest.Picked is not { History: not null, DepthOnly: false, ReviewSteamSetup: false, Settings: false })
+                throw new Exception("A stopped depth game's tile must show the normal launch caption and launch it the way it is set up");
         }
         // A running window with true geometry saved: it only attaches, with the saved method (the
         // attach then uses a VRX geometry stream or depth) - never a restart or a Steam route.
         if(apps.Any(a=>a.CanAttach && a.Windows.Any(RunningApps.IsChooserWindow))) {
-            var attachTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.GeometryAuto,_=>StereoPaths.Dxvk,[],[],store.Root) {
+            var attachTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.GeometryAuto,[],[],store.Root) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
@@ -3332,27 +3462,8 @@ public partial class MainWindow : Window
                 if(tile==null || !attachOnly) { attachTest.Close(); return; }
                 tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
-            if(attachTest.ShowDialog()!=true || attachTest.Picked is not { Backend: null, Renderer: null, Steam: null, Restart: false, DepthOnly: false, ReviewSteamSetup: false })
+            if(attachTest.ShowDialog()!=true || attachTest.Picked is not { Steam: null, Restart: false, DepthOnly: false, ReviewSteamSetup: false, Settings: false })
                 throw new Exception("A running window must attach with the game's saved method, never a geometry restart or Steam route");
-        }
-        {
-            var advancedTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Depth,_=>StereoPaths.Vulkan,[launchEntry]) {
-                Owner=this,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
-            };
-            _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
-                advancedTest.LaunchSection.IsExpanded=true; advancedTest.UpdateLayout();
-                var expander=Controls<Expander>(advancedTest).First(e=>Equals(e.Header,Loc.Get("GeometryAdvanced"))); expander.IsExpanded=true; advancedTest.UpdateLayout();
-                var renderers=Controls<ComboBox>(expander).Single();
-                if(renderers.SelectedItem is not ComboBoxItem rememberedRenderer || (string)rememberedRenderer.Tag!=StereoPaths.Vulkan) { advancedTest.Close(); return; }
-                if(!renderers.Items.Cast<ComboBoxItem>().Select(item=>(string)item.Tag).SequenceEqual(new[]{StereoPaths.GeometryAuto,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Vkd3d})) { advancedTest.Close(); return; }
-                renderers.SelectedItem=renderers.Items.Cast<ComboBoxItem>().Single(item=>(string)item.Tag==StereoPaths.Vkd3d);
-                advancedTest.UpdateLayout();
-                var bitmap=new RenderTargetBitmap((int)advancedTest.ActualWidth,(int)advancedTest.ActualHeight,96,96,PixelFormats.Pbgra32);
-                bitmap.Render(advancedTest); SavePng(bitmap,Path.Combine(output,"ui-chooser-geometry.png"));
-                PathButtons(advancedTest).First(b=>(string)b.Tag==StereoPaths.Vkd3d).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            }));
-            if(advancedTest.ShowDialog()!=true || advancedTest.Picked?.Backend!=StereoPaths.Vkd3d || advancedTest.Picked?.Renderer!=StereoPaths.Vkd3d)
-                throw new Exception("The chooser must offer the four geometry renderers and return a changed vkd3d selection");
         }
         if (chooser.Place is not { Width: 930, Height: 610, Maximized: false })
             throw new Exception($"The chooser must report its size when it closes (got {chooser.Place})");
@@ -3547,6 +3658,14 @@ public partial class MainWindow : Window
             await Settle();
             SaveStackedShot(Path.Combine(output, "ui-expert-pseudo.png"));
             CheckPseudoTexts();
+            // Auto-attach's one row fits at Expert's minimum width, even with longer text.
+            double expertWidth = Width;
+            Width = ExpertMinWidth;
+            await Settle();
+            CheckNothingClipped("Expert at its minimum width, pseudo-locale", GameCard, AutoAttachPanel, AutoAttachCheck, AutoAttachSlider, AutoAttachValue);
+            if (AutoAttachSlider.ActualWidth < 80) throw new Exception($"The auto-attach countdown slider is too narrow at the minimum width ({AutoAttachSlider.ActualWidth:F0})");
+            Width = expertWidth;
+            await Settle();
         }
         finally
         {

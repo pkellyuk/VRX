@@ -12,19 +12,68 @@ public sealed class GameHistory(string root)
     private static bool Valid(Entry e)=>!string.IsNullOrWhiteSpace(e.Executable) && Path.IsPathFullyQualified(e.Executable) &&
         e.Executable.EndsWith(".exe",StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(e.Title) && e.Arguments!=null && e.Arguments.All(a=>a!=null) &&
         Path.IsPathFullyQualified(e.WorkingDirectory) && e.SteamAppId is {} steam && steam.All(char.IsAsciiDigit);
+    // Programs that are clearly not games, never recorded as recent games (a person can attach
+    // VRX to any window, such as a Teams call). This is the one list of desktop apps; it adds
+    // to auto-attach's own exclusions (VRX, Steam and SteamVR, Windows' shell, overlays,
+    // terminals: AutoAttachRules.IsExcluded) and its web browsers (AutoAttachRules.IsBrowser).
+    // Names without ".exe", compared ignoring case.
+    private static readonly HashSet<string> DesktopApps=new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Chat, calls and mail
+        "ms-teams","teams","msteams","olk","outlook","hxoutlook","hxmail","thunderbird","slack","discord","discordptb","discordcanary",
+        "telegram","signal","skype","zoom","webex","ciscocollabhost","messenger",
+        // AI assistants
+        "claude","chatgpt","copilot","m365copilot",
+        // Code and text editors, shells
+        "devenv","code","code - insiders","cursor","windsurf","rider64","idea64","pycharm64","clion64","webstorm64","sublime_text","notepad","notepad++",
+        "wt","powershell_ise",
+        // Office, documents and PDFs
+        "winword","excel","powerpnt","onenote","onenotem","msaccess","mspub","visio","wordpad","acrord32","foxitpdfreader","sumatrapdf",
+        // Pictures, video and music
+        "mspaint","paintstudio.view","photos","microsoft.photos","photoshop","gimp","gimp-2.10","obs64","vlc","spotify","itunes","music.ui","video.ui",
+        "calculatorapp","calculator",
+    };
+    // Prefixes for apps whose executable names vary (WhatsApp.exe, WhatsApp.Root.exe, Acrobat.exe, AcroCEF.exe...).
+    private static readonly string[] DesktopAppPrefixes=["whatsapp","acrobat","acrocef"];
+
+    // True for a program that is clearly not a game (see DesktopApps); by executable path or name.
+    public static bool IsNotAGame(string? executable)
+    {
+        string name=AutoAttachRules.BaseName(executable);
+        if(name.Length==0) return true;
+        bool notGame=AutoAttachRules.IsExcluded(name) || AutoAttachRules.IsBrowser(name) || DesktopApps.Contains(name) ||
+            DesktopAppPrefixes.Any(p=>name.StartsWith(p,StringComparison.OrdinalIgnoreCase));
+        if(notGame) Debug.WriteLine($"[Recent games] IsNotAGame: '{name}' is not a game");
+        return notGame;
+    }
+
+    // Whether an entry belongs in recent games: a Steam game always does, whatever its
+    // executable is called; anything else unless it is clearly not a game.
+    private static bool Recordable(Entry entry)=>entry.SteamAppId.Length>0 || !IsNotAGame(entry.Executable);
+
+    // Recent games, newest first. Entries saved before non-games were filtered out are dropped
+    // here (their profiles are kept), and leave the file the next time it is written.
     public IReadOnlyList<Entry> Load()
     {
         try {
             if(!File.Exists(FileName)) return [];
-            return (JsonSerializer.Deserialize<Entry[]>(File.ReadAllText(FileName)) ?? []).Where(e=>e!=null && Valid(e))
-                .OrderByDescending(e=>e.LastPlayedUtc).DistinctBy(e=>e.Executable,StringComparer.OrdinalIgnoreCase).Take(24).ToArray();
+            var saved=(JsonSerializer.Deserialize<Entry[]>(File.ReadAllText(FileName)) ?? []).Where(e=>e!=null && Valid(e)).ToArray();
+            var games=saved.Where(Recordable).OrderByDescending(e=>e.LastPlayedUtc).DistinctBy(e=>e.Executable,StringComparer.OrdinalIgnoreCase).Take(24).ToArray();
+            if(games.Length<saved.Length) Debug.WriteLine($"[Recent games] Load: {saved.Length} saved, {games.Length} kept (non-games and duplicates dropped)");
+            return games;
         } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException) { Debug.WriteLine(ex.Message); return []; }
     }
     public void Remember(Entry entry)
     {
         if(!Valid(entry)) throw new InvalidDataException(Loc.Get("ErrorHistoryEntry"));
+        if(!Recordable(entry))
+        {
+            Debug.WriteLine($"[Recent games] Remember: {entry.Executable} is not a game; not recorded");
+            return;
+        }
         var entries=new[]{entry}.Concat(Load().Where(e=>!Same(e.Executable,entry.Executable))).Take(24).ToArray();
         ProfileStore.AtomicWrite(FileName,JsonSerializer.Serialize(entries,new JsonSerializerOptions{WriteIndented=true}));
+        Debug.WriteLine($"[Recent games] Remember: {entry.Executable} ('{entry.Title}'), {entries.Length} entr{(entries.Length==1?"y":"ies")}");
     }
     public void ImportLastGame(ProfileStore store)
     {
@@ -41,9 +90,25 @@ public sealed class GameHistory(string root)
             Debug.WriteLine($"[Recent games] ImportLastGame skipped: {ex.GetType().Name}: {ex.Message}");
         }
     }
+    // After a successful attach: remembers the game (title, executable, launch arguments, Steam
+    // identity) for Recent games. Never a whole display, and never a program that is clearly
+    // not a game (IsNotAGame) unless it is a Steam game.
     public async Task Record(RunningApp app,GameWindow window,Profile profile,CancellationToken token)
     {
-        if(ScreenSources.IsScreen(app) || window.Monitor>=0) return;
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(window);
+        ArgumentNullException.ThrowIfNull(profile);
+        Debug.WriteLine($"[Recent games] Record enter: {app.FullPath}, pid {app.Pid}, window '{window.Title}' monitor {window.Monitor}");
+        if(ScreenSources.IsScreen(app) || window.Monitor>=0)
+        {
+            Debug.WriteLine("[Recent games] Record exit: a whole display is not recorded");
+            return;
+        }
+        if(IsNotAGame(app.FullPath) && string.IsNullOrEmpty(profile.GeometrySteamAppId) && GeometryLaunch.FindSteamAppId(app.FullPath).Length==0)
+        {
+            Debug.WriteLine($"[Recent games] Record exit: {app.Name} is not a game; not recorded");
+            return;
+        }
         var previous=Load().FirstOrDefault(e=>Same(e.Executable,app.FullPath));
         string[] args=previous?.Arguments ?? GeometryLaunch.ParseArguments(profile.GeometryLaunchArguments ?? "");
         try { args=await GeometryLaunch.ProcessArguments(app.Pid,token); }
