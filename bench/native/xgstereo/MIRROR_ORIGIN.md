@@ -11,3 +11,10 @@ these adapted files. This local prototype does not relicense upstream code.
 VRX uses one device on one GPU, separate eye resources and command buffers,
 Win32 memory shadows, and the shared D3D12 texture transport. It does not use
 vrdual's Linux ICD loading, GPU selection, readback or frame-file transport.
+
+VRX-authored changes to the adapted files include: per-queue layer timelines
+instead of acquire-time submissions and `vkDeviceWaitIdle`; GPU zeroing of eye
+offsets and release of right-eye resources after a stop (including generated
+destroy wrappers); draw-time push-pointer translation with an interval map
+(`mirror_addresses.h`, independently authored); last-pre-rasterisation-stage
+planning; sRGB byte-copy export; and the generated device-extension allowlist.

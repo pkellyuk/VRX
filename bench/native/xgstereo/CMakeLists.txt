@@ -39,6 +39,10 @@ if(VRX_XG_VALIDATE_SPIRV)
     FetchContent_MakeAvailable(spirv_tools)
 endif()
 
+# Diagnostic switches of the mirror (VRX_XG_MIRROR_TRACE, VRX_XG_MIRROR_FAIL_AT,
+# VRX_XG_SHADOW, VRX_XG_TRANSIENT_MAPS) are compiled into Debug builds, and into
+# other configurations only with this option. Release layers ignore them.
+option(VRX_XG_DIAGNOSTICS "Compile mirror diagnostic switches into non-Debug builds" OFF)
 add_library(vrx_xgstereo SHARED layer.cpp layer.def)
 # Games can preload an old app-local MSVC runtime. In particular, their older
 # mutex implementation cannot use the constexpr mutex layout in newer headers.
@@ -52,7 +56,8 @@ endif()
 target_link_libraries(vrx_xgstereo PRIVATE Vulkan::Headers SPIRV-Headers::SPIRV-Headers)
 target_link_libraries(vrx_xgstereo PRIVATE d3d12 dxgi dxguid)
 target_include_directories(vrx_xgstereo PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-target_compile_definitions(vrx_xgstereo PRIVATE VK_NO_PROTOTYPES VK_USE_PLATFORM_WIN32_KHR WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(vrx_xgstereo PRIVATE VK_NO_PROTOTYPES VK_USE_PLATFORM_WIN32_KHR WIN32_LEAN_AND_MEAN NOMINMAX
+    "VRX_XG_DIAGNOSTICS=$<IF:$<OR:$<CONFIG:Debug>,$<BOOL:${VRX_XG_DIAGNOSTICS}>>,1,0>")
 
 add_executable(shader_test shader_test.cpp)
 add_executable(chain_test chain_test.cpp)
@@ -82,7 +87,7 @@ add_executable(geometry_copy_test geometry_copy_test.cpp)
 add_executable(gpu_transport_test gpu_transport_test.cpp)
 target_link_libraries(gpu_transport_test PRIVATE d3d12 dxgi dxguid)
 target_compile_definitions(gpu_transport_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(geometry_copy_test PRIVATE d3d12 dxgi dxguid)
+target_link_libraries(geometry_copy_test PRIVATE d3d12 dxgi dxguid d3dcompiler)
 target_compile_definitions(geometry_copy_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 foreach(target vrx_xgstereo shader_test chain_test render_test present_test same_frame_test transport_test geometry_copy_test gpu_transport_test)
     if(MSVC)
@@ -131,6 +136,8 @@ set_tests_properties(gpu_texture_present PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$
 add_test(NAME inline_shader_present COMMAND present_test --inline-shader)
 add_test(NAME mirror_win32_memory_import COMMAND present_test --mirror-win32-import)
 add_test(NAME mirror_live_stereo_tuning COMMAND present_test --mirror-live-tuning)
+add_test(NAME mirror_stop_fallback COMMAND present_test --mirror-fallback)
+set_tests_properties(mirror_stop_fallback PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
 set_tests_properties(mirror_live_stereo_tuning PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
 set_tests_properties(mirror_win32_memory_import PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
 add_test(NAME live_stereo_tuning COMMAND present_test --live-tuning)
@@ -180,6 +187,8 @@ add_dependencies(mirror_address_test vrx_xgstereo)
 add_dependencies(xgstereo_checks mirror_address_test)
 add_test(NAME mirror_address_isolation COMMAND mirror_address_test)
 set_tests_properties(mirror_address_isolation PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
+add_test(NAME mirror_address_isolation_integer COMMAND mirror_address_test --integer)
+set_tests_properties(mirror_address_isolation_integer PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
 
 add_executable(gpu_snapshot gpu_snapshot.cpp)
 target_link_libraries(gpu_snapshot PRIVATE d3d12 dxgi dxguid)

@@ -11,7 +11,30 @@ namespace xg {
     X(vkAllocateMemory) X(vkFreeMemory) X(vkGetMemoryWin32HandlePropertiesKHR) \
     X(vkCreateSemaphore) X(vkDestroySemaphore) X(vkImportSemaphoreWin32HandleKHR) \
     X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkAllocateCommandBuffers) X(vkResetCommandBuffer) \
-    X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdPipelineBarrier) X(vkCmdBlitImage)
+    X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdPipelineBarrier) X(vkCmdBlitImage) X(vkCmdCopyImage)
+// How a swapchain image reaches the shared RGBA8 UNORM eye slice. The engine
+// treats the shared bytes as display-referred sRGB-encoded values, so every
+// path copies encoded values; none of them may decode or re-encode gamma.
+enum class GpuSourcePath {
+    Blit,         // UNORM sources (8- or 10-bit): format/channel conversion only
+    Copy,         // R8G8B8A8_SRGB: raw texel copy into the RGBA8 UNORM slice
+    CopyThenBlit, // B8G8R8A8_SRGB: raw copy into a BGRA8 UNORM image, then a
+                  // UNORM->UNORM blit swaps the channels without gamma
+};
+// Classifies a swapchain format; false for formats the transport cannot carry
+// without changing the meaning of the stored values (float/HDR, 16-bit, ...).
+inline bool GpuSourcePathFor(VkFormat format, GpuSourcePath& path)
+{
+    switch (format)
+    {
+    case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_R8G8B8A8_UNORM:
+    case VK_FORMAT_A2B10G10R10_UNORM_PACK32: case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+        path = GpuSourcePath::Blit; return true;
+    case VK_FORMAT_R8G8B8A8_SRGB: path = GpuSourcePath::Copy; return true;
+    case VK_FORMAT_B8G8R8A8_SRGB: path = GpuSourcePath::CopyThenBlit; return true;
+    default: return false;
+    }
+}
 class GpuExporter {
     VkDevice device_ = VK_NULL_HANDLE;
     VkCommandPool pool_ = VK_NULL_HANDLE;
@@ -26,6 +49,9 @@ class GpuExporter {
         bool initialized = false;
     };
     std::array<Slot, GpuSlots> slots_;
+    GpuSourcePath path_ = GpuSourcePath::Blit;
+    VkImage staging_[2]{};          // CopyThenBlit only: one BGRA8 UNORM image per eye
+    VkDeviceMemory stagingMemory_[2]{};
     int slot_ = -1;
     uint64_t sequence_ = 0, released_ = 0;
     char error_[256] = "GPU geometry stopped: shared resource initialization failed";
@@ -40,6 +66,11 @@ public:
     {
         // The owning Vulkan device must be idle before destruction.
         writer_.Close();
+        for (uint32_t eye = 0; eye < 2; ++eye)
+        {
+            if (staging_[eye]) vkDestroyImage_(device_, staging_[eye], nullptr);
+            if (stagingMemory_[eye]) vkFreeMemory_(device_, stagingMemory_[eye], nullptr);
+        }
         for (auto& s : slots_)
         {
             if (s.ready) vkDestroySemaphore_(device_, s.ready, nullptr);
@@ -108,6 +139,40 @@ public:
         }
         return true;
     }
+    // Selects how Record() moves the swapchain format into the shared slice.
+    // Call once after Init, before the first Record. Without a call, sources
+    // are blitted (the UNORM behaviour).
+    bool SetSourceFormat(VkFormat format, const VkPhysicalDeviceMemoryProperties& memory)
+    {
+        if (!device_ || !pool_) return Fail("source format selected before initialization");
+        if (!GpuSourcePathFor(format, path_)) return Fail("unsupported swapchain format", int64_t(format));
+        if (path_ != GpuSourcePath::CopyThenBlit) return true;
+        for (uint32_t eye = 0; eye < 2; ++eye)
+        {
+            VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            image.imageType = VK_IMAGE_TYPE_2D; image.format = VK_FORMAT_B8G8R8A8_UNORM; image.extent = {width_, height_, 1};
+            image.mipLevels = 1; image.arrayLayers = 1; image.samples = VK_SAMPLE_COUNT_1_BIT; image.tiling = VK_IMAGE_TILING_OPTIMAL;
+            image.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            const auto created = vkCreateImage_(device_, &image, nullptr, &staging_[eye]);
+            if (created != VK_SUCCESS) return Fail("sRGB staging image creation", created);
+            VkMemoryRequirements needs{}; vkGetImageMemoryRequirements_(device_, staging_[eye], &needs);
+            uint32_t type = 0;
+            while (type < memory.memoryTypeCount && (!(needs.memoryTypeBits & (1u << type)) ||
+                !(memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))) ++type;
+            if (type == memory.memoryTypeCount) return Fail("no device-local memory for sRGB staging");
+            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO}; allocation.allocationSize = needs.size; allocation.memoryTypeIndex = type;
+            const auto allocated = vkAllocateMemory_(device_, &allocation, nullptr, &stagingMemory_[eye]);
+            if (allocated != VK_SUCCESS) return Fail("sRGB staging memory", allocated);
+            const auto bound = vkBindImageMemory_(device_, staging_[eye], stagingMemory_[eye], 0);
+            if (bound != VK_SUCCESS) return Fail("sRGB staging binding", bound);
+        }
+        return true;
+    }
+    GpuSourcePath SourcePath() const { return path_; }
+    // True when the shared fences were abandoned (a consumer process was
+    // terminated). The owner must wait for its submitted copies, destroy this
+    // exporter and Init a new one: that publishes a replacement generation.
+    bool Lost() const { return writer_.Lost(); }
     bool Reserve() { slot_ = writer_.Reserve(sequence_, released_); return slot_ >= 0; }
     VkSemaphore Ready() const { return slots_[slot_].ready; }
     VkSemaphore Released() const { return slots_[slot_].released; }
@@ -133,7 +198,29 @@ public:
         vkCmdPipelineBarrier_(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
         VkImageBlit blit{}; blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, eye, 1};
         blit.srcOffsets[1] = blit.dstOffsets[1] = {int32_t(width_), int32_t(height_), 1};
-        vkCmdBlitImage_(command, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+        VkImageCopy copy{}; copy.srcSubresource = blit.srcSubresource; copy.dstSubresource = blit.dstSubresource; copy.extent = {width_, height_, 1};
+        if (path_ == GpuSourcePath::Blit)
+            vkCmdBlitImage_(command, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+        else if (path_ == GpuSourcePath::Copy)
+            vkCmdCopyImage_(command, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        else
+        {
+            // Raw sRGB texels into the BGRA8 UNORM staging image, then a
+            // UNORM->UNORM blit for the channel order. The previous frame's
+            // blit read of this staging image is ordered before the overwrite.
+            VkImageMemoryBarrier staged{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            staged.image = staging_[eye]; staged.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            staged.srcQueueFamilyIndex = staged.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            staged.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; staged.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            staged.srcAccessMask = 0; staged.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier_(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &staged);
+            VkImageCopy raw = copy; raw.dstSubresource.baseArrayLayer = 0;
+            vkCmdCopyImage_(command, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging_[eye], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &raw);
+            staged.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; staged.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            staged.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; staged.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier_(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &staged);
+            vkCmdBlitImage_(command, staging_[eye], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+        }
         a.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; a.newLayout = layout; a.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; a.dstAccessMask = 0;
         b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = 0; b.srcQueueFamilyIndex = family_; b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;

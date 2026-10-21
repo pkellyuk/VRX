@@ -5,7 +5,8 @@ Adjust a running experimental DX11 geometry session without restarting the game.
 .DESCRIPTION
 Convergence is the per-eye normalized screen offset. With ordinary perspective
 projection, the zero-parallax clip W is Shift / Convergence. Use -Mono to set
-both values to zero. Values apply together at a new left/right pair boundary.
+both values to zero. Values apply together at a new left/right pair boundary
+(alternate) or between frames, for both eyes at once (mirror).
 #>
 [CmdletBinding(DefaultParameterSetName='Stereo')]
 param(
@@ -30,7 +31,8 @@ $live = @($candidates | Where-Object {
 })
 if ($live.Count -ne 1) { throw "Expected one live DX11 session '$Session'; found $($live.Count). Specify -RunDirectory when necessary." }
 $metadata = Get-Content -LiteralPath (Join-Path $live[0].FullName 'run.json') -Raw | ConvertFrom-Json
-if ($metadata.Stereo -eq 'mirror') { throw 'The mirror backend currently reads tuning at launch. Restart it with -Shift/-Convergence, or disable stereo in VRX for identical eyes.' }
+# Both backends poll this file while presenting: alternate mode applies values
+# at a new left/right pair, mirror mode with one GPU-ordered write of both eyes.
 $path = Join-Path $live[0].FullName 'stereo.txt'
 if ($Mono) { $Shift = 0; $Convergence = 0 }
 $invariant = [Globalization.CultureInfo]::InvariantCulture

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <atomic>
 #include <mutex>
 #include <unordered_map>
 
@@ -366,7 +367,19 @@ XG_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physica
                 auto alternate = std::make_shared<xg::AlternateDevice>();
                 if (!mirrorRequested && alternate->Init(*device, next, setLoaderData, memory, graphicsFamily, shift, name, Log, gpuRequested, adapter))
                 { state.alternate = std::move(alternate); Log(gpuRequested ? "alternate-eye GPU geometry enabled (half rate per eye, asynchronous shared textures)" : "alternate-eye geometry export enabled (single queue, half rate per eye, synchronous readback)"); }
-                else if (mirrorRequested && gpuRequested) { state.mirror = mirror::create(*device, next, setLoaderData, memory, graphicsFamily, adapter, shift, name); }
+                else if (mirrorRequested && gpuRequested)
+                {
+                    // Extensions/versions the generated mirror does not cover could
+                    // render a silently wrong right eye: keep ordinary rendering.
+                    if (const char* unknown = mirror::unsupported_device_feature(info, parent.apiVersion))
+                    {
+                        char message[320];
+                        std::snprintf(message, sizeof(message), "mirror mode unavailable: %s is not handled by the mirror; ordinary rendering kept", unknown);
+                        Log(message);
+                    }
+                    else state.mirror = mirror::create(*device, next, setLoaderData, memory, graphicsFamily, adapter, shift, name);
+                    if (!state.mirror) Log("mirror mode not active for this device");
+                }
                 else Log("alternate mode unavailable: live buffer or session initialization failed");
             }
             else if (enable) Log("alternate mode unavailable: requires positive shift and a valid VRX_XG_SESSION");
@@ -480,6 +493,24 @@ XG_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice devi
         const auto result = next(device, cache, count, changed.data(), allocator, pipelines);
         for (uint32_t i = 0; i < count; ++i)
             if (patched[i] && pipelines[i]) PatchedInline(state);
+        // Fixed/alternate modes shift the vertex stage only. A later
+        // tessellation, geometry or mesh stage may recompute Position and
+        // render flat: say so (rate limited) instead of failing silently.
+        static std::atomic<uint64_t> lateStages{0};
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            bool late = false;
+            for (uint32_t s = 0; s < infos[i].stageCount && infos[i].pStages; ++s)
+                late = late || (infos[i].pStages[s].stage & (VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT | VK_SHADER_STAGE_GEOMETRY_BIT |
+                    VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_TASK_BIT_EXT));
+            if (!late) continue;
+            const auto n = ++lateStages;
+            if (n > 8 && n % 500) continue;
+            char message[200];
+            std::snprintf(message, sizeof(message), "pipeline with a tessellation/geometry/mesh stage: only the vertex stage is shifted, it may render flat (%llu so far)",
+                static_cast<unsigned long long>(n));
+            Log(message);
+        }
         return result;
     }
     catch (...) { return VK_ERROR_OUT_OF_HOST_MEMORY; }
@@ -578,8 +609,10 @@ XG_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device, c
     {
         VkSurfaceCapabilitiesKHR capabilities{};
         const auto format = info->imageFormat;
-        bool formatOk = format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_R8G8B8A8_SRGB ||
-            format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
+        // Exported bytes are display-referred sRGB values: HDR/wide-gamut
+        // colour spaces are declined (as in mirror mode).
+        bool formatOk = (format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_R8G8B8A8_SRGB ||
+            format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB) && info->imageColorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
         if (state.alternate->IsGpu())
         {
             // A blit from sRGB to UNORM decodes gamma. Until an exact sRGB
@@ -613,7 +646,7 @@ XG_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device, c
 XG_EXPORT VKAPI_ATTR void VKAPI_CALL vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks* allocator)
 {
     const auto state = FindDevice(device);
-    if (state.mirror && state.mirror->swap.handle == swapchain) mirror::destroy_swap(state.mirror.get());
+    if (state.mirror) mirror::swapchain_destroyed(state.mirror.get(), swapchain);
     if (state.alternate) state.alternate->Destroyed(swapchain);
     const auto next = reinterpret_cast<PFN_vkDestroySwapchainKHR>(state.next(device, "vkDestroySwapchainKHR"));
     next(device, swapchain, allocator);
@@ -622,7 +655,10 @@ XG_EXPORT VKAPI_ATTR void VKAPI_CALL vkDestroySwapchainKHR(VkDevice device, VkSw
 XG_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char* name)
 {
     if (!name) return nullptr;
-    if (instance && MirrorRequested()) if (auto fn = mirror::lookup(name)) return fn;
+    // Mirror entry points are returned only by vkGetDeviceProcAddr, and only
+    // for a device whose mirror was actually created. Device commands queried
+    // here reach a device through the loader's trampolines, which dispatch via
+    // vkGetDeviceProcAddr, so a device without a mirror keeps driver functions.
 #define XG_INSTANCE_HOOK(fn) if (std::strcmp(name, #fn) == 0) return reinterpret_cast<PFN_vkVoidFunction>(fn)
     XG_INSTANCE_HOOK(vkGetInstanceProcAddr);
     XG_INSTANCE_HOOK(vkGetDeviceProcAddr);
