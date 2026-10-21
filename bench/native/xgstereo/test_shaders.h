@@ -78,6 +78,44 @@ inline std::vector<uint32_t> MultipleVertexEntries()
     return words;
 }
 
+// A later pre-rasterisation stage writing a constant Position: tessellation
+// evaluation (returns) or geometry (one point per EmitVertex).
+inline std::vector<uint32_t> LateStage(bool geometry)
+{
+    // IDs: void=1, function type=2, float=3, vec4=4, output ptr=5, output=6,
+    // one=7, zero=8, position=9, main=10, label=11.
+    std::vector<uint32_t> w{spv::MagicNumber, 0x00010000, 0, 12, 0};
+    Emit(w, spv::OpCapability, {spv::CapabilityShader});
+    Emit(w, spv::OpCapability, {geometry ? uint32_t(spv::CapabilityGeometry) : uint32_t(spv::CapabilityTessellation)});
+    Emit(w, spv::OpMemoryModel, {spv::AddressingModelLogical, spv::MemoryModelGLSL450});
+    Name(w, geometry ? spv::ExecutionModelGeometry : spv::ExecutionModelTessellationEvaluation, 10, {6});
+    if (geometry)
+    {
+        Emit(w, spv::OpExecutionMode, {10, spv::ExecutionModeInputPoints});
+        Emit(w, spv::OpExecutionMode, {10, spv::ExecutionModeInvocations, 1});
+        Emit(w, spv::OpExecutionMode, {10, spv::ExecutionModeOutputPoints});
+        Emit(w, spv::OpExecutionMode, {10, spv::ExecutionModeOutputVertices, 1});
+    }
+    else Emit(w, spv::OpExecutionMode, {10, spv::ExecutionModeTriangles});
+    Emit(w, spv::OpDecorate, {6, spv::DecorationBuiltIn, spv::BuiltInPosition});
+    Emit(w, spv::OpTypeVoid, {1});
+    Emit(w, spv::OpTypeFunction, {2, 1});
+    Emit(w, spv::OpTypeFloat, {3, 32});
+    Emit(w, spv::OpTypeVector, {4, 3, 4});
+    Emit(w, spv::OpTypePointer, {5, spv::StorageClassOutput, 4});
+    Emit(w, spv::OpVariable, {5, 6, spv::StorageClassOutput});
+    Emit(w, spv::OpConstant, {3, 7, FloatWord(2)});
+    Emit(w, spv::OpConstant, {3, 8, FloatWord(0)});
+    Emit(w, spv::OpConstantComposite, {4, 9, 8, 8, 8, 7});
+    Emit(w, spv::OpFunction, {1, 10, spv::FunctionControlMaskNone, 2});
+    Emit(w, spv::OpLabel, {11});
+    Emit(w, spv::OpStore, {6, 9});
+    if (geometry) Emit(w, spv::OpEmitVertex, {});
+    Emit(w, spv::OpReturn, {});
+    Emit(w, spv::OpFunctionEnd, {});
+    return w;
+}
+
 inline std::vector<uint32_t> Fragment()
 {
     std::vector<uint32_t> w{spv::MagicNumber, 0x00010000, 0, 13, 0};

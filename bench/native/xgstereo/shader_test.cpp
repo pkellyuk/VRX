@@ -59,11 +59,33 @@ int main()
         Check(xg::PatchClipX(negative, -0.125f).changed && validator.Validate(negative), "valid opposite eye shader");
 #endif
         Check(words[3] > before[3], "increase id bound");
-        Check(Count(words, spv::OpFAdd) == 1 && Count(words, spv::OpSelect) == 1, "one translation and HUD selection");
+        // One translation; |w| and two clamp selections; |w - 1| and the HUD selection.
+        Check(Count(words, spv::OpFAdd) == 1 && Count(words, spv::OpSelect) == 5, "one clamped translation and HUD selection");
+        Check(Count(words, spv::OpFOrdLessThanEqual) == 1 && Count(words, spv::OpFOrdEqual) == 0, "HUD test uses a W tolerance");
         Check(Count(words, spv::OpStore) == Count(before, spv::OpStore) + 1, "write translated position at return");
         Check(Count(words, spv::OpAccessChain) == (block ? 2u : 0u), "correct direct and block addressing");
     }
     Unchanged(xg::test::Fragment(), .125f, "fragment shader untouched");
+    for (const bool geometry : {false, true})
+    {
+        const auto late = xg::test::LateStage(geometry);
+        Unchanged(late, .125f, "later stages untouched unless requested");
+        auto patched = late;
+        const uint32_t stage = geometry ? xg::PatchStageGeometry : xg::PatchStageTessellationEvaluation;
+        Check(!xg::PatchClipX(patched, .125f, 0, false, xg::PatchStageVertex).changed && patched == late, "stage mask excludes later stages");
+        Check(xg::PatchClipX(patched, .125f, 0, false, stage).changed, "patch last pre-rasterisation stage");
+        Check(Count(patched, spv::OpStore) == 2 && Count(patched, spv::OpSelect) == 5, "one Position rewrite per return/emission");
+        if (geometry) Check(Count(patched, spv::OpEmitVertex) == 1, "emission retained after the rewrite");
+#ifdef XG_VALIDATE_SPIRV
+        Check(validator.Validate(late), "valid later-stage fixture");
+        Check(validator.Validate(patched), "patched later stage satisfies Vulkan SPIR-V rules");
+        auto live = late;
+        spvtools::SpirvTools liveValidator(SPV_ENV_VULKAN_1_2);
+        liveValidator.SetMessageConsumer([](spv_message_level_t, const char*, const spv_position_t&, const char* message)
+        { std::fprintf(stderr, "live late-stage SPIR-V: %s\n", message); });
+        Check(xg::PatchClipX(live, 0, 0x1234567800ull, true, xg::PatchStagePreRasterization).changed && liveValidator.Validate(live), "valid live later-stage loads");
+#endif
+    }
     float shift = 9, convergence = 9;
     Check(xg::ParseTuning("0.8 0.002\r\n", shift, convergence) && shift == .8f && convergence == .002f, "live tuning parses invariant values");
     for (const char* text : {"", "0.8", "nan 0", "0.8 inf", "-1 0", "65 0", "1 .5", "0 .01", "1 0 extra", "0,8 0"})
@@ -105,6 +127,6 @@ int main()
         auto result = xg::PatchClipX(prefix, .125f);
         Check(!result.changed && prefix == saved, "all truncated modules rejected unchanged");
     }
-    std::puts("PASS: direct/block Position, shader isolation, HUD selection, helper returns, malformed input");
+    std::puts("PASS: direct/block Position, tessellation/geometry stages, shader isolation, clamped shift, HUD tolerance, helper returns, malformed input");
     return 0;
 }

@@ -171,7 +171,9 @@ int main(int argc,char** argv) {
             auto anchorLeft=make(-.4f,.1f),anchorRight=make(.4f,.1f);
             Check(std::abs(draw.Disparity(draw.Frame(anchorLeft.Get(),anchorRight.Get(),4)))<.1,"convergence aligns the chosen depth in both eyes");
             auto orthoLeft=make(-.4f,0,false),orthoRight=make(.4f,0,false);
-            Check(draw.Disparity(draw.Frame(orthoLeft.Get(),orthoRight.Get(),1))>nearDisparity*1.7,"orthographic geometry can opt out of the HUD heuristic");
+            // Ortho +/-0.4 at w=1 is clamped to +/-0.25 NDC; near (w=2) is +/-0.2 NDC.
+            const auto orthoDisparity=draw.Disparity(draw.Frame(orthoLeft.Get(),orthoRight.Get(),1));
+            Check(orthoDisparity>nearDisparity*1.15 && orthoDisparity<nearDisparity*1.35,"orthographic geometry can opt out of the HUD heuristic; its screen shift is clamped");
             auto pixel=Bytes(draw.pixel.Get()); Check(patch::Rewrite(pixel.data(),pixel.size(),{}).status==patch::Status::Unsupported,"pixel shaders are left alone");
             std::printf("PASS: DXBC %s %s stereo, near/far disparity %.2f/%.2f; convergence, HUD, signatures, malformed input, literal preservation\n",modern?"5.1":"5.0",adapter?"WARP":"GPU",nearDisparity,farDisparity);
         }
