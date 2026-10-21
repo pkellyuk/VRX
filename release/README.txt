@@ -1,7 +1,7 @@
 VRX 1.7.9 - Windows x64
 
 Install with VRX-Setup-1.7.9.exe, or extract the complete portable ZIP and run
-VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
+VRX.Desktop.exe. Keep the engine, geometry and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
 
@@ -147,4 +147,8 @@ Source for this build: https://github.com/pkellyuk/VRX/tree/v1.7.9 (the exact
 commit is in BUILD.txt).
 Third-party components keep their own licenses; notices and license texts are in
 THIRD-PARTY-NOTICES.txt and the licenses folder.
+The geometry folder holds VRX's Vulkan layer and two unmodified third-party
+runtimes: DXVK 2.7.1 (zlib license) and vkd3d-proton 3.0.1 (LGPL-2.1-or-later;
+source: https://github.com/HansKristian-Work/vkd3d-proton/tree/v3.0.1, and on
+request - see THIRD-PARTY-NOTICES.txt).
 Project: https://github.com/pkellyuk/VRX
