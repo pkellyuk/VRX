@@ -385,7 +385,9 @@ public partial class MainWindow : Window
         if (!ready || loading || starting || engine.Running || profile == null || StereoPathList.SelectedItem is not ComboBoxItem item) return;
         string backend = (string)item.Tag;
         if (backend == StereoPaths.GeometryAuto) backend = profile.SelectedGeometryRenderer;
+#if DEBUG
         if (backend == StereoPaths.Dx12) { Status.Text = Loc.Get("PathDx12Unavailable"); return; }
+#endif
         profile.SelectStereoBackend(backend);
         loading = true; GeometryCheck.IsChecked = profile.GeometryStereo; loading = false;
         UpdateGeometryControls(); SaveAndApply();
@@ -731,7 +733,11 @@ public partial class MainWindow : Window
         Profile ChoiceProfile(RunningApp app) {
             if(choices.TryGetValue(app.FullPath,out var saved)) return saved;
             try { saved=store.Load(app.FullPath); }
-            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { saved=new Profile(); }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException or ArgumentException or NotSupportedException) {
+                // An unreadable or mismatched profile is treated as no profile: the tile plays with depth.
+                System.Diagnostics.Debug.WriteLine($"[Chooser] profile for {app.FullPath} unusable ({ex.GetType().Name}: {ex.Message}); treating it as none");
+                saved=new Profile();
+            }
             choices[app.FullPath]=saved; return saved;
         }
         var chooser = new ChooserWindow(apps, screens, ScreenSources.App(store.Root, screens), (WindowList.SelectedItem as GameWindow)?.Handle ?? 0,
@@ -936,7 +942,9 @@ public partial class MainWindow : Window
         {
             await GeometrySessionLifecycle.ReleasePrevious(app,store.Root,startCancellation.Token);
             EngineSession.EnsureAvailable();
+#if DEBUG
             if (profile!.EffectiveStereoBackend == StereoPaths.Dx12) throw new InvalidOperationException(Loc.Get("PathDx12Unavailable"));
+#endif
             // Auto is estimated depth, so geometry here was chosen for this game.
             string? existingGeometry = profile.GeometryStereo ? GeometryLaunch.ExistingSession(app,profile,store.Root) : null;
             if (profile.GeometryStereo) {
@@ -2031,8 +2039,10 @@ public partial class MainWindow : Window
         await SmokeTestChooser(output, sample, one);
         await GeometryLaunchTests.Run(output);
         await GameHistoryTests.Run(output,this);
-        await DesktopInstanceTests.Run(output);
         await SteamLibraryTests.Run(output,this);
+#if DEBUG
+        // These start fixture copies of this executable, or use bench builds: development only.
+        await DesktopInstanceTests.Run(output);
         await GeometrySessionLifecycleTests.Run(output);
         if(Environment.GetCommandLineArgs().Contains("--geometry-launch-integration-test"))
             await GeometryLaunchIntegrationTests.Run(output);
@@ -2040,6 +2050,7 @@ public partial class MainWindow : Window
             await GeometryLaunchIntegrationTests.Run(output,true);
         if(Environment.GetCommandLineArgs().Contains("--native-geometry-launch-integration-test"))
             await NativeGeometryLaunchIntegrationTests.Run(output);
+#endif
         SmokeTestStrings(root);
 
         PutProfile(one);

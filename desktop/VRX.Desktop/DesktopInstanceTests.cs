@@ -1,3 +1,7 @@
+#if DEBUG
+// Development builds only: these start copies of this executable with fixture switches
+// (App.RunDevelopmentFixture) or use the repository's bench builds, none of which exist in a
+// release build.
 using System.Diagnostics;
 using System.IO;
 
@@ -48,3 +52,4 @@ internal static class DesktopInstanceTests
         File.WriteAllText(Path.Combine(output,"desktop-instance-pass.txt"),"PASS: named mutex ownership across processes; duplicate exits and signals existing UI; normal exit permits a later launch. Steam wrappers and smoke tests bypass the interactive desktop gate.");
     }
 }
+#endif

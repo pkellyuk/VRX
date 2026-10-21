@@ -1,3 +1,7 @@
+#if DEBUG
+// Development builds only: these start copies of this executable with fixture switches
+// (App.RunDevelopmentFixture) or use the repository's bench builds, none of which exist in a
+// release build.
 using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -137,3 +141,4 @@ internal static class GeometryLaunchIntegrationTests
         }
     }
 }
+#endif

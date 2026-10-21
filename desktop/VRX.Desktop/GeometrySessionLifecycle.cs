@@ -82,6 +82,7 @@ internal static class GeometrySessionLifecycle
         }
     }
 
+#if DEBUG
     // The earlier command-line trials predate managed session records. Only the
     // explicit current-headset record, its game run and exact viewer arguments
     // qualify for migration; a process name alone never authorizes stopping it.
@@ -101,13 +102,17 @@ internal static class GeometrySessionLifecycle
         } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return null; }
     }
 
+#endif
+
     public static async Task ReleasePrevious(RunningApp app,string dataRoot,CancellationToken token,
         string? engineDirectory=null,bool includeTrial=true)
     {
-        string repository=EngineSession.RepositoryRoot();
         engineDirectory ??=Path.GetDirectoryName(EngineSession.EnginePath())!;
         var leases=Recorded(dataRoot).ToList();
-        if(includeTrial && Trial(repository) is {} trial) leases.Add(trial);
+#if DEBUG
+        // The bench trial record exists only in a development checkout.
+        if(includeTrial && Trial(EngineSession.RepositoryRoot()) is {} trial) leases.Add(trial);
+#endif
         foreach(var lease in leases.DistinctBy(l=>l.Viewer.Pid)) {
             token.ThrowIfCancellationRequested();
             if(!Same(lease.Game.Executable,app.FullPath) || GeometryLaunch.IsRunning(lease.Ui)) continue;

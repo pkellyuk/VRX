@@ -1,3 +1,5 @@
+#if DEBUG
+// The native DX12 proxy's status block: development builds only (see GeometryLaunch).
 using System.Buffers.Binary;
 using System.IO;
 using System.IO.MemoryMappedFiles;
@@ -40,3 +42,4 @@ internal sealed record NativeStereoStatus(int Pid, bool Mirroring, ulong AgeMs,
         } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or WaitHandleCannotBeOpenedException or ArgumentException) {return null;}
     }
 }
+#endif

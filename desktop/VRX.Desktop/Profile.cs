@@ -32,7 +32,13 @@ public sealed class Profile
     public string SelectedGeometryRenderer => StereoPaths.Renderer(SelectedStereoBackend) ? SelectedStereoBackend :
         StereoPaths.Renderer(GeometryRenderer) ? GeometryRenderer : StereoPaths.GeometryAuto;
     [System.Text.Json.Serialization.JsonIgnore]
-    public string SelectedStereoBackend => StereoPaths.Valid(StereoBackend) ? StereoBackend : legacyGeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
+    public string SelectedStereoBackend => StereoPaths.Valid(StereoBackend)
+#if !DEBUG
+        ? StereoBackend == StereoPaths.Dx12 ? StereoPaths.Depth : StereoBackend
+#else
+        ? StereoBackend
+#endif
+        : legacyGeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
     // Auto always means estimated depth: true geometry changes how the game draws, so it is
     // only ever used when it was chosen for this game. A tested profile is a suggestion shown
     // with the geometry choice, never a reason to pick geometry by itself.

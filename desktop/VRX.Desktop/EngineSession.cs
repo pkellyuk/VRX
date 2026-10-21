@@ -124,7 +124,10 @@ public sealed class EngineSession
         // Culture-invariant numbers: the engine parses these whatever the Windows language.
         var invariant = System.Globalization.CultureInfo.InvariantCulture;
         var args = new List<string> { "0" };
+#if DEBUG
+        // Unreachable in a release: a saved DX12 choice loads as depth there.
         if (profile.EffectiveStereoBackend == StereoPaths.Dx12) throw new InvalidOperationException(Loc.Get("PathDx12Unavailable"));
+#endif
         if (profile.GeometryStereo)
         {
             if (window.Monitor >= 0) throw new InvalidOperationException(Loc.Get("ErrorGeometryNeedsGame"));

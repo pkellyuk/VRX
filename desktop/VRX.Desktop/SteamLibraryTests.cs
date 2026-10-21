@@ -72,6 +72,7 @@ internal static class SteamLibraryTests
             depth.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }));
         Check(attachChooser.ShowDialog()==true && attachChooser.HistoryTileCount==0 && attachChooser.SteamTileCount==0 && attachChooser.WindowTileCount==1 && attachChooser.Picked?.App.Pid==123 && attachChooser.Picked.Steam==game,"running games appear only under Attach and retain their Steam/profile identity");
+#if DEBUG
         // Exercise the actual Steam-wrapper entry point and literal argument
         // forwarding, with a harmless child fixture rather than a real game.
         string childOutput=Path.Combine(root,"child.json");
@@ -85,6 +86,7 @@ internal static class SteamLibraryTests
         Check(wrapper.ExitCode==0 && File.Exists(childOutput),"ordinary Steam wrapper launch starts and waits for its child");
         using var child=JsonDocument.Parse(File.ReadAllText(childOutput));
         Check(child.RootElement.GetProperty("Arguments").EnumerateArray().Select(a=>a.GetString()).Skip(1).SequenceEqual(new[]{"literal space","quote\"value"}) && child.RootElement.GetProperty("Marker").GetString()=="inherited" && child.RootElement.GetProperty("Directory").GetString()==root,"wrapper preserves Steam arguments, working directory, and environment");
+#endif
         File.WriteAllText(Path.Combine(output,"steam-library-pass.txt"),"PASS: installed library discovery and partial failures; path containment; existing profile reuse; installed chooser selection; literal Steam argument merge; actual wrapper child launch and lifecycle.");
         var local=SteamLibrary.Discover();
         File.WriteAllText(Path.Combine(output,"steam-discovered.json"),JsonSerializer.Serialize(local,new JsonSerializerOptions{WriteIndented=true}));

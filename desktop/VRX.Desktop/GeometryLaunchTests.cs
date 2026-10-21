@@ -30,7 +30,16 @@ internal static class GeometryLaunchTests
         store.ApplyToAll(settings,out int skipped,out int failed);
         Check(skipped==0 && failed==0 && store.Load(exe).EffectiveStereoBackend==StereoPaths.Dxvk && store.Load(exe).GeometryLaunchArguments==p.GeometryLaunchArguments && store.Load(exe).Width==7,"Apply to all preserves each game's launch choice");
         Check(StereoPaths.Session(exe)==StereoPaths.Session(exe.ToUpperInvariant()) && Profile.ValidGeometrySession(StereoPaths.Session(exe)),"session identity is stable and valid");
-        foreach(string backend in new[]{StereoPaths.Depth,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Dx12}){
+#if DEBUG
+        string[] backends=[StereoPaths.Depth,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Dx12];
+#else
+        string[] backends=[StereoPaths.Depth,StereoPaths.Vulkan,StereoPaths.Dxvk];
+        // The native DX12 proxy is development-only: a saved DX12 choice loads as depth in a release.
+        var native=new Profile{ExecutablePath=Path.Combine(root,"dx12.exe"),StereoBackend=StereoPaths.Dx12}; store.Save(native);
+        Check(store.Load(native.ExecutablePath).EffectiveStereoBackend==StereoPaths.Depth && !StereoPaths.Geometry(StereoPaths.Dx12),"a release never uses the native DX12 route");
+        Check(GeometryLaunch.InstalledNames(StereoPaths.Dx12).Length==0,"a release never installs the native DX12 proxy");
+#endif
+        foreach(string backend in backends){
             var choice=new Profile{ExecutablePath=Path.Combine(root,backend+".exe"),StereoBackend=backend,GeometryStereo=backend==StereoPaths.Depth};
             bool geometry=backend!=StereoPaths.Depth;
             Check(choice.GeometryStereo==geometry && StereoPaths.FromGeometryChoice(geometry,backend)==backend,"explicit method determines the geometry checkbox without changing the selected backend");
@@ -130,6 +139,10 @@ internal static class GeometryLaunchTests
         Check(installed.Count==4 && installed.All(f=>File.Exists(f.Path)),"translated D3D12 installs both translator and matching D3D11/DXGI components");
         GeometryLaunch.Cleanup(translatedRun);
         Check(installed.All(f=>!File.Exists(f.Path)),"translated cleanup retires all four owned DLLs");
+        Check(GeometryRuntime.PinnedHash("dxvk","d3d11.dll")=="523DA2CD765DD51D99FE1644B24F9EE7EE6247E4C98953BCC449CE84CD303405" && GeometryRuntime.PinnedHash("dxvk","dxgi.dll")?.Length==64,"DXVK 2.7.1's DLLs are pinned");
+        bool unpinnedRefused=false;
+        try { GeometryRuntime.VerifySource("dxvk","d3d11.dll",Path.Combine(sources,"d3d11.dll")); } catch(InvalidDataException) { unpinnedRefused=true; }
+        Check(unpinnedRefused,"a DLL that does not match its pin is refused before it is copied into a game");
         string steamapps=Path.Combine(root,"SteamLibrary","steamapps"), steamExe=Path.Combine(steamapps,"common","TestGame","bin","game.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(steamExe)!);File.WriteAllText(Path.Combine(steamapps,"appmanifest_999.acf"),"\"appid\" \"999\"\n\"installdir\" \"TestGame\"");
         Check(GeometryLaunch.FindSteamAppId(steamExe)=="999","resolve a Steam installation by its manifest, not its game title");
@@ -163,7 +176,9 @@ internal static class GeometryLaunchTests
             using var image=File.Create(Path.Combine(output,"ui-geometry-restart.png")); encoder.Save(image);
         } finally { dialog.Close(); }
         Check(!current.HasExited,"displaying and dismissing restart details is passive");
+#if DEBUG
         await NativeGeometryLaunchTests.Run(root,app);
+#endif
         File.WriteAllText(Path.Combine(output,"geometry-launch-pass.txt"),"PASS: profile migration and per-game persistence; base/apply-all isolation; literal Windows arguments; API switch handling; scoped DLL install/rollback and hash-preserving cleanup; Steam manifest resolution; fresh same-frame stream owner validation; real command-line preflight without restarting a game.");
     }
 }

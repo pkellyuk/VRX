@@ -323,9 +323,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="GeometryCancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="GeometryRestartAction" xml:space="preserve"><value>Restart game and try</value></data>
   <data name="ErrorLaunchArguments" xml:space="preserve"><value>VRX could not read the original game command line. Leave the game running and try again.</value></data>
-  <data name="ErrorGeometryLayerMissing" xml:space="preserve"><value>The geometry stereo files are missing. Build or install the optional VRX geometry backend before trying Vulkan or DXVK.</value></data>
-  <data name="StatusDxvkDownload" xml:space="preserve"><value>Downloading and checking the DXVK 2.7.1 bridge…</value></data>
-  <data name="ErrorDxvkHash" xml:space="preserve"><value>The DXVK download failed its integrity or contents check. The game has not been restarted.</value></data>
+  <data name="ErrorGeometryLayerMissing" xml:space="preserve"><value>An optional VRX component for true geometry ({0}) is missing or damaged. Reinstall VRX to repair it, or use estimated depth.</value></data>
   <data name="ErrorGeometryManifest" xml:space="preserve"><value>VRX could not verify ownership of the temporary game files. The files were left untouched.</value></data>
   <data name="ErrorGeometryX64" xml:space="preserve"><value>Geometry stereo currently supports 64-bit x86 games only. Depth estimate is available for this window.</value></data>
   <data name="ErrorGeometryExistingDll" xml:space="preserve"><value>VRX will not replace an existing game file: {0}. Choose depth estimate, or remove the conflicting wrapper yourself before trying geometry stereo.</value></data>
@@ -355,7 +353,12 @@ You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="GeometryRenderer" xml:space="preserve"><value>Geometry renderer</value></data>
   <data name="TestedSystemShock" xml:space="preserve"><value>Tested true-geometry settings are available for this game. They are used only if you choose true geometry.</value></data>
   <data name="GeometryChooserNotice" xml:space="preserve"><value>Geometry stereo is experimental and may need a game restart and temporary graphics DLLs. Use only games that permit graphics layers; anti-cheat may block them. Review the restart details before proceeding.</value></data>
-  <data name="ErrorVkd3dMissing" xml:space="preserve"><value>The x64 vkd3d-proton runtime is missing. Install d3d12.dll and d3d12core.dll in geometry/vkd3d, or set VRX_VKD3D_DIRECTORY to the local build folder.</value></data>
+  <data name="ErrorVkd3dMissing" xml:space="preserve"><value>The DirectX 12 part of true geometry ({0}) is missing, damaged or not verified in this version of VRX. Reinstall VRX to repair it, or use estimated depth.</value></data>
+  <data name="ErrorUnexpected" xml:space="preserve"><value>Something went wrong in VRX: {0}
+
+VRX is still running. The details were saved in {1}.</value></data>
+  <data name="ErrorUnexpectedTitle" xml:space="preserve"><value>VRX</value></data>
+  <data name="ErrorGeometryNotChosen" xml:space="preserve"><value>True geometry is not chosen for this game. Choose it as the stereo method first.</value></data>
   <data name="ErrorPreviousGeometryStop" xml:space="preserve"><value>The previous game viewer did not stop. Close its VR session, then try Attach / Play again.</value></data>
   <data name="ChooserHistory" xml:space="preserve"><value>Recent games</value></data>
   <data name="HistoryMissing" xml:space="preserve"><value>Game no longer found</value></data>

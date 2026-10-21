@@ -101,11 +101,20 @@ The Steam manifest and shipping executable identify it; a matching window title
 alone does not. Calibration is seeded once and later user edits are preserved.
 Base settings and Apply to all never copy another game's renderer or calibration.
 
-The translated route needs the local Vulkan layer, matching DXVK D3D11/DXGI DLLs,
-and x64 vkd3d-proton `d3d12.dll` and `d3d12core.dll`. The runtime can be placed in
-`geometry/vkd3d`, selected with `VRX_VKD3D_DIRECTORY`, or discovered from the sibling
-`vkd3d-proton/build-win-local/libs` build. The managed launcher reproduces the
-tested single-queue and shader-cache settings. Installed files are owned by hash,
+The translated route needs the Vulkan layer, matching DXVK D3D11/DXGI DLLs, and x64
+vkd3d-proton `d3d12.dll` and `d3d12core.dll`. A release looks only in its own folder:
+`geometry\layer\vrx_xgstereo.dll` and `VkLayer_vrx_xgstereo.json`, `geometry\dxvk\d3d11.dll`
+and `dxgi.dll` (DXVK 2.7.1), `geometry\vkd3d\d3d12.dll` and `d3d12core.dll`. Nothing is
+downloaded. Before use, and again right before a copy into a game folder, every
+third-party DLL is checked against the pinned SHA-256 table in `GeometryRuntime.cs`;
+the layer is checked against the release's `FILES.sha256.txt`. A missing or mismatched
+file refuses geometry with a "reinstall VRX" message (the vkd3d-proton pins are still a
+TODO for the packaging, so a release refuses DirectX 12 geometry until they are set).
+Development builds (DEBUG) also find the bench builds, `VRX_VKD3D_DIRECTORY` and the
+sibling `vkd3d-proton/build-win-local/libs` build. The native DX12 proxy, the
+smoke-test fixture switches, the bench trial record and verbose vkd3d logging exist only
+in development builds. The managed launcher reproduces the tested single-queue and
+shader-cache settings. Installed files are owned by hash,
 never overwrite existing game DLLs, and are removed after the owning process exits.
 
 Renderer/launch settings take effect on restart. The geometry session field is
