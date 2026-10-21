@@ -451,6 +451,14 @@ writes through typed physical pointers, and the real VRX engine handoff.
 
 The native suite covers:
 
+- Mirror review regressions: `mirror_stop_fallback` (a stop zeroes both offsets
+  on the GPU; the cached command buffer renders unshifted; right-eye resources
+  are released), `mirror_srgb_export` (sRGB bytes unchanged, ~124 rather than
+  the decoded ~51), `mirror_address_isolation[_integer]` (push before bind and
+  push data persisting across a pointer-free pipeline; layer log must show no
+  stop), the clamp/HUD-tolerance render check in `geometry_render`, and
+  exited/killed consumer processes in `gpu_transport_leases`.
+
 - SPIR-V validation of baked and live-eye patches, direct/block Position forms,
   shader isolation, HUD handling and malformed input.
 - Device-chain copying, preservation of existing features and unknown-node rejection.
