@@ -49,3 +49,6 @@ bench/dml_docs.html
 *.user
 Thumbs.db
 desktop.ini
+# Promo renders are built locally (promo/README.md), never committed.
+promo/*.mp4
+promo/*poster*

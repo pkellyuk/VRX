@@ -9,6 +9,10 @@ A 40-second promo for VRX, built from the product's own published assets.
 | [`VRX-promo-poster.png`](VRX-promo-poster.png) | A still from the master, for a thumbnail. `-alt*.png` are alternates. |
 | [`SHOTLIST.md`](SHOTLIST.md) | Every shot, its timings, its assets and the source of its claims. Generated, so it cannot drift from the film. |
 
+The rendered videos and posters are not kept in this repository (they are large, and the
+repository is public): build them with the commands below, or ask the maintainer for the
+delivered copies. `.gitignore` keeps them out.
+
 ## Rebuilding it
 
 ```sh
