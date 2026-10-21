@@ -7,8 +7,44 @@
 #include <memory>
 
 static void Check(bool value, const char* reason) { if (!value) throw std::runtime_error(reason); }
-int main()
+// Child process: register as the consumer and claim the published pair, but
+// never queue its release. Either exit normally (objects destroyed) or die
+// without any cleanup, like an engine killed from Task Manager.
+static int ConsumerHoldingLease(const std::wstring& session, bool kill)
 {
+    xg::ComPtr<ID3D12Device> device;
+    if (FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)))) return 2;
+    auto* reader = new xg::GpuReader; // deleted only on the normal path
+    if (!reader->Open(device.Get(), session)) return 4;
+    xg::GpuSlotInfo frame; int slot = -1;
+    if (reader->Status(0, frame, &slot) != xg::PairRead::NewPair || slot < 0) return 5;
+    if (kill) TerminateProcess(GetCurrentProcess(), 3);
+    delete reader;
+    return 3;
+}
+// Starts this executable as a consumer that leaves holding a lease.
+static void RunConsumer(const std::wstring& session, bool kill)
+{
+    wchar_t executable[MAX_PATH]{};
+    Check(GetModuleFileNameW(nullptr, executable, MAX_PATH) != 0, "test executable path");
+    std::wstring command = L"\"" + std::wstring(executable) + (kill ? L"\" --kill-consumer=" : L"\" --exit-consumer=") + session;
+    STARTUPINFOW startup{}; startup.cb = sizeof(startup); PROCESS_INFORMATION process{};
+    Check(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process) != FALSE, "start doomed consumer");
+    const bool finished = WaitForSingleObject(process.hProcess, 20000) == WAIT_OBJECT_0;
+    DWORD code = 0; GetExitCodeProcess(process.hProcess, &code);
+    if (!finished) TerminateProcess(process.hProcess, 1);
+    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    Check(finished && code == 3, "consumer claimed a pair and left without releasing it");
+}
+int main(int argc, char** argv)
+{
+    for (const char* mode : {"--kill-consumer=", "--exit-consumer="})
+    {
+        const std::string prefix(mode);
+        if (argc != 2 || std::string(argv[1]).rfind(prefix, 0) != 0) continue;
+        const std::string name = std::string(argv[1]).substr(prefix.size());
+        return ConsumerHoldingLease(std::wstring(name.begin(), name.end()), prefix == "--kill-consumer=");
+    }
     try
     {
         xg::ComPtr<ID3D12Debug> debug;
@@ -147,7 +183,60 @@ int main()
             consumer.reset();UnmapViewOfFile(metadata);CloseHandle(map);CloseHandle(startupMutex);
             Check(xg::WaitForGpuPair(device.Get(),startupSession,GetCurrentProcessId()+1,consumer,startupFrame,40)!=xg::PairRead::NewPair,"startup retry never accepts a different producer");
         }
-        std::puts("PASS: shared texture leases, GPU completion, nonblocking full ring, strict same-frame metadata, startup generation replacement, closure, stale/size/adapter/owner rejection");
+        Check(xg::GpuConsumerAlive(GetCurrentProcessId(), xg::GpuProcessStartTime(GetCurrentProcess())), "a running consumer is alive");
+        Check(!xg::GpuConsumerAlive(GetCurrentProcessId(), xg::GpuProcessStartTime(GetCurrentProcess()) + 1), "a reused PID with another start time is not the consumer");
+        {
+            // A consumer exits while holding a lease whose release was never
+            // queued: the producer reclaims the slot instead of permanently
+            // running with two of three, and the next consumer can attach.
+            const auto exitSession = session + L"-exit";
+            xg::GpuWriter producer;
+            Check(producer.Create(exitSession, device->GetAdapterLuid(), 18, 10, xg::GpuFrameKind::SameFrame), "create exiting-consumer fixture");
+            uint64_t exitSequence = 0, exitRelease = 0;
+            const int leased = producer.Reserve(exitSequence, exitRelease);
+            Check(leased >= 0 && producer.Publish(uint32_t(leased), exitSequence, 1, 1) &&
+                SUCCEEDED(producer.Objects(uint32_t(leased)).ready->Signal(exitSequence)), "publish pair for the exiting consumer");
+            RunConsumer(exitSession, false);
+            const int second = producer.Reserve(exitSequence, exitRelease), third = producer.Reserve(exitSequence, exitRelease);
+            Check(second >= 0 && third >= 0 && second != leased && third != leased && !producer.Lost(), "free slots stay usable");
+            const int recovered = producer.Reserve(exitSequence, exitRelease);
+            Check(recovered == leased && exitRelease == 0 && producer.ReclaimedConsumers() == 1, "producer reclaims the exited consumer's lease");
+            xg::GpuReader next;
+            Check(next.Open(device.Get(), exitSession), "a new consumer attaches after the exited one");
+            { xg::GpuReader duplicate; Check(!duplicate.Open(device.Get(), exitSession), "a live consumer still excludes others"); }
+        }
+        {
+            // Engine killed (TerminateProcess): Windows abandons the shared
+            // fences it held. The registration of the dead engine no longer
+            // blocks Open, and the producer replaces the lost generation so a
+            // restarted engine receives pairs again without restarting the game.
+            const auto killSession = session + L"-kill";
+            auto producer = std::make_unique<xg::GpuWriter>();
+            Check(producer->Create(killSession, device->GetAdapterLuid(), 18, 10, xg::GpuFrameKind::SameFrame), "create killed-consumer fixture");
+            uint64_t killSequence = 0, killRelease = 0;
+            const int leased = producer->Reserve(killSequence, killRelease);
+            Check(leased >= 0 && producer->Publish(uint32_t(leased), killSequence, 1, 1) &&
+                SUCCEEDED(producer->Objects(uint32_t(leased)).ready->Signal(killSequence)), "publish pair before the engine dies");
+            RunConsumer(killSession, true);
+            {
+                xg::GpuReader stale;
+                Check(stale.Open(device.Get(), killSession) && stale.ReclaimedDeadConsumer(), "killed engine's registration is reclaimed on re-attach");
+                xg::GpuSlotInfo staleFrame;
+                Check(stale.Status(0, staleFrame) == xg::PairRead::Invalid && stale.FenceLost(), "abandoned fences are detected by the consumer");
+            }
+            auto restarted = std::make_unique<xg::GpuReader>(); xg::GpuSlotInfo restartFrame;
+            auto waiting = std::async(std::launch::async, [&] { return xg::WaitForGpuPair(device.Get(), killSession, GetCurrentProcessId(), restarted, restartFrame, 3000); });
+            Check(producer->Reserve(killSequence, killRelease) < 0 && producer->Lost(), "producer detects the abandoned generation");
+            producer->Close();
+            xg::GpuWriter replacement;
+            Check(replacement.Create(killSession, device->GetAdapterLuid(), 18, 10, xg::GpuFrameKind::SameFrame), "producer replaces the lost generation");
+            const int slot = replacement.Reserve(killSequence, killRelease);
+            Check(slot >= 0 && replacement.Publish(uint32_t(slot), killSequence, 9, 9) &&
+                SUCCEEDED(replacement.Objects(uint32_t(slot)).ready->Signal(killSequence)), "publish on the replacement generation");
+            Check(waiting.get() == xg::PairRead::NewPair && restartFrame.leftFrame == 9, "restarted engine receives the replacement generation");
+            restarted.reset(); producer.reset();
+        }
+        std::puts("PASS: exited/killed consumer lease reclaim, abandoned-fence generation replacement and re-attachment; shared texture leases, GPU completion, nonblocking full ring, strict same-frame metadata, startup generation replacement, closure, stale/size/adapter/owner rejection");
         return 0;
     }
     catch (const std::exception& e) { std::fprintf(stderr, "FAIL: %s\n", e.what()); return 1; }

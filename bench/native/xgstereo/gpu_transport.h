@@ -25,7 +25,61 @@ struct GpuHeader {
     GpuSlotInfo slots[GpuSlots]{};
 };
 static_assert(sizeof(GpuSlotInfo) == 40 && sizeof(GpuHeader) == 176, "GPU transport metadata ABI");
+// Consumer identity trailer, stored directly after the unchanged 176-byte v1
+// header (readers of the v1 header, e.g. the desktop, never see it). The PID
+// alone is not an identity: Windows reuses PIDs, so the creation time of the
+// registered consumer process is recorded as well. A mapping created by an
+// older producer has no trailer; its page padding reads as zero, which means
+// "start time unknown" and liveness then falls back to the PID alone.
+struct GpuConsumerLease {
+    uint64_t startTime = 0; // FILETIME of the consumer process creation
+    uint32_t pid = 0, reserved = 0;
+};
+static_assert(sizeof(GpuConsumerLease) == 16, "GPU consumer lease ABI");
+constexpr size_t GpuMappingBytes = sizeof(GpuHeader) + sizeof(GpuConsumerLease);
+// Rate limit for the producer's liveness probe of a consumer that blocks slots.
+constexpr uint64_t GpuConsumerProbeMs = 250;
 inline bool GpuShape(uint32_t w, uint32_t h) { return w >= 2 && h >= 2 && w <= 4096 && h <= 4096; }
+inline uint64_t GpuProcessStartTime(HANDLE process)
+{
+    if (!process) return 0;
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (!GetProcessTimes(process, &created, &exited, &kernel, &user)) return 0;
+    return (uint64_t(created.dwHighDateTime) << 32) | created.dwLowDateTime;
+}
+// True while the registered consumer may still use its leases. A process that
+// cannot be inspected (access denied) is conservatively treated as alive.
+inline bool GpuConsumerAlive(uint32_t pid, uint64_t startTime)
+{
+    if (!pid) return false;
+    const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
+    if (!process) return GetLastError() == ERROR_ACCESS_DENIED;
+    const bool exited = WaitForSingleObject(process, 0) == WAIT_OBJECT_0;
+    const uint64_t actual = GpuProcessStartTime(process);
+    CloseHandle(process);
+    if (exited) return false;
+    // A different creation time means the PID now belongs to another process.
+    return !startTime || !actual || actual == startTime;
+}
+// Metadata mutex held. A consumer whose process has exited can never signal
+// its release fences, so its registration and leases are revoked: its claimed
+// slots become writable again and another consumer may attach. Returns true
+// when a dead consumer was reclaimed.
+inline bool GpuReclaimDeadConsumer(GpuHeader& header, GpuConsumerLease* lease)
+{
+    // A detached consumer (registration cleared) keeps its lease identity in
+    // the trailer until the next consumer attaches: its queued release fences
+    // may still be pending, and they are lost if that process dies.
+    const uint32_t pid = header.consumer ? header.consumer : (lease ? lease->pid : 0);
+    if (!pid) return false;
+    const uint64_t start = lease && lease->pid == pid ? lease->startTime : 0;
+    if (GpuConsumerAlive(pid, start)) return false;
+    if (header.consumer == pid) header.consumer = 0;
+    if (lease) *lease = {};
+    for (auto& slot : header.slots)
+        if (slot.claimed) slot = {}; // the stale pair is not offered again
+    return true;
+}
 inline std::wstring GpuName(const std::wstring& session, const wchar_t* suffix)
 { return L"Local\\VRX.xgstereo." + session + L".gpu" + suffix; }
 inline std::wstring GpuObjectName(const std::wstring& session, const GpuHeader& h, uint32_t slot, const wchar_t* suffix)
@@ -41,6 +95,8 @@ class GpuMapping {
 protected:
     HANDLE mutex_ = nullptr, mapping_ = nullptr;
     GpuHeader* view_ = nullptr;
+    // Trailer after the header (see GpuConsumerLease); null when unmapped.
+    GpuConsumerLease* Lease() const { return view_ ? reinterpret_cast<GpuConsumerLease*>(view_ + 1) : nullptr; }
 public:
     GpuMapping() = default;
     GpuMapping(const GpuMapping&) = delete;
@@ -55,9 +111,18 @@ class GpuWriter : public GpuMapping {
     uint32_t nextSlot_ = 0;
     std::array<uint64_t, GpuSlots> pending_{};
     std::vector<HANDLE> handles_;
+    uint64_t nextConsumerProbe_ = 0;
+    uint64_t reclaimed_ = 0;
+    bool lost_ = false;
 public:
     ~GpuWriter() { Close(); for (HANDLE h : handles_) CloseHandle(h); }
     ID3D12Device* Device() const { return device_.Get(); }
+    // Number of dead consumers whose leases this producer revoked.
+    uint64_t ReclaimedConsumers() const { return reclaimed_; }
+    // True once a shared fence of this generation was abandoned (see Reserve).
+    // The producer must then Close() and Create() a replacement generation;
+    // consumers detect it with ReplacementAvailable()/WaitForGpuPair.
+    bool Lost() const { return lost_; }
     const GpuObjects& Objects(uint32_t slot) const { return objects_[slot]; }
     HANDLE Handle(uint32_t slot, uint32_t object) const { return handles_[slot * 3 + object]; }
     bool Create(const std::wstring& session, LUID adapter, uint32_t w, uint32_t h, GpuFrameKind kind, bool unorderedAccess=false)
@@ -68,10 +133,10 @@ public:
             FAILED(vrx::SystemD3d12Device(gpu.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device_)))) return false;
         mutex_ = CreateMutexW(nullptr, FALSE, GpuName(session, L".lock").c_str());
         if (!mutex_) return false;
-        mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(GpuHeader), GpuName(session, L".frames").c_str());
+        mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, DWORD(GpuMappingBytes), GpuName(session, L".frames").c_str());
         if (!mapping_) return false;
         const bool existing = GetLastError() == ERROR_ALREADY_EXISTS;
-        view_ = static_cast<GpuHeader*>(MapViewOfFile(mapping_, FILE_MAP_WRITE, 0, 0, sizeof(GpuHeader)));
+        view_ = static_cast<GpuHeader*>(MapViewOfFile(mapping_, FILE_MAP_WRITE, 0, 0, GpuMappingBytes));
         if (!view_) return false;
         PairLock lock(mutex_, 1000);
         if (!lock.Ready()) return false;
@@ -99,7 +164,7 @@ public:
                 handles_.push_back(handle);
             }
         }
-        *view_ = header; generation_ = header.generation;
+        *view_ = header; *Lease() = {}; generation_ = header.generation;
         return true;
     }
     // Never wait for a consumer. A leased texture cannot be reused until the
@@ -108,17 +173,33 @@ public:
     {
         PairLock lock(mutex_);
         if (!lock.Ready() || !view_ || !view_->active || !generation_ || view_->generation != generation_ || sequence_ == UINT64_MAX) return -1;
-        for (uint32_t n = 0; n < GpuSlots; ++n)
+        for (int attempt = 0; attempt < 2; ++attempt)
         {
-            const uint32_t i = (nextSlot_ + n) % GpuSlots;
-            auto& s = view_->slots[i];
-            const auto ready = objects_[i].ready->GetCompletedValue(), released = objects_[i].released->GetCompletedValue();
-            if (ready == UINT64_MAX || released == UINT64_MAX) return -1;
-            if (ready < pending_[i] || (s.claimed && released < s.claimed)) continue;
-            releasedValue = s.claimed; sequence = ++sequence_; pending_[i] = sequence;
-            nextSlot_ = (i + 1) % GpuSlots;
-            s = {}; // revoke old metadata before GPU writes can begin
-            return int(i);
+            bool leased = false;
+            for (uint32_t n = 0; n < GpuSlots; ++n)
+            {
+                const uint32_t i = (nextSlot_ + n) % GpuSlots;
+                auto& s = view_->slots[i];
+                const auto ready = objects_[i].ready->GetCompletedValue(), released = objects_[i].released->GetCompletedValue();
+                // Windows completes shared fences with UINT64_MAX when a process
+                // holding them is terminated (e.g. a killed engine). These fences
+                // can never order GPU work again: the generation is lost.
+                if (ready == UINT64_MAX || released == UINT64_MAX) { lost_ = true; return -1; }
+                if (s.claimed && released < s.claimed) leased = true;
+                if (ready < pending_[i] || (s.claimed && released < s.claimed)) continue;
+                releasedValue = s.claimed; sequence = ++sequence_; pending_[i] = sequence;
+                nextSlot_ = (i + 1) % GpuSlots;
+                s = {}; // revoke old metadata before GPU writes can begin
+                return int(i);
+            }
+            // A consumer that died while holding a lease never signals its
+            // release fence. Probe its process (rate limited, never per frame
+            // while healthy) and revoke its leases instead of losing slots.
+            const auto now = GetTickCount64();
+            if (attempt || !leased || now < nextConsumerProbe_) return -1;
+            nextConsumerProbe_ = now + GpuConsumerProbeMs;
+            if (!GpuReclaimDeadConsumer(*view_, Lease())) return -1;
+            ++reclaimed_;
         }
         return -1;
     }
@@ -140,6 +221,8 @@ class GpuReader : public GpuMapping {
     GpuHeader header_{};
     bool tainted_ = false;
     bool registered_ = false;
+    bool reclaimed_ = false;
+    bool fenceLost_ = false;
     int pendingSlot_ = -1;
     uint64_t pendingSequence_ = 0;
 public:
@@ -150,10 +233,18 @@ public:
         mutex_ = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, GpuName(session, L".lock").c_str());
         mapping_ = OpenFileMappingW(FILE_MAP_WRITE, FALSE, GpuName(session, L".frames").c_str());
         if (!mutex_ || !mapping_) return false;
-        view_ = static_cast<GpuHeader*>(MapViewOfFile(mapping_, FILE_MAP_WRITE, 0, 0, sizeof(GpuHeader)));
+        // Map the whole section: an older producer's mapping holds only the
+        // header, and its page padding (zero) stands in for the lease trailer.
+        view_ = static_cast<GpuHeader*>(MapViewOfFile(mapping_, FILE_MAP_WRITE, 0, 0, 0));
         if (!view_) return false;
+        MEMORY_BASIC_INFORMATION region{};
+        if (!VirtualQuery(view_, &region, sizeof(region)) || region.RegionSize < GpuMappingBytes) return false;
         PairLock lock(mutex_, 1000);
-        if (!lock.Ready() || !ValidGpuHeader(*view_) || !view_->active || view_->consumer || (expectedPid && view_->pid != expectedPid)) return false;
+        if (!lock.Ready() || !ValidGpuHeader(*view_) || !view_->active || (expectedPid && view_->pid != expectedPid)) return false;
+        // A registered consumer that has exited (killed engine) no longer
+        // blocks attachment; its leases are revoked so no slot stays lost.
+        if (GpuReclaimDeadConsumer(*view_, Lease())) reclaimed_ = true;
+        if (view_->consumer) return false;
         const LUID luid = device->GetAdapterLuid();
         if (luid.LowPart != view_->adapter.LowPart || luid.HighPart != view_->adapter.HighPart) return false;
         header_ = *view_;
@@ -170,9 +261,15 @@ public:
                 d.DepthOrArraySize != 2 || d.MipLevels != 1 || d.SampleDesc.Count != 1 || d.Format != DXGI_FORMAT_R8G8B8A8_UNORM) return false;
         }
         view_->consumer = GetCurrentProcessId();
+        *Lease() = {GpuProcessStartTime(GetCurrentProcess()), GetCurrentProcessId(), 0};
         registered_ = true;
         return true;
     }
+    // True when Open revoked the registration of a consumer that had exited.
+    bool ReclaimedDeadConsumer() const { return reclaimed_; }
+    // True when this generation's fences were abandoned by a terminated
+    // process; the producer replaces the generation on its next frame.
+    bool FenceLost() const { return fenceLost_; }
     bool ReplacementAvailable() const {
         PairLock lock(mutex_);
         return lock.Ready() && !tainted_ && view_ && view_->active && ValidGpuHeader(*view_) &&
@@ -185,9 +282,16 @@ public:
         // Dropping a candidate after a Busy status must not strand its consumer
         // registration. Cleanup is rare; allow a bounded metadata-lock wait.
         PairLock lock(mutex_,1000);
-        if (registered_ && lock.Ready() && view_ && view_->generation == header_.generation && view_->pid == header_.pid && view_->consumer == GetCurrentProcessId()) view_->consumer = 0;
+        if (registered_ && lock.Ready() && view_ && view_->generation == header_.generation && view_->pid == header_.pid && view_->consumer == GetCurrentProcessId())
+        {
+            // The lease identity stays until the next consumer attaches, so
+            // leases still awaiting this process's release fences can be
+            // revoked if it exits before they signal.
+            view_->consumer = 0;
+        }
         // Leases deliberately survive disconnect. Only completed GPU signals
-        // permit reuse, including when a reader dies during a submission.
+        // permit reuse while the reader process lives; once it has exited,
+        // GpuReclaimDeadConsumer revokes them (see GpuWriter::Reserve/Open).
     }
     PairRead Status(uint64_t previous, GpuSlotInfo& frame, int* slot = nullptr)
     {
@@ -203,7 +307,7 @@ public:
         {
             const auto& s = view_->slots[i];
             const auto ready = objects_[i].ready->GetCompletedValue();
-            if (ready == UINT64_MAX) return PairRead::Invalid;
+            if (ready == UINT64_MAX) { fenceLost_ = true; return PairRead::Invalid; }
             if (!s.sequence || ready < s.sequence || s.claimed || (best >= 0 && s.sequence <= view_->slots[best].sequence)) continue;
             best = int(i);
         }
@@ -270,7 +374,9 @@ inline PairRead WaitForGpuPair(ID3D12Device* device,const std::wstring& session,
         if(reader) {
             status=reader->Status(0,frame);
             if(status==PairRead::NewPair) return status;
-            if(status==PairRead::Invalid && !reader->ReplacementAvailable()) return status;
+            // Abandoned fences (an earlier consumer was killed) are replaced by
+            // the producer on its next frame: wait for that generation.
+            if(status==PairRead::Invalid && !reader->ReplacementAvailable() && !reader->FenceLost()) return status;
             if(status==PairRead::Closed || status==PairRead::Invalid) reader.reset();
         }
         Sleep(5);
