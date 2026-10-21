@@ -14,13 +14,20 @@ namespace VRX.Desktop;
 // restart action can close a game. Auto-attach never restarts a foreground app.
 public static class GeometryLaunch
 {
-    public sealed record InstalledFile(string Path, string SHA256);
+    // Temporary: the copy being made next to the target. Recorded before the copy starts, so
+    // a crash at any point leaves only files the manifest names (see InstallFiles).
+    public sealed record InstalledFile(string Path, string SHA256, string? Temporary = null);
     internal sealed record LiveTuningState(int Version,int Pid,float Separation,float Convergence,ulong Revision,bool Active);
     internal enum TuningUpdate { NextLaunch, RestartRequired, Pending, Applied }
     public sealed record Run(int Pid, long StartTicks, string Executable, string Session, string Stereo = "mirror", string Backend = "", string LaunchExecutable = "");
     public sealed record Plan(RunningApp App, long StartTicks, string Backend, string LayerDirectory,
         string[] Arguments, string WorkingDirectory, string SteamAppId, string Session, string? DxvkDirectory, string[] OwnedRuns, string? Vkd3dDirectory = null);
     private static string RunsRoot(string dataRoot) => Path.Combine(dataRoot,"geometry","runs");
+    // Retired run folders kept for their logs; older ones are deleted (PruneRuns).
+    internal const int KeptRuns = 5;
+    // A game's persistent DXVK / vkd3d-proton shader caches, so a launch does not recompile
+    // everything: <data>\geometry\cache\<session>. Runs keep only their logs and tuning.
+    internal static string CacheFolder(string dataRoot,string session) => Path.Combine(dataRoot,"geometry","cache",session);
     private static string Hash(string path) { using var f=File.OpenRead(path); return Convert.ToHexString(SHA256.HashData(f)); }
     private sealed class FileGate : IDisposable {
         private readonly Mutex mutex;
@@ -48,7 +55,7 @@ public static class GeometryLaunch
         if (Directory.Exists(native)) foreach(var d in Directory.GetDirectories(native).Where(d => Path.GetFileName(d).StartsWith("native-") || Path.GetFileName(d).StartsWith("vkd3d-"))) yield return d;
 #endif
     }
-    private static Run? ReadRun(string folder) {
+    internal static Run? ReadRun(string folder) {
         try {
             var run = JsonSerializer.Deserialize<Run>(File.ReadAllText(Path.Combine(folder,"run.json")));
             if (run is { Backend: "" } && Path.GetFileName(folder).StartsWith("vkd3d-",StringComparison.OrdinalIgnoreCase)) run = run with { Backend = StereoPaths.Vkd3d };
@@ -205,29 +212,94 @@ public static class GeometryLaunch
         var files=JsonSerializer.Deserialize<InstalledFile[]>(File.ReadAllText(Path.Combine(folder,"installed.json"))) ?? [];
         string parent=Path.GetDirectoryName(Path.GetFullPath(run.Executable))!;
         var names=InstalledNames(run.Backend);
-        if(files.Any(f=>!Same(Path.GetDirectoryName(f.Path)!,parent) || !names.Contains(Path.GetFileName(f.Path),StringComparer.OrdinalIgnoreCase))) throw new InvalidDataException(Loc.Get("ErrorGeometryManifest"));
+        bool Owned(InstalledFile f) => f.Path!=null && Same(Path.GetDirectoryName(f.Path)!,parent) && names.Contains(Path.GetFileName(f.Path),StringComparer.OrdinalIgnoreCase) &&
+            (f.Temporary==null || (Same(Path.GetDirectoryName(f.Temporary)!,parent) && Path.GetFileName(f.Temporary).StartsWith(Path.GetFileName(f.Path)+".vrx-",StringComparison.OrdinalIgnoreCase) &&
+                f.Temporary.EndsWith(".tmp",StringComparison.OrdinalIgnoreCase)));
+        if(files.Any(f=>f==null || !Owned(f))) throw new InvalidDataException(Loc.Get("ErrorGeometryManifest"));
         return files;
     }
+    // True when the run's own process, or any process started from the game's folder, is
+    // running: the DLLs sit next to the executable, so any program there (a Steam DRM relaunch
+    // of the same executable, a helper) may have them loaded.
+    internal static bool GameFolderBusy(Run run) {
+        ArgumentNullException.ThrowIfNull(run);
+        if(IsRunning(run)) return true;
+        string folder=Path.GetDirectoryName(Path.GetFullPath(run.Executable))!;
+        foreach(var p in Process.GetProcesses()) {
+            using(p) {
+                if(p.Id==Environment.ProcessId) continue;
+                string path;
+                try { path=RunningApps.ProcessPath(p.Id); } catch(Exception ex) when(ex is InvalidOperationException or System.ComponentModel.Win32Exception) { continue; }
+                if(path.Length>0 && Same(Path.GetDirectoryName(path)!,folder)) { Debug.WriteLine($"[Geometry cleanup] {path} (pid {p.Id}) still runs in the game's folder"); return true; }
+            }
+        }
+        return false;
+    }
+    // One owned file: its unfinished copy, then the file itself only if it is still exactly
+    // what VRX installed (by hash). A file changed by anyone else is left alone.
+    private static void RemoveOwned(InstalledFile file,bool moved=true) {
+        if(file.Temporary!=null && File.Exists(file.Temporary)) { Debug.WriteLine($"[Geometry cleanup] removing unfinished copy {file.Temporary}"); File.Delete(file.Temporary); }
+        if(!moved || !File.Exists(file.Path)) return;
+        if(!Hash(file.Path).Equals(file.SHA256,StringComparison.OrdinalIgnoreCase)) { Debug.WriteLine($"[Geometry cleanup] {file.Path} changed since it was installed; left alone"); return; }
+        File.Delete(file.Path);
+        Debug.WriteLine($"[Geometry cleanup] removed {file.Path}");
+    }
+    // True once a run's files are all removed (an empty manifest; see Cleanup).
+    internal static bool Retired(string folder) {
+        try {
+            string manifest=Path.Combine(folder,"installed.json");
+            return File.Exists(manifest) && (JsonSerializer.Deserialize<InstalledFile[]>(File.ReadAllText(manifest))?.Length ?? 0)==0;
+        } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException) { Debug.WriteLine("[Geometry cleanup] "+ex.Message); return false; }
+    }
     public static void Cleanup(string folder) {
-        var run=ReadRun(folder); if(run==null || IsRunning(run)) return;
+        Debug.WriteLine($"[Geometry cleanup] Cleanup enter: {folder}");
+        var run=ReadRun(folder); if(run==null || IsRunning(run)) { Debug.WriteLine("[Geometry cleanup] Cleanup exit: no run, or it is still running"); return; }
+        if(Retired(folder)) { Debug.WriteLine("[Geometry cleanup] Cleanup exit: already retired"); return; }
         try {
             using var gate=new FileGate(run.Executable);
-            if(IsRunning(run)) return;
-            // A later launch of the same executable can still have these files loaded.
-            foreach(var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(run.Executable))) {
-                using(p) { if(Same(RunningApps.ProcessPath(p.Id),run.Executable)) return; }
-            }
-            foreach(var file in Files(folder,run)) if(File.Exists(file.Path) && Hash(file.Path).Equals(file.SHA256,StringComparison.OrdinalIgnoreCase)) File.Delete(file.Path);
+            // A later launch of the same executable (or another program in its folder) can
+            // still have these files loaded.
+            if(GameFolderBusy(run)) { Debug.WriteLine("[Geometry cleanup] Cleanup exit: the game's folder is in use"); return; }
+            foreach(var file in Files(folder,run)) RemoveOwned(file);
             // Retire ownership permanently. A delayed observer of an older run
             // must not remove identical DLLs installed by the next launch.
             ProfileStore.AtomicWrite(Path.Combine(folder,"installed.json"),"[]");
-        } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException) { Debug.WriteLine("[Geometry cleanup] "+ex.Message); }
+            Debug.WriteLine("[Geometry cleanup] Cleanup exit: retired");
+        } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidDataException or NotSupportedException) {
+            // An unverifiable manifest (ErrorGeometryManifest) leaves every file untouched.
+            Debug.WriteLine("[Geometry cleanup] "+ex.Message);
+        }
     }
+    // At startup (a second safety net behind each run's guard process): retire every run whose
+    // game has gone, then delete old retired run folders.
     public static void Recover(string dataRoot) {
         foreach(var folder in RunFolders(dataRoot)) Cleanup(folder);
+        PruneRuns(dataRoot);
     }
     internal static void RecoverOwned(string dataRoot) {
         foreach(var folder in RunFolders(dataRoot,false)) Cleanup(folder);
+    }
+    // Deletes retired run folders (logs only) beyond the newest `keep`. Never a folder whose
+    // game still runs, whose files are not all removed, or whose guard is still waiting.
+    internal static int PruneRuns(string dataRoot,int keep=KeptRuns) {
+        ArgumentNullException.ThrowIfNull(dataRoot);
+        string runs=RunsRoot(dataRoot);
+        if(!Directory.Exists(runs)) return 0;
+        var retired=new List<DirectoryInfo>();
+        foreach(var folder in new DirectoryInfo(runs).GetDirectories()) {
+            var run=ReadRun(folder.FullName);
+            if(run!=null && IsRunning(run)) continue;
+            if(!Retired(folder.FullName)) continue;
+            if(GeometryGuard.Waiting(folder.FullName)) continue;
+            retired.Add(folder);
+        }
+        int deleted=0;
+        foreach(var folder in retired.OrderByDescending(f=>f.LastWriteTimeUtc).Skip(Math.Max(0,keep))) {
+            try { folder.Delete(true); deleted++; }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException) { Debug.WriteLine($"[Geometry cleanup] could not delete {folder.FullName}: {ex.Message}"); }
+        }
+        Debug.WriteLine($"[Geometry cleanup] PruneRuns: {retired.Count} retired, {deleted} deleted, keep {keep}");
+        return deleted;
     }
     public static Task<Plan> Prepare(RunningApp app,Profile profile,string dataRoot,Action<string> status,CancellationToken token,string[]? launchArguments=null) =>
         PrepareWithLayer(app,profile,dataRoot,status,token,
@@ -270,9 +342,15 @@ public static class GeometryLaunch
     }
     // verifyPins: production launches check every source DLL against GeometryRuntime's pinned
     // hashes right before copying it (the smoke test installs harmless fixture files).
+    // Intent first: each file is added to installed.json (with its temporary name) before the
+    // copy starts, and marked moved afterwards, so a crash at any moment leaves no DLL in the
+    // game's folder that the manifest does not name.
     internal static List<InstalledFile> InstallFiles(string? sourceFolder,string executable,string runRoot,string backend=StereoPaths.Dxvk,string? vkd3dFolder=null,bool verifyPins=false) {
+        Debug.WriteLine($"[Geometry install] InstallFiles enter: {backend} into {Path.GetDirectoryName(executable)}, run {runRoot}");
         using var gate=new FileGate(executable);
         var installed=new List<InstalledFile>();
+        string manifest=Path.Combine(runRoot,"installed.json");
+        void Record() => ProfileStore.AtomicWrite(manifest,JsonSerializer.Serialize(installed));
         try {
             if(sourceFolder!=null) foreach(string name in InstalledNames(backend)) {
                 bool translator=backend==StereoPaths.Vkd3d && name is "d3d12.dll" or "d3d12core.dll";
@@ -280,20 +358,27 @@ public static class GeometryLaunch
                 if(verifyPins && backend!=StereoPaths.Dx12) GeometryRuntime.VerifySource(translator?"vkd3d":"dxvk",name,source);
                 string temporary=target+".vrx-"+Guid.NewGuid().ToString("N")+".tmp";
                 string hash=Hash(source);
-                try { File.Copy(source,temporary,false); if(!Hash(temporary).Equals(hash,StringComparison.Ordinal)) throw new IOException(Loc.Get("ErrorGeometrySourceChanged")); File.Move(temporary,target,false); }
-                finally { if(File.Exists(temporary)) File.Delete(temporary); }
-                installed.Add(new InstalledFile(target,hash));
-                ProfileStore.AtomicWrite(Path.Combine(runRoot,"installed.json"),JsonSerializer.Serialize(installed));
+                installed.Add(new InstalledFile(target,hash,temporary)); Record();
+                File.Copy(source,temporary,false);
+                if(!Hash(temporary).Equals(hash,StringComparison.Ordinal)) throw new IOException(Loc.Get("ErrorGeometrySourceChanged"));
+                File.Move(temporary,target,false);
+                installed[^1]=installed[^1] with {Temporary=null}; Record();
+                Debug.WriteLine($"[Geometry install] installed {target} ({hash[..12]})");
             }
-            if(installed.Count==0) ProfileStore.AtomicWrite(Path.Combine(runRoot,"installed.json"),"[]");
+            if(installed.Count==0) ProfileStore.AtomicWrite(manifest,"[]");
+            Debug.WriteLine($"[Geometry install] InstallFiles exit: {installed.Count} file(s)");
             return installed;
-        } catch {
-            foreach(var file in installed) if(File.Exists(file.Path) && Hash(file.Path).Equals(file.SHA256,StringComparison.Ordinal)) File.Delete(file.Path);
-            ProfileStore.AtomicWrite(Path.Combine(runRoot,"installed.json"),"[]");
+        } catch(Exception ex) {
+            Debug.WriteLine($"[Geometry install] InstallFiles failed ({ex.Message}); rolling back {installed.Count} file(s)");
+            // A file whose move did not finish is not ours to delete (only its temporary is).
+            foreach(var file in installed) RemoveOwned(file,moved:file.Temporary==null);
+            ProfileStore.AtomicWrite(manifest,"[]");
             throw;
         }
     }
-    internal static void ConfigureEnvironment(ProcessStartInfo start,Plan plan,Profile profile,string runRoot) {
+    // cacheFolder: the game's persistent shader caches (CacheFolder); the run folder by default.
+    internal static void ConfigureEnvironment(ProcessStartInfo start,Plan plan,Profile profile,string runRoot,string? cacheFolder=null) {
+        cacheFolder ??= runRoot;
         if(profile.GeometryProfileId==TestedStereoProfiles.SystemShock) {
             var compatibility=(start.Environment.TryGetValue("__COMPAT_LAYER",out var previous)?previous ?? "":"")
                 .Split(' ',StringSplitOptions.RemoveEmptyEntries)
@@ -327,7 +412,7 @@ public static class GeometryLaunch
             start.Environment["VRX_XG_EYE"]="mirror";start.Environment["VRX_XG_TRANSPORT"]="gpu";
             start.Environment["VRX_XG_SHIFT"]=profile.GeometrySeparation.ToString("R",CultureInfo.InvariantCulture);
             start.Environment["VRX_XG_TUNING"]=Path.Combine(runRoot,"stereo.txt");start.Environment["VRX_XG_LOG"]=Path.Combine(runRoot,"layer.log");
-            start.Environment["DXVK_LOG_PATH"]=runRoot;start.Environment["DXVK_CONFIG_FILE"]=Path.Combine(runRoot,"dxvk.conf");start.Environment["DXVK_STATE_CACHE_PATH"]=runRoot;
+            start.Environment["DXVK_LOG_PATH"]=runRoot;start.Environment["DXVK_CONFIG_FILE"]=Path.Combine(runRoot,"dxvk.conf");start.Environment["DXVK_STATE_CACHE_PATH"]=cacheFolder;
         }
         if(plan.Backend==StereoPaths.Vkd3d) {
             string config=start.Environment.TryGetValue("VKD3D_CONFIG",out var inheritedConfig) ? inheritedConfig ?? "" : "";
@@ -339,7 +424,7 @@ public static class GeometryLaunch
             // Verbose translator logging is a development aid only.
             start.Environment["VKD3D_DEBUG"]="info";
 #endif
-            start.Environment["VKD3D_SHADER_CACHE_PATH"]=runRoot;
+            start.Environment["VKD3D_SHADER_CACHE_PATH"]=cacheFolder;
         }
         if(plan.SteamAppId.Length>0)start.Environment["SteamAppId"]=start.Environment["SteamGameId"]=plan.SteamAppId;
     }
@@ -384,11 +469,16 @@ public static class GeometryLaunch
                 if(Same(RunningApps.ProcessPath(process.Id),plan.App.FullPath)) throw new InvalidOperationException(Loc.Get("ErrorHistoryAlreadyRunning"));
         }
         foreach(var folder in plan.OwnedRuns) Cleanup(folder);
+        PruneRuns(dataRoot);
         string runRoot=Path.Combine(RunsRoot(dataRoot),Guid.NewGuid().ToString("N")); Directory.CreateDirectory(runRoot);
+        string cache=CacheFolder(dataRoot,plan.Session); Directory.CreateDirectory(cache);
         var installed=new List<InstalledFile>();
         // A zero PID records ownership even when startup fails before a child exists.
         var run=new Run(0,0,plan.App.FullPath,plan.Session,Backend:plan.Backend);
         ProfileStore.AtomicWrite(Path.Combine(runRoot,"run.json"),JsonSerializer.Serialize(run));
+        // A separate guard process removes this run's files once the game has gone, even if
+        // VRX itself is closed or crashes meanwhile. Started before anything is installed.
+        GeometryGuard.Start(runRoot);
         Process? bootstrap=null;
         try {
             using(new FileGate(plan.App.FullPath)) {
@@ -400,7 +490,7 @@ public static class GeometryLaunch
             }
             var start=new ProcessStartInfo(steamExecutable ?? plan.App.FullPath){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=plan.WorkingDirectory};
             foreach(string arg in plan.Arguments) start.ArgumentList.Add(arg);
-            ConfigureEnvironment(start,plan,profile,runRoot);
+            ConfigureEnvironment(start,plan,profile,runRoot,cache);
             token.ThrowIfCancellationRequested();
             var child=Process.Start(start) ?? throw new InvalidOperationException(Loc.Get("ErrorGeometryLaunch"));
             bool launcher=!Same(start.FileName,plan.App.FullPath);
@@ -426,10 +516,21 @@ public static class GeometryLaunch
                 _=Observe(game,runRoot);
                 bootstrap.Dispose(); bootstrap=null;
             }
-            status(Loc.Get("StatusGeometryWaiting"));
-            var deadline=Environment.TickCount64+45000;
-            while(Environment.TickCount64<deadline && IsRunning(run)) {
+            // The first 3D frame can take a while (shader compilation, a loading screen): wait up
+            // to a minute, showing the time left.
+            long deadline=Environment.TickCount64+FirstFrameWait;
+            while(Environment.TickCount64<deadline) {
                 token.ThrowIfCancellationRequested();
+                status(Loc.Format("StatusGeometryWaiting",Math.Max(0,(deadline-Environment.TickCount64)/1000)));
+                if(!IsRunning(run)) {
+                    // A Steam DRM stub restarts the same executable and exits: follow it.
+                    if(FindRelaunch(run) is not {} relaunch) break;
+                    Debug.WriteLine($"[Geometry launch] pid {run.Pid} exited; following relaunch pid {relaunch.Id}");
+                    run=run with {Pid=relaunch.Id,StartTicks=relaunch.StartTime.ToUniversalTime().Ticks};
+                    ProfileStore.AtomicWrite(Path.Combine(runRoot,"run.json"),JsonSerializer.Serialize(run));
+                    _=Observe(relaunch,runRoot);
+                    continue;
+                }
 #if DEBUG
                 NativeStereoStatus? native=plan.Backend==StereoPaths.Dx12?NativeStereoStatus.Read(run.Session,run.Pid):null;
                 if(native!=null && (native.Stops>0 || native.HookFailures>0 || !native.Mirroring)) {
@@ -446,8 +547,25 @@ public static class GeometryLaunch
                 await Task.Delay(150,token);
             }
             throw new InvalidOperationException(Loc.Format("ErrorGeometryNoStream",runRoot));
-        } catch { if(bootstrap!=null) _=Observe(bootstrap,runRoot); if(run.Pid==0) { foreach(var file in installed) if(File.Exists(file.Path)&&Hash(file.Path).Equals(file.SHA256,StringComparison.Ordinal)) File.Delete(file.Path); } throw; }
+        } catch {
+            if(bootstrap!=null) _=Observe(bootstrap,runRoot);
+            if(run.Pid==0) { foreach(var file in installed) RemoveOwned(file); ProfileStore.AtomicWrite(Path.Combine(runRoot,"installed.json"),"[]"); }
+            throw;
+        }
     }
+    internal const int FirstFrameWait=60000;
+    // The same executable started again after `run` (a Steam DRM stub relaunching itself).
+    internal static Process? FindRelaunch(Run run) {
+        ArgumentNullException.ThrowIfNull(run);
+        foreach(var candidate in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(run.Executable))) {
+            try {
+                if(candidate.Id!=run.Pid && !candidate.HasExited && candidate.StartTime.ToUniversalTime().Ticks>=run.StartTicks && Same(RunningApps.ProcessPath(candidate.Id),run.Executable)) return candidate;
+            } catch(Exception ex) when(ex is InvalidOperationException or System.ComponentModel.Win32Exception) { Debug.WriteLine("[Geometry launch] "+ex.Message); }
+            candidate.Dispose();
+        }
+        return null;
+    }
+    // The in-process fast path; the run's guard process and Recover at startup back it up.
     private static async Task Observe(Process child,string folder) {
         try { await child.WaitForExitAsync(); Cleanup(folder); }
         catch(Exception ex) { Debug.WriteLine("[Geometry run] "+ex.Message); }

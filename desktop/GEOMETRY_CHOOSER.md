@@ -117,6 +117,20 @@ in development builds. The managed launcher reproduces the tested single-queue a
 shader-cache settings. Installed files are owned by hash,
 never overwrite existing game DLLs, and are removed after the owning process exits.
 
+Cleanup does not depend on VRX staying open. Each launch writes its run record and
+starts a small detached guard (`VRX.Desktop.exe --geometry-guard=<run folder>`, no
+window) before anything is copied. Each DLL is added to `installed.json` (with the
+name of its temporary copy) before the copy starts, so a crash at any moment leaves
+only files the manifest names. The guard waits until neither the game nor anything
+else started from the game's folder has run for 10 seconds (a Steam DRM stub that
+restarts the same executable is followed, both by the guard and by the launch's
+first-frame wait), then removes exactly the recorded files that are still unchanged
+by hash. VRX's in-process observer and `Recover` at startup remain as further safety
+nets; nothing is ever injected into a process. Retired run folders (logs only) are
+pruned to the newest five, never one still owning files or watched by a guard.
+DXVK and vkd3d-proton shader caches persist per game in `geometry\cache\<session>`,
+so a launch does not recompile everything.
+
 Renderer/launch settings take effect on restart. The geometry session field is
 an advanced connection name managed by VRX, not a game title or launch command.
 The desktop separates estimated-depth controls into **3D & Depth Estimation**

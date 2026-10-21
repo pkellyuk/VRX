@@ -9,6 +9,63 @@ namespace VRX.Desktop;
 // never closes a real game, starts a renderer, or installs a real game DLL.
 internal static class GeometryLaunchTests
 {
+    // Crash-proof cleanup: the manifest's intent records, the guard (in process and as the real
+    // detached --geometry-guard process) and run-folder pruning. Fixture files only.
+    private static async Task GuardAndCleanupChecks(string root,string exe,string sources,Action<bool,string> Check)
+    {
+        System.Diagnostics.Debug.WriteLine("[Smoke] GuardAndCleanupChecks enter");
+        string game=Path.GetDirectoryName(exe)!;
+        string data=Path.Combine(root,"guard-data"), runs=Path.Combine(data,"geometry","runs");
+        string NewRun(GeometryLaunch.Run run) {
+            string folder=Path.Combine(runs,Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder,"run.json"),JsonSerializer.Serialize(run)); return folder;
+        }
+        // A crash between recording the intent and finishing the copy: the manifest names the
+        // temporary copy and the target, and cleanup removes both (the target only by hash).
+        string crashed=NewRun(new GeometryLaunch.Run(0,0,exe,"test"));
+        string temporary=Path.Combine(game,"d3d11.dll.vrx-"+Guid.NewGuid().ToString("N")+".tmp");
+        File.Copy(Path.Combine(sources,"d3d11.dll"),temporary);
+        File.Copy(Path.Combine(sources,"dxgi.dll"),Path.Combine(game,"dxgi.dll"));
+        string Sha(string file)=>GeometryRuntime.Hash(file);
+        File.WriteAllText(Path.Combine(crashed,"installed.json"),JsonSerializer.Serialize(new[]{
+            new GeometryLaunch.InstalledFile(Path.Combine(game,"d3d11.dll"),Sha(Path.Combine(sources,"d3d11.dll")),temporary),
+            new GeometryLaunch.InstalledFile(Path.Combine(game,"dxgi.dll"),Sha(Path.Combine(sources,"dxgi.dll")))}));
+        GeometryLaunch.Cleanup(crashed);
+        Check(!File.Exists(temporary) && !File.Exists(Path.Combine(game,"dxgi.dll")) && GeometryLaunch.Retired(crashed),"files recorded before a crash are all removed, including an unfinished copy");
+        string escape=NewRun(new GeometryLaunch.Run(0,0,exe,"test"));
+        File.WriteAllText(Path.Combine(escape,"installed.json"),JsonSerializer.Serialize(new[]{new GeometryLaunch.InstalledFile(Path.Combine(game,"d3d11.dll"),"00",Path.Combine(root,"elsewhere.tmp"))}));
+        GeometryLaunch.Cleanup(escape);
+        Check(!GeometryLaunch.Retired(escape),"a manifest naming a file outside the game's folder is refused");
+        // The guard, in this process with no waiting: the game never started, so it cleans.
+        string guarded=NewRun(new GeometryLaunch.Run(0,0,exe,"test"));
+        GeometryLaunch.InstallFiles(sources,exe,guarded);
+        Check(GeometryGuard.ValidRunFolder(guarded) && !GeometryGuard.ValidRunFolder(game) && await GeometryGuard.Run(game)==2,"the guard accepts only geometry run folders");
+        Check(await GeometryGuard.Run(guarded,TimeSpan.Zero,TimeSpan.Zero,TimeSpan.FromMilliseconds(20),CancellationToken.None)==0 &&
+            !File.Exists(Path.Combine(game,"d3d11.dll")) && GeometryLaunch.Retired(guarded) && !GeometryGuard.Waiting(guarded),"the guard removes a run's files once the game has gone");
+        // The real detached guard process: a run whose game has already exited is cleaned
+        // after the relaunch grace, with no VRX window and independent of this process.
+        string detached=NewRun(new GeometryLaunch.Run(int.MaxValue-7,1,exe,"test"));
+        GeometryLaunch.InstallFiles(sources,exe,detached);
+        var guardStart=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=false,CreateNoWindow=true};
+        guardStart.ArgumentList.Add(GeometryGuard.Switch+detached);
+        using(var guard=Process.Start(guardStart)!) {
+            await guard.WaitForExitAsync().WaitAsync(GeometryGuard.RelaunchGrace+TimeSpan.FromSeconds(30));
+            Check(guard.ExitCode==0 && !File.Exists(Path.Combine(game,"d3d11.dll")) && !File.Exists(Path.Combine(game,"dxgi.dll")) && GeometryLaunch.Retired(detached),"the detached --geometry-guard process cleans up after the game exits");
+        }
+        // Pruning: retired folders beyond the newest few go; a folder still owning files stays.
+        for(int i=0;i<GeometryLaunch.KeptRuns+3;++i) {
+            string old=NewRun(new GeometryLaunch.Run(0,0,exe,"test")); File.WriteAllText(Path.Combine(old,"installed.json"),"[]");
+            Directory.SetLastWriteTimeUtc(old,DateTime.UtcNow.AddMinutes(-60+i));
+        }
+        string owning=NewRun(new GeometryLaunch.Run(0,0,exe,"test"));
+        File.WriteAllText(Path.Combine(owning,"installed.json"),JsonSerializer.Serialize(new[]{new GeometryLaunch.InstalledFile(Path.Combine(game,"d3d11.dll"),"00")}));
+        Directory.SetLastWriteTimeUtc(owning,DateTime.UtcNow.AddDays(-30));
+        int before=Directory.GetDirectories(runs).Length;
+        GeometryLaunch.PruneRuns(data);
+        Check(Directory.Exists(owning) && Directory.GetDirectories(runs).Length==GeometryLaunch.KeptRuns+2 && before>GeometryLaunch.KeptRuns+2,"old retired run folders are deleted, keeping the newest few and any folder still owning files");
+        System.Diagnostics.Debug.WriteLine("[Smoke] GuardAndCleanupChecks exit");
+    }
+
     public static async Task Run(string output)
     {
         static void Check(bool value,string reason) { if(!value) throw new Exception("Geometry launch: "+reason); }
@@ -98,7 +155,13 @@ internal static class GeometryLaunchTests
         var translated=new GeometryLaunch.Plan(new RunningApp(1,"fixture",exe,[],null),0,StereoPaths.Vkd3d,root,[],root,"482400","fixture",root,[],root);
         var start=new ProcessStartInfo(exe); start.Environment["VKD3D_CONFIG"]="existing";
         start.Environment["__COMPAT_LAYER"]="RUNASINVOKER DPIUNAWARE";
-        GeometryLaunch.ConfigureEnvironment(start,translated,tested,root);
+        string shaderCache=GeometryLaunch.CacheFolder(root,"fixture");
+        GeometryLaunch.ConfigureEnvironment(start,translated,tested,root,shaderCache);
+        Check(start.Environment["VKD3D_SHADER_CACHE_PATH"]==shaderCache && start.Environment["DXVK_STATE_CACHE_PATH"]==shaderCache && start.Environment["VKD3D_LOG_FILE"]!.StartsWith(root,StringComparison.OrdinalIgnoreCase) &&
+            shaderCache.EndsWith(Path.Combine("geometry","cache","fixture"),StringComparison.OrdinalIgnoreCase),"shader caches persist per game while logs stay in the run folder");
+#if !DEBUG
+        Check(!start.Environment.ContainsKey("VKD3D_DEBUG"),"a release never turns on verbose vkd3d logging");
+#endif
         Check(start.Environment["__COMPAT_LAYER"]!.Contains("HIGHDPIAWARE") && start.Environment["__COMPAT_LAYER"]!.Contains("RUNASINVOKER") &&
             !start.Environment["__COMPAT_LAYER"]!.Contains("DPIUNAWARE"),"the tested game uses native pixels on a scaled desktop while preserving other compatibility options");
         Check(start.Environment["VKD3D_CONFIG"]!.Contains("single_queue") && start.Environment["VKD3D_CONFIG"]!.Contains("existing") &&
@@ -131,6 +194,8 @@ internal static class GeometryLaunchTests
         GeometryLaunch.Cleanup(runRoot);
         Check(File.Exists(Path.Combine(Path.GetDirectoryName(exe)!,"d3d11.dll")) && File.Exists(Path.Combine(Path.GetDirectoryName(exe)!,"dxgi.dll")),"a delayed old cleanup cannot remove the next run's identical DLLs");
         GeometryLaunch.Cleanup(nextRun);
+        Check(!Directory.GetFiles(Path.GetDirectoryName(exe)!,"*.vrx-*.tmp").Any(),"a rolled-back install leaves no temporary copies");
+        await GuardAndCleanupChecks(root,exe,sources,Check);
         string translator=Path.Combine(root,"translator"); Directory.CreateDirectory(translator);
         foreach(string name in new[]{"d3d12.dll","d3d12core.dll"}) File.WriteAllText(Path.Combine(translator,name),"translator fixture; never loaded");
         string translatedRun=Path.Combine(root,"translated-run"); Directory.CreateDirectory(translatedRun);
@@ -179,6 +244,7 @@ internal static class GeometryLaunchTests
 #if DEBUG
         await NativeGeometryLaunchTests.Run(root,app);
 #endif
+        File.WriteAllText(Path.Combine(output,"geometry-guard-pass.txt"),"PASS: install records intent before copying; crash-left temporary copies and DLLs removed by hash; detached --geometry-guard process cleans after the game's folder is quiet; invalid guard folders refused; retired run folders pruned to the newest few, never one in use; per-game shader cache.");
         File.WriteAllText(Path.Combine(output,"geometry-launch-pass.txt"),"PASS: profile migration and per-game persistence; base/apply-all isolation; literal Windows arguments; API switch handling; scoped DLL install/rollback and hash-preserving cleanup; Steam manifest resolution; fresh same-frame stream owner validation; real command-line preflight without restarting a game.");
     }
 }

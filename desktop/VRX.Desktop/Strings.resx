@@ -329,7 +329,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorGeometryExistingDll" xml:space="preserve"><value>VRX will not replace an existing game file: {0}. Choose depth estimate, or remove the conflicting wrapper yourself before trying geometry stereo.</value></data>
   <data name="ErrorGeometryClose" xml:space="preserve"><value>The game did not close normally. Finish saving or dismiss its quit dialog, then try again. VRX will not force it to close.</value></data>
   <data name="ErrorGeometryLaunch" xml:space="preserve"><value>The geometry game process could not be started.</value></data>
-  <data name="StatusGeometryWaiting" xml:space="preserve"><value>Waiting for the game to produce same-frame stereo…</value></data>
+  <data name="StatusGeometryWaiting" xml:space="preserve"><value>Waiting for the game's first 3D frame (up to {0} s more; shaders may be compiling)…</value></data>
   <data name="ErrorGeometryNoStream" xml:space="preserve"><value>The game did not produce a matching geometry stream. You can choose depth estimate for its window. Diagnostic logs: {0}</value></data>
   <data name="ErrorGeometryFolder" xml:space="preserve"><value>Choose an existing working folder.</value></data>
   <data name="ErrorGeometrySteamId" xml:space="preserve"><value>The Steam App ID must be empty or contain digits only.</value></data>

@@ -29,6 +29,13 @@ public partial class App : Application
         // Fixtures for the smoke test's child processes. Never part of a release build.
         if (await RunDevelopmentFixture(e.Args)) return;
 #endif
+        if (e.Args.FirstOrDefault()?.StartsWith(GeometryGuard.Switch, StringComparison.Ordinal) == true)
+        {
+            // The cleanup guard for one geometry run: no window, independent of the desktop.
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            Shutdown(await GeometryGuard.Run(e.Args[0][GeometryGuard.Switch.Length..]));
+            return;
+        }
         if(e.Args.Length>=3 && e.Args[0]=="--steam-game" && e.Args[2]=="--") {
             ShutdownMode=ShutdownMode.OnExplicitShutdown;
             Shutdown(await SteamGeometry.Run(e.Args[1],e.Args.Skip(3).ToArray())); return;
