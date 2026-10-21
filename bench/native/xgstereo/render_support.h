@@ -172,6 +172,7 @@ struct Scene {
     VkFence fence = VK_NULL_HANDLE;
     VkCommandBuffer command = VK_NULL_HANDLE; // replayed unchanged to verify live eye updates
     float hudDepth = 1; // clip W of the third ("HUD") post
+    float clearGrey = 0; // background: linear grey (0 keeps the historical black)
     explicit Scene(Gpu& g) : gpu(g) {}
     void Buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory)
     {
@@ -300,7 +301,8 @@ struct Scene {
         Vk(gpu.vkAllocateCommandBuffers(gpu.device, &ca, &command), "vkAllocateCommandBuffers");
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         Vk(gpu.vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer");
-        const VkClearValue clear{};
+        VkClearValue clear{};
+        if (clearGrey) clear.color = {{clearGrey, clearGrey, clearGrey, 1}};
         VkRenderPassBeginInfo rb{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         rb.renderPass = pass; rb.framebuffer = framebuffer; rb.renderArea = scissor; rb.clearValueCount = 1; rb.pClearValues = &clear;
         gpu.vkCmdBeginRenderPass(command, &rb, VK_SUBPASS_CONTENTS_INLINE);

@@ -33,7 +33,7 @@ struct WindowSwapchain {
 #undef MEMBER
     PFN_vkDestroySurfaceKHR destroySurface = nullptr;
     explicit WindowSwapchain(Gpu& g) : gpu(g) {}
-    void Init(bool tenBit=false)
+    void Init(bool tenBit=false, bool srgb=false)
     {
 #define LOAD(fn) fn = reinterpret_cast<PFN_##fn>(gpu.getDeviceProc(gpu.device, #fn)); Require(fn != nullptr, #fn);
         WSI_FUNCTIONS(LOAD)
@@ -62,6 +62,7 @@ struct WindowSwapchain {
         VkSurfaceFormatKHR chosen{};
         for (auto candidate : available)
             if (tenBit ? (candidate.format==VK_FORMAT_A2B10G10R10_UNORM_PACK32 || candidate.format==VK_FORMAT_A2R10G10B10_UNORM_PACK32) :
+                srgb ? (candidate.format == VK_FORMAT_B8G8R8A8_SRGB || candidate.format == VK_FORMAT_R8G8B8A8_SRGB) && candidate.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR :
                 (candidate.format == VK_FORMAT_B8G8R8A8_UNORM || candidate.format == VK_FORMAT_B8G8R8A8_SRGB)) { chosen = candidate; break; }
         Require(chosen.format != VK_FORMAT_UNDEFINED, "requested surface format for export conversion validation");
         format = chosen.format;
@@ -196,7 +197,8 @@ int main(int argc, char** argv)
         const bool externalImport=argc==2 && std::string(argv[1])=="--mirror-win32-import";
         const bool mirrorLive=argc==2 && std::string(argv[1])=="--mirror-live-tuning";
         const bool mirrorFallback=argc==2 && std::string(argv[1])=="--mirror-fallback";
-        const bool mirror = mirrorFallback || mirrorLive || externalImport || tenBit || contention || serveMirror || (argc == 2 && (std::string(argv[1]) == "--mirror" || std::string(argv[1]) == "--mirror-inline"));
+        const bool srgb=argc==2 && std::string(argv[1])=="--mirror-srgb";
+        const bool mirror = srgb || mirrorFallback || mirrorLive || externalImport || tenBit || contention || serveMirror || (argc == 2 && (std::string(argv[1]) == "--mirror" || std::string(argv[1]) == "--mirror-inline"));
         const bool gpuTransport = mirror || serveGpu || (argc == 2 && std::string(argv[1]) == "--gpu");
         const bool unsupported = argc == 2 && std::string(argv[1]) == "--unsupported-queues";
         const bool unsupportedShader = argc == 2 && std::string(argv[1]) == "--unsupported-shader";
@@ -239,7 +241,7 @@ int main(int argc, char** argv)
             if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) debug->EnableDebugLayer();
         }
         Gpu gpu; gpu.Init(true, unsupported ? 2 : 1, inlineShader,externalImport || mirrorFallback);
-        WindowSwapchain wsi(gpu); wsi.Init(tenBit);
+        WindowSwapchain wsi(gpu); wsi.Init(tenBit, srgb);
         if(externalImport) {
             // Steam can import a shared Windows texture after the first pair.
             // Import a real exported allocation, then verify stereo still runs.
@@ -276,7 +278,12 @@ int main(int argc, char** argv)
             LUID luid{}; std::memcpy(&luid, id.deviceLUID, sizeof(luid));
             std::unique_ptr<xg::gpu_test::Snapshot> snapshot;
             if (!serveGpu) { snapshot = std::make_unique<xg::gpu_test::Snapshot>(); snapshot->Init(luid, Width, Height, wide); }
-            Scene scene(gpu); scene.Draw(true, wsi.format);
+            Scene scene(gpu);
+            // An sRGB swapchain stores encoded bytes: linear 0.2 is stored as
+            // ~124. The shared texture must carry those bytes unchanged; a
+            // gamma-decoding blit into UNORM would store ~51 (too dark).
+            if (srgb) scene.clearGrey = .2f;
+            scene.Draw(true, wsi.format);
             if (mirrorFallback) {
                 // Two stereo frames, then an external semaphore import (which a
                 // right-eye twin cannot share) stops the mirror. The SAME recorded command buffer (left-eye shader
@@ -438,6 +445,13 @@ int main(int argc, char** argv)
                     xg::PairFrame pair; const auto timeout = GetTickCount64() + 5000;
                     while (!snapshot->Read(pair) && GetTickCount64() < timeout) Sleep(1);
                     Require(pair.header.sequence != 0, "GPU pair completed asynchronously"); CheckPair(pair, mirror ? frame + 1 : frame, 1, 0, mirror, mirror ? double(frame%16)*2 : 0);
+                    if (srgb) {
+                        for (uint32_t eye = 0; eye < 2; ++eye) {
+                            const uint8_t* pixel = pair.rgba.data() + size_t(eye) * Width * 4; // top-left background of each eye
+                            std::printf("sRGB pair %llu eye %u background %u %u %u\n", (unsigned long long)pair.header.leftFrame, eye, pixel[0], pixel[1], pixel[2]);
+                            for (uint32_t c = 0; c < 3; ++c) Require(pixel[c] >= 118 && pixel[c] <= 130, "sRGB swapchain bytes exported unchanged (no gamma decode)");
+                        }
+                    }
                     if (contention) ++recoveredPairs;
                 }
                 ++frame; if (serveGpu) Sleep(16);
@@ -445,7 +459,8 @@ int main(int argc, char** argv)
             Require(!contention || (busy.holds >= 6 && recoveredPairs == 10), "six real metadata holds followed by ten complete fresh pairs");
             if (vertices) gpu.vkUnmapMemory(gpu.device,scene.vertexMemory);
             Vk(gpu.vkDeviceWaitIdle(gpu.device), "wait test producer idle");
-            std::puts("PASS: Vulkan swapchain -> shared D3D12 array/fences -> D3D12 consumer; no CPU transport pixels");
+            std::puts(srgb ? "PASS: sRGB swapchain bytes reach the shared texture unchanged in both eyes (copy, not gamma-decoding blit)" :
+                "PASS: Vulkan swapchain -> shared D3D12 array/fences -> D3D12 consumer; no CPU transport pixels");
             return 0;
         }
         xg::PairReader reader;
