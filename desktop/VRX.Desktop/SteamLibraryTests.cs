@@ -27,6 +27,7 @@ internal static class SteamLibraryTests
         Write("126","\"AppState\" { \"appid\" \"126\"");
         Write("127",Manifest("128","Wrong identity","Test game"));
         Write("228980",Manifest("228980","Redistributables","Test game"));
+        Check(!SteamLibrary.Discover(Path.Combine(root,"no-steam")).Installed && SteamLibrary.Discover(steam).Installed,"a PC without Steam is told apart from an empty library");
         var discovery=SteamLibrary.Discover(steam);
         Check(discovery.Games.Count==1 && discovery.Games[0].AppId=="123" && discovery.Games[0].Title=="Test & game" && discovery.Errors.Count==1,"multiple library paths, deduplication, malformed file isolation, installed flags and path/identity validation");
         var game=discovery.Games[0];
@@ -39,7 +40,18 @@ internal static class SteamLibraryTests
         Check(refused && !SteamLibrary.Inside(game.Directory+" sibling/game.exe",game.Directory),"binding cannot escape the game's installation folder or match a prefix sibling");
         Check(!SteamLibrary.ValidId("123/quit") && !SteamLibrary.ValidId("0") && !SteamLibrary.ValidId("4294967296"),"Steam identifiers validated before URI/path construction");
         var unknown=new SteamLibrary.Game("456","Not configured",game.Directory);
-        Check(SteamLibrary.ProfileKey(store.Root,unknown)!=exe,"unconfigured titles have separate provisional profiles");
+        Check(SteamLibrary.ProfileKey(store.Root,unknown)!=exe && SteamLibrary.IsPlaceholder(store.Root,SteamLibrary.ProfileKey(store.Root,unknown)),"unconfigured titles use a placeholder key");
+        // An earlier build saved placeholder profiles that then counted as set-up games.
+        store.Save(new Profile{ExecutablePath=SteamLibrary.PlaceholderKey(store.Root,"456")});
+        Check(SteamLibrary.RemovePlaceholderProfiles(store)==1 && !store.HasProfile(SteamLibrary.PlaceholderKey(store.Root,"456")) && store.HasProfile(exe),"placeholder profiles are removed, real ones kept");
+        // Launchers are never bound or attached as the game.
+        string launcherExe=Path.Combine(game.Directory,"GameLauncher.exe"); File.Copy(Environment.ProcessPath!,launcherExe);
+        bool launcherRefused=false; try {SteamLibrary.SaveBinding(store.Root,game,new(launcherExe));} catch(InvalidDataException) {launcherRefused=true;}
+        Check(launcherRefused && SteamLibrary.IsLauncher("UnityCrashHandler64.exe") && SteamLibrary.IsLauncher("unins000.exe") && !SteamLibrary.IsLauncher(exe),"launchers, crash reporters and uninstallers are never recorded as the game");
+        var launcherApp=new RunningApp(7,"GameLauncher.exe",launcherExe,[new GameWindow(1,"Launcher")],null);
+        var gameApp=new RunningApp(8,"game.exe",exe,[new GameWindow(2,"Game")],null);
+        Check(SteamLibrary.Running(game,[launcherApp])==null && SteamLibrary.Running(game,[launcherApp,gameApp])==gameApp && SteamLibrary.Running(game,[launcherApp,gameApp],launcherExe)==launcherApp,
+            "a Steam launch attaches to the bound executable, or the game rather than its launcher");
         string[] merged=SteamGeometry.MergeArguments(["--bundle-dir","data","literal space","-dx11"],new Profile {ExecutablePath="game-Shipping.exe",StereoBackend=StereoPaths.Vkd3d,GeometryLaunchArguments="-dx12 -norhithread"});
         Check(merged.Contains("literal space") && merged.Take(2).SequenceEqual(new[]{"--bundle-dir","data"}) && !merged.Contains("-dx11") && merged.Count(a=>a=="-dx12")==1,"Steam arguments retained literally while the selected Unreal renderer is applied");
         var chooser=new ChooserWindow([],[],null,0,null,_=>StereoPaths.Vkd3d,_=>StereoPaths.Vkd3d,[],[game],store.Root) {
@@ -56,7 +68,7 @@ internal static class SteamLibraryTests
             using(var file=File.Create(Path.Combine(output,"ui-chooser-steam.png"))) encoder.Save(file);
             Buttons(chooser).First(b=>b.Tag is string tag && tag==StereoPaths.Vkd3d).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }));
-        Check(chooser.ShowDialog()==true && chooser.SteamTileCount==1 && chooser.Picked?.Steam==game && chooser.Picked.Backend==StereoPaths.Vkd3d && chooser.Picked.App.FullPath==exe,"installed card launches without a running window and returns the saved stereo route");
+        Check(chooser.ShowDialog()==true && chooser.SteamSectionShown && chooser.SteamTileCount==1 && chooser.Picked?.Steam==game && chooser.Picked.Backend==StereoPaths.Vkd3d && chooser.Picked.App.FullPath==exe,"installed card launches without a running window and returns the saved stereo route");
         var runningApp=new RunningApp(123,"game.exe",exe,[new GameWindow(42,"Test gameplay")],null);
         var recent=new GameHistory.Entry(exe,game.Title,[],game.Directory,game.AppId,DateTimeOffset.UtcNow);
         var attachChooser=new ChooserWindow([runningApp],[],null,0,null,_=>StereoPaths.Depth,_=>StereoPaths.Vkd3d,[recent],[game],store.Root) {
@@ -72,6 +84,7 @@ internal static class SteamLibraryTests
             depth.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }));
         Check(attachChooser.ShowDialog()==true && attachChooser.HistoryTileCount==0 && attachChooser.SteamTileCount==0 && attachChooser.WindowTileCount==1 && attachChooser.Picked?.App.Pid==123 && attachChooser.Picked.Steam==game,"running games appear only under Attach and retain their Steam/profile identity");
+#if DEBUG
         // Exercise the actual Steam-wrapper entry point and literal argument
         // forwarding, with a harmless child fixture rather than a real game.
         string childOutput=Path.Combine(root,"child.json");
@@ -85,6 +98,13 @@ internal static class SteamLibraryTests
         Check(wrapper.ExitCode==0 && File.Exists(childOutput),"ordinary Steam wrapper launch starts and waits for its child");
         using var child=JsonDocument.Parse(File.ReadAllText(childOutput));
         Check(child.RootElement.GetProperty("Arguments").EnumerateArray().Select(a=>a.GetString()).Skip(1).SequenceEqual(new[]{"literal space","quote\"value"}) && child.RootElement.GetProperty("Marker").GetString()=="inherited" && child.RootElement.GetProperty("Directory").GetString()==root,"wrapper preserves Steam arguments, working directory, and environment");
+        // A cancelled or expired request: the next ordinary Steam launch starts the game normally.
+        string expiredRoot=Path.Combine(root,"expired-data"), expiredChild=Path.Combine(root,"expired-child.json");
+        var expired=new SteamGeometry.Request("nonce",exe,new Profile{ExecutablePath=exe},DateTimeOffset.MinValue);
+        ProfileStore.AtomicWrite(Path.Combine(expiredRoot,"steam","123.pending.json"),JsonSerializer.Serialize(expired));
+        int expiredExit=await SteamGeometry.RunFixture("123",[Environment.ProcessPath!,"--steam-child-test="+expiredChild],expiredRoot,[game]);
+        Check(expiredExit==0 && File.Exists(expiredChild) && !File.Exists(Path.Combine(expiredRoot,"steam","123.pending.json")),"an expired VRX request falls through to a normal launch instead of an error");
+#endif
         File.WriteAllText(Path.Combine(output,"steam-library-pass.txt"),"PASS: installed library discovery and partial failures; path containment; existing profile reuse; installed chooser selection; literal Steam argument merge; actual wrapper child launch and lifecycle.");
         var local=SteamLibrary.Discover();
         File.WriteAllText(Path.Combine(output,"steam-discovered.json"),JsonSerializer.Serialize(local,new JsonSerializerOptions{WriteIndented=true}));

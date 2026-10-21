@@ -20,8 +20,11 @@ public sealed class Profile
     // Explicit methods determine the input type. Keep the old checkbox only
     // as a migration fallback for profiles without a method choice.
     private bool legacyGeometryStereo;
+    // True when true geometry is chosen for this game (a specific renderer, or the automatic
+    // one even when it cannot tell the game's graphics API: that is reported, never silently
+    // turned into depth).
     public bool GeometryStereo {
-        get => StereoPaths.Geometry(EffectiveStereoBackend);
+        get => SelectedStereoBackend == StereoPaths.GeometryAuto || StereoPaths.Geometry(SelectedStereoBackend);
         set => legacyGeometryStereo=value;
     }
     // Empty migrates legacy profiles from the geometry checkbox. New choices
@@ -32,19 +35,61 @@ public sealed class Profile
     public string SelectedGeometryRenderer => StereoPaths.Renderer(SelectedStereoBackend) ? SelectedStereoBackend :
         StereoPaths.Renderer(GeometryRenderer) ? GeometryRenderer : StereoPaths.GeometryAuto;
     [System.Text.Json.Serialization.JsonIgnore]
-    public string SelectedStereoBackend => StereoPaths.Valid(StereoBackend) ? StereoBackend : legacyGeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
+    public string SelectedStereoBackend => StereoPaths.Valid(StereoBackend)
+#if !DEBUG
+        ? StereoBackend == StereoPaths.Dx12 ? StereoPaths.Depth : StereoBackend
+#else
+        ? StereoBackend
+#endif
+        : legacyGeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
+    // Auto always means estimated depth: true geometry changes how the game draws, so it is
+    // only ever used when it was chosen for this game. A tested profile is a suggestion shown
+    // with the geometry choice, never a reason to pick geometry by itself. The automatic
+    // geometry renderer follows the game's graphics API (GraphicsApi); when that cannot be
+    // told it stays GeometryAuto, which launching reports instead of guessing.
     [System.Text.Json.Serialization.JsonIgnore]
     public string EffectiveStereoBackend => SelectedStereoBackend switch {
-        StereoPaths.Auto => GeometryProfileId == TestedStereoProfiles.SystemShock ? StereoPaths.Vkd3d : StereoPaths.Depth,
-        StereoPaths.GeometryAuto => GeometryProfileId == TestedStereoProfiles.SystemShock ? StereoPaths.Vkd3d : StereoPaths.Vulkan,
+        StereoPaths.Auto => StereoPaths.Depth,
+        StereoPaths.GeometryAuto => GeometryProfileId == TestedStereoProfiles.SystemShock ? StereoPaths.Vkd3d :
+            string.IsNullOrEmpty(ExecutablePath) ? StereoPaths.GeometryAuto :
+            GraphicsApi.Detect(ExecutablePath).Renderer is { Length: > 0 } detected ? detected : StereoPaths.GeometryAuto,
         var backend => backend
     };
     public string GeometryProfileId { get; set; } = "";
     public string? GeometryLaunchArguments { get; set; }
     public string GeometryWorkingDirectory { get; set; } = "";
     public string GeometrySteamAppId { get; set; } = "";
-    public float GeometrySeparation { get; set; } = 0.032f;
-    public float GeometryConvergence { get; set; }
+    // Geometry tuning (the layer's clip-space formula x += shift - convergence * w, see
+    // docs/XGSTEREO.md): the screen plane (zero parallax) sits at w = shift / convergence, and
+    // the farthest scenery is pushed apart by convergence x the VR screen's width in total. At
+    // 0.01 that is 5.7 cm on the default 5.7 m screen - under the 6.4 cm between the eyes, so
+    // the eyes never have to diverge. Convergence 0 puts the screen plane at infinity: the
+    // whole scene in front of the screen and the unshifted HUD behind it. The defaults assume
+    // metre-scale world units: the screen plane at 4 m. Values outside the safe ranges are
+    // clamped when a profile loads and refused when typed.
+    public const float DefaultGeometrySeparation = 0.032f, DefaultGeometryConvergence = 0.008f;
+    public const float MinGeometrySeparation = 0.001f, MaxGeometrySeparation = 4f, MaxGeometryConvergence = 0.01f;
+    public float GeometrySeparation { get; set; } = DefaultGeometrySeparation;
+    public float GeometryConvergence { get; set; } = DefaultGeometryConvergence;
+    public static bool SafeGeometryTuning(float separation, float convergence) =>
+        float.IsFinite(separation) && separation >= MinGeometrySeparation && separation <= MaxGeometrySeparation &&
+        float.IsFinite(convergence) && convergence >= 0 && convergence <= MaxGeometryConvergence;
+
+    // Brings saved tuning into the safe ranges (profiles saved before the ranges existed could
+    // hold anything Valid() accepts). True when something changed.
+    public bool ClampGeometryTuning()
+    {
+        float separation = float.IsFinite(GeometrySeparation) ? Math.Clamp(GeometrySeparation, MinGeometrySeparation, MaxGeometrySeparation) : DefaultGeometrySeparation;
+        float convergence = float.IsFinite(GeometryConvergence) ? Math.Clamp(GeometryConvergence, 0, MaxGeometryConvergence) : DefaultGeometryConvergence;
+        bool changed = separation != GeometrySeparation || convergence != GeometryConvergence;
+        if (changed)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Profile] ClampGeometryTuning: {GeometrySeparation}/{GeometryConvergence} -> {separation}/{convergence} for {ExecutablePath}");
+        }
+        GeometrySeparation = separation;
+        GeometryConvergence = convergence;
+        return changed;
+    }
     public void SelectStereoBackend(string backend) {
         if (!StereoPaths.Valid(backend)) throw new ArgumentException(nameof(backend));
         GeometryRenderer = StereoPaths.Renderer(backend) ? backend : SelectedGeometryRenderer;
@@ -172,7 +217,7 @@ public sealed class ProfileStore(string root)
         p.SelectStereoBackend(StereoPaths.Depth); p.GeometrySession = "game";
         p.GeometryRenderer = StereoPaths.GeometryAuto;
         p.GeometryLaunchArguments = null; p.GeometryWorkingDirectory = p.GeometrySteamAppId = "";
-        p.GeometrySeparation = .032f; p.GeometryConvergence = 0;
+        p.GeometrySeparation = Profile.DefaultGeometrySeparation; p.GeometryConvergence = Profile.DefaultGeometryConvergence;
         p.GeometryProfileId = "";
     }
     // The saved base, or VRX's own defaults if there is none (or it is unreadable).
@@ -354,6 +399,7 @@ public sealed class ProfileStore(string root)
         if (profile == null || !profile.Valid() || !string.Equals(profile.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException(Loc.Get("ErrorProfileInvalid"));
         TestedStereoProfiles.Apply(profile);
+        profile.ClampGeometryTuning();
         return profile;
     }
     public void Save(Profile profile)

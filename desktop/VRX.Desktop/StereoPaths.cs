@@ -8,7 +8,13 @@ public static class StereoPaths
 {
     public const string Auto = "auto", GeometryAuto = "geometry", Depth = "depth", Vulkan = "vulkan", Dxvk = "dxvk", Vkd3d = "vkd3d", Dx12 = "dx12";
     public static bool Valid(string? id) => id is Auto or GeometryAuto or Depth or Vulkan or Dxvk or Vkd3d or Dx12;
-    public static bool Geometry(string id) => id is Vulkan or Dxvk or Vkd3d or Dx12;
+    // The native DX12 proxy is a development experiment: a release never treats it as geometry
+    // (a profile that saved it loads as depth, see Profile.SelectedStereoBackend).
+    public static bool Geometry(string id) => id is Vulkan or Dxvk or Vkd3d
+#if DEBUG
+        or Dx12
+#endif
+        ;
     public static bool Renderer(string? id) => id is GeometryAuto or Vulkan or Dxvk or Vkd3d;
     public static string Mode(string id) => id is Auto or Depth ? id : GeometryAuto;
     public static string FromGeometryChoice(bool enabled,string backend) => enabled ? Geometry(backend) ? backend : Vulkan : Depth;

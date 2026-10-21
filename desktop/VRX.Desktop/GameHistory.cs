@@ -36,7 +36,10 @@ public sealed class GameHistory(string root)
             Remember(new(exe,MainWindow.GameDisplayName(profile.PreferredWindowTitle,Path.GetFileName(exe)),GeometryLaunch.ParseArguments(profile.GeometryLaunchArguments ?? ""),
                 string.IsNullOrEmpty(profile.GeometryWorkingDirectory)?Path.GetDirectoryName(exe)!:profile.GeometryWorkingDirectory,
                 string.IsNullOrEmpty(profile.GeometrySteamAppId)?GeometryLaunch.FindSteamAppId(exe):profile.GeometrySteamAppId,File.GetLastWriteTimeUtc(last)));
-        } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException) { Debug.WriteLine(ex.Message); }
+        } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidDataException or NotSupportedException) {
+            // An invalid or mismatched profile (ProfileStore.Load) means nothing is imported.
+            Debug.WriteLine($"[Recent games] ImportLastGame skipped: {ex.GetType().Name}: {ex.Message}");
+        }
     }
     public async Task Record(RunningApp app,GameWindow window,Profile profile,CancellationToken token)
     {
@@ -45,6 +48,8 @@ public sealed class GameHistory(string root)
         string[] args=previous?.Arguments ?? GeometryLaunch.ParseArguments(profile.GeometryLaunchArguments ?? "");
         try { args=await GeometryLaunch.ProcessArguments(app.Pid,token); }
         catch(Exception ex) when(ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception) { Debug.WriteLine(ex.Message); }
+        // Only what is needed to start the game again: never sign-in codes or tokens.
+        args=ProcessCommandLine.WithoutCredentials(args);
         Remember(new(app.FullPath,MainWindow.GameDisplayName(window.Title,app.Name),args,
             string.IsNullOrEmpty(profile.GeometryWorkingDirectory)?Path.GetDirectoryName(app.FullPath)!:profile.GeometryWorkingDirectory,
             string.IsNullOrEmpty(profile.GeometrySteamAppId)?GeometryLaunch.FindSteamAppId(app.FullPath):profile.GeometrySteamAppId,DateTimeOffset.UtcNow));

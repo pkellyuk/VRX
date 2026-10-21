@@ -85,10 +85,15 @@
        <ComboBox x:Name="WindowList" SelectionChanged="WindowSelected"/>
        <TextBlock Text="{l:Tr StereoPath}" Style="{StaticResource SubHeader}" Margin="0,10,0,6"/>
        <ComboBox x:Name="StereoPathList" SelectionChanged="StereoPathSelected">
-        <ComboBoxItem Tag="auto" Content="{l:Tr PathAuto}"/>
+        <ComboBoxItem Tag="auto" Content="{l:Tr PathAuto}" ToolTip="{l:Tr PathAutoTip}"/>
         <ComboBoxItem Tag="depth" Content="{l:Tr PathDepth}"/>
         <ComboBoxItem Tag="geometry" Content="{l:Tr PathGeometry}"/>
        </ComboBox>
+       <!-- Shown whenever true geometry is chosen for this game (GeometryWarning). -->
+       <Border x:Name="GeometryWarningBanner" Background="{StaticResource WarningBack}" BorderBrush="{StaticResource WarningEdge}" BorderThickness="2" CornerRadius="6" Padding="12,8" Margin="0,8,0,0" Visibility="Collapsed">
+        <TextBlock Text="{l:Tr GeometryWarningText}" Foreground="{StaticResource WarningInk}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+       </Border>
+       <TextBlock x:Name="TestedHint" Text="{l:Tr TestedSystemShock}" Style="{StaticResource Hint}" Margin="0,6,0,0" Visibility="Collapsed"/>
        <StackPanel x:Name="GeometryRendererPanel" Visibility="Collapsed">
        <TextBlock Text="{l:Tr GeometryRenderer}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
        <ComboBox x:Name="GeometryRendererList" SelectionChanged="GeometryRendererSelected">
@@ -97,6 +102,7 @@
         <ComboBoxItem Tag="dxvk" Content="{l:Tr PathDxvk}"/>
         <ComboBoxItem Tag="vkd3d" Content="{l:Tr PathVkd3d}"/>
        </ComboBox>
+       <TextBlock x:Name="RendererDetected" Style="{StaticResource Hint}" Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
        </StackPanel>
        <TextBlock x:Name="PathLabel" Text="{l:Tr PathChoose}" Style="{StaticResource Hint}" Margin="0,8,0,4"/>
        <TextBlock Text="{l:Tr GameHint}" Style="{StaticResource Hint}"/>
@@ -227,30 +233,48 @@
     <!-- Geometry stereo -->
     <Expander x:Name="GeometrySection" Header="{l:Tr SectionGeometry}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="GeometryPanel">
-      <CheckBox x:Name="GeometryCheck" Content="{l:Tr GeometryStereo}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr GeometryTip}"/>
+      <!-- The method is chosen once, under Game & window ("True geometry (experimental)"). -->
+      <TextBlock x:Name="GeometryOffHint" Text="{l:Tr GeometryOffHint}" Style="{StaticResource Hint}"/>
       <StackPanel x:Name="GeometryContent" Visibility="Collapsed">
+       <Border Background="{StaticResource WarningBack}" BorderBrush="{StaticResource WarningEdge}" BorderThickness="2" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+        <TextBlock Text="{l:Tr GeometryWarningText}" Foreground="{StaticResource WarningInk}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+       </Border>
        <TextBlock Text="{l:Tr GeometryHint}" Style="{StaticResource Hint}"/>
        <Grid Margin="0,8,0,0">
         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions>
         <StackPanel>
          <TextBlock Text="{l:Tr GeometrySeparation}" Style="{StaticResource Label}"/>
-         <TextBox x:Name="GeometrySeparationText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometrySeparationTip}" AutomationProperties.Name="{l:Tr GeometrySeparation}"/>
          <Slider x:Name="GeometrySeparationSlider" Minimum="0.001" Maximum="2" SmallChange="0.005" LargeChange="0.05" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometrySeparationTip}" AutomationProperties.Name="{l:Tr GeometrySeparation}"/>
         </StackPanel>
         <StackPanel Grid.Column="2">
          <TextBlock Text="{l:Tr GeometryConvergence}" Style="{StaticResource Label}"/>
-         <TextBox x:Name="GeometryConvergenceText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
-         <Slider x:Name="GeometryConvergenceSlider" Minimum="0" Maximum="0.05" SmallChange="0.0005" LargeChange="0.005" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
+         <Slider x:Name="GeometryConvergenceSlider" Minimum="0" Maximum="0.01" SmallChange="0.0002" LargeChange="0.001" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
         </StackPanel>
        </Grid>
        <TextBlock x:Name="GeometryTuningHint" Text="{l:Tr GeometryTuningLive}" Style="{StaticResource Hint}" Margin="0,6,0,0"/>
-       <Expander Header="{l:Tr GeometryAdvanced}" Margin="0,6,0,0">
+       <!-- Developer: exact numbers and the stream's connection name. Not needed to play. -->
+       <Expander x:Name="GeometryDeveloper" Header="{l:Tr GeometryDeveloper}" Margin="0,8,0,0">
         <StackPanel>
-       <TextBlock Text="{l:Tr GeometrySession}" Style="{StaticResource Label}" Margin="0,4,0,4"/>
-       <TextBox x:Name="GeometrySessionText" MaxLength="64" TextChanged="SettingsChanged" ToolTip="{l:Tr GeometrySessionTip}"/>
+         <TextBlock Text="{l:Tr GeometryDeveloperHint}" Style="{StaticResource Hint}"/>
+         <Grid Margin="0,4,0,0">
+          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions>
+          <StackPanel>
+           <TextBlock Text="{l:Tr GeometrySeparationExact}" Style="{StaticResource Label}"/>
+           <TextBox x:Name="GeometrySeparationText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometrySeparationTip}" AutomationProperties.Name="{l:Tr GeometrySeparationExact}"/>
+          </StackPanel>
+          <StackPanel Grid.Column="2">
+           <TextBlock Text="{l:Tr GeometryConvergenceExact}" Style="{StaticResource Label}"/>
+           <TextBox x:Name="GeometryConvergenceText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergenceExact}"/>
+          </StackPanel>
+         </Grid>
+         <TextBlock Text="{l:Tr GeometrySession}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
+         <TextBox x:Name="GeometrySessionText" MaxLength="64" TextChanged="SettingsChanged" ToolTip="{l:Tr GeometrySessionTip}"/>
         </StackPanel>
        </Expander>
       </StackPanel>
+      <!-- Steam launch options that start games through VRX: listed to remove before moving
+           or uninstalling VRX (SteamGeometry.ShowRemoval). -->
+      <Button x:Name="SteamSetupsButton" Content="{l:Tr SteamRemoveSetups}" ToolTip="{l:Tr SteamRemoveSetupsTip}" Click="SteamSetupsClick" HorizontalAlignment="Left" Margin="0,10,0,0"/>
      </StackPanel>
     </Expander>
 

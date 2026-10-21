@@ -9,6 +9,112 @@ namespace VRX.Desktop;
 // never closes a real game, starts a renderer, or installs a real game DLL.
 internal static class GeometryLaunchTests
 {
+    // A minimal x64 PE image with the given import and delay-load import tables (never run).
+    internal static void FakePe(string path,string[] imports,string[] delayImports)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        byte[] pe=new byte[0x400];
+        void U16(int at,int v)=>BinaryPrimitives.WriteUInt16LittleEndian(pe.AsSpan(at),(ushort)v);
+        void U32(int at,uint v)=>BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(at),v);
+        U16(0,0x5A4D); U32(0x3C,0x40); U32(0x40,0x4550); U16(0x44,0x8664); U16(0x46,1); U16(0x54,240);
+        const int optional=0x58, section=optional+240, raw=0x200; const uint va=0x1000;
+        U16(optional,0x20B); U32(optional+108,16);
+        int descriptors=raw, delays=descriptors+20*(imports.Length+1), names=delays+32*(delayImports.Length+1);
+        uint Rva(int offset)=>(uint)(offset-raw)+va;
+        int Write(string text) { int at=names; foreach(char c in text) pe[names++]=(byte)c; pe[names++]=0; return at; }
+        for(int i=0;i<imports.Length;i++) U32(descriptors+20*i+12,Rva(Write(imports[i])));
+        for(int i=0;i<delayImports.Length;i++) { U32(delays+32*i,1); U32(delays+32*i+4,Rva(Write(delayImports[i]))); }
+        if(imports.Length>0) { U32(optional+112+8,Rva(descriptors)); U32(optional+112+12,(uint)(20*(imports.Length+1))); }
+        if(delayImports.Length>0) { U32(optional+112+13*8,Rva(delays)); U32(optional+112+13*8+4,(uint)(32*(delayImports.Length+1))); }
+        for(int i=0;i<5;i++) pe[section+i]=(byte)".text"[i];
+        U32(section+8,0x200); U32(section+12,va); U32(section+16,0x200); U32(section+20,raw);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path,pe);
+    }
+
+    // Automatic renderer: the API from the executable's imports (or a known engine DLL), the
+    // route that follows, and no guess when it is unknown, unsupported or ambiguous.
+    private static void GraphicsApiChecks(string root,ProfileStore store,Action<bool,string> Check)
+    {
+        System.Diagnostics.Debug.WriteLine("[Smoke] GraphicsApiChecks enter");
+        string api=Path.Combine(root,"api");
+        string Exe(string name,string[] imports,string[]? delay=null) { string p=Path.Combine(api,name,name+".exe"); FakePe(p,imports,delay ?? []); return p; }
+        string dx11=Exe("dx11",["KERNEL32.dll","dxgi.dll","d3d11.dll"]), dx12=Exe("dx12",["d3d12.dll","dxgi.dll"]), vk=Exe("vk",["vulkan-1.dll"]);
+        string dx9=Exe("dx9",["d3d9.dll"]), dxgiOnly=Exe("dxgi",["dxgi.dll"]), both=Exe("both",[],["d3d11.dll","d3d12.dll"]);
+        string unreal=Path.Combine(api,"ue","Game-Win64-Shipping.exe"); FakePe(unreal,["KERNEL32.dll"],["d3d11.dll","d3d12.dll"]);
+        string unity=Exe("unity",["KERNEL32.dll"]); FakePe(Path.Combine(api,"unity","UnityPlayer.dll"),["d3d11.dll","dxgi.dll"],[]);
+        Check(GraphicsApi.Imports(dx11).Contains("d3d11.dll") && GraphicsApi.Imports(both).SequenceEqual(new[]{"d3d11.dll","d3d12.dll"}),"PE import and delay-load tables are read");
+        Check(GraphicsApi.Detect(dx11).Renderer==StereoPaths.Dxvk && GraphicsApi.Detect(dx12).Renderer==StereoPaths.Vkd3d && GraphicsApi.Detect(vk).Renderer==StereoPaths.Vulkan,"Direct3D 11 uses DXVK, Direct3D 12 vkd3d-proton, Vulkan the plain layer");
+        Check(GraphicsApi.Detect(unity).Renderer==StereoPaths.Dxvk && GraphicsApi.Detect(unreal).Renderer==StereoPaths.Dxvk,"a Unity player DLL and an Unreal executable with several APIs are recognised");
+        Check(GraphicsApi.Detect(dx9).Renderer=="" && GraphicsApi.Explain(GraphicsApi.Detect(dx9)).Contains(GraphicsApi.D3D9),"Direct3D 9 is reported as unsupported");
+        Check(GraphicsApi.Detect(dxgiOnly).Renderer=="" && GraphicsApi.Detect(both).Renderer=="" && GraphicsApi.Detect(Path.Combine(api,"missing.exe")).Renderer=="","an unknown or ambiguous API is not guessed");
+        var auto=new Profile{ExecutablePath=dx11}; auto.SelectStereoBackend(StereoPaths.GeometryAuto);
+        Check(auto.GeometryStereo && auto.EffectiveStereoBackend==StereoPaths.Dxvk,"automatic geometry on a Direct3D 11 game resolves to DXVK");
+        var unknown=new Profile{ExecutablePath=dxgiOnly}; unknown.SelectStereoBackend(StereoPaths.GeometryAuto);
+        Check(unknown.GeometryStereo && unknown.EffectiveStereoBackend==StereoPaths.GeometryAuto,"an unknown API stays geometry-chosen but unresolved, never depth or Vulkan");
+        bool explained=false;
+        try { GeometryLaunch.PrepareWithLayer(new RunningApp(0,"dxgi.exe",dxgiOnly,[],null),unknown,root,_=>{},CancellationToken.None,root,[]).GetAwaiter().GetResult(); }
+        catch(InvalidOperationException ex) { explained=ex.Message==GraphicsApi.Explain(GraphicsApi.Detect(dxgiOnly)); }
+        Check(explained,"launching with an unknown API says so instead of failing after 45 s");
+        System.Diagnostics.Debug.WriteLine("[Smoke] GraphicsApiChecks exit");
+    }
+
+    // Crash-proof cleanup: the manifest's intent records, the guard (in process and as the real
+    // detached --geometry-guard process) and run-folder pruning. Fixture files only.
+    private static async Task GuardAndCleanupChecks(string root,string exe,string sources,Action<bool,string> Check)
+    {
+        System.Diagnostics.Debug.WriteLine("[Smoke] GuardAndCleanupChecks enter");
+        string game=Path.GetDirectoryName(exe)!;
+        string data=Path.Combine(root,"guard-data"), runs=Path.Combine(data,"geometry","runs");
+        string NewRun(GeometryLaunch.Run run) {
+            string folder=Path.Combine(runs,Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder,"run.json"),JsonSerializer.Serialize(run)); return folder;
+        }
+        // A crash between recording the intent and finishing the copy: the manifest names the
+        // temporary copy and the target, and cleanup removes both (the target only by hash).
+        string crashed=NewRun(new GeometryLaunch.Run(0,0,exe,"test"));
+        string temporary=Path.Combine(game,"d3d11.dll.vrx-"+Guid.NewGuid().ToString("N")+".tmp");
+        File.Copy(Path.Combine(sources,"d3d11.dll"),temporary);
+        File.Copy(Path.Combine(sources,"dxgi.dll"),Path.Combine(game,"dxgi.dll"));
+        string Sha(string file)=>GeometryRuntime.Hash(file);
+        File.WriteAllText(Path.Combine(crashed,"installed.json"),JsonSerializer.Serialize(new[]{
+            new GeometryLaunch.InstalledFile(Path.Combine(game,"d3d11.dll"),Sha(Path.Combine(sources,"d3d11.dll")),temporary),
+            new GeometryLaunch.InstalledFile(Path.Combine(game,"dxgi.dll"),Sha(Path.Combine(sources,"dxgi.dll")))}));
+        GeometryLaunch.Cleanup(crashed);
+        Check(!File.Exists(temporary) && !File.Exists(Path.Combine(game,"dxgi.dll")) && GeometryLaunch.Retired(crashed),"files recorded before a crash are all removed, including an unfinished copy");
+        string escape=NewRun(new GeometryLaunch.Run(0,0,exe,"test"));
+        File.WriteAllText(Path.Combine(escape,"installed.json"),JsonSerializer.Serialize(new[]{new GeometryLaunch.InstalledFile(Path.Combine(game,"d3d11.dll"),"00",Path.Combine(root,"elsewhere.tmp"))}));
+        GeometryLaunch.Cleanup(escape);
+        Check(!GeometryLaunch.Retired(escape),"a manifest naming a file outside the game's folder is refused");
+        // The guard, in this process with no waiting: the game never started, so it cleans.
+        string guarded=NewRun(new GeometryLaunch.Run(0,0,exe,"test"));
+        GeometryLaunch.InstallFiles(sources,exe,guarded);
+        Check(GeometryGuard.ValidRunFolder(guarded) && !GeometryGuard.ValidRunFolder(game) && await GeometryGuard.Run(game)==2,"the guard accepts only geometry run folders");
+        Check(await GeometryGuard.Run(guarded,TimeSpan.Zero,TimeSpan.Zero,TimeSpan.FromMilliseconds(20),CancellationToken.None)==0 &&
+            !File.Exists(Path.Combine(game,"d3d11.dll")) && GeometryLaunch.Retired(guarded) && !GeometryGuard.Waiting(guarded),"the guard removes a run's files once the game has gone");
+        // The real detached guard process: a run whose game has already exited is cleaned
+        // after the relaunch grace, with no VRX window and independent of this process.
+        string detached=NewRun(new GeometryLaunch.Run(int.MaxValue-7,1,exe,"test"));
+        GeometryLaunch.InstallFiles(sources,exe,detached);
+        var guardStart=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=false,CreateNoWindow=true};
+        guardStart.ArgumentList.Add(GeometryGuard.Switch+detached);
+        using(var guard=Process.Start(guardStart)!) {
+            await guard.WaitForExitAsync().WaitAsync(GeometryGuard.RelaunchGrace+TimeSpan.FromSeconds(30));
+            Check(guard.ExitCode==0 && !File.Exists(Path.Combine(game,"d3d11.dll")) && !File.Exists(Path.Combine(game,"dxgi.dll")) && GeometryLaunch.Retired(detached),"the detached --geometry-guard process cleans up after the game exits");
+        }
+        // Pruning: retired folders beyond the newest few go; a folder still owning files stays.
+        for(int i=0;i<GeometryLaunch.KeptRuns+3;++i) {
+            string old=NewRun(new GeometryLaunch.Run(0,0,exe,"test")); File.WriteAllText(Path.Combine(old,"installed.json"),"[]");
+            Directory.SetLastWriteTimeUtc(old,DateTime.UtcNow.AddMinutes(-60+i));
+        }
+        string owning=NewRun(new GeometryLaunch.Run(0,0,exe,"test"));
+        File.WriteAllText(Path.Combine(owning,"installed.json"),JsonSerializer.Serialize(new[]{new GeometryLaunch.InstalledFile(Path.Combine(game,"d3d11.dll"),"00")}));
+        Directory.SetLastWriteTimeUtc(owning,DateTime.UtcNow.AddDays(-30));
+        int before=Directory.GetDirectories(runs).Length;
+        GeometryLaunch.PruneRuns(data);
+        Check(Directory.Exists(owning) && Directory.GetDirectories(runs).Length==GeometryLaunch.KeptRuns+2 && before>GeometryLaunch.KeptRuns+2,"old retired run folders are deleted, keeping the newest few and any folder still owning files");
+        System.Diagnostics.Debug.WriteLine("[Smoke] GuardAndCleanupChecks exit");
+    }
+
     public static async Task Run(string output)
     {
         static void Check(bool value,string reason) { if(!value) throw new Exception("Geometry launch: "+reason); }
@@ -30,7 +136,16 @@ internal static class GeometryLaunchTests
         store.ApplyToAll(settings,out int skipped,out int failed);
         Check(skipped==0 && failed==0 && store.Load(exe).EffectiveStereoBackend==StereoPaths.Dxvk && store.Load(exe).GeometryLaunchArguments==p.GeometryLaunchArguments && store.Load(exe).Width==7,"Apply to all preserves each game's launch choice");
         Check(StereoPaths.Session(exe)==StereoPaths.Session(exe.ToUpperInvariant()) && Profile.ValidGeometrySession(StereoPaths.Session(exe)),"session identity is stable and valid");
-        foreach(string backend in new[]{StereoPaths.Depth,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Dx12}){
+#if DEBUG
+        string[] backends=[StereoPaths.Depth,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Dx12];
+#else
+        string[] backends=[StereoPaths.Depth,StereoPaths.Vulkan,StereoPaths.Dxvk];
+        // The native DX12 proxy is development-only: a saved DX12 choice loads as depth in a release.
+        var native=new Profile{ExecutablePath=Path.Combine(root,"dx12.exe"),StereoBackend=StereoPaths.Dx12}; store.Save(native);
+        Check(store.Load(native.ExecutablePath).EffectiveStereoBackend==StereoPaths.Depth && !StereoPaths.Geometry(StereoPaths.Dx12),"a release never uses the native DX12 route");
+        Check(GeometryLaunch.InstalledNames(StereoPaths.Dx12).Length==0,"a release never installs the native DX12 proxy");
+#endif
+        foreach(string backend in backends){
             var choice=new Profile{ExecutablePath=Path.Combine(root,backend+".exe"),StereoBackend=backend,GeometryStereo=backend==StereoPaths.Depth};
             bool geometry=backend!=StereoPaths.Depth;
             Check(choice.GeometryStereo==geometry && StereoPaths.FromGeometryChoice(geometry,backend)==backend,"explicit method determines the geometry checkbox without changing the selected backend");
@@ -54,10 +169,15 @@ internal static class GeometryLaunchTests
         Directory.CreateDirectory(Path.GetDirectoryName(shockExe)!);
         File.WriteAllText(Path.Combine(shockApps,"appmanifest_482400.acf"),"\"appid\" \"482400\"\n\"installdir\" \"System Shock\"");
         var tested=store.Load(shockExe);
-        Check(tested.SelectedStereoBackend==StereoPaths.Auto && tested.EffectiveStereoBackend==StereoPaths.Vkd3d && tested.GeometrySeparation==.5f && tested.GeometryConvergence==0 && tested.GeometryLaunchArguments!.Contains("-norhithread"),"Auto seeds the tested System Shock route and calibration");
-        tested.GeometrySeparation=.35f; tested.GeometryConvergence=.02f; store.Save(tested);
+        // Auto is always estimated depth, even for a game with tested geometry settings.
+        Check(tested.SelectedStereoBackend==StereoPaths.Auto && tested.EffectiveStereoBackend==StereoPaths.Depth && !tested.GeometryStereo,"a new System Shock profile resolves to depth");
+        Check(tested.GeometryProfileId==TestedStereoProfiles.SystemShock && tested.GeometrySeparation==TestedStereoProfiles.SystemShockSeparation &&
+            tested.GeometryConvergence==TestedStereoProfiles.SystemShockConvergence && tested.GeometryConvergence>0 && tested.GeometryLaunchArguments!.Contains("-norhithread"),"the tested System Shock calibration is only a suggestion, with the screen plane in front of infinity");
+        var chosen=store.Load(shockExe); chosen.SelectStereoBackend(StereoPaths.GeometryAuto);
+        Check(chosen.EffectiveStereoBackend==StereoPaths.Vkd3d,"choosing geometry for System Shock uses its tested renderer");
+        tested.GeometrySeparation=.35f; tested.GeometryConvergence=.004f; store.Save(tested);
         var remembered=store.Load(shockExe);
-        Check(remembered.GeometrySeparation==.35f && remembered.GeometryConvergence==.02f && remembered.SelectedStereoBackend==StereoPaths.Auto,"reloading Auto preserves user calibration");
+        Check(remembered.GeometrySeparation==.35f && remembered.GeometryConvergence==.004f && remembered.SelectedStereoBackend==StereoPaths.Auto,"reloading Auto preserves user calibration");
         Check(!remembered.GeometryLaunchArguments!.Contains("-Res") && !remembered.GeometryLaunchArguments.Contains("-windowed"),"the game controls its saved resolution and display mode");
         remembered.GeometryProfileId="system-shock-vkd3d-v1";
         remembered.GeometryLaunchArguments="-norhithread -windowed -ResX=1280 -ResY=720 -dx12";
@@ -65,7 +185,15 @@ internal static class GeometryLaunchTests
         Check(remembered.GeometryProfileId==TestedStereoProfiles.SystemShock && remembered.GeometrySeparation==.35f && remembered.GeometryLaunchArguments=="-dx12 -norhithread","migrate the old test resolution without changing stereo tuning");
         remembered.GeometryProfileId="system-shock-vkd3d-v2"; remembered.GeometryLaunchArguments="-norhithread -windowed -dx12";
         store.Save(remembered); remembered=store.Load(shockExe);
-        Check(remembered.GeometryLaunchArguments=="-dx12 -norhithread" && remembered.GeometryConvergence==.02f,"remove the v2 forced window mode while preserving calibration");
+        Check(remembered.GeometryLaunchArguments=="-dx12 -norhithread" && remembered.GeometryConvergence==.004f,"remove the v2 forced window mode while preserving calibration");
+        remembered.GeometryProfileId="system-shock-vkd3d-v3"; remembered.GeometryConvergence=0; store.Save(remembered); remembered=store.Load(shockExe);
+        Check(remembered.GeometryProfileId==TestedStereoProfiles.SystemShock && remembered.GeometryConvergence==TestedStereoProfiles.SystemShockConvergence && remembered.GeometrySeparation==.35f,"the v3 seed's convergence 0 (HUD behind the scene) moves to the tested screen plane once");
+        remembered.GeometryConvergence=0; store.Save(remembered);
+        Check(store.Load(shockExe).GeometryConvergence==0,"a convergence the player sets after the migration is kept");
+        var unsafeTuning=store.Load(shockExe); unsafeTuning.GeometrySeparation=40; unsafeTuning.GeometryConvergence=.2f; store.Save(unsafeTuning);
+        Check(store.Load(shockExe).GeometrySeparation==Profile.MaxGeometrySeparation && store.Load(shockExe).GeometryConvergence==Profile.MaxGeometryConvergence,"saved tuning outside the safe range is clamped when it loads");
+        Check(!Profile.SafeGeometryTuning(5,.001f) && !Profile.SafeGeometryTuning(.5f,.02f) && !Profile.SafeGeometryTuning(0,0) && Profile.SafeGeometryTuning(.5f,0),"typed tuning outside the safe range is refused");
+        remembered.GeometryConvergence=.004f; store.Save(remembered);
         remembered.GeometryProfileId="system-shock-vkd3d-v2"; remembered.GeometryLaunchArguments="-dx12 -norhithread -windowed -ResX=2560 -ResY=1440";
         store.Save(remembered); remembered=store.Load(shockExe);
         Check(remembered.GeometryLaunchArguments!.Contains("-ResX=2560"),"explicit custom launch settings survive the default-profile migration");
@@ -76,7 +204,13 @@ internal static class GeometryLaunchTests
         var translated=new GeometryLaunch.Plan(new RunningApp(1,"fixture",exe,[],null),0,StereoPaths.Vkd3d,root,[],root,"482400","fixture",root,[],root);
         var start=new ProcessStartInfo(exe); start.Environment["VKD3D_CONFIG"]="existing";
         start.Environment["__COMPAT_LAYER"]="RUNASINVOKER DPIUNAWARE";
-        GeometryLaunch.ConfigureEnvironment(start,translated,tested,root);
+        string shaderCache=GeometryLaunch.CacheFolder(root,"fixture");
+        GeometryLaunch.ConfigureEnvironment(start,translated,tested,root,shaderCache);
+        Check(start.Environment["VKD3D_SHADER_CACHE_PATH"]==shaderCache && start.Environment["DXVK_STATE_CACHE_PATH"]==shaderCache && start.Environment["VKD3D_LOG_FILE"]!.StartsWith(root,StringComparison.OrdinalIgnoreCase) &&
+            shaderCache.EndsWith(Path.Combine("geometry","cache","fixture"),StringComparison.OrdinalIgnoreCase),"shader caches persist per game while logs stay in the run folder");
+#if !DEBUG
+        Check(!start.Environment.ContainsKey("VKD3D_DEBUG"),"a release never turns on verbose vkd3d logging");
+#endif
         Check(start.Environment["__COMPAT_LAYER"]!.Contains("HIGHDPIAWARE") && start.Environment["__COMPAT_LAYER"]!.Contains("RUNASINVOKER") &&
             !start.Environment["__COMPAT_LAYER"]!.Contains("DPIUNAWARE"),"the tested game uses native pixels on a scaled desktop while preserving other compatibility options");
         Check(start.Environment["VKD3D_CONFIG"]!.Contains("single_queue") && start.Environment["VKD3D_CONFIG"]!.Contains("existing") &&
@@ -109,6 +243,9 @@ internal static class GeometryLaunchTests
         GeometryLaunch.Cleanup(runRoot);
         Check(File.Exists(Path.Combine(Path.GetDirectoryName(exe)!,"d3d11.dll")) && File.Exists(Path.Combine(Path.GetDirectoryName(exe)!,"dxgi.dll")),"a delayed old cleanup cannot remove the next run's identical DLLs");
         GeometryLaunch.Cleanup(nextRun);
+        Check(!Directory.GetFiles(Path.GetDirectoryName(exe)!,"*.vrx-*.tmp").Any(),"a rolled-back install leaves no temporary copies");
+        await GuardAndCleanupChecks(root,exe,sources,Check);
+        GraphicsApiChecks(root,store,Check);
         string translator=Path.Combine(root,"translator"); Directory.CreateDirectory(translator);
         foreach(string name in new[]{"d3d12.dll","d3d12core.dll"}) File.WriteAllText(Path.Combine(translator,name),"translator fixture; never loaded");
         string translatedRun=Path.Combine(root,"translated-run"); Directory.CreateDirectory(translatedRun);
@@ -117,6 +254,10 @@ internal static class GeometryLaunchTests
         Check(installed.Count==4 && installed.All(f=>File.Exists(f.Path)),"translated D3D12 installs both translator and matching D3D11/DXGI components");
         GeometryLaunch.Cleanup(translatedRun);
         Check(installed.All(f=>!File.Exists(f.Path)),"translated cleanup retires all four owned DLLs");
+        Check(GeometryRuntime.PinnedHash("dxvk","d3d11.dll")=="523DA2CD765DD51D99FE1644B24F9EE7EE6247E4C98953BCC449CE84CD303405" && GeometryRuntime.PinnedHash("dxvk","dxgi.dll")?.Length==64,"DXVK 2.7.1's DLLs are pinned");
+        bool unpinnedRefused=false;
+        try { GeometryRuntime.VerifySource("dxvk","d3d11.dll",Path.Combine(sources,"d3d11.dll")); } catch(InvalidDataException) { unpinnedRefused=true; }
+        Check(unpinnedRefused,"a DLL that does not match its pin is refused before it is copied into a game");
         string steamapps=Path.Combine(root,"SteamLibrary","steamapps"), steamExe=Path.Combine(steamapps,"common","TestGame","bin","game.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(steamExe)!);File.WriteAllText(Path.Combine(steamapps,"appmanifest_999.acf"),"\"appid\" \"999\"\n\"installdir\" \"TestGame\"");
         Check(GeometryLaunch.FindSteamAppId(steamExe)=="999","resolve a Steam installation by its manifest, not its game title");
@@ -150,7 +291,10 @@ internal static class GeometryLaunchTests
             using var image=File.Create(Path.Combine(output,"ui-geometry-restart.png")); encoder.Save(image);
         } finally { dialog.Close(); }
         Check(!current.HasExited,"displaying and dismissing restart details is passive");
+#if DEBUG
         await NativeGeometryLaunchTests.Run(root,app);
+#endif
+        File.WriteAllText(Path.Combine(output,"geometry-guard-pass.txt"),"PASS: install records intent before copying; crash-left temporary copies and DLLs removed by hash; detached --geometry-guard process cleans after the game's folder is quiet; invalid guard folders refused; retired run folders pruned to the newest few, never one in use; per-game shader cache.");
         File.WriteAllText(Path.Combine(output,"geometry-launch-pass.txt"),"PASS: profile migration and per-game persistence; base/apply-all isolation; literal Windows arguments; API switch handling; scoped DLL install/rollback and hash-preserving cleanup; Steam manifest resolution; fresh same-frame stream owner validation; real command-line preflight without restarting a game.");
     }
 }

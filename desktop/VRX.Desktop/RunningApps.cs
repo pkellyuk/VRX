@@ -29,6 +29,12 @@ public static class RunningApps
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetWindowText(nint hwnd, StringBuilder text, int count);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetClassName(nint hwnd, StringBuilder text, int count);
     [DllImport("user32.dll")] internal static extern bool GetClientRect(nint hwnd, out Rect rect);
+    // A visible window's client area in pixels (0 when hidden, minimized or gone).
+    public static long WindowArea(nint hwnd)
+    {
+        if (hwnd == 0 || !IsWindowVisible(hwnd) || IsMinimized(hwnd) || !GetClientRect(hwnd, out var rect)) return 0;
+        return (long)Math.Max(0, rect.Right - rect.Left) * Math.Max(0, rect.Bottom - rect.Top);
+    }
     [StructLayout(LayoutKind.Sequential)] internal struct Rect { public int Left, Top, Right, Bottom; }
     [DllImport("kernel32.dll")] private static extern nint OpenProcess(uint access, bool inherit, int pid);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageName(nint process, int flags, StringBuilder path, ref int size);

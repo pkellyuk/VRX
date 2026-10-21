@@ -1,3 +1,7 @@
+#if DEBUG
+// Development builds only: these start copies of this executable with fixture switches
+// (App.RunDevelopmentFixture) or use the repository's bench builds, none of which exist in a
+// release build.
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Globalization;
@@ -62,3 +66,4 @@ internal static class NativeGeometryLaunchTests
         GeometryLaunch.Cleanup(runRoot);Check(!File.Exists(Path.Combine(Path.GetDirectoryName(game)!,"d3d12.dll")),"native cleanup uses backend-specific ownership and exact content hashes");
     }
 }
+#endif

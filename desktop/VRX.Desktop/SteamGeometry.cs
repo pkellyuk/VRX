@@ -13,12 +13,41 @@ internal static class SteamGeometry
     internal sealed record Request(string Nonce,string Executable,Profile Profile,DateTimeOffset Expires,bool Claimed=false);
     internal sealed record Result(string Nonce,GeometryLaunch.Run? Run,string? Error);
     internal static string DataRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"VRX");
-    private static string RequestFile(string root,string id) => SteamLibrary.ValidId(id)?Path.Combine(root,"steam",id+".pending.json"):throw new InvalidDataException("Invalid Steam App ID.");
+    private static string RequestFile(string root,string id) => SteamLibrary.ValidId(id)?Path.Combine(root,"steam",id+".pending.json"):throw new InvalidDataException(Loc.Get("SteamInvalidId"));
     public static string LaunchOptions(string id) {
-        if(!SteamLibrary.ValidId(id)) throw new InvalidDataException("Invalid Steam App ID.");
-        string executable=Environment.ProcessPath ?? throw new InvalidOperationException("VRX executable is unavailable.");
+        if(!SteamLibrary.ValidId(id)) throw new InvalidDataException(Loc.Get("SteamInvalidId"));
+        string executable=Environment.ProcessPath ?? throw new InvalidOperationException(Loc.Get("ErrorVrxPathUnavailable"));
         if(!Path.GetFileNameWithoutExtension(executable).Equals("VRX.Desktop",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException(Loc.Get("SteamUsePublishedApp"));
         return GeometryLaunch.QuoteArgument(executable)+" --steam-game "+id+" -- %command%";
+    }
+    // Steam games whose launch options start them through VRX: these must be removed in Steam
+    // before VRX is moved or uninstalled (Steam would otherwise fail to start them). VRX does
+    // not edit Steam's settings, so this lists exactly what to remove.
+    public static void ShowRemoval(Window owner,string root,IReadOnlyList<SteamLibrary.Game> games) {
+        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(games);
+        Debug.WriteLine($"[Steam setup] ShowRemoval enter: {games.Count} game(s)");
+        var window=new Window {Title=Loc.Get("SteamRemoveTitle"),Owner=owner,Width=650,SizeToContent=SizeToContent.Height,MaxHeight=Math.Min(800,SystemParameters.WorkArea.Height-40),
+            WindowStartupLocation=WindowStartupLocation.CenterOwner,ShowInTaskbar=false};
+        window.Background=(System.Windows.Media.Brush)owner.FindResource("Page"); window.Foreground=(System.Windows.Media.Brush)owner.FindResource("Ink");
+        var body=new StackPanel {Margin=new Thickness(24)};
+        window.Content=new ScrollViewer {Content=body,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+        body.Children.Add(new TextBlock {Text=Loc.Get(games.Count==0?"SteamRemoveNone":"SteamRemoveInfo"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12)});
+        foreach(var game in games) {
+            body.Children.Add(new TextBlock {Text=game.Title,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,8,0,4)});
+            body.Children.Add(new TextBox {Text=LaunchOptions(game.AppId),IsReadOnly=true,TextWrapping=TextWrapping.Wrap});
+        }
+        var done=new Button {Content=Loc.Get(games.Count==0?"SteamRemoveClose":"SteamRemoveDone"),Margin=new Thickness(0,16,0,0),HorizontalAlignment=HorizontalAlignment.Right,Padding=new Thickness(14,8,14,8)};
+        done.Click+=(_,_)=>window.DialogResult=true; body.Children.Add(done);
+        if(window.ShowDialog()!=true) { Debug.WriteLine("[Steam setup] ShowRemoval exit: closed"); return; }
+        // "I've removed them": VRX shows the setup again before the next Steam geometry launch.
+        foreach(var game in games) {
+            if(SteamLibrary.LoadBinding(root,game) is not {} binding) continue;
+            try { SteamLibrary.SaveBinding(root,game,binding with {WrapperConfigured=false}); }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or InvalidDataException) { Debug.WriteLine("[Steam setup] "+ex.Message); }
+        }
+        Debug.WriteLine("[Steam setup] ShowRemoval exit: marked removed");
     }
     public static bool Setup(Window owner,SteamLibrary.Game game) {
         string options=LaunchOptions(game.AppId);
@@ -37,7 +66,7 @@ internal static class SteamGeometry
         string pending=RequestFile(root,game.AppId), resultFile=pending+".result";
         var request=new Request(Guid.NewGuid().ToString("N"),plan.App.FullPath,profile,DateTimeOffset.UtcNow.AddMinutes(3));
         // The launcher wrapper's paths are fixed to the normal per-user VRX root.
-        if(!Path.GetFullPath(root).Equals(Path.GetFullPath(DataRoot),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Steam launches require the normal VRX data directory.");
+        if(!Path.GetFullPath(root).Equals(Path.GetFullPath(DataRoot),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException(Loc.Get("SteamDataDirectory"));
         using var gate=new Mutex(false,@"Local\VRX.steam.launch."+game.AppId);
         bool held; try {held=gate.WaitOne(0);} catch(AbandonedMutexException) {held=true;}
         if(!held) throw new InvalidOperationException(Loc.Get("SteamLaunchBusy"));
@@ -68,8 +97,8 @@ internal static class SteamGeometry
             }
             throw new InvalidOperationException(Loc.Get("SteamWrapperTimeout"));
         } finally {
-            // Expire instead of deleting: a delayed Steam start must not launch
-            // an unconfigured game after the user cancelled this request.
+            // Expire instead of deleting, so a wrapper already started for this request knows
+            // it was cancelled; a later Steam start then launches the game normally.
             if(completed) File.Delete(pending);
             else ProfileStore.AtomicWrite(pending,JsonSerializer.Serialize(request with {Expires=DateTimeOffset.MinValue}));
         }
@@ -91,11 +120,17 @@ internal static class SteamGeometry
             try {
                 if(File.Exists(pending)) {
                     request=JsonSerializer.Deserialize<Request>(File.ReadAllText(pending)) ?? throw new InvalidDataException(Loc.Get("SteamCommandInvalid"));
-                    if(request.Expires<=DateTimeOffset.UtcNow) { File.Delete(pending); throw new InvalidOperationException(Loc.Get("SteamRequestExpired")); }
-                    if(request.Claimed) {request=null; throw new InvalidOperationException(Loc.Get("SteamLaunchBusy"));}
-                    // Consume atomically under the wrapper gate; only one child
-                    // may install the translation libraries for this request.
-                    ProfileStore.AtomicWrite(pending,JsonSerializer.Serialize(request with {Claimed=true}));
+                    if(request.Expires<=DateTimeOffset.UtcNow) {
+                        // A cancelled or expired VRX request: this is an ordinary Steam launch,
+                        // so the game starts normally (no geometry) instead of showing an error.
+                        Debug.WriteLine($"[Steam wrapper] request for {id} expired at {request.Expires:O}; launching normally");
+                        File.Delete(pending); request=null;
+                    } else {
+                        if(request.Claimed) {request=null; throw new InvalidOperationException(Loc.Get("SteamLaunchBusy"));}
+                        // Consume atomically under the wrapper gate; only one child
+                        // may install the translation libraries for this request.
+                        ProfileStore.AtomicWrite(pending,JsonSerializer.Serialize(request with {Claimed=true}));
+                    }
                 }
             } finally {claim.ReleaseMutex();}
             if(request==null) {
