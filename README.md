@@ -100,17 +100,16 @@ Session logs are under `%LOCALAPPDATA%\VRX\sessions`.
 
 ## Build locally
 
-An experimental second stereo backend is being developed on `xgstereo`:
-[geometry stereo prototype](docs/XGSTEREO.md). It includes a Windows Vulkan shader
-layer with alternate-frame and same-frame command/resource mirroring, shared GPU
-textures, paired input in the renderer, and per-window stereo method buttons in
-the chooser (Depth estimate, Vulkan, DXVK, and DX12 through a locally supplied
-vkd3d-proton build; the native DX12 proxy is not offered). The choice is
-remembered per game and is also available in Expert. Geometry methods reuse a
-ready stream or show a restart dialog with the captured arguments and Steam ID;
-auto-attach never restarts games. System
-Shock through the scoped DXVK launcher has passed same-frame gameplay checks at
-2560x1440 per eye. Headset comfort and full-game compatibility need validation.
+An experimental second stereo method, **3D: true geometry**, is being developed on
+`xgstereo` ([how it works](docs/XGSTEREO.md)). Instead of estimating depth, it renders the
+game twice, once per eye, through a Vulkan layer: Vulkan games directly, DX11 games
+through DXVK and DX12 games through vkd3d-proton (both bundled, pinned and hash-checked).
+It is off by default and chosen per game in Expert only, behind a warning: it loads a
+rendering layer into the game, so use it with offline games; online games with
+anti-cheat may flag it, and games with a known anti-cheat are refused. VRX copies the
+translation DLLs next to the game only while it runs and a separate guard removes them
+afterwards, even if VRX closes first. Auto and Easy mode always use estimated depth.
+Headset comfort and game compatibility still need validation.
 
 You need Visual Studio with the C++ tools and a Windows SDK (the newest one is found
 with `vswhere`), the .NET 10 SDK, Python 3.12 and Git. The OpenXR loader and the HLSL

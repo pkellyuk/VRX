@@ -134,7 +134,9 @@ V2 alongside ZipDepth for more detailed layering, moved to the current frame the
 same way; it is best with another GPU chosen as the depth GPU and is limited to
 10 passes per second on one GPU. Both add CPU work to each depth pass; the session
 log reports it. GPUs without a hardware motion estimator play without them.
-No game injection, motion-controller controls, or in-headset UI.
+No game injection in the default (estimated depth) mode; the experimental true-geometry
+mode, off by default, loads a rendering layer into the game. No motion-controller
+controls or in-headset UI.
 SteamVR dashboard dismissal is best-effort. Other games/headsets need validation.
 
 The installer is not code-signed and Windows may display an unknown-publisher
