@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- First signing request of a release: VRX's own programs and Inno Setup's uninstaller
      (release\build-release.ps1 -Stage Payload writes them to to-sign\; the GitHub Actions
-     build uploads that folder as a ZIP). Everything else VRX ships is already signed by
-     Microsoft or Valve and is not sent. -->
+     build uploads that folder as a ZIP). Everything else VRX ships is either already
+     signed by Microsoft or Valve, or is a third-party DLL shipped exactly as its project
+     releases it (DXVK, vkd3d-proton: pinned by hash, not re-signed), and is not sent. -->
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
     <pe-file path="VRX.Desktop.exe" product-name="VRX">
@@ -12,6 +13,9 @@
       <authenticode-sign />
     </pe-file>
     <pe-file path="engine/xrplayer.exe" product-name="VRX">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="geometry/layer/vrx_xgstereo.dll">
       <authenticode-sign />
     </pe-file>
     <pe-file-set>

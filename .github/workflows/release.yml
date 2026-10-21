@@ -2,14 +2,18 @@
 # code-signed by SignPath (free for open source, certificate by SignPath Foundation).
 #
 # Every input is pinned: the native NuGet packages (release/NativePackages.csproj), the
-# OpenXR loader (release/vendor), and the two depth models, which are rebuilt from their
-# upstream sources and hash-checked (release/build-models.ps1).
+# OpenXR loader (release/vendor), the two depth models, which are rebuilt from their
+# upstream sources and hash-checked (release/build-models.ps1), CMake (below), the
+# geometry layer's Vulkan and SPIR-V headers (commits in bench/native/xgstereo/CMakeLists.txt),
+# and the DXVK and vkd3d-proton release archives and DLLs (release/build-release.ps1,
+# release/vendor/geometry-runtime.sha256).
 #
 # Signing runs only once the repository variables SIGNPATH_ORGANIZATION_ID and
 # SIGNPATH_PROJECT_SLUG and the secret SIGNPATH_API_TOKEN are set; until then the build
 # produces the same files unsigned. Each signing request waits for manual approval in
 # SignPath. Two requests per release:
-#   1. program-files: VRX.Desktop.exe/.dll, engine\xrplayer.exe and the uninstaller
+#   1. program-files: VRX.Desktop.exe/.dll, engine\xrplayer.exe, geometry\layer\vrx_xgstereo.dll
+#      and the uninstaller
 #   2. installer:     VRX-Setup-<version>.exe, built from the signed files of request 1
 name: Release build
 
@@ -42,6 +46,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+
+      # The geometry layer (bench/native/xgstereo) builds with CMake and the Visual Studio
+      # generator; its Vulkan/SPIR-V headers come from FetchContent (git), so no Vulkan SDK.
+      - name: Install CMake 3.31.12 (pinned)
+        run: |
+          $zip = "$env:RUNNER_TEMP\cmake-3.31.12-windows-x86_64.zip"
+          Invoke-WebRequest 'https://github.com/Kitware/CMake/releases/download/v3.31.12/cmake-3.31.12-windows-x86_64.zip' -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne '0C4BAA40F28B3F8225EB3FDF6946C987B4FE901403B4EAF2FBBD9378100AAA0C') { throw 'CMake archive hash mismatch' }
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          "$env:RUNNER_TEMP\cmake-3.31.12-windows-x86_64\bin" | Add-Content $env:GITHUB_PATH
+          & "$env:RUNNER_TEMP\cmake-3.31.12-windows-x86_64\bin\cmake.exe" --version
 
       - name: Install Inno Setup
         run: |
@@ -113,7 +128,7 @@ jobs:
       - name: Show signatures
         run: |
           Get-ChildItem $env:OUT -File -Filter *.exe | ForEach-Object { '{0}: {1}' -f $_.Name, (Get-AuthenticodeSignature $_.FullName).Status }
-          Get-ChildItem "$env:OUT\VRX-*-win-x64" -Recurse -Include VRX.Desktop.exe, VRX.Desktop.dll, xrplayer.exe | ForEach-Object { '{0}: {1}' -f $_.Name, (Get-AuthenticodeSignature $_.FullName).Status }
+          Get-ChildItem "$env:OUT\VRX-*-win-x64" -Recurse -Include VRX.Desktop.exe, VRX.Desktop.dll, xrplayer.exe, vrx_xgstereo.dll | ForEach-Object { '{0}: {1}' -f $_.Name, (Get-AuthenticodeSignature $_.FullName).Status }
           Get-Content "$env:OUT\SHA256SUMS.txt"
 
       - name: Upload the release
