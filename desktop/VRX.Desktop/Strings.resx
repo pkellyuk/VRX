@@ -320,6 +320,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="GeometryCancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="GeometryRestartAction" xml:space="preserve"><value>Restart game and try</value></data>
   <data name="ErrorLaunchArguments" xml:space="preserve"><value>VRX could not read the original game command line. Leave the game running and try again.</value></data>
+  <data name="ErrorGeometryNotInThisCopy" xml:space="preserve"><value>This copy of VRX ({0}) doesn't include true geometry: it is a developer build or an incomplete copy. Start the installed VRX instead, or use estimated depth.</value></data>
   <data name="ErrorGeometryLayerMissing" xml:space="preserve"><value>An optional VRX component for true geometry ({0}) is missing or damaged. Reinstall VRX to repair it, or use estimated depth.</value></data>
   <data name="ErrorGeometryManifest" xml:space="preserve"><value>VRX could not verify ownership of the temporary game files. The files were left untouched.</value></data>
   <data name="ErrorGeometryX64" xml:space="preserve"><value>Geometry stereo currently supports 64-bit x86 games only. Depth estimate is available for this window.</value></data>

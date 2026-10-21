@@ -86,7 +86,20 @@ internal static class GeometryRuntime
         }
 #endif
         Debug.WriteLine("[Geometry runtime] LayerDirectory: missing");
-        throw new FileNotFoundException(Loc.Format("ErrorGeometryLayerMissing", Path.Combine("geometry", "layer")));
+        throw new FileNotFoundException(MissingMessage("layer"));
+    }
+
+    // A copy with no geometry folder at all (a developer build, or a partial copy) says which
+    // copy it is, rather than suggesting the installed VRX is damaged.
+    internal static string MissingMessage(string component)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(component);
+        if (!Directory.Exists(Root))
+        {
+            Debug.WriteLine($"[Geometry runtime] MissingMessage: no {Root}");
+            return Loc.Format("ErrorGeometryNotInThisCopy", AppRoot);
+        }
+        return Loc.Format("ErrorGeometryLayerMissing", Path.Combine("geometry", component));
     }
 
     // DXVK's folder, every DLL verified against the pin.
@@ -110,7 +123,7 @@ internal static class GeometryRuntime
         }
 #endif
         Debug.WriteLine("[Geometry runtime] DxvkDirectory: missing");
-        throw new FileNotFoundException(Loc.Format("ErrorGeometryLayerMissing", Path.Combine("geometry", "dxvk")));
+        throw new FileNotFoundException(MissingMessage("dxvk"));
     }
 
     // vkd3d-proton's folder, every DLL verified against the pin. A development build also

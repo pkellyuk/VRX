@@ -440,9 +440,9 @@ public static class GeometryLaunch
         if(plan.Backend==StereoPaths.Dx12){ValidateNativeRuntime(plan.LayerDirectory);return;}
 #endif
         if(!StereoPaths.Geometry(plan.Backend) || !File.Exists(Path.Combine(plan.LayerDirectory,GeometryRuntime.LayerLibrary)) || !File.Exists(Path.Combine(plan.LayerDirectory,GeometryRuntime.LayerManifest)))
-            throw new FileNotFoundException(Loc.Format("ErrorGeometryLayerMissing",Path.Combine("geometry","layer")));
+            throw new FileNotFoundException(GeometryRuntime.MissingMessage("layer"));
         if((plan.Backend is StereoPaths.Dxvk or StereoPaths.Vkd3d) && (plan.DxvkDirectory==null || GeometryRuntime.DxvkFiles.Any(n=>!File.Exists(Path.Combine(plan.DxvkDirectory,n)) || !IsX64(Path.Combine(plan.DxvkDirectory,n)))))
-            throw new FileNotFoundException(Loc.Format("ErrorGeometryLayerMissing",Path.Combine("geometry","dxvk")));
+            throw new FileNotFoundException(GeometryRuntime.MissingMessage("dxvk"));
         if(plan.Backend==StereoPaths.Vkd3d && (plan.Vkd3dDirectory==null || GeometryRuntime.Vkd3dFiles.Any(n=>!File.Exists(Vkd3dFile(plan.Vkd3dDirectory,n)) || !IsX64(Vkd3dFile(plan.Vkd3dDirectory,n)))))
             throw new FileNotFoundException(Loc.Format("ErrorVkd3dMissing",Path.Combine("geometry","vkd3d")));
     }

@@ -53,20 +53,24 @@ internal static class SteamGeometry
         }
         Debug.WriteLine("[Steam setup] ShowRemoval exit: marked removed");
     }
-    // True when Steam still starts this game through a VRX install folder named directly
-    // (an older setup, or a development build): those must be replaced with the fixed launcher.
-    public static bool NeedsUpdate(SteamLibrary.Game game) {
+    // True when Steam's saved Launch Options for this game do not start it through VRX's fixed
+    // launcher: none at all (removed in Steam), or an older line naming a VRX folder directly.
+    // When Steam's settings cannot be read, VRX relies on its own record (the caller's check).
+    // Steam saves its settings on its own schedule, so a line added a moment ago may still read
+    // as missing; the setup dialog then simply shows the same line again and carries on.
+    public static bool NeedsSetup(SteamLibrary.Game game) {
         ArgumentNullException.ThrowIfNull(game);
         string? current=SteamLibrary.LaunchOptionsFor(game.AppId);
-        bool stale=SteamLauncher.IsDirectOption(current);
-        Debug.WriteLine($"[Steam setup] NeedsUpdate {game.AppId}: {stale}");
-        return stale;
+        if(current==null) { Debug.WriteLine($"[Steam setup] NeedsSetup {game.AppId}: Steam's settings unreadable"); return false; }
+        bool needed=!current.Contains(SteamLauncher.InstalledPath,StringComparison.OrdinalIgnoreCase);
+        Debug.WriteLine($"[Steam setup] NeedsSetup {game.AppId}: {needed} ('{current}')");
+        return needed;
     }
     public static bool Setup(Window owner,SteamLibrary.Game game) {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(game);
         string options=LaunchOptions(game.AppId);
-        bool replacing=NeedsUpdate(game);
+        bool replacing=SteamLauncher.IsDirectOption(SteamLibrary.LaunchOptionsFor(game.AppId));
         Debug.WriteLine($"[Steam setup] Setup {game.AppId}: replacing {replacing}");
         var window=new Window {Title=Loc.Get("SteamSetupTitle"),Owner=owner,Width=650,SizeToContent=SizeToContent.Height,WindowStartupLocation=WindowStartupLocation.CenterOwner,ShowInTaskbar=false};
         window.Background=(System.Windows.Media.Brush)owner.FindResource("Page"); window.Foreground=(System.Windows.Media.Brush)owner.FindResource("Ink");

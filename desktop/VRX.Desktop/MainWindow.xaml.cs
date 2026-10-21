@@ -919,7 +919,7 @@ public partial class MainWindow : Window
                 }
                 saved.GeometryLaunchArguments=GeometryLaunch.SavedArguments(plan.Arguments); saved.GeometryWorkingDirectory=plan.WorkingDirectory;
                 saved.GeometrySession=plan.Session; store.Save(saved);
-                if(picked.ReviewSteamSetup || SteamLibrary.LoadBinding(store.Root,game)?.WrapperConfigured!=true || SteamGeometry.NeedsUpdate(game)) {
+                if(picked.ReviewSteamSetup || SteamLibrary.LoadBinding(store.Root,game)?.WrapperConfigured!=true || SteamGeometry.NeedsSetup(game)) {
                     if(!SteamGeometry.Setup(this,game)) return;
                 }
                 if(running!=null) {
