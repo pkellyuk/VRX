@@ -70,8 +70,8 @@ internal static class GeometryLaunchIntegrationTests
                 Check(pair.Success && pair.Groups[1].Value==pair.Groups[2].Value && double.Parse(pair.Groups[3].Value,System.Globalization.CultureInfo.InvariantCulture)>.1,
                     "the renderer produces distinct same-frame eyes for an ordinary D3D11 app");
                 string engine=Environment.GetEnvironmentVariable("VRX_GEOMETRY_TEST_ENGINE") ?? Path.Combine(repository,"bench","native","openxr","out","xrplayer.exe");
-                string result=await Tool(engine,["--geometry-session="+running.Session,"--geometry-pid="+running.Pid,"--check-geometry","--debug","--normal-gpu-priority"]);
-                Check(result.Contains("Geometry check: PASS") && result.Contains("same-frame eyes") && !result.Contains("InitXrInstance:"),"actual VRX GPU eye handoff passes without starting VR");
+                string consumerResult=await Tool(engine,["--geometry-session="+running.Session,"--geometry-pid="+running.Pid,"--check-geometry","--debug","--normal-gpu-priority"]);
+                Check(consumerResult.Contains("Geometry check: PASS") && consumerResult.Contains("same-frame eyes") && !consumerResult.Contains("InitXrInstance:"),"actual VRX GPU eye handoff passes without starting VR");
             }
             using(var warm=Process.GetProcessById(running.Pid)) {
                 Check(warm.CloseMainWindow(),"close the warm fixture before testing launch from history"); await warm.WaitForExitAsync(token);
@@ -93,7 +93,35 @@ internal static class GeometryLaunchIntegrationTests
                 await Task.Delay(50,token);
             GeometryLaunch.RecoverOwned(root);
             Check(new[]{"d3d11.dll","dxgi.dll","d3d12.dll","d3d12core.dll"}.All(n=>!File.Exists(Path.Combine(root,n))),"all scoped graphics DLLs are removed after fixture exit");
-            File.WriteAllText(Path.Combine(output,translated?"vkd3d-geometry-integration-pass.txt":"geometry-integration-pass.txt"),(translated?"PASS: managed vkd3d-proton D3D12 translation and four-component installation; ":"PASS: ")+"two managed restarts and a direct cold launch from history; literal arguments; distinct same-frame geometry; stream reuse; actual VRX GPU handoff; normal exit and scoped DLL cleanup. Logs: "+root);
+            var bootstrapPlan=coldPlan with {Arguments=new[]{"--steam-bootstrap-test="+executable}.Concat(capturedArgs).ToArray()};
+            running=await GeometryLaunch.LaunchFromSteam(bootstrapPlan,profile,root,log.Add,token,Environment.ProcessPath!);
+            Check(running.Executable==executable && running.LaunchExecutable=="" && GeometryLaunch.IsRunning(running),"Steam-style bootstrap is followed to the actual rendering process");
+            await Window(running);
+            string bootstrapPixels=await Tool(Path.Combine(repository,"bench","native","dx12stereo","out","Release","geometry_gpu_snapshot.exe"),[running.Session,Path.Combine(root,"steam-bootstrap-eyes.ppm"),running.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+            var bootstrapPair=Regex.Match(bootstrapPixels,@"frame (\d+)/(\d+).*mean eye difference ([0-9.]+)");
+            Check(bootstrapPair.Success && bootstrapPair.Groups[1].Value==bootstrapPair.Groups[2].Value && double.Parse(bootstrapPair.Groups[3].Value,System.Globalization.CultureInfo.InvariantCulture)>.1,"Steam-style child inherits the layer and produces distinct same-frame eyes");
+            using(var final=Process.GetProcessById(running.Pid)) {Check(final.CloseMainWindow(),"close the Steam-style fixture normally");await final.WaitForExitAsync(token);}
+            GeometryLaunch.RecoverOwned(root);
+            Check(new[]{"d3d11.dll","dxgi.dll","d3d12.dll","d3d12core.dll"}.All(n=>!File.Exists(Path.Combine(root,n))),"Steam-style child exit also cleans up owned libraries");
+            profile.GeometrySteamAppId="123"; profile.GeometryWorkingDirectory=root;
+            string pending=Path.Combine(root,"steam","123.pending.json");
+            var request=new SteamGeometry.Request(Guid.NewGuid().ToString("N"),executable,profile,DateTimeOffset.UtcNow.AddMinutes(2));
+            ProfileStore.AtomicWrite(pending,System.Text.Json.JsonSerializer.Serialize(request));
+            var wrapper=SteamGeometry.RunFixture("123",new[]{executable}.Concat(capturedArgs).ToArray(),root,[new("123","Steam fixture",root)]);
+            SteamGeometry.Result? result=null;
+            long resultDeadline=Environment.TickCount64+45000;
+            while(Environment.TickCount64<resultDeadline && result==null) {
+                if(File.Exists(pending+".result")) result=System.Text.Json.JsonSerializer.Deserialize<SteamGeometry.Result>(File.ReadAllText(pending+".result"));
+                if(result==null) await Task.Delay(100,token);
+            }
+            Check(result?.Nonce==request.Nonce && result.Run!=null,"the full geometry wrapper claims the pending request and reports its matching ready stream: "+result?.Error);
+            running=result!.Run!;
+            Check(!wrapper.IsCompleted && GeometryLaunch.StreamMatches(running.Session,running.Pid),"wrapper remains alive while the rendering game owns a ready stream");
+            using(var final=Process.GetProcessById(running.Pid)) {Check(final.CloseMainWindow(),"close the request-driven fixture"); await final.WaitForExitAsync(token);}
+            Check(await wrapper.WaitAsync(TimeSpan.FromSeconds(10),token)==0,"request-driven wrapper exits normally with its game");
+            Check(new[]{"d3d11.dll","dxgi.dll","d3d12.dll","d3d12core.dll"}.All(n=>!File.Exists(Path.Combine(root,n))),"request-driven wrapper removes all its owned libraries");
+            File.Delete(pending);
+            File.WriteAllText(Path.Combine(output,translated?"vkd3d-geometry-integration-pass.txt":"geometry-integration-pass.txt"),(translated?"PASS: managed vkd3d-proton D3D12 translation and four-component installation; ":"PASS: ")+"two managed restarts, direct cold launch, Steam-style bootstrap child launch, and full nonce-matched wrapper request; literal arguments; distinct same-frame geometry; stream reuse; actual VRX GPU handoff; normal exit and scoped DLL cleanup. Logs: "+root);
         } finally {
             var owned=new List<GeometryLaunch.Run>(); if(running!=null) owned.Add(running);
             foreach(string file in Directory.GetFiles(root,"run.json",SearchOption.AllDirectories)) {

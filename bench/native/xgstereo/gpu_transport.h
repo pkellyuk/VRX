@@ -5,6 +5,7 @@
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 #include <array>
+#include <memory>
 #include "../common/system_d3d12.h"
 
 namespace xg {
@@ -250,4 +251,30 @@ public:
         pendingSlot_ = -1; pendingSequence_ = 0; return true;
     }
 };
+// Startup may observe the short closed generation between a game's splash
+// swapchain and its real one. Reopen until a completed pair arrives, retaining
+// the first producer's identity and the device's adapter check throughout.
+inline PairRead WaitForGpuPair(ID3D12Device* device,const std::wstring& session,uint32_t expectedPid,
+    std::unique_ptr<GpuReader>& reader,GpuSlotInfo& frame,uint64_t timeoutMs)
+{
+    const auto until=GetTickCount64()+timeoutMs;
+    uint32_t owner=expectedPid;PairRead status=PairRead::Closed;
+    reader.reset();
+    do {
+        if(!reader) {
+            auto candidate=std::make_unique<GpuReader>();
+            if(candidate->Open(device,session,owner)) {
+                owner=candidate->Header().pid;reader=std::move(candidate);
+            }
+        }
+        if(reader) {
+            status=reader->Status(0,frame);
+            if(status==PairRead::NewPair) return status;
+            if(status==PairRead::Invalid && !reader->ReplacementAvailable()) return status;
+            if(status==PairRead::Closed || status==PairRead::Invalid) reader.reset();
+        }
+        Sleep(5);
+    } while(GetTickCount64()<until);
+    return status;
+}
 } // namespace xg

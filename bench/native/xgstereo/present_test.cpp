@@ -3,6 +3,8 @@
 // unchanged recorded draw list. Stereo is added entirely by the explicit layer.
 #include "render_support.h"
 #include "gpu_test_support.h"
+#include <fstream>
+#include <filesystem>
 #include <algorithm>
 #include <memory>
 #include <thread>
@@ -191,7 +193,9 @@ int main(int argc, char** argv)
         const bool serveGpu = serveMirror || argc == 2 && std::string(argv[1]).rfind("--serve-gpu=", 0) == 0;
         const bool contention = argc == 2 && std::string(argv[1]) == "--mirror-contention";
         const bool tenBit=argc==2 && std::string(argv[1])=="--mirror-ten";
-        const bool mirror = tenBit || contention || serveMirror || (argc == 2 && (std::string(argv[1]) == "--mirror" || std::string(argv[1]) == "--mirror-inline"));
+        const bool externalImport=argc==2 && std::string(argv[1])=="--mirror-win32-import";
+        const bool mirrorLive=argc==2 && std::string(argv[1])=="--mirror-live-tuning";
+        const bool mirror = mirrorLive || externalImport || tenBit || contention || serveMirror || (argc == 2 && (std::string(argv[1]) == "--mirror" || std::string(argv[1]) == "--mirror-inline"));
         const bool gpuTransport = mirror || serveGpu || (argc == 2 && std::string(argv[1]) == "--gpu");
         const bool unsupported = argc == 2 && std::string(argv[1]) == "--unsupported-queues";
         const bool unsupportedShader = argc == 2 && std::string(argv[1]) == "--unsupported-shader";
@@ -214,9 +218,9 @@ int main(int argc, char** argv)
                 const bool ok = WriteFile(file, text, size, &written, nullptr) && written == size;
                 CloseHandle(file); Require(ok, "write tuning fixture file");
             }
-            ~TuningFile() { if (!path.empty()) DeleteFileW(path.c_str()); }
+            ~TuningFile() { if (!path.empty()) {DeleteFileW(path.c_str());DeleteFileW((path+L".live.json").c_str());} }
         } tuning;
-        if (liveTuning) {
+        if (liveTuning || mirrorLive) {
             wchar_t executable[32768]; Require(GetModuleFileNameW(nullptr, executable, 32768) != 0, "get test path");
             tuning.path = std::wstring(executable) + L"." + std::to_wstring(GetCurrentProcessId()) + L".stereo.txt";
             tuning.Write("0.125 0\n"); SetEnvironmentVariableW(L"VRX_XG_TUNING", tuning.path.c_str());
@@ -226,8 +230,36 @@ int main(int argc, char** argv)
             xg::ComPtr<ID3D12Debug> debug;
             if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) debug->EnableDebugLayer();
         }
-        Gpu gpu; gpu.Init(true, unsupported ? 2 : 1, inlineShader);
+        Gpu gpu; gpu.Init(true, unsupported ? 2 : 1, inlineShader,externalImport);
         WindowSwapchain wsi(gpu); wsi.Init(tenBit);
+        if(externalImport) {
+            // Steam can import a shared Windows texture after the first pair.
+            // Import a real exported allocation, then verify stereo still runs.
+            VkBuffer buffers[2]{}; VkDeviceMemory memories[2]{};
+            VkExternalMemoryBufferCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
+            external.handleTypes=VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+            VkBufferCreateInfo buffer{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};buffer.pNext=&external;
+            buffer.size=4096;buffer.usage=VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            for(auto& b:buffers) Vk(gpu.vkCreateBuffer(gpu.device,&buffer,nullptr,&b),"create external buffer");
+            VkMemoryRequirements needs{};gpu.vkGetBufferMemoryRequirements(gpu.device,buffers[0],&needs);
+            VkExportMemoryAllocateInfo exporting{VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO};exporting.handleTypes=external.handleTypes;
+            VkMemoryAllocateInfo allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};allocate.pNext=&exporting;
+            allocate.allocationSize=needs.size;allocate.memoryTypeIndex=gpu.MemoryType(needs.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            Vk(gpu.vkAllocateMemory(gpu.device,&allocate,nullptr,&memories[0]),"allocate exportable memory");
+            Vk(gpu.vkBindBufferMemory(gpu.device,buffers[0],memories[0],0),"bind exported buffer");
+            auto getHandle=reinterpret_cast<PFN_vkGetMemoryWin32HandleKHR>(gpu.getDeviceProc(gpu.device,"vkGetMemoryWin32HandleKHR"));
+            Require(getHandle!=nullptr,"Win32 export function");
+            VkMemoryGetWin32HandleInfoKHR get{VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR};
+            get.memory=memories[0];get.handleType=VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+            HANDLE handle=nullptr;Vk(getHandle(gpu.device,&get,&handle),"export Windows memory handle");
+            VkImportMemoryWin32HandleInfoKHR importing{VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR};
+            importing.handleType=get.handleType;importing.handle=handle;allocate.pNext=&importing;
+            Vk(gpu.vkAllocateMemory(gpu.device,&allocate,nullptr,&memories[1]),"import external memory while mirroring");
+            DWORD flags=0;Require(GetHandleInformation(handle,&flags)!=FALSE,"both imports retain caller ownership of the Windows handle");
+            CloseHandle(handle);
+            Vk(gpu.vkBindBufferMemory(gpu.device,buffers[1],memories[1],0),"bind imported buffer");
+            for(int i=1;i>=0;--i) {gpu.vkDestroyBuffer(gpu.device,buffers[i],nullptr);gpu.vkFreeMemory(gpu.device,memories[i],nullptr);}
+        }
         if (gpuTransport)
         {
             VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
@@ -237,6 +269,44 @@ int main(int argc, char** argv)
             std::unique_ptr<xg::gpu_test::Snapshot> snapshot;
             if (!serveGpu) { snapshot = std::make_unique<xg::gpu_test::Snapshot>(); snapshot->Init(luid, Width, Height, wide); }
             Scene scene(gpu); scene.Draw(true, wsi.format);
+            if(mirrorLive) {
+                auto state=[&]() {std::ifstream input(std::filesystem::path(tuning.path+L".live.json"));return std::string(std::istreambuf_iterator<char>(input),{});};
+                auto value=[](const std::string& json,const char* key) {auto at=json.find(key);Require(at!=std::string::npos,"live tuning acknowledgement field");return std::strtof(json.c_str()+at+std::strlen(key),nullptr);};
+                uint64_t frame=0;
+                auto phase=[&](const char* text,float separation,float convergence) {
+                    tuning.Write(text);const auto start=GetTickCount64(),until=start+5000;uint32_t stable=0;
+                    while(GetTickCount64()<until) {
+                        if(frame) {
+                            Vk(gpu.vkResetFences(gpu.device,1,&scene.fence),"reset live tuning scene fence");
+                            wsi.SubmitCommand(scene.command,scene.fence,uint32_t(frame%3));
+                            Vk(gpu.vkWaitForFences(gpu.device,1,&scene.fence,VK_TRUE,5000000000ull),"reuse the same recorded draw after tuning");
+                        }
+                        wsi.Present(scene.image,uint32_t((frame+1)%3));++frame;
+                        xg::PairFrame pair;const auto readUntil=GetTickCount64()+3000;
+                        while(!snapshot->Read(pair) && GetTickCount64()<readUntil) Sleep(1);
+                        Require(pair.header.sequence!=0,"live tuning keeps publishing GPU pairs");
+                        const auto json=state();
+                        bool applied=!json.empty() && value(json,"\"Separation\":")==separation && value(json,"\"Convergence\":")==convergence;
+                        stable=applied?stable+1:0;
+                        if(stable>=3 && GetTickCount64()-start>=250) {
+                            CheckPair(pair,frame,separation/.125,convergence*Width/2,true);
+                            return value(json,"\"Revision\":");
+                        }
+                        Sleep(5);
+                    }
+                    throw std::runtime_error("live tuning did not reach the expected GPU values");
+                };
+                phase("0.125 0\n",.125f,0);
+                phase("0.25 0\n",.25f,0);
+                phase("0.25 0.015625\n",.25f,.015625f);
+                const auto revision=phase("0.0625 0\n",.0625f,0);
+                Require(phase("NaN 0\n",.0625f,0)==revision,"invalid tuning retains the last acknowledged values");
+                Require(phase("0.5 ",.0625f,0)==revision,"partial tuning cannot update only one eye/value");
+                phase("0.125 0\n",.125f,0);
+                Vk(gpu.vkDeviceWaitIdle(gpu.device),"complete live tuning fixture");
+                std::puts("PASS: live same-frame separation and convergence; GPU-ordered paired updates; reused shaders/commands; HUD unchanged; invalid/partial input ignored");
+                return 0;
+            }
             const auto deadline = GetTickCount64() + (serveGpu ? 120000 : 15000);
             void* vertices = nullptr;
             const size_t vertexBytes = 18 * 4 * sizeof(float);

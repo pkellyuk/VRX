@@ -1851,19 +1851,10 @@ static bool InitSource(App& app)
         if (gpuMapping)
         {
             CloseHandle(gpuMapping);
-            if (!app.geometryGpuReader->Open(app.device.Get(), app.opt.geometrySession))
-            { Log("InitSource: FAIL shared GPU geometry unavailable (adapter, consumer or resource mismatch)"); return false; }
+            const auto status=xg::WaitForGpuPair(app.device.Get(),app.opt.geometrySession,app.opt.geometryPid,
+                app.geometryGpuReader,app.geometryGpuFrame,15000);
+            if (status != xg::PairRead::NewPair) { Log("InitSource: FAIL no completed GPU geometry pair after reconnecting for 15 s (%d); check producer, adapter and consumer", int(status)); return false; }
             const auto& header = app.geometryGpuReader->Header();
-            if (app.opt.geometryPid && header.pid != app.opt.geometryPid)
-            { Log("InitSource: FAIL geometry session belongs to another process"); return false; }
-            const auto deadline = GetTickCount64() + 5000;
-            xg::PairRead status;
-            do {
-                status = app.geometryGpuReader->Status(0, app.geometryGpuFrame);
-                if (status == xg::PairRead::NewPair || status == xg::PairRead::Invalid || status == xg::PairRead::Closed) break;
-                Sleep(5);
-            } while (GetTickCount64() < deadline);
-            if (status != xg::PairRead::NewPair) { Log("InitSource: FAIL no completed GPU geometry pair (%d)", int(status)); return false; }
             app.geometryGpu = true; app.srcW = int(header.width) * 2; app.srcH = int(header.height);
             app.srcFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
             Log("InitSource: GPU texture sharing, %s eyes, no CPU pixel upload", header.kind == uint32_t(xg::GpuFrameKind::SameFrame) ? "same-frame" : "alternating-frame");

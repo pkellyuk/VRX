@@ -67,7 +67,8 @@
   <data name="SectionScreen" xml:space="preserve"><value>Screen</value></data>
   <data name="SectionAround" xml:space="preserve"><value>Around the screen</value></data>
   <data name="SectionRoom" xml:space="preserve"><value>Room</value></data>
-  <data name="SectionDepth" xml:space="preserve"><value>3D &amp; depth</value></data>
+  <data name="SectionDepth" xml:space="preserve"><value>3D &amp; Depth Estimation</value></data>
+  <data name="SectionGeometry" xml:space="preserve"><value>3D and Depth Geometry</value></data>
   <data name="SectionSteamVr" xml:space="preserve"><value>SteamVR &amp; shortcuts</value></data>
   <data name="SectionProfile" xml:space="preserve"><value>Profile</value></data>
   <data name="SectionSession" xml:space="preserve"><value>Session details</value></data>
@@ -263,7 +264,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ChooseButton" xml:space="preserve"><value>Choose…</value><comment>Opens the chooser: pictures of every window and display.</comment></data>
   <data name="ChooseTip" xml:space="preserve"><value>Pick a window or a whole screen from live pictures and play it in VR</value></data>
   <data name="ChooserTitle" xml:space="preserve"><value>Choose what to play</value></data>
-  <data name="ChooserIntro" xml:space="preserve"><value>Click a window or a screen to play it in VR.</value></data>
+  <data name="ChooserIntro" xml:space="preserve"><value>Choose a game, window or screen to play in VR.</value></data>
   <data name="ChooserWindows" xml:space="preserve"><value>Windows</value></data>
   <data name="ChooserNoWindows" xml:space="preserve"><value>No windows to show. Start your game, then choose again.</value></data>
   <data name="ChooserScreens" xml:space="preserve"><value>Whole screen</value></data>
@@ -358,5 +359,33 @@ You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="GeometryLaunchTitle" xml:space="preserve"><value>Launch {0} stereo</value></data>
   <data name="GeometryLaunchAction" xml:space="preserve"><value>Launch game</value></data>
   <data name="GeometryLaunchInfo" xml:space="preserve"><value>The selected graphics components will be prepared before the game starts. Your saved stereo tuning will be used.</value></data>
-  <data name="ChooserNoWindowsHistory" xml:space="preserve"><value>No running game windows. You can launch a recent game above.</value></data>
+  <data name="ChooserNoWindowsHistory" xml:space="preserve"><value>No running game windows. You can launch a game above.</value></data>
+  <data name="SteamReviewSetup" xml:space="preserve"><value>Review Steam launch setup…</value></data>
+  <data name="ChooserSteam" xml:space="preserve"><value>Installed Steam games</value></data>
+  <data name="SteamLibraryHint" xml:space="preserve"><value>Launch through Steam with your saved stereo settings. Geometry needs a one-time Steam launch-options setup.</value></data>
+  <data name="SteamDiscoveryPartial" xml:space="preserve"><value>Some Steam library files could not be read. Available installed games are shown; reopen the chooser to refresh.</value></data>
+  <data name="SteamNoGames" xml:space="preserve"><value>No installed Steam games found. Running windows and recent games are still available.</value></data>
+  <data name="SteamLaunch" xml:space="preserve"><value>Launch through Steam</value></data>
+  <data name="SteamExecutableInvalid" xml:space="preserve"><value>Select the game's rendering executable inside its Steam installation folder.</value></data>
+  <data name="SteamSelectExecutable" xml:space="preserve"><value>Select the game's rendering executable for geometry stereo</value></data>
+  <data name="SteamWindowTimeout" xml:space="preserve"><value>Steam has not opened a game window within two minutes. Check Steam for a launch choice, update, or error, then select the running window.</value></data>
+  <data name="SteamSetupTitle" xml:space="preserve"><value>Steam geometry setup</value></data>
+  <data name="SteamSetupInfo" xml:space="preserve"><value>In Steam, open {0} → Properties → General → Launch Options. Add the line below. If you already have launch arguments, keep them after %command%. If you already use a wrapper, cancel and review its compatibility first.
+
+This lets Steam start the game with VRX's saved geometry settings. VRX does not edit Steam's configuration. Keep VRX installed at this location while the wrapper is configured; remove this line in Steam to undo setup. Without a pending VRX request, the wrapper launches the game normally.</value></data>
+  <data name="SteamCopyOptions" xml:space="preserve"><value>Copy launch options</value></data>
+  <data name="SteamSetupLaunch" xml:space="preserve"><value>I've added these options — launch through Steam</value></data>
+  <data name="SteamUsePublishedApp" xml:space="preserve"><value>Run the VRX desktop executable to configure Steam geometry launches.</value></data>
+  <data name="SteamLaunchBusy" xml:space="preserve"><value>A Steam geometry launch is already pending for this game. Wait for it to finish or cancel it in VRX.</value></data>
+  <data name="SteamWaitingWrapper" xml:space="preserve"><value>Waiting for Steam to start the VRX geometry wrapper…</value></data>
+  <data name="SteamWrapperTimeout" xml:space="preserve"><value>Steam did not return a ready stereo stream within two minutes. Check the game's Steam Launch Options, launch dialogs, and whether the game is already running. Recheck the wrapper entry before trying geometry again.</value></data>
+  <data name="SteamCommandInvalid" xml:space="preserve"><value>Steam did not supply a valid game command. The VRX Launch Options entry must end with -- %command%.</value></data>
+  <data name="SteamCommandMismatch" xml:space="preserve"><value>Steam's launch command or the selected rendering executable is outside this game's installation folder. This launcher needs a tested profile; use Depth estimate for now.</value></data>
+  <data name="SteamRequestExpired" xml:space="preserve"><value>This VRX geometry launch was cancelled or expired. Launch again from VRX, or launch normally through Steam again.</value></data>
+  <data name="GeometrySeparationTip" xml:space="preserve"><value>Controls the strength of geometry depth. Larger values increase the difference between the eyes. Saves for this game and updates a compatible running geometry layer live.</value></data>
+  <data name="GeometryConvergenceTip" xml:space="preserve"><value>Adjusts where the left and right images line up in depth. Saves for this game and updates a compatible running geometry layer live.</value></data>
+  <data name="GeometryTuningLive" xml:space="preserve"><value>Saved per game. A compatible running geometry layer applies changes live to both eyes.</value></data>
+  <data name="GeometryTuningPending" xml:space="preserve"><value>Saved. Applying stereo tuning to both eyes…</value></data>
+  <data name="GeometryTuningApplied" xml:space="preserve"><value>Saved and applied live to both eyes.</value></data>
+  <data name="GeometryTuningUpgrade" xml:space="preserve"><value>Saved. This game has an older or unsupported geometry layer; restart it once to load live tuning.</value></data>
 </root>

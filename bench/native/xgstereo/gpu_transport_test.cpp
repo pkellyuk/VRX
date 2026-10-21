@@ -123,7 +123,31 @@ int main()
             detachRelease.set_value();owner.join();detached.get();CloseHandle(held);
             xg::GpuReader next;Check(waited && next.Open(device.Get(),detachSession),"contended cleanup releases registration for the next reader");
         }
-        std::puts("PASS: shared texture leases, GPU completion, nonblocking full ring, strict same-frame metadata, closure, stale/size/adapter rejection");
+        {
+            const auto startupSession=session+L"-startup";
+            xg::GpuWriter splash;
+            Check(splash.Create(startupSession,device->GetAdapterLuid(),18,10,xg::GpuFrameKind::SameFrame),"create splash generation");
+            auto consumer=std::make_unique<xg::GpuReader>();xg::GpuSlotInfo startupFrame;
+            auto waiting=std::async(std::launch::async,[&]{return xg::WaitForGpuPair(device.Get(),startupSession,GetCurrentProcessId(),consumer,startupFrame,3000);});
+            // Wait until startup has registered on the splash stream, so this
+            // test exercises replacement after Open rather than just retrying.
+            HANDLE map=OpenFileMappingW(FILE_MAP_READ,FALSE,xg::GpuName(startupSession,L".frames").c_str());
+            auto* metadata=static_cast<const xg::GpuHeader*>(MapViewOfFile(map,FILE_MAP_READ,0,0,sizeof(xg::GpuHeader)));
+            HANDLE startupMutex=OpenMutexW(SYNCHRONIZE|MUTEX_MODIFY_STATE,FALSE,xg::GpuName(startupSession,L".lock").c_str());
+            const auto startupDeadline=GetTickCount64()+1000;
+            bool registered=false;
+            while(!registered && GetTickCount64()<startupDeadline) {{xg::PairLock lock(startupMutex,1000);registered=lock.Ready() && metadata->consumer==GetCurrentProcessId();}if(!registered)Sleep(1);}
+            Check(registered,"startup reader opened splash generation");
+            splash.Close();Sleep(30);
+            xg::GpuWriter game;
+            Check(game.Create(startupSession,device->GetAdapterLuid(),23,13,xg::GpuFrameKind::SameFrame),"create gameplay replacement while startup waits");
+            uint64_t startupSequence=0,startupRelease=0;int slot=game.Reserve(startupSequence,startupRelease);
+            Check(slot>=0 && game.Publish(uint32_t(slot),startupSequence,7,7) && SUCCEEDED(game.Objects(uint32_t(slot)).ready->Signal(startupSequence)),"complete replacement pair");
+            Check(waiting.get()==xg::PairRead::NewPair && consumer->Header().width==23 && startupFrame.leftFrame==7 && startupFrame.rightFrame==7,"startup reconnects to completed replacement without restarting the game");
+            consumer.reset();UnmapViewOfFile(metadata);CloseHandle(map);CloseHandle(startupMutex);
+            Check(xg::WaitForGpuPair(device.Get(),startupSession,GetCurrentProcessId()+1,consumer,startupFrame,40)!=xg::PairRead::NewPair,"startup retry never accepts a different producer");
+        }
+        std::puts("PASS: shared texture leases, GPU completion, nonblocking full ring, strict same-frame metadata, startup generation replacement, closure, stale/size/adapter/owner rejection");
         return 0;
     }
     catch (const std::exception& e) { std::fprintf(stderr, "FAIL: %s\n", e.what()); return 1; }

@@ -12,7 +12,7 @@ namespace VRX.Desktop;
 // snapshot of the display taken as the chooser opens. Clicking a tile picks it.
 public sealed partial class ChooserWindow : Window
 {
-    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null, string? Renderer = null, GameHistory.Entry? History = null);
+    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null, string? Renderer = null, GameHistory.Entry? History = null, SteamLibrary.Game? Steam = null, bool ReviewSteamSetup = false);
 
     // What was picked; null when the chooser was closed without a pick.
     public Choice? Picked { get; private set; }
@@ -39,7 +39,7 @@ public sealed partial class ChooserWindow : Window
     // The size it was left at, for next time (AppSettings.ChooserWindow); set when it closes.
     public WindowPlace? Place { get; private set; }
 
-    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null, Func<RunningApp, string>? backendFor = null, Func<RunningApp, string>? rendererFor = null,IReadOnlyList<GameHistory.Entry>? history = null)
+    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null, Func<RunningApp, string>? backendFor = null, Func<RunningApp, string>? rendererFor = null,IReadOnlyList<GameHistory.Entry>? history = null, IReadOnlyList<SteamLibrary.Game>? steamGames = null, string? dataRoot = null, string? steamWarning = null)
     {
         ArgumentNullException.ThrowIfNull(apps);
         ArgumentNullException.ThrowIfNull(screens);
@@ -60,6 +60,15 @@ public sealed partial class ChooserWindow : Window
             HistoryTiles.Children.Add(MakeTile(new Choice(app,window,backendFor?.Invoke(app) ?? StereoPaths.Auto,rendererFor?.Invoke(app),entry),null,false));
         }
         HistoryHeader.Visibility=HistoryTiles.Children.Count>0?Visibility.Visible:Visibility.Collapsed;
+        foreach(var game in steamGames ?? []) {
+            string key=SteamLibrary.ProfileKey(dataRoot!,game);
+            var app=SteamLibrary.Running(game,apps) ?? new RunningApp(0,game.Title,key,[],System.IO.File.Exists(key)?RunningApps.IconFor(key):null);
+            var window=app.Windows.FirstOrDefault(RunningApps.IsChooserWindow) ?? new GameWindow(0,game.Title);
+            SteamTiles.Children.Add(MakeTile(new Choice(app,window,backendFor?.Invoke(app) ?? StereoPaths.Auto,rendererFor?.Invoke(app),Steam:game),null,false));
+        }
+        SteamHeader.Visibility=steamGames!=null?Visibility.Visible:Visibility.Collapsed;
+        SteamHint.Visibility=SteamHeader.Visibility;
+        SteamHint.Text=!string.IsNullOrEmpty(steamWarning)?Loc.Get("SteamDiscoveryPartial"):SteamTiles.Children.Count==0?Loc.Get("SteamNoGames"):Loc.Get("SteamLibraryHint");
 
         // Windows, most recently used first (Windows' z-order), each with its app's icon.
         var order = RunningApps.ZOrder();
@@ -69,7 +78,7 @@ public sealed partial class ChooserWindow : Window
         foreach (var choice in windows)
             WindowTiles.Children.Add(MakeTile(choice with { Backend = backendFor?.Invoke(choice.App) ?? StereoPaths.Depth, Renderer = rendererFor?.Invoke(choice.App) }, null, choice.Window.Handle == currentWindow));
         NoWindows.Visibility = windows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        if(HistoryTiles.Children.Count>0) NoWindows.Text=Loc.Get("ChooserNoWindowsHistory");
+        if(HistoryTiles.Children.Count>0 || SteamTiles.Children.Count>0) NoWindows.Text=Loc.Get("ChooserNoWindowsHistory");
 
         if (screenApp != null)
             foreach (var screen in screens)
@@ -96,6 +105,7 @@ public sealed partial class ChooserWindow : Window
     // The number of tiles, for the smoke test.
     public int WindowTileCount => WindowTiles.Children.Count;
     public int HistoryTileCount => HistoryTiles.Children.Count;
+    public int SteamTileCount => SteamTiles.Children.Count;
     public int ScreenTileCount => ScreenTiles.Children.Count;
 
     private FrameworkElement MakeTile(Choice choice, ScreenSource? screen, bool current)
@@ -115,11 +125,12 @@ public sealed partial class ChooserWindow : Window
             RenderOptions.SetBitmapScalingMode(snapshot, BitmapScalingMode.HighQuality);
             picture.Children.Add(snapshot);
         }
-        string title = screen != null ? screen.Title : choice.History?.Title ?? MainWindow.GameDisplayName(choice.Window.Title, choice.App.Name);
+        string title = screen != null ? screen.Title : choice.Steam?.Title ?? choice.History?.Title ?? MainWindow.GameDisplayName(choice.Window.Title, choice.App.Name);
         string detail = screen != null ? (screen.Primary ? Loc.Get("ChooserMainDisplay") : Loc.Get("WholeScreen")) :
             RunningApps.IsMinimized(choice.Window.Handle) ? Loc.Format("ChooserMinimized", choice.App.Name) : choice.App.Name;
         bool missing=choice.History!=null && !System.IO.File.Exists(choice.App.FullPath);
         if(choice.History!=null) detail=Loc.Get(missing?"HistoryMissing":choice.App.Pid>0?"HistoryRunning":"HistoryLaunch");
+        if(choice.Steam!=null) detail=Loc.Get(choice.App.Pid>0?"HistoryRunning":"SteamLaunch");
         var caption = new StackPanel { Width = PictureWidth, Margin = new Thickness(0, 8, 0, 0) };
         caption.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = title });
         caption.Children.Add(new TextBlock { Text = detail, FontSize = 12, Foreground = (Brush)FindResource("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
@@ -168,6 +179,11 @@ public sealed partial class ChooserWindow : Window
         list.SelectionChanged+=(_,_)=> { if(list.SelectedItem is ComboBoxItem item) geometryButton!.Tag=renderer=(string)item.Tag; };
         options.Children.Add(list);
         options.Children.Add(new TextBlock { Text=Loc.Get("GeometryChooserNotice"),TextWrapping=TextWrapping.Wrap,FontSize=12,Foreground=(Brush)FindResource("Muted") });
+        if(choice.Steam!=null) {
+            var setup=new Button {Content=Loc.Get("SteamReviewSetup"),Margin=new Thickness(0,8,0,0)};
+            setup.Click+=(_,_)=>Pick(choice with {Backend=renderer,Renderer=renderer,ReviewSteamSetup=true});
+            options.Children.Add(setup);
+        }
         advanced.Content=options; card.Children.Add(advanced);
         return card;
     }

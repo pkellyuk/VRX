@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     private readonly EngineSession engine = new();
     private readonly DispatcherTimer saveTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private readonly DispatcherTimer refreshTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    private readonly DispatcherTimer geometryTuningTimer = new() {Interval=TimeSpan.FromMilliseconds(350)};
     private bool starting;
     private CancellationTokenSource? startCancellation;
     private Profile? profile;
@@ -75,6 +76,8 @@ public partial class MainWindow : Window
         RecenterKeys.SelectedValue = 0xBB; MenuKeys.SelectedValue = 0x77;
         saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveAndApply(); };
         refreshTimer.Tick += (_, _) => RefreshApps();
+        geometryTuningTimer.Tick+=(_,_)=>UpdateGeometryTuningHint();
+        Closed+=(_,_)=>geometryTuningTimer.Stop();
         engine.Log += line => Dispatcher.InvokeAsync(() =>
         {
             LogBox.AppendText(line + Environment.NewLine);
@@ -244,6 +247,10 @@ public partial class MainWindow : Window
         HorizontalSlider.Value = p.Horizontal; StrengthSlider.Value = p.Strength;
         FollowCheck.IsChecked = p.Follow; StereoCheck.IsChecked = p.Stereo; DismissCheck.IsChecked = p.AutoDismiss; DesktopAwayCheck.IsChecked = p.DesktopWhenAway;
         GeometryCheck.IsChecked = p.GeometryStereo; GeometrySessionText.Text = p.GeometrySession;
+        GeometrySeparationText.Text=p.GeometrySeparation.ToString("R",CultureInfo.CurrentCulture);
+        GeometryConvergenceText.Text=p.GeometryConvergence.ToString("R",CultureInfo.CurrentCulture);
+        SyncGeometryTuningSliders(resetRange:true);
+        GeometryTuningHint.Text=Loc.Get("GeometryTuningLive");
         foreach (ComboBoxItem item in StereoPathList.Items) if ((string)item.Tag == StereoPaths.Mode(p.SelectedStereoBackend)) StereoPathList.SelectedItem = item;
         ForegroundCheck.IsChecked = p.ForegroundRefinement;
         TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
@@ -268,6 +275,7 @@ public partial class MainWindow : Window
     private Profile ReadProfile()
     {
         if (profile == null) throw new InvalidOperationException(Loc.Get("ErrorSelectGame"));
+        if(!TryGeometryTuning(out float separation,out float convergence)) throw new InvalidDataException(Loc.Get("ErrorGeometryTuning"));
         var p = new Profile { ExecutablePath = profile.ExecutablePath,
             PreferredWindowTitle = (WindowList.SelectedItem as GameWindow)?.Title ?? profile.PreferredWindowTitle, Width = WidthSlider.Value,
             Distance = DistanceSlider.Value, Height = HeightSlider.Value, Horizontal = HorizontalSlider.Value,
@@ -275,7 +283,7 @@ public partial class MainWindow : Window
             GeometryStereo = GeometryCheck.IsChecked == true, GeometrySession = GeometrySessionText.Text,
             StereoBackend = profile.SelectedStereoBackend, GeometryProfileId = profile.GeometryProfileId, GeometryRenderer = profile.SelectedGeometryRenderer,
             GeometryLaunchArguments = profile.GeometryLaunchArguments, GeometryWorkingDirectory = profile.GeometryWorkingDirectory,
-            GeometrySteamAppId = profile.GeometrySteamAppId, GeometrySeparation = profile.GeometrySeparation, GeometryConvergence = profile.GeometryConvergence,
+            GeometrySteamAppId = profile.GeometrySteamAppId, GeometrySeparation = separation, GeometryConvergence = convergence,
             ForegroundRefinement = ForegroundCheck.IsChecked == true,
             MatchFrameToDepth = TimingList.SelectedIndex == 2,
             DelayToDepth = TimingList.SelectedIndex == 1,
@@ -307,6 +315,7 @@ public partial class MainWindow : Window
         try
         {
             var p = ReadProfile(); store.Save(p); profile = p;
+            UpdateGeometryTuningHint(apply:true);
             if (engine.Running) engine.Update(p);
             if (sessionError.Length == 0)
                 Status.Text = Loc.Format(engine.Running ? "StatusSavedPlaying" : "StatusSaved", ProfileName(p.ExecutablePath));
@@ -342,7 +351,7 @@ public partial class MainWindow : Window
     // usable, so sections can be opened and closed at any time.
     private void SetSettingsEnabled(bool on)
     {
-        foreach (var content in new UIElement?[] { ScreenContent, AroundContent, RoomContent, DepthContent, SteamVrContent, ProfileContent })
+        foreach (var content in new UIElement?[] { ScreenContent, AroundContent, RoomContent, DepthContent, GeometryPanel, SteamVrContent, ProfileContent })
         {
             if (content == null) continue;
             content.IsEnabled = on;
@@ -365,6 +374,7 @@ public partial class MainWindow : Window
         }
         GeometryContent.Visibility = geometry ? Visibility.Visible : Visibility.Collapsed;
         AiDepthContent.IsEnabled = !geometry;
+        if(StereoCheck!=null) StereoCheck.IsEnabled=!geometry;
         StrengthSlider.IsEnabled = !geometry;
         DesktopAwayCheck.IsEnabled = !geometry;
     }
@@ -385,6 +395,65 @@ public partial class MainWindow : Window
         profile.SelectStereoBackend((string)item.Tag);
         loading = true; GeometryCheck.IsChecked = profile.GeometryStereo; loading = false;
         UpdateGeometryControls(); SaveAndApply();
+    }
+    private void UpdateGeometryTuningHint(bool apply=false)
+    {
+        if(profile==null || GeometryTuningHint==null || !TryGeometryTuning(out _,out _)) return;
+        var result=GeometryLaunch.UpdateTuning(profile,store.Root,apply);
+        GeometryTuningHint.Text=Loc.Get(result switch {
+            GeometryLaunch.TuningUpdate.Pending=>"GeometryTuningPending",
+            GeometryLaunch.TuningUpdate.Applied=>"GeometryTuningApplied",
+            GeometryLaunch.TuningUpdate.RestartRequired=>"GeometryTuningUpgrade",
+            _=>"GeometryTuningLive"
+        });
+        if(result==GeometryLaunch.TuningUpdate.Pending) geometryTuningTimer.Start(); else geometryTuningTimer.Stop();
+    }
+    private bool TryGeometryTuning(out float separation,out float convergence)
+    {
+        separation=convergence=0;
+        return float.TryParse(GeometrySeparationText?.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out separation) && float.IsFinite(separation) && separation>0 && separation<=64 &&
+            float.TryParse(GeometryConvergenceText?.Text,NumberStyles.Float,CultureInfo.CurrentCulture,out convergence) && float.IsFinite(convergence) && convergence>=0 && convergence<=.25f;
+    }
+    private bool geometryTuningSyncing;
+    private void SyncGeometryTuningSliders(bool resetRange=false)
+    {
+        if(GeometrySeparationSlider==null || GeometryConvergenceSlider==null || !TryGeometryTuning(out float separation,out float convergence)) return;
+        geometryTuningSyncing=true;
+        try {
+            // Normal ranges give useful precision in a headset. Existing or
+            // typed larger values expand the range without clamping a profile.
+            GeometrySeparationSlider.Maximum=Math.Max(resetRange?2:GeometrySeparationSlider.Maximum,separation);
+            GeometryConvergenceSlider.Maximum=Math.Max(resetRange ? .05 : GeometryConvergenceSlider.Maximum,convergence);
+            GeometrySeparationSlider.Value=separation;GeometryConvergenceSlider.Value=convergence;
+        } finally {geometryTuningSyncing=false;}
+    }
+    private void GeometryTuningSliderChanged(object sender,RoutedPropertyChangedEventArgs<double> e)
+    {
+        if(geometryTuningSyncing || loading || !ready || profile==null || GeometrySeparationSlider==null || GeometryConvergenceSlider==null) return;
+        geometryTuningSyncing=true;
+        try {
+            if(ReferenceEquals(sender,GeometrySeparationSlider)) GeometrySeparationText.Text=((float)Math.Round(GeometrySeparationSlider.Value,3)).ToString("R",CultureInfo.CurrentCulture);
+            else GeometryConvergenceText.Text=((float)Math.Round(GeometryConvergenceSlider.Value,4)).ToString("R",CultureInfo.CurrentCulture);
+        } finally {geometryTuningSyncing=false;}
+        bool valid=TryGeometryTuning(out _,out _);
+        GeometryTuningHint.Text=Loc.Get(valid?"GeometryTuningLive":"ErrorGeometryTuning");
+        if(valid) SettingsChanged(sender,e);
+    }
+    private void GeometryTuningChanged(object sender,TextChangedEventArgs e)
+    {
+        if(geometryTuningSyncing || !ready || loading || profile==null || GeometryTuningHint==null) return;
+        bool valid=TryGeometryTuning(out _,out _);
+        GeometryTuningHint.Text=Loc.Get(valid?"GeometryTuningLive":"ErrorGeometryTuning");
+        if(valid) {SyncGeometryTuningSliders();SettingsChanged(sender,e);}
+    }
+    private void GeometryTuningLostFocus(object sender,RoutedEventArgs e)
+    {
+        if(profile==null || loading || TryGeometryTuning(out _,out _)) return;
+        // Incomplete/invalid typing never replaces the last saved calibration.
+        bool wasLoading=loading; loading=true;
+        GeometrySeparationText.Text=profile.GeometrySeparation.ToString("R",CultureInfo.CurrentCulture);
+        GeometryConvergenceText.Text=profile.GeometryConvergence.ToString("R",CultureInfo.CurrentCulture);
+        SyncGeometryTuningSliders();loading=wasLoading; UpdateGeometryTuningHint();
     }
     private void SettingsChanged(object sender, RoutedEventArgs e)
     {
@@ -573,6 +642,8 @@ public partial class MainWindow : Window
         AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = StereoPathList.IsEnabled = GeometryRendererList.IsEnabled = !running && !starting;
         // These select startup-only engine arguments, like the method chooser.
         GeometryCheck.IsEnabled = GeometrySessionText.IsEnabled = !running && !starting && profile != null && !stopping;
+        GeometrySeparationText.IsEnabled=GeometryConvergenceText.IsEnabled=!starting && !stopping && profile!=null;
+        GeometrySeparationSlider.IsEnabled=GeometryConvergenceSlider.IsEnabled=GeometrySeparationText.IsEnabled;
         UpdateGameCard();
     }
 
@@ -648,6 +719,11 @@ public partial class MainWindow : Window
         try { apps = RunningApps.List(false); screens = ScreenSources.List(); }
         catch (Exception ex) { Status.Text = Loc.Format("StatusRefreshFailed", ex.Message); return; }
         var history=new GameHistory(store.Root); history.ImportLastGame(store);
+        SteamLibrary.Discovery steam;
+        try { steam=await Task.Run(()=>SteamLibrary.Discover()); }
+        catch(Exception ex) { steam=new([], [ex.Message]); }
+        try { SteamLibrary.ImportBindings(store,steam.Games,history.Load()); }
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException) { Status.Text=ex.Message; }
         var choices=new Dictionary<string,Profile>(StringComparer.OrdinalIgnoreCase);
         Profile ChoiceProfile(RunningApp app) {
             if(choices.TryGetValue(app.FullPath,out var saved)) return saved;
@@ -656,7 +732,7 @@ public partial class MainWindow : Window
             choices[app.FullPath]=saved; return saved;
         }
         var chooser = new ChooserWindow(apps, screens, ScreenSources.App(store.Root, screens), (WindowList.SelectedItem as GameWindow)?.Handle ?? 0,
-            appSettings.ChooserWindow, app=>ChoiceProfile(app).SelectedStereoBackend, app=>ChoiceProfile(app).SelectedGeometryRenderer,history.Load()) { Owner = this };
+            appSettings.ChooserWindow, app=>ChoiceProfile(app).SelectedStereoBackend, app=>ChoiceProfile(app).SelectedGeometryRenderer,history.Load(),steam.Games,store.Root,string.Join("\n",steam.Errors)) { Owner = this };
         bool chose = chooser.ShowDialog() == true;
         if (chooser.Place != null)
         {
@@ -673,7 +749,13 @@ public partial class MainWindow : Window
             for(int i=0;engine.Running && i<20;++i) await Task.Delay(50);
             if(engine.Running) return;
         }
-        if(picked.History!=null) { await StartFromHistory(picked); return; }
+        if(picked.Steam!=null) { await StartFromSteam(picked); return; }
+        if(picked.History!=null) {
+            var installed=steam.Games.FirstOrDefault(g=>g.AppId==picked.History.SteamAppId && SteamLibrary.LoadBinding(store.Root,g)!=null);
+            if(installed!=null) await StartFromSteam(picked with {Steam=installed});
+            else await StartFromHistory(picked);
+            return;
+        }
         if (!SelectChoice(picked)) { Status.Text = Loc.Get("StatusChoiceGone"); return; }
         System.Diagnostics.Debug.WriteLine($"[Chooser] ChooseClick: starting {picked.App.Name} '{picked.Window.Title}'");
         if (profile != null && picked.Backend != null) {
@@ -682,6 +764,96 @@ public partial class MainWindow : Window
             PutProfile(profile); SaveAndApply();
         }
         await StartSession();
+    }
+
+    private async Task StartFromSteam(ChooserWindow.Choice picked)
+    {
+        if(starting || stopping || engine.Running) return;
+        if(profile!=null && !SaveAndApply()) return;
+        var game=picked.Steam!;
+        bool refreshWasRunning=refreshTimer.IsEnabled; refreshTimer.Stop();
+        bool ready=false;
+        starting=true; startCancellation=new CancellationTokenSource(); UpdateButtons();
+        try {
+            var token=startCancellation.Token;
+            string key=SteamLibrary.ProfileKey(store.Root,game);
+            var saved=store.Load(key);
+            if(picked.Backend!=null) saved.SelectStereoBackend(picked.Backend);
+            if(StereoPaths.Renderer(picked.Renderer)) saved.GeometryRenderer=picked.Renderer!;
+            store.Save(saved);
+            await GeometrySessionLifecycle.ReleasePrevious(picked.App,store.Root,token);
+            EngineSession.EnsureAvailable();
+            var running=SteamLibrary.Running(game,RunningApps.List(false));
+            bool geometry=saved.GeometryStereo && !(saved.SelectedStereoBackend==StereoPaths.Auto && !GeometryLaunch.AutoRuntimeAvailable(store.Root));
+            if(geometry && (picked.ReviewSteamSetup || running==null || GeometryLaunch.ExistingSession(running,saved,store.Root)==null)) {
+                string executable=SteamLibrary.LoadBinding(store.Root,game)?.Executable ?? "";
+                if(executable.Length==0) {
+                    var select=new Microsoft.Win32.OpenFileDialog {Title=Loc.Get("SteamSelectExecutable"),InitialDirectory=game.Directory,Filter="Game executable (*.exe)|*.exe",CheckFileExists=true};
+                    if(select.ShowDialog(this)!=true) return;
+                    executable=select.FileName;
+                    if(!SteamLibrary.Inside(executable,game.Directory)) throw new InvalidDataException(Loc.Get("SteamExecutableInvalid"));
+                    // An existing executable profile owns its tuning; carry only
+                    // the mode/renderer choice from the unbound library card.
+                    if(File.Exists(store.FileFor(executable))) {
+                        var existing=store.Load(executable); existing.SelectStereoBackend(saved.SelectedStereoBackend); existing.GeometryRenderer=saved.GeometryRenderer; saved=existing;
+                    }
+                }
+                saved.ExecutablePath=executable; TestedStereoProfiles.Apply(saved);
+                saved.GeometrySteamAppId=game.AppId;
+                if(string.IsNullOrEmpty(saved.GeometryWorkingDirectory)) saved.GeometryWorkingDirectory=game.Directory;
+                SteamLibrary.SaveBinding(store.Root,game,new(executable,SteamLibrary.LoadBinding(store.Root,game)?.WrapperConfigured ?? false));
+                store.Save(saved);
+                var app=new RunningApp(0,game.Title,executable,[],RunningApps.IconFor(executable));
+                var plan=await GeometryLaunch.Prepare(app,saved,store.Root,text=>Status.Text=text,token,[]);
+                if(running!=null) {
+                    using var process=System.Diagnostics.Process.GetProcessById(running.Pid);
+                    plan=plan with {App=running,StartTicks=process.StartTime.ToUniversalTime().Ticks};
+                }
+                if(picked.ReviewSteamSetup || running!=null || SteamLibrary.LoadBinding(store.Root,game)?.WrapperConfigured!=true) {
+                    var dialog=new GeometryLaunchWindow(plan,saved) {Owner=this};
+                    if(dialog.ShowDialog()!=true) return;
+                    plan=dialog.Plan;
+                    if(plan.SteamAppId!=game.AppId) throw new InvalidDataException(Loc.Get("ErrorGeometrySteamId"));
+                    saved.GeometrySeparation=dialog.Separation; saved.GeometryConvergence=dialog.Convergence;
+                }
+                saved.GeometryLaunchArguments=string.Join(' ',plan.Arguments.Select(GeometryLaunch.QuoteArgument)); saved.GeometryWorkingDirectory=plan.WorkingDirectory;
+                saved.GeometrySession=plan.Session; store.Save(saved);
+                if(picked.ReviewSteamSetup || SteamLibrary.LoadBinding(store.Root,game)?.WrapperConfigured!=true) {
+                    if(!SteamGeometry.Setup(this,game)) return;
+                }
+                if(running!=null) {
+                    if(!GeometryLaunch.IsRunning(new(running.Pid,plan.StartTicks,running.FullPath,plan.Session))) throw new InvalidOperationException(Loc.Get("ErrorProcessChanged"));
+                    using var process=System.Diagnostics.Process.GetProcessById(running.Pid);
+                    if(!process.CloseMainWindow()) throw new InvalidOperationException(Loc.Get("ErrorGeometryClose"));
+                    try {await process.WaitForExitAsync(token).WaitAsync(TimeSpan.FromSeconds(30),token);}
+                    catch(TimeoutException) {throw new InvalidOperationException(Loc.Get("ErrorGeometryClose"));}
+                    // Steam may take a moment to release its running-app state.
+                    await Task.Delay(1500,token);
+                    plan=plan with {App=plan.App with {Pid=0},StartTicks=0};
+                }
+                var run=await SteamGeometry.Launch(game,plan,saved,store.Root,text=>Status.Text=text,token);
+                SteamLibrary.SaveBinding(store.Root,game,new(executable,true));
+                running=await GameHistory.WaitForWindow(new(executable,game.Title,[],plan.WorkingDirectory,game.AppId,DateTimeOffset.UtcNow),run.Pid,token);
+            } else if(running==null) {
+                Status.Text=Loc.Format("StatusHistoryLaunching",game.Title);
+                SteamLibrary.Launch(game.AppId); running=await SteamLibrary.WaitForWindow(game,token);
+            }
+            token.ThrowIfCancellationRequested();
+            if(!string.Equals(saved.ExecutablePath,running.FullPath,StringComparison.OrdinalIgnoreCase)) {
+                var actual=store.Load(running.FullPath);
+                actual.SelectStereoBackend(saved.SelectedStereoBackend); actual.GeometryRenderer=saved.GeometryRenderer; saved=actual;
+            }
+            saved.ExecutablePath=running.FullPath; saved.GeometrySteamAppId=game.AppId; store.Save(saved);
+            SteamLibrary.SaveBinding(store.Root,game,new(running.FullPath,SteamLibrary.LoadBinding(store.Root,game)?.WrapperConfigured ?? false));
+            if(!SelectChoice(new ChooserWindow.Choice(running,running.Windows[0]))) throw new InvalidOperationException(Loc.Get("StatusChoiceGone"));
+            ready=true;
+        } catch(Exception ex) {Status.Text=ex.Message;}
+        finally {
+            starting=false; startCancellation.Dispose(); startCancellation=null;
+            if(refreshWasRunning && IsLoaded && !closing) refreshTimer.Start();
+            UpdateButtons();
+        }
+        if(ready) await StartSession();
     }
 
     private async Task StartFromHistory(ChooserWindow.Choice picked)
@@ -1145,7 +1317,7 @@ public partial class MainWindow : Window
     private (string Name, Expander Section)[] SectionList() =>
     [
         (AppSettings.SectionGame, GameSection), (AppSettings.SectionScreen, ScreenSection), (AppSettings.SectionAround, AroundSection),
-        (AppSettings.SectionRoom, RoomSection), (AppSettings.SectionDepth, DepthSection), (AppSettings.SectionSteamVr, SteamVrSection),
+        (AppSettings.SectionRoom, RoomSection), (AppSettings.SectionDepth, DepthSection), (AppSettings.SectionGeometry, GeometrySection), (AppSettings.SectionSteamVr, SteamVrSection),
         (AppSettings.SectionProfile, ProfileSection), (AppSettings.SectionSession, SessionDetails),
     ];
 
@@ -1199,6 +1371,8 @@ public partial class MainWindow : Window
     // the smoke test); XAML text follows by itself.
     private void RefreshLanguage()
     {
+        GeometryTuningHint.Text=Loc.Get(profile==null || TryGeometryTuning(out _,out _)?"GeometryTuningLive":"ErrorGeometryTuning");
+        UpdateGeometryTuningHint();
         System.Diagnostics.Debug.WriteLine($"[MainWindow] RefreshLanguage enter: pseudo {Loc.Pseudo}");
         Title = Loc.Format("WindowTitle", VersionText.Text);
         Subtitle.Text = Loc.Get(appSettings.IsExpert ? "SubtitleExpert" : "SubtitleEasy");
@@ -1614,6 +1788,43 @@ public partial class MainWindow : Window
         SelectTag(StereoPathList,StereoPaths.GeometryAuto);
         if(ReadProfile().EffectiveStereoBackend!=StereoPaths.Vkd3d || ReadProfile().GeometrySeparation!=.5f)
             throw new Exception("Returning to Geometry stereo must restore renderer and calibration");
+        GeometrySeparationText.Text=.65f.ToString("R",CultureInfo.CurrentCulture);
+        GeometryConvergenceText.Text=.015f.ToString("R",CultureInfo.CurrentCulture);
+        if(!SaveAndApply() || store.Load(one.ExecutablePath).GeometrySeparation!=.65f || store.Load(one.ExecutablePath).GeometryConvergence!=.015f)
+            throw new Exception("Desktop geometry tuning must save both values in the selected game's profile");
+        if(Math.Abs(GeometrySeparationSlider.Value-.65)>1e-6 || Math.Abs(GeometryConvergenceSlider.Value-.015)>1e-6)
+            throw new Exception("Geometry sliders must follow typed numeric values");
+        GeometrySeparationSlider.Value=.7;GeometryConvergenceSlider.Value=.02;
+        if(!SaveAndApply() || store.Load(one.ExecutablePath).GeometrySeparation!=.7f || store.Load(one.ExecutablePath).GeometryConvergence!=.02f)
+            throw new Exception("Geometry sliders must use the same save/live-update path as numeric fields");
+        GeometrySeparationText.Text="4";GeometryConvergenceText.Text=.1f.ToString("R",CultureInfo.CurrentCulture);
+        if(GeometrySeparationSlider.Maximum<4 || GeometryConvergenceSlider.Maximum<.1f || ReadProfile().GeometrySeparation!=4)
+            throw new Exception("Geometry sliders must expand to retain larger numeric calibrations");
+        GeometrySeparationText.Text=.65f.ToString("R",CultureInfo.CurrentCulture);GeometryConvergenceText.Text=.015f.ToString("R",CultureInfo.CurrentCulture);SaveAndApply();PutProfile(profile);
+        GeometrySeparationText.Text="NaN";
+        if(TryGeometryTuning(out _,out _) || store.Load(one.ExecutablePath).GeometrySeparation!=.65f)
+            throw new Exception("Invalid geometry typing must not replace saved tuning");
+        GeometryTuningLostFocus(GeometrySeparationText,new RoutedEventArgs());
+        if(!TryGeometryTuning(out float restoredSeparation,out float restoredConvergence) || restoredSeparation!=.65f || restoredConvergence!=.015f)
+            throw new Exception("Leaving invalid geometry input must restore the saved calibration");
+        var tuningCulture=CultureInfo.CurrentCulture;
+        try {
+            CultureInfo.CurrentCulture=CultureInfo.GetCultureInfo("fr-FR");
+            GeometrySeparationText.Text="0,5"; GeometryConvergenceText.Text="0,01";
+            if(!TryGeometryTuning(out float localSeparation,out float localConvergence) || localSeparation!=.5f || localConvergence!=.01f)
+                throw new Exception("Geometry tuning must accept the user's decimal separator");
+            GeometryConvergenceText.Text="0,3";
+            if(TryGeometryTuning(out _,out _)) throw new Exception("Out-of-range convergence must be rejected");
+        } finally { CultureInfo.CurrentCulture=tuningCulture; PutProfile(profile); }
+        GeometrySeparationText.Text=.5f.ToString("R",CultureInfo.CurrentCulture); GeometryConvergenceText.Text="0"; SaveAndApply();
+        bool tuningExpanded=GeometrySection.IsExpanded; GeometrySection.IsExpanded=true;
+        await Dispatcher.InvokeAsync(()=>{},DispatcherPriority.ApplicationIdle); UpdateLayout();
+        GeometryContent.BringIntoView();
+        await Dispatcher.InvokeAsync(()=>{},DispatcherPriority.ApplicationIdle); UpdateLayout();
+        var tuningUi=new RenderTargetBitmap((int)ActualWidth,(int)ActualHeight,96,96,PixelFormats.Pbgra32);
+        tuningUi.Render(this); SavePng(tuningUi,Path.Combine(output,"ui-geometry-tuning.png"));
+        GeometrySection.IsExpanded=tuningExpanded;
+        File.WriteAllText(Path.Combine(output,"geometry-tuning-pass.txt"),"PASS: desktop separation/convergence controls; per-game persistence; invalid/range input rejection; saved-value recovery; locale decimal parsing; method-switch calibration preservation. Compatible running layers receive live tuning; older layers request one upgrade restart.");
         bool gameWasExpanded=GameSection.IsExpanded; GameSection.IsExpanded=true;
         await Dispatcher.InvokeAsync(()=>{},DispatcherPriority.ApplicationIdle); UpdateLayout();
         var stereoUi=new RenderTargetBitmap((int)ActualWidth,(int)ActualHeight,96,96,PixelFormats.Pbgra32);
@@ -1821,6 +2032,8 @@ public partial class MainWindow : Window
         await SmokeTestChooser(output, sample, one);
         await GeometryLaunchTests.Run(output);
         await GameHistoryTests.Run(output,this);
+        await DesktopInstanceTests.Run(output);
+        await SteamLibraryTests.Run(output,this);
         await GeometrySessionLifecycleTests.Run(output);
         if(Environment.GetCommandLineArgs().Contains("--geometry-launch-integration-test"))
             await GeometryLaunchIntegrationTests.Run(output);

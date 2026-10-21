@@ -402,6 +402,15 @@ def main(xml_path, disp_path, out_path):
     w('    if (!p) return nullptr;')
     w('    auto* b = (const VkBaseInStructure*)p;')
     w('    switch (b->sType) {')
+    # Win32 imports retain caller ownership of HANDLE/name. The same external
+    # payload can be imported more than once; keep its external identity while
+    # translating the rest of the allocation chain (e.g. dedicated image).
+    # Platform commands remain excluded from automatic generation.
+    w('#ifdef VK_USE_PLATFORM_WIN32_KHR')
+    for s in ('VkImportMemoryWin32HandleInfoKHR', 'VkImportMemoryWin32HandleInfoNV'):
+        st = stype_of[s]
+        w(f'    case {st}: {{ auto* o = c.alloc<{s}>(1); *o = *({s}*)p; o->pNext = tr_chain(c, b->pNext); return o; }}')
+    w('#endif')
     seen_st = set()
     for s in sorted(structs):
         if s not in stype_of or not usable(s) or s in returnedonly:

@@ -18,7 +18,9 @@ namespace VRX.Desktop;
 public static class GeometryLaunch
 {
     public sealed record InstalledFile(string Path, string SHA256);
-    public sealed record Run(int Pid, long StartTicks, string Executable, string Session, string Stereo = "mirror", string Backend = "");
+    internal sealed record LiveTuningState(int Version,int Pid,float Separation,float Convergence,ulong Revision,bool Active);
+    internal enum TuningUpdate { NextLaunch, RestartRequired, Pending, Applied }
+    public sealed record Run(int Pid, long StartTicks, string Executable, string Session, string Stereo = "mirror", string Backend = "", string LaunchExecutable = "");
     public sealed record Plan(RunningApp App, long StartTicks, string Backend, string LayerDirectory,
         string[] Arguments, string WorkingDirectory, string SteamAppId, string Session, string? DxvkDirectory, string[] OwnedRuns, string? Vkd3dDirectory = null);
     private const string DxvkVersion = "2.7.1";
@@ -55,8 +57,25 @@ public static class GeometryLaunch
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return null; }
     }
     public static bool IsRunning(Run run) {
-        try { using var p=Process.GetProcessById(run.Pid); return !p.HasExited && p.StartTime.ToUniversalTime().Ticks==run.StartTicks && Same(RunningApps.ProcessPath(run.Pid),run.Executable); }
+        try { using var p=Process.GetProcessById(run.Pid); return !p.HasExited && p.StartTime.ToUniversalTime().Ticks==run.StartTicks && Same(RunningApps.ProcessPath(run.Pid),string.IsNullOrEmpty(run.LaunchExecutable)?run.Executable:run.LaunchExecutable); }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return false; }
+    }
+    internal static TuningUpdate UpdateTuning(Profile profile,string dataRoot,bool apply=true)
+    {
+        if(!profile.GeometryStereo) return TuningUpdate.NextLaunch;
+        foreach(string folder in RunFolders(dataRoot)) {
+            var run=ReadRun(folder);
+            if(run==null || !Same(run.Executable,profile.ExecutablePath) || run.Session!=profile.GeometrySession || !IsRunning(run)) continue;
+            string tuning=Path.Combine(folder,"stereo.txt");
+            try {
+                var state=JsonSerializer.Deserialize<LiveTuningState>(File.ReadAllText(tuning+".live.json"));
+                if(state is not {Version:1,Active:true} || state.Pid!=run.Pid) return TuningUpdate.RestartRequired;
+                string value=FormattableString.Invariant($"{profile.GeometrySeparation:R} {profile.GeometryConvergence:R}\n");
+                if(apply && (!File.Exists(tuning) || File.ReadAllText(tuning)!=value)) ProfileStore.AtomicWrite(tuning,value);
+                return state.Separation==profile.GeometrySeparation && state.Convergence==profile.GeometryConvergence?TuningUpdate.Applied:TuningUpdate.Pending;
+            } catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException) { Debug.WriteLine(ex.Message); return TuningUpdate.RestartRequired; }
+        }
+        return TuningUpdate.NextLaunch;
     }
     public static bool HeaderMatches(ReadOnlySpan<byte> bytes, int pid, long now) {
         if (bytes.Length!=176) return false;
@@ -365,7 +384,9 @@ public static class GeometryLaunch
         plan.App.Pid>0?Start(plan,profile,dataRoot,status,token):throw new ArgumentException(nameof(plan));
     public static Task<Run> Launch(Plan plan,Profile profile,string dataRoot,Action<string> status,CancellationToken token) =>
         plan.App.Pid==0?Start(plan,profile,dataRoot,status,token):throw new ArgumentException(nameof(plan));
-    private static async Task<Run> Start(Plan plan,Profile profile,string dataRoot,Action<string> status,CancellationToken token) {
+    internal static Task<Run> LaunchFromSteam(Plan plan,Profile profile,string dataRoot,Action<string> status,CancellationToken token,string steamExecutable) =>
+        plan.App.Pid==0?Start(plan,profile,dataRoot,status,token,steamExecutable):throw new ArgumentException(nameof(plan));
+    private static async Task<Run> Start(Plan plan,Profile profile,string dataRoot,Action<string> status,CancellationToken token,string? steamExecutable=null) {
         // All preflight and the launch-details dialog have completed before this point.
         token.ThrowIfCancellationRequested();
         ValidateRuntime(plan);
@@ -388,6 +409,7 @@ public static class GeometryLaunch
         // A zero PID records ownership even when startup fails before a child exists.
         var run=new Run(0,0,plan.App.FullPath,plan.Session,Backend:plan.Backend);
         ProfileStore.AtomicWrite(Path.Combine(runRoot,"run.json"),JsonSerializer.Serialize(run));
+        Process? bootstrap=null;
         try {
             using(new FileGate(plan.App.FullPath)) {
             ValidateFiles(plan);
@@ -396,14 +418,33 @@ public static class GeometryLaunch
                 ProfileStore.AtomicWrite(Path.Combine(runRoot,"stereo.txt"),FormattableString.Invariant($"{profile.GeometrySeparation:R} {profile.GeometryConvergence:R}\n"));
                 ProfileStore.AtomicWrite(Path.Combine(runRoot,"dxvk.conf"),"dxvk.enableGraphicsPipelineLibrary = False\ndxvk.enableDescriptorBuffer = False\ndxvk.disableNvLowLatency2 = True\n");
             }
-            var start=new ProcessStartInfo(plan.App.FullPath){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=plan.WorkingDirectory};
+            var start=new ProcessStartInfo(steamExecutable ?? plan.App.FullPath){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=plan.WorkingDirectory};
             foreach(string arg in plan.Arguments) start.ArgumentList.Add(arg);
             ConfigureEnvironment(start,plan,profile,runRoot);
             token.ThrowIfCancellationRequested();
             var child=Process.Start(start) ?? throw new InvalidOperationException(Loc.Get("ErrorGeometryLaunch"));
-            run=run with {Pid=child.Id,StartTicks=child.StartTime.ToUniversalTime().Ticks};
+            bool launcher=!Same(start.FileName,plan.App.FullPath);
+            run=run with {Pid=child.Id,StartTicks=child.StartTime.ToUniversalTime().Ticks,LaunchExecutable=launcher?start.FileName:""};
             ProfileStore.AtomicWrite(Path.Combine(runRoot,"run.json"),JsonSerializer.Serialize(run));
-            _=Observe(child,runRoot);
+            if(launcher) bootstrap=child;
+            else _=Observe(child,runRoot);
+            }
+            if(bootstrap!=null) {
+                long startupDeadline=Environment.TickCount64+60000;
+                Process? game=null;
+                while(Environment.TickCount64<startupDeadline && game==null) {
+                    token.ThrowIfCancellationRequested();
+                    foreach(var candidate in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(plan.App.FullPath))) {
+                        if(!candidate.HasExited && Same(RunningApps.ProcessPath(candidate.Id),plan.App.FullPath)) {game=candidate;break;}
+                        candidate.Dispose();
+                    }
+                    if(game==null) await Task.Delay(150,token);
+                }
+                if(game==null) throw new InvalidOperationException(Loc.Get("SteamWindowTimeout"));
+                run=run with {Pid=game.Id,StartTicks=game.StartTime.ToUniversalTime().Ticks,LaunchExecutable=""};
+                ProfileStore.AtomicWrite(Path.Combine(runRoot,"run.json"),JsonSerializer.Serialize(run));
+                _=Observe(game,runRoot);
+                bootstrap.Dispose(); bootstrap=null;
             }
             status(Loc.Get("StatusGeometryWaiting"));
             var deadline=Environment.TickCount64+45000;
@@ -421,7 +462,7 @@ public static class GeometryLaunch
                 await Task.Delay(150,token);
             }
             throw new InvalidOperationException(Loc.Format("ErrorGeometryNoStream",runRoot));
-        } catch { if(run.Pid==0) { foreach(var file in installed) if(File.Exists(file.Path)&&Hash(file.Path).Equals(file.SHA256,StringComparison.Ordinal)) File.Delete(file.Path); } throw; }
+        } catch { if(bootstrap!=null) _=Observe(bootstrap,runRoot); if(run.Pid==0) { foreach(var file in installed) if(File.Exists(file.Path)&&Hash(file.Path).Equals(file.SHA256,StringComparison.Ordinal)) File.Delete(file.Path); } throw; }
     }
     private static async Task Observe(Process child,string folder) {
         try { await child.WaitForExitAsync(); Cleanup(folder); }

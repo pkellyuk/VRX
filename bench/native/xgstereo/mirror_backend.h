@@ -112,6 +112,14 @@ struct MDev {
     std::atomic<bool> live{true};
     bool replay = false;  // device addresses: captured on A, replayed on B (same values)
     EyeBuf bep;
+    std::wstring tuningPath;
+    float tuningShift = 0, tuningConvergence = 0, queuedShift = 0, queuedConvergence = 0;
+    uint64_t tuningProbe = 0, tuningRevision = 0;
+    VkCommandPool tuningPool{};
+    VkCommandBuffer tuningCommand{};
+    VkFence tuningFence{};
+    bool tuningPending = false;
+    bool tuningStatusDirty = false;
     bool stoppedLogged = false;
 
     VkQueue bqueue_any = VK_NULL_HANDLE;
@@ -172,8 +180,9 @@ static MDev* mdev_of(void* k) {
     auto it = data.devices.find(k);
     return it == data.devices.end() ? nullptr : it->second.mirror.get();
 }
+static void publish_tuning_state(MDev* md, bool active);
 static void mirror_fail(MDev* md, const char* why) {
-    if (md->live.exchange(false)) { logf("mirror STOPPED: %s; device=0x%llx", why, (unsigned long long)h2u(md->device)); if (md->gpu) md->gpu->Close(); }
+    if (md->live.exchange(false)) { logf("mirror STOPPED: %s; device=0x%llx", why, (unsigned long long)h2u(md->device)); if (md->gpu) md->gpu->Close(); publish_tuning_state(md,false); }
 }
 // Per-call scratch: arena for translated structs + translation status.
 struct Ctx {
@@ -458,7 +467,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL m_AllocateMemory(VkDevice dev, const VkMem
     VkDeviceMemory bm = VK_NULL_HANDLE;
     VkResult rb = c.ok() ? md->b.AllocateMemory(md->bdev, &bai, nullptr, &bm) : VK_ERROR_UNKNOWN;
     ctx_end(c);
-    if (rb < 0) { mirror_fail(md, "vkAllocateMemory failed on B"); return r; }
+    if (rb < 0) { logf("mirror allocation failed: result=%d bytes=%llu type=%u translated=%d",int(rb),(unsigned long long)ai->allocationSize,ai->memoryTypeIndex,c.ok()?1:0); mirror_fail(md, "vkAllocateMemory failed on B"); return r; }
     record_handle(md, *out, bm);
     VkMemoryPropertyFlags f = md->amp.memoryTypes[ai->memoryTypeIndex].propertyFlags;
     if (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
@@ -1097,6 +1106,68 @@ static uint32_t memory_type(const VkPhysicalDeviceMemoryProperties& memory, uint
         if ((mask & (1u << i)) && (memory.memoryTypes[i].propertyFlags & flags) == flags) return i;
     return UINT32_MAX;
 }
+static bool read_tuning(const std::wstring& path,float& shift,float& convergence) {
+    if(path.empty()) return false;
+    HANDLE f=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(f==INVALID_HANDLE_VALUE) return false;
+    char buffer[128]{};DWORD size=0;
+    const bool read=ReadFile(f,buffer,sizeof(buffer),&size,nullptr)!=FALSE;CloseHandle(f);
+    return read && size<sizeof(buffer) && xg::ParseTuning(std::string_view(buffer,size),shift,convergence);
+}
+static void publish_tuning_state(MDev* md,bool active) {
+    if(md->tuningPath.empty()) return;
+    md->tuningStatusDirty=true;
+    auto number=[](float value) {char b[64];auto r=std::to_chars(b,b+sizeof(b),value);return std::string(b,r.ptr);};
+    std::string json="{\"Version\":1,\"Pid\":"+std::to_string(GetCurrentProcessId())+",\"Separation\":"+number(md->tuningShift)+
+        ",\"Convergence\":"+number(md->tuningConvergence)+",\"Revision\":"+std::to_string(md->tuningRevision)+",\"Active\":"+(active?"true":"false")+"}";
+    const auto path=md->tuningPath+L".live.json";
+    const auto temporary=path+L"."+std::to_wstring(h2u(md->device))+L".tmp";
+    HANDLE f=CreateFileW(temporary.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(f==INVALID_HANDLE_VALUE) return;
+    DWORD written=0;const bool ok=WriteFile(f,json.data(),DWORD(json.size()),&written,nullptr) && written==json.size();CloseHandle(f);
+    if(!ok || !MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING)) DeleteFileW(temporary.c_str());
+    else md->tuningStatusDirty=false;
+}
+// Called only at the end of the supported single-queue presentation path.
+// Queue-ordered GPU writes update BOTH eyes between frames. Never overwrite
+// shader data from the CPU while an earlier draw may still be reading it.
+static void update_tuning(MDev* md,VkQueue queue) {
+    if(md->tuningPath.empty() || !md->live) return;
+    if(md->tuningStatusDirty) publish_tuning_state(md,true);
+    if(md->tuningPending) {
+        const auto ready=md->a.GetFenceStatus(md->device,md->tuningFence);
+        if(ready==VK_NOT_READY) return;
+        if(ready!=VK_SUCCESS) {mirror_fail(md,"live tuning completion");return;}
+        md->tuningPending=false;md->tuningShift=md->queuedShift;md->tuningConvergence=md->queuedConvergence;++md->tuningRevision;
+        publish_tuning_state(md,true);
+        logf("live stereo tuning %llu: separation %.6f convergence %.6f (GPU ordered, both eyes)",(unsigned long long)md->tuningRevision,md->tuningShift,md->tuningConvergence);
+    }
+    const auto now=GetTickCount64();if(now<md->tuningProbe) return;md->tuningProbe=now+100;
+    float shift=0,convergence=0;
+    if(!read_tuning(md->tuningPath,shift,convergence) || (shift==md->tuningShift && convergence==md->tuningConvergence)) return;
+    if(!md->tuningPool) {
+        VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pool.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;pool.queueFamilyIndex=md->family;
+        if(md->a.CreateCommandPool(md->device,&pool,nullptr,&md->tuningPool)!=VK_SUCCESS) {mirror_fail(md,"live tuning command pool");return;}
+        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};allocation.commandPool=md->tuningPool;allocation.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;allocation.commandBufferCount=1;
+        VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        if(md->a.AllocateCommandBuffers(md->device,&allocation,&md->tuningCommand)!=VK_SUCCESS ||
+           (md->loader && md->loader(md->device,md->tuningCommand)!=VK_SUCCESS) ||
+           md->a.CreateFence(md->device,&fence,nullptr,&md->tuningFence)!=VK_SUCCESS) {mirror_fail(md,"live tuning command allocation");return;}
+    }
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};begin.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if(md->a.ResetCommandBuffer(md->tuningCommand,0)!=VK_SUCCESS || md->a.ResetFences(md->device,1,&md->tuningFence)!=VK_SUCCESS ||
+       md->a.BeginCommandBuffer(md->tuningCommand,&begin)!=VK_SUCCESS) {mirror_fail(md,"live tuning recording");return;}
+    VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};barrier.srcAccessMask=VK_ACCESS_SHADER_READ_BIT;barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    md->a.CmdPipelineBarrier(md->tuningCommand,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&barrier,0,nullptr,0,nullptr);
+    const float left[2]={shift,convergence},right[2]={-shift,-convergence};
+    md->a.CmdUpdateBuffer(md->tuningCommand,md->aep.buffer,0,8,left);md->a.CmdUpdateBuffer(md->tuningCommand,md->bep.buffer,0,8,right);
+    barrier.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+    md->a.CmdPipelineBarrier(md->tuningCommand,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,1,&barrier,0,nullptr,0,nullptr);
+    if(md->a.EndCommandBuffer(md->tuningCommand)!=VK_SUCCESS) {mirror_fail(md,"live tuning recording end");return;}
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&md->tuningCommand;
+    if(md->a.QueueSubmit(queue,1,&submit,md->tuningFence)!=VK_SUCCESS) {mirror_fail(md,"live tuning submission");return;}
+    md->queuedShift=shift;md->queuedConvergence=convergence;md->tuningPending=true;
+}
 static bool make_eye(MDev* md, EyeBuf& eye, float shift, float convergence) {
     eye.patches = &md->patches;
     VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; ci.size = 8;
@@ -1129,6 +1200,9 @@ static void destroy_swap(MDev* md) {
 static void shutdown(MDev* md) {
     md->a.DeviceWaitIdle(md->device);
     destroy_swap(md);
+    if(md->tuningFence) md->a.DestroyFence(md->device,md->tuningFence,nullptr);
+    if(md->tuningPool) md->a.DestroyCommandPool(md->device,md->tuningPool,nullptr);
+    if(md->frame) publish_tuning_state(md,false);
     for (auto& kv : md->mems) free_shadow(kv.second);
     for (auto* eye : {&md->aep, &md->bep}) {
         if (eye->buffer) md->a.DestroyBuffer(md->device, eye->buffer, nullptr);
@@ -1146,18 +1220,13 @@ static std::shared_ptr<MDev> create(VkDevice device, PFN_vkGetDeviceProcAddr nex
     md->amp = md->bmp = memory; md->family = family; md->adapter = adapter; md->session = session;
     load_dispatch(md->a, next, device); md->b = md->a;
     float convergence = 0;
-    // Read initial tuning atomically before any app shaders exist. Runtime tuning
-    // requires ordered GPU updates and is deliberately separate from CPU mappings.
+    // Initial values are uploaded before shaders exist; later changes use
+    // queue-ordered transfers in update_tuning, not CPU mappings.
     wchar_t path[32768]{};
     if (GetEnvironmentVariableW(L"VRX_XG_TUNING", path, 32768)) {
-        HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (f != INVALID_HANDLE_VALUE) {
-            char buf[128]{}; DWORD n = 0;
-            if (ReadFile(f, buf, 127, &n, nullptr)) { float a, b; if (xg::ParseTuning(std::string(buf, n), a, b)) { shift = a; convergence = b; } }
-            CloseHandle(f);
-        }
+        md->tuningPath=path;read_tuning(md->tuningPath,shift,convergence);
     }
+    md->tuningShift=shift;md->tuningConvergence=convergence;
     if (!make_eye(md.get(), md->aep, shift, convergence) || !make_eye(md.get(), md->bep, -shift, -convergence)) {
         shutdown(md.get()); return {};
     }
@@ -1218,6 +1287,7 @@ static VkResult create_swap(MDev* md, const VkSwapchainCreateInfoKHR* ci, const 
         mirror_fail(md, md->gpu->Error()); return result;
     }
     logf("mirror swapchain: %ux%u per eye, %u isolated targets; GPU same-frame transport", s.extent.width, s.extent.height, n);
+    publish_tuning_state(md,true);
     return result;
 }
 static VkResult present(MDev* md, VkQueue queue, const VkPresentInfoKHR* pi) {
@@ -1268,6 +1338,7 @@ static VkResult present(MDev* md, VkQueue queue, const VkPresentInfoKHR* pi) {
                 (unsigned long long)md->submits.load(), (unsigned long long)md->patches.load());
         md->gpu->Drop();
     }
+    update_tuning(md,queue);
     return result;
 }
 

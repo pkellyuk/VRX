@@ -197,19 +197,9 @@
      </StackPanel>
     </Expander>
 
-    <!-- 5 3D & depth -->
+    <!-- Estimated depth stereo -->
     <Expander x:Name="DepthSection" Header="{l:Tr SectionDepth}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="DepthContent">
-      <CheckBox x:Name="GeometryCheck" Content="{l:Tr GeometryStereo}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr GeometryTip}"/>
-      <StackPanel x:Name="GeometryContent" Visibility="Collapsed">
-       <TextBlock Text="{l:Tr GeometryHint}" Style="{StaticResource Hint}"/>
-       <Expander Header="{l:Tr GeometryAdvanced}" Margin="0,6,0,0">
-        <StackPanel>
-       <TextBlock Text="{l:Tr GeometrySession}" Style="{StaticResource Label}" Margin="0,4,0,4"/>
-       <TextBox x:Name="GeometrySessionText" MaxLength="64" TextChanged="SettingsChanged" ToolTip="{l:Tr GeometrySessionTip}"/>
-        </StackPanel>
-       </Expander>
-      </StackPanel>
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueNumber, Element=StrengthSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Strength3D}"/></DockPanel>
       <Slider x:Name="StrengthSlider" Minimum="0" Maximum="2" Value="1" ValueChanged="SettingsChanged"/>
       <CheckBox x:Name="StereoCheck" Content="{l:Tr EnableStereo}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
@@ -230,6 +220,36 @@
        <ComboBoxItem Content="{l:Tr TimingMatched}"/>
       </ComboBox>
       <TextBlock Text="{l:Tr TimingHint}" Style="{StaticResource Hint}"/>
+      </StackPanel>
+     </StackPanel>
+    </Expander>
+
+    <!-- Geometry stereo -->
+    <Expander x:Name="GeometrySection" Header="{l:Tr SectionGeometry}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <StackPanel x:Name="GeometryPanel">
+      <CheckBox x:Name="GeometryCheck" Content="{l:Tr GeometryStereo}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr GeometryTip}"/>
+      <StackPanel x:Name="GeometryContent" Visibility="Collapsed">
+       <TextBlock Text="{l:Tr GeometryHint}" Style="{StaticResource Hint}"/>
+       <Grid Margin="0,8,0,0">
+        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions>
+        <StackPanel>
+         <TextBlock Text="{l:Tr GeometrySeparation}" Style="{StaticResource Label}"/>
+         <TextBox x:Name="GeometrySeparationText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometrySeparationTip}" AutomationProperties.Name="{l:Tr GeometrySeparation}"/>
+         <Slider x:Name="GeometrySeparationSlider" Minimum="0.001" Maximum="2" SmallChange="0.005" LargeChange="0.05" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometrySeparationTip}" AutomationProperties.Name="{l:Tr GeometrySeparation}"/>
+        </StackPanel>
+        <StackPanel Grid.Column="2">
+         <TextBlock Text="{l:Tr GeometryConvergence}" Style="{StaticResource Label}"/>
+         <TextBox x:Name="GeometryConvergenceText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
+         <Slider x:Name="GeometryConvergenceSlider" Minimum="0" Maximum="0.05" SmallChange="0.0005" LargeChange="0.005" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
+        </StackPanel>
+       </Grid>
+       <TextBlock x:Name="GeometryTuningHint" Text="{l:Tr GeometryTuningLive}" Style="{StaticResource Hint}" Margin="0,6,0,0"/>
+       <Expander Header="{l:Tr GeometryAdvanced}" Margin="0,6,0,0">
+        <StackPanel>
+       <TextBlock Text="{l:Tr GeometrySession}" Style="{StaticResource Label}" Margin="0,4,0,4"/>
+       <TextBox x:Name="GeometrySessionText" MaxLength="64" TextChanged="SettingsChanged" ToolTip="{l:Tr GeometrySessionTip}"/>
+        </StackPanel>
+       </Expander>
       </StackPanel>
      </StackPanel>
     </Expander>

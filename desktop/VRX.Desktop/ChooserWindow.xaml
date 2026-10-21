@@ -58,6 +58,9 @@
     <StackPanel x:Name="Sections" Margin="12,0,6,0">
      <TextBlock x:Name="HistoryHeader" Text="{l:Tr ChooserHistory}" Style="{StaticResource SubHeader}" Margin="0,10,0,8" Visibility="Collapsed"/>
      <WrapPanel x:Name="HistoryTiles"/>
+     <TextBlock x:Name="SteamHeader" Text="{l:Tr ChooserSteam}" Style="{StaticResource SubHeader}" Margin="0,10,0,2" Visibility="Collapsed"/>
+     <TextBlock x:Name="SteamHint" Style="{StaticResource Hint}" TextWrapping="Wrap" FontSize="13" Margin="0,0,0,8" Visibility="Collapsed"/>
+     <WrapPanel x:Name="SteamTiles"/>
      <TextBlock x:Name="WindowsHeader" Text="{l:Tr ChooserWindows}" Style="{StaticResource SubHeader}" Margin="0,10,0,8"/>
      <WrapPanel x:Name="WindowTiles"/>
      <TextBlock x:Name="NoWindows" Text="{l:Tr ChooserNoWindows}" Style="{StaticResource Hint}" FontSize="13" Visibility="Collapsed"/>

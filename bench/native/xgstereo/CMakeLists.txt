@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(vrx_xgstereo LANGUAGES CXX)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/gen_mirror.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/gen_chain_sizes.py")
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "This prototype requires 64-bit Windows.")
 endif()
@@ -126,6 +129,10 @@ set_tests_properties(mirror_present mirror_inline_present PROPERTIES ENVIRONMENT
 set_tests_properties(same_frame_gpu PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
 set_tests_properties(gpu_texture_present PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
 add_test(NAME inline_shader_present COMMAND present_test --inline-shader)
+add_test(NAME mirror_win32_memory_import COMMAND present_test --mirror-win32-import)
+add_test(NAME mirror_live_stereo_tuning COMMAND present_test --mirror-live-tuning)
+set_tests_properties(mirror_live_stereo_tuning PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
+set_tests_properties(mirror_win32_memory_import PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
 add_test(NAME live_stereo_tuning COMMAND present_test --live-tuning)
 set_tests_properties(live_stereo_tuning PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)
 set_tests_properties(inline_shader_present PROPERTIES ENVIRONMENT "VK_LAYER_PATH=$<TARGET_FILE_DIR:vrx_xgstereo>" TIMEOUT 30)

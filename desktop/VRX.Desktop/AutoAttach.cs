@@ -33,11 +33,11 @@ public sealed class AppSettings
 
     // Expert's collapsible sections: name -> open. Sections not listed use DefaultSections.
     public const string SectionGame = "Game", SectionScreen = "Screen", SectionAround = "Around", SectionRoom = "Room",
-        SectionDepth = "Depth", SectionSteamVr = "SteamVr", SectionProfile = "Profile", SectionSession = "Session";
+        SectionDepth = "Depth", SectionGeometry = "Geometry", SectionSteamVr = "SteamVr", SectionProfile = "Profile", SectionSession = "Session";
     public static readonly IReadOnlyDictionary<string, bool> DefaultSections = new Dictionary<string, bool>(StringComparer.Ordinal)
     {
         [SectionGame] = false, [SectionScreen] = true, [SectionAround] = true, [SectionRoom] = true,
-        [SectionDepth] = false, [SectionSteamVr] = false, [SectionProfile] = false, [SectionSession] = false,
+        [SectionDepth] = false, [SectionGeometry] = false, [SectionSteamVr] = false, [SectionProfile] = false, [SectionSession] = false,
     };
     public Dictionary<string, bool>? Sections { get; set; }
 
