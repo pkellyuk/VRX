@@ -56,7 +56,7 @@ internal static class GameHistoryTests
         _=owner.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>{
             chooser.UpdateLayout();
             var buttons=Buttons(chooser).ToArray();
-            if(chooser.HistoryTileCount!=2 || chooser.WindowTileCount!=0 || buttons.Count(b=>b.IsEnabled)!=3 || buttons.Count(b=>!b.IsEnabled)!=3) { chooser.Close(); return; }
+            if(chooser.HistoryTileCount!=2 || chooser.WindowTileCount!=0 || buttons.Count(b=>b.IsEnabled)!=2 || buttons.Count(b=>!b.IsEnabled)!=2) { chooser.Close(); return; }
             var image=new RenderTargetBitmap((int)chooser.ActualWidth,(int)chooser.ActualHeight,96,96,PixelFormats.Pbgra32); image.Render(chooser);
             var encoder=new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image));
             using(var file=File.Create(Path.Combine(output,"ui-chooser-history.png"))) encoder.Save(file);

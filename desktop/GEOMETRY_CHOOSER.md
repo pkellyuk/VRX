@@ -1,7 +1,23 @@
 # Stereo methods in the window chooser
 
-Each game window offers Auto, Depth estimate and Geometry stereo. Clicking the
-picture keeps that executable's saved selection. Whole displays use depth capture.
+In **Expert**, each game tile offers Estimated depth and True geometry (experimental);
+clicking the picture keeps that executable's saved selection. In **Easy** the tiles
+have no method buttons, renderer list or Steam setup review: a pick plays with
+estimated depth now, without changing the game's saved method, and Attach / Play and
+auto-attach also use depth. True geometry is only reachable in Expert, per game,
+never as a global default. Whole displays use depth capture.
+
+True geometry shows a prominent red warning every time it is turned on for a game
+(choosing it in the main window or a chooser tile) and before every geometry launch
+or restart, Steam launches included: use it with offline games; online games with
+anti-cheat may detect it and the account can be banned. The main window keeps a red
+banner while geometry is chosen. Before the warning, VRX looks for anti-cheat in the
+game's installation (Easy Anti-Cheat folders and `start_protected_game.exe`,
+BattlEye and `BEService*`, EA Javelin, PunkBuster, GameGuard, XIGNCODE3, Tencent ACE,
+miHoYo protect, EQU8) and for anti-cheat services started from that folder or by the
+game, and for Riot Vanguard (`vgk`) when its client runs or the game is a Riot game.
+A game with anti-cheat is refused geometry and offered estimated depth. "Use
+estimated depth" at the warning plays with depth this time only.
 
 Auto always means estimated depth, for every game, including games with a built-in
 tested geometry profile: true geometry is only used when it was chosen for that game.
@@ -21,9 +37,10 @@ layer. Unreal executables (`-Shipping.exe`) with several APIs use DXVK with `-dx
 reported instead of guessed: launching says so at once rather than failing after the
 first-frame wait. Native D3D12 command replay remains developer-only.
 
-The main window keeps these levels separate: Stereo method has Auto, Depth
-estimate and Geometry stereo. Geometry stereo reveals a secondary Geometry
-renderer dropdown. The per-game renderer is remembered when switching methods,
+The main window keeps these levels separate: Stereo method (the one control that
+turns geometry on) has Auto (estimated depth), Estimated depth and True geometry
+(experimental), which reveals a secondary Geometry renderer dropdown with what was
+detected. The per-game renderer is remembered when switching methods,
 and is shared with the window chooser's advanced geometry selection.
 
 The chooser separates **Launch a game** from **Attach to something running**.
@@ -66,7 +83,10 @@ Options entry: `"<stable VRX.Desktop.exe path>" --steam-game <appid> -- %command
 The setup dialog supplies the exact line and a copy button; existing game arguments
 belong after `%command%`. Existing wrappers require manual compatibility review.
 VRX deliberately does not edit Steam's live `localconfig.vdf` or restart Steam.
-Remove that line in Steam to undo setup, and update it if VRX moves.
+Remove that line in Steam to undo setup, and update it if VRX moves. Expert → 3D: true
+geometry → **Steam launch setups…** lists every Steam game that starts through VRX
+with the exact line to delete, for use before moving or uninstalling VRX (Steam cannot
+start those games once VRX is gone); the setup dialog says so too.
 
 For a geometry launch the UI writes an expiring, single-use request under its own
 `steam` data folder. Steam starts the wrapper with the original command; the
@@ -79,12 +99,26 @@ games which remove the environment from their children need a tested profile.
 
 The wrapper stays alive until the rendering process exits so owned libraries are
 cleaned up. Ordinary Steam launches with no pending request pass through unchanged.
-Expired/cancelled requests block one delayed launch instead of silently launching
-without the requested geometry configuration. Launch results are matched by nonce;
+An expired or cancelled request is discarded and that Steam launch starts the game
+normally (no error box). Launch results are matched by nonce;
 timeouts point to Steam launch options/dialogs rather than claiming geometry works.
 Once setup has produced a ready stream, subsequent cold launches reuse the saved
-settings without another review. Restarting a running game still requires the
+settings without another review, but the red warning and the anti-cheat check still
+come before every launch. Restarting a running game still requires the
 normal launch review and a graceful close; the game is never forcibly killed.
+
+After a geometry launch VRX attaches to the run it just started, waiting up to a
+minute (with a countdown) for its first frame; a stalled loading screen gives an
+error, never a silent switch to depth while the translation DLLs are loaded. While
+the chooser gathers games, Attach / Play, a second Choose and auto-attach wait; if
+the previous session has not stopped a second after a pick, the status says so.
+
+A Steam launch attaches to the bound executable, or else to the largest visible
+window in the game's folder whose executable is not a launcher, setup, crash
+reporter, redistributable, uninstaller or updater, and only once it has stayed for
+three seconds; such executables are never saved as the game's binding. Unbound Steam
+tiles keep their choice in memory: no placeholder profile is saved (earlier ones are
+deleted). The Installed Steam games section is hidden when Steam is not installed.
 
 Selecting a stopped history game launches it directly. Geometry's launch review
 prepares the selected backend before the first process starts, so there is no
@@ -142,16 +176,22 @@ DXVK and vkd3d-proton shader caches persist per game in `geometry\cache\<session
 so a launch does not recompile everything.
 
 Renderer/launch settings take effect on restart. The geometry session field is
-an advanced connection name managed by VRX, not a game title or launch command.
-The desktop separates estimated-depth controls into **3D & Depth Estimation**
-and geometry controls into **3D and Depth Geometry**, with independently remembered
-expanded/collapsed states. The geometry panel exposes separation and convergence whenever
-geometry is selected. They save with that executable's profile, accept the user's
+an advanced connection name managed by VRX, not a game title or launch command; it
+and the exact numbers live in the geometry section's collapsed **Developer** part,
+like the launch dialog's arguments, working folder and Steam App ID.
+The desktop separates estimated-depth controls into **3D: estimated depth**
+and geometry controls into **3D: true geometry (experimental)**, with independently
+remembered expanded/collapsed states. The geometry panel exposes 3D strength
+(separation) and Screen depth (convergence) sliders whenever geometry is selected. They save with that executable's profile, accept the user's
 decimal separator, and retain the existing calibration when switching methods.
-Sliders below the numeric fields allow continuous live adjustment. The normal
-slider ranges are 0.001–2 separation and 0–0.05 convergence; larger existing or
-typed values expand the ranges so profiles are never clamped. Numeric fields
-remain available for exact values, and both inputs share the same save/live path.
+The sliders allow continuous live adjustment. The normal slider range is 0.001–2
+separation (a larger typed value up to 4 expands it) and 0–0.01 convergence. These
+are also the safe limits: separation 0.001–4, convergence 0–0.01 (the farthest
+scenery is pushed apart by convergence x the screen width, so at 0.01 the eyes never
+diverge on the default 5.7 m screen). Saved values outside them are clamped when a
+profile loads; typed ones are refused. New profiles start at 0.032/0.008 (screen
+plane at 4 world units). The numeric fields (Developer) give exact values; both
+inputs share the same save/live path.
 Invalid or incomplete input is not saved and reverts to the saved values on focus
 loss. Separation and convergence update live on the same-frame Vulkan backend,
 including DXVK and vkd3d-proton. The UI matches the recorded game's executable,
@@ -168,8 +208,9 @@ buffer reuse and acknowledges GPU completion; neither CPU writes to in-flight
 shader data nor device-idle waits are used. Invalid/partial files retain the last
 valid pair of values. A paused/non-presenting game may leave the UI at applying
 until presentation resumes. Values continue to save per game for later launches.
-Graphics layers and translation DLLs can be blocked by anti-cheat; the restart
-review explains this before it changes the game.
+Graphics layers and translation DLLs can be blocked or reported by anti-cheat:
+games with detected anti-cheat are refused, and the red warning comes before every
+geometry launch or restart.
 
 Validation: desktop `--smoke-test` covers route/profile persistence, calibration,
 chooser controls and rendered UI. Add `--geometry-launch-integration-test` and

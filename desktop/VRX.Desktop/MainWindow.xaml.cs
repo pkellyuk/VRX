@@ -21,6 +21,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer refreshTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private readonly DispatcherTimer geometryTuningTimer = new() {Interval=TimeSpan.FromMilliseconds(350)};
     private bool starting;
+    // The chooser is gathering games: Attach / Play, Choose and auto-attach wait (ChooseClick).
+    private bool choosing;
     private CancellationTokenSource? startCancellation;
     private Profile? profile;
     private bool ready, loading, refreshing, stopping, closing, dragging;
@@ -246,7 +248,7 @@ public partial class MainWindow : Window
         WidthSlider.Value = p.Width; DistanceSlider.Value = p.Distance; HeightSlider.Value = p.Height;
         HorizontalSlider.Value = p.Horizontal; StrengthSlider.Value = p.Strength;
         FollowCheck.IsChecked = p.Follow; StereoCheck.IsChecked = p.Stereo; DismissCheck.IsChecked = p.AutoDismiss; DesktopAwayCheck.IsChecked = p.DesktopWhenAway;
-        GeometryCheck.IsChecked = p.GeometryStereo; GeometrySessionText.Text = p.GeometrySession;
+        GeometrySessionText.Text = p.GeometrySession;
         GeometrySeparationText.Text=p.GeometrySeparation.ToString("R",CultureInfo.CurrentCulture);
         GeometryConvergenceText.Text=p.GeometryConvergence.ToString("R",CultureInfo.CurrentCulture);
         SyncGeometryTuningSliders(resetRange:true);
@@ -280,7 +282,7 @@ public partial class MainWindow : Window
             PreferredWindowTitle = (WindowList.SelectedItem as GameWindow)?.Title ?? profile.PreferredWindowTitle, Width = WidthSlider.Value,
             Distance = DistanceSlider.Value, Height = HeightSlider.Value, Horizontal = HorizontalSlider.Value,
             Strength = StrengthSlider.Value, Follow = FollowCheck.IsChecked == true, Stereo = StereoCheck.IsChecked == true,
-            GeometryStereo = GeometryCheck.IsChecked == true, GeometrySession = GeometrySessionText.Text,
+            GeometrySession = GeometrySessionText.Text,
             StereoBackend = profile.SelectedStereoBackend, GeometryProfileId = profile.GeometryProfileId, GeometryRenderer = profile.SelectedGeometryRenderer,
             GeometryLaunchArguments = profile.GeometryLaunchArguments, GeometryWorkingDirectory = profile.GeometryWorkingDirectory,
             GeometrySteamAppId = profile.GeometrySteamAppId, GeometrySeparation = separation, GeometryConvergence = convergence,
@@ -362,8 +364,11 @@ public partial class MainWindow : Window
     private bool SettingsEnabled => ScreenContent?.IsEnabled == true;
     private void UpdateGeometryControls()
     {
-        if (GeometryCheck == null || GeometryContent == null || AiDepthContent == null || StrengthSlider == null || DesktopAwayCheck == null) return;
-        bool geometry = GeometryCheck.IsChecked == true;
+        if (GeometryContent == null || AiDepthContent == null || StrengthSlider == null || DesktopAwayCheck == null || GeometryOffHint == null || GeometryWarningBanner == null) return;
+        // One control chooses the method (Stereo method, under Game & window).
+        bool geometry = profile?.GeometryStereo == true;
+        GeometryOffHint.Visibility = geometry ? Visibility.Collapsed : Visibility.Visible;
+        GeometryWarningBanner.Visibility = geometry ? Visibility.Visible : Visibility.Collapsed;
         if (profile != null && StereoPathList != null) {
             string selected = StereoPaths.Mode(profile.SelectedStereoBackend);
             bool wasLoading = loading; loading = true;
@@ -406,8 +411,21 @@ public partial class MainWindow : Window
 #if DEBUG
         if (backend == StereoPaths.Dx12) { Status.Text = Loc.Get("PathDx12Unavailable"); return; }
 #endif
+        System.Diagnostics.Debug.WriteLine($"[MainWindow] StereoPathSelected: {profile.SelectedStereoBackend} -> {backend}");
+        if (!profile.GeometryStereo && (backend == StereoPaths.GeometryAuto || StereoPaths.Geometry(backend)))
+        {
+            // Turning true geometry on for this game: the red warning every time (anti-cheat
+            // refuses it). Anything but "I understand" keeps the previous method.
+            var consent = AskGeometry(profile.ExecutablePath, (AppList.SelectedItem as RunningApp)?.Pid ?? 0,
+                GameDisplayName((WindowList.SelectedItem as GameWindow)?.Title, (AppList.SelectedItem as RunningApp)?.Name), launch: false);
+            if (consent != GeometryConsent.Proceed)
+            {
+                if (consent == GeometryConsent.UseDepth) profile.SelectStereoBackend(StereoPaths.Depth);
+                UpdateGeometryControls(); SaveAndApply();
+                return;
+            }
+        }
         profile.SelectStereoBackend(backend);
-        loading = true; GeometryCheck.IsChecked = profile.GeometryStereo; loading = false;
         UpdateGeometryControls(); SaveAndApply();
     }
     private void GeometryRendererSelected(object sender, SelectionChangedEventArgs e)
@@ -415,7 +433,6 @@ public partial class MainWindow : Window
         if (!ready || loading || starting || engine.Running || profile == null ||
             StereoPaths.Mode(profile.SelectedStereoBackend) != StereoPaths.GeometryAuto || GeometryRendererList.SelectedItem is not ComboBoxItem item) return;
         profile.SelectStereoBackend((string)item.Tag);
-        loading = true; GeometryCheck.IsChecked = profile.GeometryStereo; loading = false;
         UpdateGeometryControls(); SaveAndApply();
     }
     private void UpdateGeometryTuningHint(bool apply=false)
@@ -480,10 +497,6 @@ public partial class MainWindow : Window
     }
     private void SettingsChanged(object sender, RoutedEventArgs e)
     {
-        if (ready && !loading && profile != null && ReferenceEquals(sender,GeometryCheck)) {
-            profile=System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(profile))!;
-            profile.SelectStereoBackend(GeometryCheck.IsChecked == true ? profile.SelectedGeometryRenderer : StereoPaths.Depth);
-        }
         UpdateRoomControls();
         UpdateGeometryControls();
         if (!ready || loading || profile == null) return;
@@ -658,13 +671,13 @@ public partial class MainWindow : Window
     {
         bool running = engine.Running;
         SetSettingsEnabled(profile != null && !stopping && !starting);
-        StartButton.IsEnabled = !running && !starting && profile != null && WindowList.SelectedItem is GameWindow;
-        ChooseButton.IsEnabled = !stopping && !starting;
+        StartButton.IsEnabled = !running && !starting && !choosing && profile != null && WindowList.SelectedItem is GameWindow;
+        ChooseButton.IsEnabled = !stopping && !starting && !choosing;
         StopButton.IsEnabled = running && !stopping;
         RecenterButton.IsEnabled = EasyRecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
         AppList.IsEnabled = WindowList.IsEnabled = RefreshButton.IsEnabled = ShowAll.IsEnabled = StereoPathList.IsEnabled = GeometryRendererList.IsEnabled = !running && !starting;
         // These select startup-only engine arguments, like the method chooser.
-        GeometryCheck.IsEnabled = GeometrySessionText.IsEnabled = !running && !starting && profile != null && !stopping;
+        GeometrySessionText.IsEnabled = !running && !starting && profile != null && !stopping;
         GeometrySeparationText.IsEnabled=GeometryConvergenceText.IsEnabled=!starting && !stopping && profile!=null;
         GeometrySeparationSlider.IsEnabled=GeometryConvergenceSlider.IsEnabled=GeometrySeparationText.IsEnabled;
         UpdateGameCard();
@@ -732,21 +745,52 @@ public partial class MainWindow : Window
     private async void StartClick(object sender, RoutedEventArgs e) => await StartSession();
 
     // "Choose...": pick a window or a whole display from live pictures, then play it at once,
-    // through the same path as picking it in the lists and pressing Attach / Play.
+    // through the same path as picking it in the lists and pressing Attach / Play. While the
+    // chooser gathers games (Steam discovery takes a moment) Attach / Play, a second Choose and
+    // auto-attach wait. Nothing that goes wrong here may close VRX.
     private async void ChooseClick(object sender, RoutedEventArgs e)
     {
         System.Diagnostics.Debug.WriteLine("[Chooser] ChooseClick enter");
-        if (stopping || starting) return;
+        if (stopping || starting || choosing) return;
+        choosing = true; UpdateButtons();
+        ChooserWindow.Choice? picked = null;
+        SteamLibrary.Discovery steam = new([], [], false);
+        try { (picked, steam) = await ShowChooser(); }
+        catch (Exception ex)
+        {
+            App.LogUnexpected("chooser", ex);
+            Status.Text = Loc.Format("StatusChooseFailed", ex.Message);
+        }
+        finally { choosing = false; UpdateButtons(); }
+        if (picked == null)
+        {
+            System.Diagnostics.Debug.WriteLine("[Chooser] ChooseClick exit: nothing picked");
+            return;
+        }
+        try { await StartPicked(picked, steam); }
+        catch (Exception ex)
+        {
+            App.LogUnexpected("chooser start", ex);
+            Status.Text = Loc.Format("StatusChooseFailed", ex.Message);
+        }
+        System.Diagnostics.Debug.WriteLine($"[Chooser] ChooseClick exit: {picked.App.Name}");
+    }
+
+    // Gathers running windows, displays, recent and installed Steam games, and shows the
+    // chooser (Easy: tiles that play with depth; Expert: stereo method per game).
+    private async Task<(ChooserWindow.Choice?, SteamLibrary.Discovery)> ShowChooser()
+    {
         List<RunningApp> apps;
         List<ScreenSource> screens;
+        var none = new SteamLibrary.Discovery([], [], false);
         try { apps = RunningApps.List(false); screens = ScreenSources.List(); }
-        catch (Exception ex) { Status.Text = Loc.Format("StatusRefreshFailed", ex.Message); return; }
+        catch (Exception ex) { Status.Text = Loc.Format("StatusRefreshFailed", ex.Message); return (null, none); }
         var history=new GameHistory(store.Root); history.ImportLastGame(store);
         SteamLibrary.Discovery steam;
         try { steam=await Task.Run(()=>SteamLibrary.Discover()); }
-        catch(Exception ex) { steam=new([], [ex.Message]); }
-        try { SteamLibrary.ImportBindings(store,steam.Games,history.Load()); }
-        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException) { Status.Text=ex.Message; }
+        catch(Exception ex) { steam=new([], [ex.Message], true); }
+        try { SteamLibrary.ImportBindings(store,steam.Games,history.Load()); SteamLibrary.RemovePlaceholderProfiles(store); }
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or InvalidDataException) { Status.Text=ex.Message; }
         var choices=new Dictionary<string,Profile>(StringComparer.OrdinalIgnoreCase);
         Profile ChoiceProfile(RunningApp app) {
             if(choices.TryGetValue(app.FullPath,out var saved)) return saved;
@@ -759,22 +803,25 @@ public partial class MainWindow : Window
             choices[app.FullPath]=saved; return saved;
         }
         var chooser = new ChooserWindow(apps, screens, ScreenSources.App(store.Root, screens), (WindowList.SelectedItem as GameWindow)?.Handle ?? 0,
-            appSettings.ChooserWindow, app=>ChoiceProfile(app).SelectedStereoBackend, app=>ChoiceProfile(app).SelectedGeometryRenderer,history.Load(),steam.Games,store.Root,string.Join("\n",steam.Errors)) { Owner = this };
+            appSettings.ChooserWindow, app=>ChoiceProfile(app).SelectedStereoBackend, app=>ChoiceProfile(app).SelectedGeometryRenderer,history.Load(),
+            steam.Installed ? steam.Games : null,store.Root,string.Join("\n",steam.Errors),appSettings.IsExpert) { Owner = this };
         bool chose = chooser.ShowDialog() == true;
         if (chooser.Place != null)
         {
             appSettings.ChooserWindow = chooser.Place;
             SaveAppSettings();
         }
-        if (!chose || chooser.Picked is not { } picked)
-        {
-            System.Diagnostics.Debug.WriteLine("[Chooser] ChooseClick exit: nothing picked");
-            return;
-        }
+        return (chose ? chooser.Picked : null, steam);
+    }
+
+    private async Task StartPicked(ChooserWindow.Choice picked, SteamLibrary.Discovery steam)
+    {
+        ArgumentNullException.ThrowIfNull(picked);
+        ArgumentNullException.ThrowIfNull(steam);
         if(engine.Running) {
             await StopSession();
             for(int i=0;engine.Running && i<20;++i) await Task.Delay(50);
-            if(engine.Running) return;
+            if(engine.Running) { Status.Text=Loc.Get("StatusChoiceStillStopping"); return; }
         }
         if(picked.Steam!=null) { await StartFromSteam(picked); return; }
         if(picked.History!=null) {
@@ -784,47 +831,74 @@ public partial class MainWindow : Window
             return;
         }
         if (!SelectChoice(picked)) { Status.Text = Loc.Get("StatusChoiceGone"); return; }
-        System.Diagnostics.Debug.WriteLine($"[Chooser] ChooseClick: starting {picked.App.Name} '{picked.Window.Title}'");
-        if (profile != null && picked.Backend != null) {
+        System.Diagnostics.Debug.WriteLine($"[Chooser] starting {picked.App.Name} '{picked.Window.Title}', backend {picked.Backend ?? "saved"}, depth only {picked.DepthOnly}");
+        if (profile != null && picked.Backend != null && !picked.DepthOnly) {
             profile.SelectStereoBackend(picked.Backend);
             if(StereoPaths.Renderer(picked.Renderer)) profile.GeometryRenderer=picked.Renderer!;
             PutProfile(profile); SaveAndApply();
         }
-        await StartSession();
+        await StartSession(depthOnly: picked.DepthOnly);
+    }
+
+    // The red warning before true geometry is used for a game, after looking for anti-cheat:
+    // a game with anti-cheat is refused (depth is offered). The smoke test answers itself.
+    internal int GeometryWarningsShown { get; private set; }
+    private GeometryConsent AskGeometry(string executable, int pid, string game, bool launch)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(executable);
+        System.Diagnostics.Debug.WriteLine($"[Geometry warning] AskGeometry enter: {executable}, pid {pid}, launch {launch}");
+        var markers = AntiCheat.Detect(executable, pid);
+        GeometryWarningsShown++;
+        var answer = smoke ? (markers.Count > 0 ? GeometryConsent.UseDepth : GeometryConsent.Proceed) : GeometryWarning.Ask(this, game, markers, launch);
+        if (answer != GeometryConsent.Proceed) Status.Text = Loc.Get(answer == GeometryConsent.UseDepth ? (markers.Count > 0 ? "StatusGeometryAntiCheat" : "StatusGeometryDepthInstead") : "StatusGeometryCancelled");
+        System.Diagnostics.Debug.WriteLine($"[Geometry warning] AskGeometry exit: {answer} ({markers.Count} anti-cheat marker(s))");
+        return answer;
     }
 
     private async Task StartFromSteam(ChooserWindow.Choice picked)
     {
+        ArgumentNullException.ThrowIfNull(picked);
         if(starting || stopping || engine.Running) return;
         if(profile!=null && !SaveAndApply()) return;
         var game=picked.Steam!;
         bool refreshWasRunning=refreshTimer.IsEnabled; refreshTimer.Stop();
-        bool ready=false;
+        bool ready=false, depthOnly=picked.DepthOnly;
+        GeometryLaunch.Run? launched=null;
         starting=true; startCancellation=new CancellationTokenSource(); UpdateButtons();
         try {
             var token=startCancellation.Token;
+            var binding=SteamLibrary.LoadBinding(store.Root,game);
             string key=SteamLibrary.ProfileKey(store.Root,game);
             var saved=store.Load(key);
-            if(picked.Backend!=null) saved.SelectStereoBackend(picked.Backend);
+            if(picked.Backend!=null && !depthOnly) saved.SelectStereoBackend(picked.Backend);
             if(StereoPaths.Renderer(picked.Renderer)) saved.GeometryRenderer=picked.Renderer!;
-            store.Save(saved);
+            // Before the real executable is known the choice stays in memory: no placeholder profile.
+            if(binding!=null) store.Save(saved);
             await GeometrySessionLifecycle.ReleasePrevious(picked.App,store.Root,token);
             EngineSession.EnsureAvailable();
-            var running=SteamLibrary.Running(game,RunningApps.List(false));
-            bool geometry=saved.GeometryStereo;
+            var running=SteamLibrary.Running(game,RunningApps.List(false),binding?.Executable);
+            bool geometry=saved.GeometryStereo && !depthOnly && appSettings.IsExpert;
+            string executable=binding?.Executable ?? "";
             if(geometry && (picked.ReviewSteamSetup || running==null || GeometryLaunch.ExistingSession(running,saved,store.Root)==null)) {
-                string executable=SteamLibrary.LoadBinding(store.Root,game)?.Executable ?? "";
                 if(executable.Length==0) {
-                    var select=new Microsoft.Win32.OpenFileDialog {Title=Loc.Get("SteamSelectExecutable"),InitialDirectory=game.Directory,Filter="Game executable (*.exe)|*.exe",CheckFileExists=true};
+                    var select=new Microsoft.Win32.OpenFileDialog {Title=Loc.Get("SteamSelectExecutable"),InitialDirectory=game.Directory,Filter=Loc.Get("FilterGameExecutable"),CheckFileExists=true};
                     if(select.ShowDialog(this)!=true) return;
                     executable=select.FileName;
                     if(!SteamLibrary.Inside(executable,game.Directory)) throw new InvalidDataException(Loc.Get("SteamExecutableInvalid"));
+                    if(SteamLibrary.IsLauncher(executable)) throw new InvalidDataException(Loc.Get("SteamExecutableLauncher"));
                     // An existing executable profile owns its tuning; carry only
                     // the mode/renderer choice from the unbound library card.
                     if(File.Exists(store.FileFor(executable))) {
                         var existing=store.Load(executable); existing.SelectStereoBackend(saved.SelectedStereoBackend); existing.GeometryRenderer=saved.GeometryRenderer; saved=existing;
                     }
                 }
+                // Every geometry launch, Steam's included: the red warning (anti-cheat refuses it).
+                var consent=AskGeometry(executable,running?.Pid ?? 0,game.Title,launch:true);
+                if(consent==GeometryConsent.Cancel) return;
+                geometry=consent==GeometryConsent.Proceed;
+                depthOnly=!geometry;
+            }
+            if(geometry && (picked.ReviewSteamSetup || running==null || GeometryLaunch.ExistingSession(running,saved,store.Root)==null)) {
                 saved.ExecutablePath=executable; TestedStereoProfiles.Apply(saved);
                 saved.GeometrySteamAppId=game.AppId;
                 if(string.IsNullOrEmpty(saved.GeometryWorkingDirectory)) saved.GeometryWorkingDirectory=game.Directory;
@@ -858,12 +932,12 @@ public partial class MainWindow : Window
                     await Task.Delay(1500,token);
                     plan=plan with {App=plan.App with {Pid=0},StartTicks=0};
                 }
-                var run=await SteamGeometry.Launch(game,plan,saved,store.Root,text=>Status.Text=text,token);
+                launched=await SteamGeometry.Launch(game,plan,saved,store.Root,text=>Status.Text=text,token);
                 SteamLibrary.SaveBinding(store.Root,game,new(executable,true));
-                running=await GameHistory.WaitForWindow(new(executable,game.Title,[],plan.WorkingDirectory,game.AppId,DateTimeOffset.UtcNow),run.Pid,token);
+                running=await GameHistory.WaitForWindow(new(executable,game.Title,[],plan.WorkingDirectory,game.AppId,DateTimeOffset.UtcNow),launched.Pid,token);
             } else if(running==null) {
                 Status.Text=Loc.Format("StatusHistoryLaunching",game.Title);
-                SteamLibrary.Launch(game.AppId); running=await SteamLibrary.WaitForWindow(game,token);
+                SteamLibrary.Launch(game.AppId); running=await SteamLibrary.WaitForWindow(game,binding?.Executable,token);
             }
             token.ThrowIfCancellationRequested();
             if(!string.Equals(saved.ExecutablePath,running.FullPath,StringComparison.OrdinalIgnoreCase)) {
@@ -871,30 +945,34 @@ public partial class MainWindow : Window
                 actual.SelectStereoBackend(saved.SelectedStereoBackend); actual.GeometryRenderer=saved.GeometryRenderer; saved=actual;
             }
             saved.ExecutablePath=running.FullPath; saved.GeometrySteamAppId=game.AppId; store.Save(saved);
-            SteamLibrary.SaveBinding(store.Root,game,new(running.FullPath,SteamLibrary.LoadBinding(store.Root,game)?.WrapperConfigured ?? false));
+            // Only the game itself is bound: never a launcher that happened to show a window.
+            if(!SteamLibrary.IsLauncher(running.FullPath))
+                SteamLibrary.SaveBinding(store.Root,game,new(running.FullPath,SteamLibrary.LoadBinding(store.Root,game)?.WrapperConfigured ?? false));
             if(!SelectChoice(new ChooserWindow.Choice(running,running.Windows[0]))) throw new InvalidOperationException(Loc.Get("StatusChoiceGone"));
             ready=true;
-        } catch(Exception ex) {Status.Text=ex.Message;}
+        } catch(Exception ex) {Status.Text=ex.Message; System.Diagnostics.Debug.WriteLine("[Steam] StartFromSteam: "+ex);}
         finally {
             starting=false; startCancellation.Dispose(); startCancellation=null;
             if(refreshWasRunning && IsLoaded && !closing) refreshTimer.Start();
             UpdateButtons();
         }
-        if(ready) await StartSession();
+        if(ready) await StartSession(depthOnly:depthOnly,launched:launched);
     }
 
     private async Task StartFromHistory(ChooserWindow.Choice picked)
     {
+        ArgumentNullException.ThrowIfNull(picked);
         var entry=picked.History!;
         if(starting || stopping || engine.Running) return;
         if(profile!=null && !SaveAndApply()) return;
         bool refreshWasRunning=refreshTimer.IsEnabled; refreshTimer.Stop();
-        bool cold=false,launched=false;
+        bool cold=false,launched=false,depthOnly=picked.DepthOnly;
+        GeometryLaunch.Run? run=null;
         starting=true; startCancellation=new CancellationTokenSource(); UpdateButtons();
         try {
             var token=startCancellation.Token;
             var saved=store.Load(entry.Executable);
-            if(picked.Backend!=null) saved.SelectStereoBackend(picked.Backend);
+            if(picked.Backend!=null && !depthOnly) saved.SelectStereoBackend(picked.Backend);
             if(StereoPaths.Renderer(picked.Renderer)) saved.GeometryRenderer=picked.Renderer!;
             if(string.IsNullOrEmpty(saved.GeometryWorkingDirectory)) saved.GeometryWorkingDirectory=entry.WorkingDirectory;
             if(string.IsNullOrEmpty(saved.GeometrySteamAppId)) saved.GeometrySteamAppId=entry.SteamAppId;
@@ -906,7 +984,15 @@ public partial class MainWindow : Window
             cold=running==null;
             if(cold) {
                 Status.Text=Loc.Format("StatusHistoryLaunching",entry.Title);
-                if(saved.GeometryStereo) {
+                bool geometry=saved.GeometryStereo && !depthOnly && appSettings.IsExpert;
+                if(geometry) {
+                    // Every geometry launch: the red warning (anti-cheat refuses it).
+                    var consent=AskGeometry(entry.Executable,0,entry.Title,launch:true);
+                    if(consent==GeometryConsent.Cancel) return;
+                    geometry=consent==GeometryConsent.Proceed;
+                    depthOnly=!geometry;
+                }
+                if(geometry) {
                     var plan=await GeometryLaunch.Prepare(picked.App with {Pid=0},saved,store.Root,text=>Status.Text=text,token,entry.Arguments);
                     var dialog=new GeometryLaunchWindow(plan,saved){Owner=this};
                     if(dialog.ShowDialog()!=true) { Status.Text=Loc.Get("StatusGeometryCancelled"); return; }
@@ -915,22 +1001,22 @@ public partial class MainWindow : Window
                     saved.GeometryWorkingDirectory=plan.WorkingDirectory; saved.GeometrySteamAppId=plan.SteamAppId;
                     saved.GeometrySeparation=dialog.Separation; saved.GeometryConvergence=dialog.Convergence;
                     saved.GeometrySession=plan.Session; store.Save(saved);
-                    var run=await GeometryLaunch.Launch(plan,saved,store.Root,text=>Status.Text=text,token);
+                    run=await GeometryLaunch.Launch(plan,saved,store.Root,text=>Status.Text=text,token);
                     pid=run.Pid;
                 } else GameHistory.LaunchDepth(entry);
             }
             var app=await GameHistory.WaitForWindow(entry,pid,token);
             if(!SelectChoice(new ChooserWindow.Choice(app,app.Windows[0]))) throw new InvalidOperationException(Loc.Get("StatusChoiceGone"));
             launched=true;
-        } catch(Exception ex) { Status.Text=ex.Message; }
+        } catch(Exception ex) { Status.Text=ex.Message; System.Diagnostics.Debug.WriteLine("[Recent games] StartFromHistory: "+ex); }
         finally {
             starting=false; startCancellation.Dispose(); startCancellation=null;
             if(refreshWasRunning && IsLoaded && !closing) refreshTimer.Start();
             UpdateButtons();
         }
-        // A cold geometry launch already prepared the stream. Never restart it
-        // again simply because its first window took a moment to settle.
-        if(launched) await StartSession(automatic:cold);
+        // A geometry launch attaches to the run it just started (waiting for its first frame),
+        // never through auto-attach's rules and never falling back to depth.
+        if(launched) await StartSession(depthOnly:depthOnly,launched:run);
     }
 
     // Selects a chooser pick in the game and window lists (as a manual pick would, loading its
@@ -949,10 +1035,14 @@ public partial class MainWindow : Window
         return profile != null && ReferenceEquals(WindowList.SelectedItem, window);
     }
     // Attach / Play, for the button and for auto-attach alike. True when the engine started.
-    private async Task<bool> StartSession(bool automatic = false)
+    // depthOnly: play with estimated depth now (Easy, or "Use estimated depth" at the warning)
+    // without changing the game's saved method. launched: the geometry run VRX just started
+    // for this game - attach to it, waiting for its first frame, never falling back to depth.
+    private async Task<bool> StartSession(bool automatic = false, bool depthOnly = false, GeometryLaunch.Run? launched = null)
     {
-        if (starting || stopping || closing) return false;
+        if (starting || stopping || closing || choosing) return false;
         if (!SaveAndApply() || AppList.SelectedItem is not RunningApp app || WindowList.SelectedItem is not GameWindow window) return false;
+        System.Diagnostics.Debug.WriteLine($"[Session] StartSession enter: {app.FullPath}, automatic {automatic}, depth only {depthOnly}, launched run {launched?.Pid}");
         bool started = false;
         bool refreshWasRunning = refreshTimer.IsEnabled; refreshTimer.Stop();
         starting = true; startCancellation = new CancellationTokenSource(); UpdateButtons();
@@ -963,16 +1053,23 @@ public partial class MainWindow : Window
 #if DEBUG
             if (profile!.EffectiveStereoBackend == StereoPaths.Dx12) throw new InvalidOperationException(Loc.Get("PathDx12Unavailable"));
 #endif
-            // Auto is estimated depth, so geometry here was chosen for this game.
-            string? existingGeometry = profile.GeometryStereo ? GeometryLaunch.ExistingSession(app,profile,store.Root) : null;
-            if (profile.GeometryStereo) {
+            // Auto is estimated depth, so geometry here was chosen for this game - and only
+            // Expert uses it (Easy always plays with depth).
+            bool geometry = profile!.GeometryStereo && !depthOnly && appSettings.IsExpert;
+            if (geometry) {
                 if (window.Monitor >= 0) throw new InvalidOperationException(Loc.Get("ErrorGeometryNeedsGame"));
-                string? existing = existingGeometry;
+                var token = startCancellation.Token;
+                string? existing = launched != null ? await WaitForFirstFrame(launched, token) : GeometryLaunch.ExistingSession(app,profile,store.Root);
                 if (existing != null) { profile.GeometrySession = existing; GeometrySessionText.Text = existing; store.Save(profile); }
                 else {
                     if (automatic) throw new InvalidOperationException(Loc.Get("StatusGeometryManualRestart"));
+                    // Restarting the game with geometry: the red warning first, every time.
+                    var consent = AskGeometry(app.FullPath, app.Pid, GameDisplayName(window.Title, app.Name), launch: true);
+                    if (consent == GeometryConsent.Cancel) return false;
+                    geometry = consent == GeometryConsent.Proceed;
+                }
+                if (geometry && existing == null) {
                     Status.Text = Loc.Get("StatusGeometryPreparing");
-                    var token = startCancellation.Token;
                     var plan = await GeometryLaunch.Prepare(app, profile, store.Root, text => Status.Text = text, token);
                     token.ThrowIfCancellationRequested();
                     var dialog = new GeometryLaunchWindow(plan,profile) { Owner = this };
@@ -1001,6 +1098,12 @@ public partial class MainWindow : Window
             playing = false;
             shown = SourceShown.Game;
             var runtimeProfile=profile!;
+            if (runtimeProfile.GeometryStereo && !geometry)
+            {
+                // Depth for this session only; the game's saved method is unchanged.
+                runtimeProfile = System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(profile))!;
+                runtimeProfile.SelectStereoBackend(StereoPaths.Depth);
+            }
             engine.Start(app, window, runtimeProfile, store.Root);
             sessionWindow = window.Handle; started = true;
             Status.Text = Loc.Format("StatusStarting", app.Name);
@@ -1013,7 +1116,32 @@ public partial class MainWindow : Window
             autoMachine.MarkSpent(window.Handle);      // not retried until it leaves the foreground and comes back
         }
         finally { starting = false; startCancellation.Dispose(); startCancellation = null; if (refreshWasRunning && IsLoaded && !closing) refreshTimer.Start(); UpdateButtons(); }
+        System.Diagnostics.Debug.WriteLine($"[Session] StartSession exit: started {started}");
         return started;
+    }
+
+    // The run VRX just launched: wait (up to a minute, showing the time left) for a fresh frame
+    // of its stream - a loading screen or shader compilation can pause it for a while. Its
+    // session, or an error; never a fallback to depth while its DLLs are loaded.
+    private async Task<string> WaitForFirstFrame(GeometryLaunch.Run run, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        System.Diagnostics.Debug.WriteLine($"[Session] WaitForFirstFrame enter: session {run.Session}, pid {run.Pid}");
+        long deadline = Environment.TickCount64 + GeometryLaunch.FirstFrameWait;
+        while (Environment.TickCount64 < deadline)
+        {
+            token.ThrowIfCancellationRequested();
+            if (GeometryLaunch.StreamMatches(run.Session, run.Pid))
+            {
+                System.Diagnostics.Debug.WriteLine("[Session] WaitForFirstFrame exit: stream ready");
+                return run.Session;
+            }
+            if (!GeometryLaunch.IsRunning(run)) throw new InvalidOperationException(Loc.Get("ErrorGeometryGameClosed"));
+            Status.Text = Loc.Format("StatusGeometryWaiting", Math.Max(0, (deadline - Environment.TickCount64) / 1000));
+            await Task.Delay(250, token);
+        }
+        System.Diagnostics.Debug.WriteLine("[Session] WaitForFirstFrame exit: no frame within the wait");
+        throw new InvalidOperationException(Loc.Get("ErrorGeometryFirstFrame"));
     }
 
     // ---- Auto-attach -------------------------------------------------------------------
@@ -1446,7 +1574,7 @@ public partial class MainWindow : Window
         try { snapshot = ForegroundWindow.Read(store.HasProfile); }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[AutoAttach] could not read the window in front: " + ex.Message); }
         bool qualifies = AutoAttachRules.Evaluate(snapshot, out string reason);
-        var input = new AutoAttachInput(appSettings.AutoAttach, engine.Running || stopping || starting, snapshot?.Handle ?? 0,
+        var input = new AutoAttachInput(appSettings.AutoAttach, engine.Running || stopping || starting || choosing, snapshot?.Handle ?? 0,
             snapshot?.IsVrx == true, qualifies, autoClock.Elapsed.TotalSeconds);
         var action = autoMachine.Step(input);
         if (action != AutoAttachAction.None)
@@ -1549,6 +1677,25 @@ public partial class MainWindow : Window
         System.Diagnostics.Debug.WriteLine($"[AutoAttach] started {app.Name}");
     }
     private async void StopClick(object sender, RoutedEventArgs e) => await StopSession();
+
+    // "Steam launch setups...": the Steam games whose launch options start them through VRX,
+    // with exactly what to remove in Steam (before moving or uninstalling VRX).
+    private async void SteamSetupsClick(object sender, RoutedEventArgs e)
+    {
+        System.Diagnostics.Debug.WriteLine("[Steam setup] SteamSetupsClick enter");
+        try
+        {
+            var steam = await Task.Run(() => SteamLibrary.Discover());
+            var configured = steam.Games.Where(g => SteamLibrary.LoadBinding(store.Root, g)?.WrapperConfigured == true).ToList();
+            SteamGeometry.ShowRemoval(this, store.Root, configured);
+            System.Diagnostics.Debug.WriteLine($"[Steam setup] SteamSetupsClick exit: {configured.Count} configured");
+        }
+        catch (Exception ex)
+        {
+            App.LogUnexpected("Steam setups", ex);
+            Status.Text = ex.Message;
+        }
+    }
     private async Task StopSession()
     {
         if (!engine.Running || profile == null || stopping) return;
@@ -1770,7 +1917,14 @@ public partial class MainWindow : Window
         profile = one; PutProfile(one); WindowList.ItemsSource = sample.Windows; WindowList.SelectedIndex = 0;
         if (ReadProfile().GeometryStereo || store.Load(one.ExecutablePath).GeometryStereo ||
             store.Load(one.ExecutablePath).GeometrySession != "game") throw new Exception("Old profiles must keep AI stereo as the default");
-        GeometryCheck.IsChecked = true; GeometrySessionText.Text = "test_game";
+        void SelectMethod(string tag)=>StereoPathList.SelectedItem=StereoPathList.Items.Cast<ComboBoxItem>().Single(i=>(string)i.Tag==tag);
+        if (GeometryWarningBanner.Visibility == Visibility.Visible || GeometryOffHint.Visibility != Visibility.Visible)
+            throw new Exception("The red geometry warning must be hidden while depth is chosen");
+        int warningsBefore = GeometryWarningsShown;
+        profile = System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(one))!;   // keep `one` itself on depth
+        SelectMethod(StereoPaths.GeometryAuto); GeometrySessionText.Text = "test_game";
+        if (GeometryWarningsShown != warningsBefore + 1 || GeometryWarningBanner.Visibility != Visibility.Visible || GeometryOffHint.Visibility == Visibility.Visible)
+            throw new Exception("Choosing true geometry must show the red warning (dialog and banner) every time");
         var geometryProfile = ReadProfile();
         if (!geometryProfile.GeometryStereo || geometryProfile.GeometrySession != "test_game" ||
             AiDepthContent.IsEnabled || StrengthSlider.IsEnabled || DesktopAwayCheck.IsEnabled || GeometryContent.Visibility != Visibility.Visible)
@@ -1787,14 +1941,35 @@ public partial class MainWindow : Window
         if (!store.Load(one.ExecutablePath).GeometryStereo || store.Load(one.ExecutablePath).GeometrySession != "test_game")
             throw new Exception("Geometry profile does not round-trip");
         store.Save(one);
+        SelectMethod(StereoPaths.Depth); SelectMethod(StereoPaths.GeometryAuto);
+        if (GeometryWarningsShown != warningsBefore + 2) throw new Exception("Turning true geometry on again must warn again");
         GeometrySessionText.Text = "../bad";
         bool invalidGeometry = false;
         try { ReadProfile(); } catch (InvalidDataException) { invalidGeometry = true; }
         if (!invalidGeometry || Profile.ValidGeometrySession("") || Profile.ValidGeometrySession(new string('x', 65)) || Profile.ValidGeometrySession("é"))
             throw new Exception("Invalid geometry session names must be rejected");
-        PutProfile(one);
+        profile = one; PutProfile(one);
         if (!AiDepthContent.IsEnabled || !StrengthSlider.IsEnabled || !DesktopAwayCheck.IsEnabled || GeometryContent.Visibility != Visibility.Collapsed)
             throw new Exception("Switching back to AI must restore the existing controls");
+        // Anti-cheat: a game folder with Easy Anti-Cheat or BattlEye is refused geometry.
+        string protectedGame=Path.Combine(output,"anticheat","Game","Binaries","Win64","Game.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(protectedGame)!); File.WriteAllText(protectedGame,"fixture");
+        Directory.CreateDirectory(Path.Combine(output,"anticheat","Game","EasyAntiCheat"));
+        File.WriteAllText(Path.Combine(output,"anticheat","Game","start_protected_game.exe"),"fixture");
+        string battlEye=Path.Combine(output,"anticheat-be","bin","x64","game.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(battlEye)!); File.WriteAllText(battlEye,"fixture");
+        File.WriteAllText(Path.Combine(output,"anticheat-be","BEService_x64.exe"),"fixture");
+        string clean=Path.Combine(output,"anticheat-none","bin","game.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(clean)!); File.WriteAllText(clean,"fixture");
+        var eac=AntiCheat.Detect(protectedGame);
+        if(!eac.Any(m=>m.Name=="Easy Anti-Cheat" && m.Where.EndsWith("EasyAntiCheat")) || !eac.Any(m=>m.Where.EndsWith("start_protected_game.exe")) ||
+            !AntiCheat.Detect(battlEye).Any(m=>m.Name=="BattlEye") || AntiCheat.Detect(clean).Count!=0 ||
+            !AntiCheat.Matches("EasyAntiCheat_EOS_Setup.exe","EasyAntiCheat*") || !AntiCheat.Matches("DayZ_BE.exe","*_BE.exe") || AntiCheat.Matches("Bees.exe","BEService*"))
+            throw new Exception("Anti-cheat detection: Easy Anti-Cheat, BattlEye and a clean game folder");
+        if(AntiCheat.InstallRoot(protectedGame)!=Path.Combine(output,"anticheat","Game")) throw new Exception("Anti-cheat detection must scan the game's whole installation");
+        int beforeProtected=GeometryWarningsShown;
+        if(AskGeometry(protectedGame,0,"Protected",true)!=GeometryConsent.UseDepth || AskGeometry(clean,0,"Clean",true)!=GeometryConsent.Proceed || GeometryWarningsShown!=beforeProtected+2)
+            throw new Exception("A game with anti-cheat must be refused geometry and offered depth; others must be warned");
         if(!StereoPathList.Items.Cast<ComboBoxItem>().Select(i=>(string)i.Tag).SequenceEqual(new[]{StereoPaths.Auto,StereoPaths.Depth,StereoPaths.GeometryAuto}) ||
             !GeometryRendererList.Items.Cast<ComboBoxItem>().Select(i=>(string)i.Tag).SequenceEqual(new[]{StereoPaths.GeometryAuto,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Vkd3d}))
             throw new Exception("Stereo methods and secondary geometry renderers must be separate dropdowns");
@@ -2426,6 +2601,11 @@ public partial class MainWindow : Window
 
         // The chooser: one tile per display, windows that pass the filter, off screen.
         var apps = RunningApps.List(false);
+        static IEnumerable<T> Controls<T>(DependencyObject node) where T:DependencyObject {
+            if(node is T value) yield return value;
+            for(int i=0;i<VisualTreeHelper.GetChildrenCount(node);++i)
+                foreach(var child in Controls<T>(VisualTreeHelper.GetChild(node,i))) yield return child;
+        }
         static IEnumerable<Button> PathButtons(DependencyObject node) {
             if(node is Button b && b.Tag is string tag && StereoPaths.Valid(tag)) yield return b;
             for(int i=0;i<VisualTreeHelper.GetChildrenCount(node);++i)
@@ -2445,8 +2625,8 @@ public partial class MainWindow : Window
                 throw new Exception($"Chooser tiles: {chooser.WindowTileCount} windows (expected {expectedWindows}), {chooser.ScreenTileCount} displays (expected {screens.Count})");
             if (chooser.Picked != null) throw new Exception("The chooser must start with nothing picked");
             var paths=PathButtons(chooser).ToArray();
-            if(paths.Length!=expectedWindows*3 || paths.Any(b=>!b.IsEnabled || (string)b.Tag==StereoPaths.Dx12))
-                throw new Exception("Each window must have Auto, depth and geometry choices; native DX12 is developer-only");
+            if(paths.Length!=expectedWindows*2 || paths.Any(b=>!b.IsEnabled || (string)b.Tag==StereoPaths.Dx12))
+                throw new Exception("Each window must have depth and geometry choices in Expert; native DX12 is developer-only");
             var bitmap = new RenderTargetBitmap((int)chooser.ActualWidth, (int)chooser.ActualHeight, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(chooser);
             SavePng(bitmap, Path.Combine(output, "ui-chooser.png"));
@@ -2457,6 +2637,26 @@ public partial class MainWindow : Window
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         }
         finally { chooser.Close(); }
+        // Easy: tiles only, no stereo method buttons or geometry options; a pick plays with depth
+        // without changing the game's saved method. No Steam section without Steam.
+        {
+            var easyChooser=new ChooserWindow(apps.Where(a=>a.CanAttach).Take(3).ToList(),[],null,0,null,_=>StereoPaths.GeometryAuto,_=>StereoPaths.Vkd3d,[],null,store.Root,null,expert:false) {
+                Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
+            };
+            bool easyChecked=false;
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
+                easyChooser.UpdateLayout();
+                easyChecked=PathButtons(easyChooser).Count()==0 && !easyChooser.SteamSectionShown &&
+                    !Controls<Expander>(easyChooser).Any(x=>Equals(x.Header,Loc.Get("GeometryAdvanced"))) &&
+                    !Controls<Button>(easyChooser).Any(b=>Equals(b.Content,Loc.Get("SteamReviewSetup")));
+                var tile=Controls<Button>(easyChooser).FirstOrDefault(b=>b.Style==easyChooser.FindResource("Tile"));
+                if(tile==null) { easyChooser.Close(); return; }
+                tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }));
+            bool easyPicked=easyChooser.ShowDialog()==true;
+            if(!easyChecked || (easyChooser.WindowTileCount>0 && (!easyPicked || easyChooser.Picked?.DepthOnly!=true || easyChooser.Picked.Backend!=null)))
+                throw new Exception("Easy's chooser must show only tiles that play with depth, and no Steam section without Steam");
+        }
         if(apps.Any(a=>a.CanAttach && a.Windows.Any(RunningApps.IsChooserWindow))) {
             var pickTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Dxvk) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
@@ -2474,11 +2674,6 @@ public partial class MainWindow : Window
             var advancedTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Depth,_=>StereoPaths.Vulkan) {
                 Owner=this,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
             };
-            static IEnumerable<T> Controls<T>(DependencyObject node) where T:DependencyObject {
-                if(node is T value) yield return value;
-                for(int i=0;i<VisualTreeHelper.GetChildrenCount(node);++i)
-                    foreach(var child in Controls<T>(VisualTreeHelper.GetChild(node,i))) yield return child;
-            }
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
                 advancedTest.UpdateLayout();
                 var expander=Controls<Expander>(advancedTest).First(e=>Equals(e.Header,Loc.Get("GeometryAdvanced"))); expander.IsExpanded=true; advancedTest.UpdateLayout();
@@ -2669,12 +2864,14 @@ public partial class MainWindow : Window
         sectionsLoading = false;
         await Settle();
         SaveStackedShot(Path.Combine(output, "ui-expert-all-open.png"));
-        bool savedGeometry = GeometryCheck.IsChecked == true;
+        string savedMethod = (StereoPathList.SelectedItem as ComboBoxItem)?.Tag as string ?? StereoPaths.Auto;
         string savedGeometrySession = GeometrySessionText.Text;
-        GeometryCheck.IsChecked = true; GeometrySessionText.Text = "game";
+        StereoPathList.SelectedItem = StereoPathList.Items.Cast<ComboBoxItem>().Single(i => (string)i.Tag == StereoPaths.GeometryAuto); GeometrySessionText.Text = "game";
+        GeometryDeveloper.IsExpanded = true;
         await Settle();
         SaveStackedShot(Path.Combine(output, "ui-geometry-stereo.png"));
-        GeometryCheck.IsChecked = savedGeometry; GeometrySessionText.Text = savedGeometrySession;
+        GeometryDeveloper.IsExpanded = false;
+        StereoPathList.SelectedItem = StereoPathList.Items.Cast<ComboBoxItem>().Single(i => (string)i.Tag == savedMethod); GeometrySessionText.Text = savedGeometrySession;
 
         string savedPath = PathLabel.Text;
         Loc.SetPseudo(true);

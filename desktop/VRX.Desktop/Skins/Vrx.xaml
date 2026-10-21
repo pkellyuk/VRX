@@ -16,6 +16,10 @@
  <SolidColorBrush x:Key="RaisedEdge" Color="#3A4E6E"/>
  <SolidColorBrush x:Key="Hover" Color="#22324C"/>
  <SolidColorBrush x:Key="Field" Color="#0F1828"/>
+ <!-- The true-geometry warning: a red panel that cannot be mistaken for a hint. -->
+ <SolidColorBrush x:Key="WarningBack" Color="#4A1215"/>
+ <SolidColorBrush x:Key="WarningEdge" Color="#E5484D"/>
+ <SolidColorBrush x:Key="WarningInk" Color="#FFE1E1"/>
 
  <!-- Window chrome: the title bar, the window's edge (drawn by Windows 11 itself, in this
       colour, or by the window on older Windows) and the caption buttons. -->

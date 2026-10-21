@@ -22,19 +22,24 @@ public sealed class GeometryLaunchWindow : Window
         var body=new StackPanel{Margin=new Thickness(24)};
         Content=new ScrollViewer{Content=body,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
         body.Children.Add(new TextBlock{Text=Loc.Format(plan.App.Pid==0?"GeometryLaunchIntro":"GeometryRestartIntro",MainWindow.GameDisplayName(plan.App.Windows.FirstOrDefault()?.Title,plan.App.Name),StereoPaths.Label(plan.Backend)),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12),FontSize=16});
-        body.Children.Add(new TextBlock{Text=Loc.Get(plan.App.Pid==0?"GeometryLaunchInfo":"GeometryRestartSave")+"\n\n"+Loc.Get("GeometryChooserNotice"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12)});
+        body.Children.Add(GeometryWarning.Panel(Loc.Get("GeometryWarningText")));
+        body.Children.Add(new TextBlock{Text=Loc.Get(plan.App.Pid==0?"GeometryLaunchInfo":"GeometryRestartSave"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,12)});
         body.Children.Add(new TextBlock{Text=plan.App.FullPath,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12),FontSize=12});
+        // Developer details (the exact command line, folder, Steam App ID and tuning numbers):
+        // filled in already and not needed to play, so folded away.
+        var developer=new StackPanel();
+        body.Children.Add(new Expander{Header=Loc.Get("GeometryDeveloper"),Content=developer,Margin=new Thickness(0,0,0,4)});
         TextBox Field(string label,string value,bool multi=false) {
-            body.Children.Add(new TextBlock{Text=label,Margin=new Thickness(0,8,0,4)});
+            developer.Children.Add(new TextBlock{Text=label,Margin=new Thickness(0,8,0,4)});
             var field=new TextBox{Text=value,MinHeight=multi?70:30,AcceptsReturn=multi,TextWrapping=multi?TextWrapping.Wrap:TextWrapping.NoWrap,MaxLength=32768};
-            System.Windows.Automation.AutomationProperties.SetName(field,label); body.Children.Add(field); return field;
+            System.Windows.Automation.AutomationProperties.SetName(field,label); developer.Children.Add(field); return field;
         }
         var arguments=Field(Loc.Get("GeometryArguments"),string.Join(' ',plan.Arguments.Select(GeometryLaunch.QuoteArgument)),true);
-        body.Children.Add(new TextBlock{Text=Loc.Get("GeometryArgumentsHint"),TextWrapping=TextWrapping.Wrap,FontSize=12,Margin=new Thickness(0,4,0,0)});
+        developer.Children.Add(new TextBlock{Text=Loc.Get("GeometryArgumentsHint"),TextWrapping=TextWrapping.Wrap,FontSize=12,Margin=new Thickness(0,4,0,0)});
         var working=Field(Loc.Get("GeometryWorkingFolder"),plan.WorkingDirectory);
         var steam=Field(Loc.Get("GeometrySteamId"),plan.SteamAppId);
-        var separation=Field(Loc.Get("GeometrySeparation"),profile.GeometrySeparation.ToString("R",CultureInfo.CurrentCulture));
-        var convergence=Field(Loc.Get("GeometryConvergence"),profile.GeometryConvergence.ToString("R",CultureInfo.CurrentCulture));
+        var separation=Field(Loc.Get("GeometrySeparationExact"),profile.GeometrySeparation.ToString("R",CultureInfo.CurrentCulture));
+        var convergence=Field(Loc.Get("GeometryConvergenceExact"),profile.GeometryConvergence.ToString("R",CultureInfo.CurrentCulture));
         var error=new TextBlock{TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,0)}; body.Children.Add(error);
         var buttons=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right,Margin=new Thickness(0,16,0,0)};
         var cancel=new Button{Content=Loc.Get("GeometryCancel"),IsCancel=true,Padding=new Thickness(14,8,14,8),Margin=new Thickness(0,0,8,0)};
@@ -50,7 +55,7 @@ public sealed class GeometryLaunchWindow : Window
                     throw new InvalidDataException(Loc.Get("ErrorGeometryTuning"));
                 Plan=plan with {Arguments=GeometryLaunch.ParseArguments(arguments.Text),WorkingDirectory=Path.GetFullPath(working.Text),SteamAppId=steam.Text};
                 Separation=shift; Convergence=anchor; DialogResult=true;
-            } catch(Exception ex) { error.Text=ex.Message; }
+            } catch(Exception ex) when(ex is InvalidDataException or IOException or ArgumentException or NotSupportedException) { error.Text=ex.Message; }
         };
     }
 }

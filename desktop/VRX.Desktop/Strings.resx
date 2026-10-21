@@ -67,8 +67,8 @@
   <data name="SectionScreen" xml:space="preserve"><value>Screen</value></data>
   <data name="SectionAround" xml:space="preserve"><value>Around the screen</value></data>
   <data name="SectionRoom" xml:space="preserve"><value>Room</value></data>
-  <data name="SectionDepth" xml:space="preserve"><value>3D &amp; Depth Estimation</value></data>
-  <data name="SectionGeometry" xml:space="preserve"><value>3D and Depth Geometry</value></data>
+  <data name="SectionDepth" xml:space="preserve"><value>3D: estimated depth</value></data>
+  <data name="SectionGeometry" xml:space="preserve"><value>3D: true geometry (experimental)</value></data>
   <data name="SectionSteamVr" xml:space="preserve"><value>SteamVR &amp; shortcuts</value></data>
   <data name="SectionProfile" xml:space="preserve"><value>Profile</value></data>
   <data name="SectionSession" xml:space="preserve"><value>Session details</value></data>
@@ -268,14 +268,13 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ChooserLaunchSection" xml:space="preserve"><value>Launch a game</value></data>
   <data name="ChooserLaunchHint" xml:space="preserve"><value>These games are not running. Launch starts the game with the selected stereo method, then connects VRX.</value></data>
   <data name="ChooserAttachSection" xml:space="preserve"><value>Attach to something running</value></data>
-  <data name="ChooserAttachHint" xml:space="preserve"><value>Connect to an existing window or display. Geometry may require a game restart; VRX shows the restart details before proceeding.</value></data>
+  <data name="ChooserAttachHint" xml:space="preserve"><value>Connect to a window or display that is already running.</value></data>
   <data name="ChooserLaunchAction" xml:space="preserve"><value>Launch game →</value></data>
   <data name="ChooserAttachAction" xml:space="preserve"><value>Attach to window →</value></data>
   <data name="ChooserAttachDisplay" xml:space="preserve"><value>Attach to display →</value></data>
   <data name="ChooserRouteLaunch" xml:space="preserve"><value>Launch:</value></data>
   <data name="ChooserRouteAttach" xml:space="preserve"><value>Attach:</value></data>
   <data name="ChooserSteamAllRunning" xml:space="preserve"><value>Your installed Steam games are already running. Find their windows in the attach section.</value></data>
-  <data name="ChooserRunningWindow" xml:space="preserve"><value>Running · {0}</value></data>
   <data name="ChooserWindows" xml:space="preserve"><value>Windows</value></data>
   <data name="ChooserNoWindows" xml:space="preserve"><value>No windows to show. Start your game, then choose again.</value></data>
   <data name="ChooserScreens" xml:space="preserve"><value>Whole screen</value></data>
@@ -295,21 +294,19 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorRendererMissing" xml:space="preserve"><value>VRX renderer is missing. Reinstall VRX or build the project.</value></data>
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
   <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
-  <data name="GeometryStereo" xml:space="preserve"><value>Geometry stereo — experimental Vulkan</value></data>
-  <data name="GeometryTip" xml:space="preserve"><value>Use stereo frames rendered by the game instead of AI depth. Applies at the next Attach / Play using the selected geometry method.</value></data>
-  <data name="GeometryHint" xml:space="preserve"><value>Both eyes use the same game frame. Attach / Play can connect to an existing VRX stream or review a game restart. Use games that permit graphics layers. AI depth, strength and desktop switching are unused.</value></data>
+  <data name="GeometryHint" xml:space="preserve"><value>Both eyes come from the same game frame. Estimated-depth settings (strength, depth model, showing the desktop when you leave the game) are not used.</value></data>
   <data name="GeometrySession" xml:space="preserve"><value>Geometry session</value></data>
   <data name="GeometrySessionTip" xml:space="preserve"><value>Managed automatically by VRX. Change only when connecting to a stereo stream launched manually.</value></data>
   <data name="ErrorGeometrySession" xml:space="preserve"><value>Geometry session must contain 1–64 letters, numbers, hyphens or underscores.</value></data>
   <data name="ErrorGeometryNeedsGame" xml:space="preserve"><value>Geometry stereo needs a compatible game and geometry stream. Select its game window instead of a whole display.</value></data>
   <data name="StereoPath" xml:space="preserve"><value>Stereo method</value></data>
-  <data name="PathDepth" xml:space="preserve"><value>Depth estimate</value></data>
+  <data name="PathDepth" xml:space="preserve"><value>Estimated depth</value></data>
   <data name="PathVulkan" xml:space="preserve"><value>Native Vulkan</value></data>
   <data name="PathDxvk" xml:space="preserve"><value>DirectX 11 → Vulkan (DXVK)</value></data>
   <data name="PathDx12" xml:space="preserve"><value>DX12 · unavailable</value></data>
   <data name="PathDx12Unavailable" xml:space="preserve"><value>Native DirectX 12 geometry stereo is under development and is not available in this chooser yet. Choose depth estimation or DirectX 12 → Vulkan for a DX12 game.</value></data>
-  <data name="PathDepthTip" xml:space="preserve"><value>Attach to this window using VRX depth estimation. No game restart needed.</value></data>
-  <data name="PathGeometryTip" xml:space="preserve"><value>Try geometry stereo. Attach to an existing VRX stream, or review a game restart first.</value></data>
+  <data name="PathDepthTip" xml:space="preserve"><value>Play this window with VRX's estimated depth. Works with every game; no restart needed.</value></data>
+  <data name="PathGeometryTip" xml:space="preserve"><value>Experimental: the game draws both eyes itself. Shows a warning first; games with anti-cheat are refused. May need a game restart.</value></data>
   <data name="PathForWindow" xml:space="preserve"><value>{0} for {1}</value></data>
   <data name="GeometryRestartTitle" xml:space="preserve"><value>Try {0} stereo</value></data>
   <data name="GeometryRestartIntro" xml:space="preserve"><value>Restart {0} to try {1} geometry stereo?</value></data>
@@ -318,8 +315,8 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="GeometryArgumentsHint" xml:space="preserve"><value>Your current arguments are preserved. Check the rendering option for this game; non-Unreal games may need a different Vulkan or DirectX 11 setting.</value></data>
   <data name="GeometryWorkingFolder" xml:space="preserve"><value>Working folder</value></data>
   <data name="GeometrySteamId" xml:space="preserve"><value>Steam App ID (optional)</value></data>
-  <data name="GeometrySeparation" xml:space="preserve"><value>Geometry separation (clip units)</value></data>
-  <data name="GeometryConvergence" xml:space="preserve"><value>Geometry convergence</value></data>
+  <data name="GeometrySeparation" xml:space="preserve"><value>3D strength</value></data>
+  <data name="GeometryConvergence" xml:space="preserve"><value>Screen depth</value></data>
   <data name="GeometryCancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="GeometryRestartAction" xml:space="preserve"><value>Restart game and try</value></data>
   <data name="ErrorLaunchArguments" xml:space="preserve"><value>VRX could not read the original game command line. Leave the game running and try again.</value></data>
@@ -345,7 +342,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
 You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="ErrorGeometryNativeCoverage" xml:space="preserve"><value>The bridge could not establish complete native stereo interception.</value></data>
   <data name="PathAuto" xml:space="preserve"><value>Auto (estimated depth)</value></data>
-  <data name="PathGeometry" xml:space="preserve"><value>Geometry stereo</value></data>
+  <data name="PathGeometry" xml:space="preserve"><value>True geometry (experimental)</value></data>
   <data name="PathVkd3d" xml:space="preserve"><value>DirectX 12 → Vulkan (vkd3d-proton)</value></data>
   <data name="PathAutoTip" xml:space="preserve"><value>Uses estimated depth. VRX never turns on true geometry by itself: choose it for a game yourself in Expert.</value></data>
   <data name="GeometryAdvanced" xml:space="preserve"><value>Advanced geometry settings</value></data>
@@ -356,7 +353,6 @@ You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="RendererDetected" xml:space="preserve"><value>This game uses {0}: {1}.</value></data>
   <data name="GeometryRenderer" xml:space="preserve"><value>Geometry renderer</value></data>
   <data name="TestedSystemShock" xml:space="preserve"><value>Tested true-geometry settings are available for this game. They are used only if you choose true geometry.</value></data>
-  <data name="GeometryChooserNotice" xml:space="preserve"><value>Geometry stereo is experimental and may need a game restart and temporary graphics DLLs. Use only games that permit graphics layers; anti-cheat may block them. Review the restart details before proceeding.</value></data>
   <data name="ErrorVkd3dMissing" xml:space="preserve"><value>The DirectX 12 part of true geometry ({0}) is missing, damaged or not verified in this version of VRX. Reinstall VRX to repair it, or use estimated depth.</value></data>
   <data name="ErrorUnexpected" xml:space="preserve"><value>Something went wrong in VRX: {0}
 
@@ -366,7 +362,6 @@ VRX is still running. The details were saved in {1}.</value></data>
   <data name="ErrorPreviousGeometryStop" xml:space="preserve"><value>The previous game viewer did not stop. Close its VR session, then try Attach / Play again.</value></data>
   <data name="ChooserHistory" xml:space="preserve"><value>Recent games</value></data>
   <data name="HistoryMissing" xml:space="preserve"><value>Game no longer found</value></data>
-  <data name="HistoryRunning" xml:space="preserve"><value>Running · attach or change method</value></data>
   <data name="HistoryLaunch" xml:space="preserve"><value>Launch with your saved settings</value></data>
   <data name="ErrorHistoryEntry" xml:space="preserve"><value>The saved game launch details are invalid.</value></data>
   <data name="ErrorHistoryMissing" xml:space="preserve"><value>This game executable is no longer available.</value></data>
@@ -390,7 +385,7 @@ VRX is still running. The details were saved in {1}.</value></data>
   <data name="SteamSetupTitle" xml:space="preserve"><value>Steam geometry setup</value></data>
   <data name="SteamSetupInfo" xml:space="preserve"><value>In Steam, open {0} → Properties → General → Launch Options. Add the line below. If you already have launch arguments, keep them after %command%. If you already use a wrapper, cancel and review its compatibility first.
 
-This lets Steam start the game with VRX's saved geometry settings. VRX does not edit Steam's configuration. Keep VRX installed at this location while the wrapper is configured; remove this line in Steam to undo setup. Without a pending VRX request, the wrapper launches the game normally.</value></data>
+This lets Steam start the game with VRX's saved geometry settings. VRX does not edit Steam's configuration. Before you move or uninstall VRX, remove this line again (Expert → 3D: true geometry → Steam launch setups…); otherwise Steam cannot start the game.</value></data>
   <data name="SteamCopyOptions" xml:space="preserve"><value>Copy launch options</value></data>
   <data name="SteamSetupLaunch" xml:space="preserve"><value>I've added these options — launch through Steam</value></data>
   <data name="SteamUsePublishedApp" xml:space="preserve"><value>Run the VRX desktop executable to configure Steam geometry launches.</value></data>
@@ -398,12 +393,42 @@ This lets Steam start the game with VRX's saved geometry settings. VRX does not 
   <data name="SteamWaitingWrapper" xml:space="preserve"><value>Waiting for Steam to start the VRX geometry wrapper…</value></data>
   <data name="SteamWrapperTimeout" xml:space="preserve"><value>Steam did not return a ready stereo stream within two minutes. Check the game's Steam Launch Options, launch dialogs, and whether the game is already running. Recheck the wrapper entry before trying geometry again.</value></data>
   <data name="SteamCommandInvalid" xml:space="preserve"><value>Steam did not supply a valid game command. The VRX Launch Options entry must end with -- %command%.</value></data>
-  <data name="SteamCommandMismatch" xml:space="preserve"><value>Steam's launch command or the selected rendering executable is outside this game's installation folder. This launcher needs a tested profile; use Depth estimate for now.</value></data>
-  <data name="SteamRequestExpired" xml:space="preserve"><value>This VRX geometry launch was cancelled or expired. Launch again from VRX, or launch normally through Steam again.</value></data>
-  <data name="GeometrySeparationTip" xml:space="preserve"><value>Controls the strength of geometry depth. Larger values increase the difference between the eyes. Saves for this game and updates a compatible running geometry layer live.</value></data>
-  <data name="GeometryConvergenceTip" xml:space="preserve"><value>Adjusts where the left and right images line up in depth. Saves for this game and updates a compatible running geometry layer live.</value></data>
+  <data name="SteamCommandMismatch" xml:space="preserve"><value>Steam started a program outside this game's installation folder (for example a separate launcher), so VRX cannot use true geometry for this launch. Play it with estimated depth.</value></data>
+  <data name="GeometrySeparationTip" xml:space="preserve"><value>How strong the 3D is: higher pulls the eyes' views further apart. Saved for this game and applied live to a running game.</value></data>
+  <data name="GeometryConvergenceTip" xml:space="preserve"><value>Which distance in the game lines up with the VR screen. 0 puts the whole scene in front of the screen (and the HUD behind it); higher moves the screen into the scene. Saved for this game and applied live.</value></data>
   <data name="GeometryTuningLive" xml:space="preserve"><value>Saved per game. A compatible running geometry layer applies changes live to both eyes.</value></data>
   <data name="GeometryTuningPending" xml:space="preserve"><value>Saved. Applying stereo tuning to both eyes…</value></data>
   <data name="GeometryTuningApplied" xml:space="preserve"><value>Saved and applied live to both eyes.</value></data>
   <data name="GeometryTuningUpgrade" xml:space="preserve"><value>Saved. This game has an older or unsupported geometry layer; restart it once to load live tuning.</value></data>
+  <data name="GeometrySeparationExact" xml:space="preserve"><value>3D strength (layer clip units)</value></data>
+  <data name="GeometryConvergenceExact" xml:space="preserve"><value>Screen depth (layer convergence)</value></data>
+  <data name="GeometryOffHint" xml:space="preserve"><value>These settings apply when the stereo method for this game is “True geometry (experimental)” (Game &amp; window).</value></data>
+  <data name="GeometryDeveloper" xml:space="preserve"><value>Developer</value></data>
+  <data name="GeometryDeveloperHint" xml:space="preserve"><value>Exact values and the stream's connection name. VRX manages these; change them only if you know why.</value></data>
+  <data name="GeometryWarningTitle" xml:space="preserve"><value>True geometry is experimental</value></data>
+  <data name="GeometryWarningText" xml:space="preserve"><value>Warning: true geometry changes how the game draws by loading extra graphics components into it. Use it with offline games. Online games with anti-cheat may detect it, and your account can be banned.</value></data>
+  <data name="GeometryAntiCheatTitle" xml:space="preserve"><value>True geometry is not allowed for this game</value></data>
+  <data name="GeometryAntiCheatFound" xml:space="preserve"><value>This game uses anti-cheat ({0}). True geometry would change how it draws, which anti-cheat may report and which can get your account banned, so VRX will not use it here. Estimated depth works with this game.</value></data>
+  <data name="GeometryUseDepth" xml:space="preserve"><value>Use estimated depth</value></data>
+  <data name="GeometryAccept" xml:space="preserve"><value>I understand, use true geometry</value></data>
+  <data name="GeometryAcceptLaunch" xml:space="preserve"><value>I understand, launch with true geometry</value></data>
+  <data name="StatusGeometryAntiCheat" xml:space="preserve"><value>This game uses anti-cheat, so true geometry is not used. Estimated depth is available.</value></data>
+  <data name="StatusGeometryDepthInstead" xml:space="preserve"><value>Using estimated depth this time. The game's saved stereo method is unchanged.</value></data>
+  <data name="StatusChooseFailed" xml:space="preserve"><value>Choose could not finish: {0}</value></data>
+  <data name="StatusChoiceStillStopping" xml:space="preserve"><value>The current VR session is still stopping. Choose again in a moment.</value></data>
+  <data name="ErrorGeometryGameClosed" xml:space="preserve"><value>The game closed before it showed its first 3D frame.</value></data>
+  <data name="ErrorGeometryFirstFrame" xml:space="preserve"><value>The game is running but has not shown a 3D frame within a minute. When it is in play, press Attach / Play to connect to it; VRX does not switch to estimated depth while true geometry is loaded.</value></data>
+  <data name="SteamRemoveSetups" xml:space="preserve"><value>Steam launch setups…</value></data>
+  <data name="SteamRemoveSetupsTip" xml:space="preserve"><value>Lists the Steam games that start through VRX. Remove their VRX launch options in Steam before you move or uninstall VRX.</value></data>
+  <data name="SteamRemoveTitle" xml:space="preserve"><value>Remove Steam launch setup</value></data>
+  <data name="SteamRemoveInfo" xml:space="preserve"><value>These Steam games start through VRX. Before you move or uninstall VRX, open each game's Properties → General → Launch Options in Steam and delete the VRX part shown below (keep anything after %command%). Otherwise Steam cannot start them.</value></data>
+  <data name="SteamRemoveNone" xml:space="preserve"><value>No Steam games start through VRX. Nothing needs removing before you move or uninstall VRX.</value></data>
+  <data name="SteamRemoveDone" xml:space="preserve"><value>I've removed them in Steam</value></data>
+  <data name="SteamRemoveClose" xml:space="preserve"><value>Close</value></data>
+  <data name="SteamExecutableLauncher" xml:space="preserve"><value>That file looks like a launcher, installer or crash reporter, not the game. Select the game's own executable.</value></data>
+  <data name="SteamInvalidId" xml:space="preserve"><value>Invalid Steam App ID.</value></data>
+  <data name="SteamDataDirectory" xml:space="preserve"><value>Steam launches need VRX's normal data folder.</value></data>
+  <data name="ErrorVrxPathUnavailable" xml:space="preserve"><value>VRX could not find its own program file.</value></data>
+  <data name="FilterGameExecutable" xml:space="preserve"><value>Game executable (*.exe)|*.exe</value></data>
+  <data name="SteamLibraryHintEasy" xml:space="preserve"><value>Launch through Steam and play with estimated depth.</value></data>
 </root>
