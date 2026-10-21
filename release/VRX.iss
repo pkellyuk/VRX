@@ -33,12 +33,19 @@ CloseApplications=yes
 RestartApplications=no
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
+[InstallDelete]
+; The geometry stereo runtime (VRX's Vulkan layer, DXVK, vkd3d-proton) is replaced as a
+; whole, so an update never leaves a DLL of an older version beside the new ones.
+Type: filesandordirs; Name: "{app}\geometry"
 [Files]
+; The whole payload, including geometry\layer, geometry\dxvk and geometry\vkd3d.
 Source: "{#Payload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [UninstallDelete]
 ; Compiled shaders the engine cached for this PC. The rest of {localappdata}\VRX
 ; (profiles, settings, logs) is deliberately kept.
 Type: filesandordirs; Name: "{localappdata}\VRX\shader-cache"
+; The geometry runtime folder, with anything added to it after installation.
+Type: filesandordirs; Name: "{app}\geometry"
 [Icons]
 Name: "{group}\VRX"; Filename: "{app}\VRX.Desktop.exe"
 Name: "{autodesktop}\VRX"; Filename: "{app}\VRX.Desktop.exe"; Tasks: desktopicon

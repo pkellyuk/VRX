@@ -168,5 +168,6 @@ from it must also be released under the GPL with its source available. It comes 
 no warranty.
 
 The released packages also contain third-party components under their own licenses
-(the depth models, ONNX Runtime, DirectML, the OpenXR loader and the .NET runtime):
-see `release/THIRD-PARTY-NOTICES.txt` and `release/licenses`.
+(the depth models, ONNX Runtime, DirectML, the OpenXR loader, the .NET runtime, and for
+geometry stereo DXVK, vkd3d-proton, the Khronos Vulkan and SPIR-V headers, and code
+adapted from vrdual): see `release/THIRD-PARTY-NOTICES.txt` and `release/licenses`.

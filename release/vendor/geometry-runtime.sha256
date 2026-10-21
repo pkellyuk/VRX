@@ -1,0 +1,19 @@
+# The third-party DLLs of VRX's geometry stereo runtime, as shipped in the release
+# (paths relative to the install folder). release\build-release.ps1 fetches the official
+# release archives below, checks each archive's SHA-256, extracts these files and checks
+# them against this list; it also ships this file as geometry\geometry-runtime.sha256, so
+# the desktop app can verify the DLLs before it copies them next to a game.
+# Format: <sha256>  <path>, one per line; lines starting with # are comments.
+#
+# DXVK 2.7.1 (zlib licence), x64 build
+#   https://github.com/doitsujin/dxvk/releases/download/v2.7.1/dxvk-2.7.1.tar.gz
+#   archive SHA-256 d85ce7c79f57ecd765aaa1b9e7007cb875e6fde9f6d331df799bce73d513ce87
+523da2cd765dd51d99fe1644b24f9ee7ee6247e4c98953bcc449ce84cd303405  geometry\dxvk\d3d11.dll
+ec02eb37620ff52361cb45376a4611fc4210d96e71d0363f1cc9807f151c01be  geometry\dxvk\dxgi.dll
+#
+# vkd3d-proton 3.0.1 (LGPL-2.1-or-later), x64 build
+#   https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v3.0.1/vkd3d-proton-3.0.1.tar.zst
+#   archive SHA-256 3cf2315522af5e43605ef6d3c41dad91387040bf97199934f3f7ab76caaa2f0c
+#   source: https://github.com/HansKristian-Work/vkd3d-proton/archive/refs/tags/v3.0.1.tar.gz
+aed51497c0efa76c9ffc30386ff0957197824cd4734ce64b4e962d3551fba43c  geometry\vkd3d\d3d12.dll
+68b8bc7b32f9b1b1b0526e9e2e769731dd8da9af0f2b40f76012385b9d5721df  geometry\vkd3d\d3d12core.dll

@@ -22,8 +22,23 @@ $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $payload = Join-Path $OutputRoot "VRX-$version-win-x64"
 $nativeOutput = Join-Path $OutputRoot 'native'
 $toSign = Join-Path $OutputRoot 'to-sign'
-# VRX's own programs: the only unsigned files in the payload (the rest are signed by Microsoft or Valve).
-$ownPrograms = 'VRX.Desktop.exe', 'VRX.Desktop.dll', 'engine\xrplayer.exe'
+# VRX's own programs: the files VRX signs. Everything else is signed by Microsoft or Valve,
+# except the geometry runtime's DXVK and vkd3d-proton DLLs, which ship exactly as their
+# projects release them (unsigned) and are pinned by hash instead (release\vendor).
+$ownPrograms = 'VRX.Desktop.exe', 'VRX.Desktop.dll', 'engine\xrplayer.exe', 'geometry\layer\vrx_xgstereo.dll'
+# The geometry runtime's third-party DLLs: the official release archives, checked by these
+# pinned SHA-256s, and each extracted DLL by release\vendor\geometry-runtime.sha256.
+$geometryArchives = @(
+    @{ Name = 'DXVK 2.7.1'; Folder = 'dxvk'; File = 'dxvk-2.7.1.tar.gz'
+       Url = 'https://github.com/doitsujin/dxvk/releases/download/v2.7.1/dxvk-2.7.1.tar.gz'
+       Sha256 = 'D85CE7C79F57ECD765AAA1B9E7007CB875E6FDE9F6D331DF799BCE73D513CE87'
+       Members = @{ 'dxvk-2.7.1/x64/d3d11.dll' = 'd3d11.dll'; 'dxvk-2.7.1/x64/dxgi.dll' = 'dxgi.dll' } },
+    @{ Name = 'vkd3d-proton 3.0.1'; Folder = 'vkd3d'; File = 'vkd3d-proton-3.0.1.tar.zst'
+       Url = 'https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v3.0.1/vkd3d-proton-3.0.1.tar.zst'
+       Sha256 = '3CF2315522AF5E43605EF6D3C41DAD91387040BF97199934F3F7AB76CAAA2F0C'
+       Members = @{ 'vkd3d-proton-3.0.1/x64/d3d12.dll' = 'd3d12.dll'; 'vkd3d-proton-3.0.1/x64/d3d12core.dll' = 'd3d12core.dll' } }
+)
+$geometryPins = Join-Path $PSScriptRoot 'vendor\geometry-runtime.sha256'
 Write-Output "build-release: $Stage, version $version, output $OutputRoot"
 
 function Find-InnoCompiler
@@ -35,6 +50,103 @@ function Find-InnoCompiler
     $onPath = Get-Command ISCC.exe -ErrorAction SilentlyContinue
     if ($onPath) { return $onPath.Source }
     throw 'Inno Setup 6 (ISCC.exe) not found'
+}
+
+# release\vendor\geometry-runtime.sha256 as a map of payload path -> SHA-256 (upper case).
+function Read-GeometryPins
+{
+    Write-Output "geometry pins: reading $geometryPins" | Out-Host
+    if (!(Test-Path -LiteralPath $geometryPins)) { throw "Missing $geometryPins" }
+    $pins = @{}
+    foreach ($line in Get-Content -LiteralPath $geometryPins)
+    {
+        if (!$line.Trim() -or $line.TrimStart().StartsWith('#')) { continue }
+        if ($line -notmatch '^([0-9a-fA-F]{64})  (geometry\\[^\s]+)$') { throw "Malformed line in ${geometryPins}: $line" }
+        $pins[$Matches[2]] = $Matches[1].ToUpperInvariant()
+    }
+    if ($pins.Count -ne 4) { throw "Expected 4 pinned geometry DLLs in $geometryPins, found $($pins.Count)" }
+    Write-Output "geometry pins: $($pins.Count) files" | Out-Host
+    return $pins
+}
+
+# The DXVK and vkd3d-proton DLLs: each official release archive is downloaded once into
+# release\out\vendor-cache (kept between builds), checked against its pinned SHA-256, and
+# only the x64 DLLs are extracted into the payload and checked against their own pins.
+function Add-GeometryRuntime([string]$geometry)
+{
+    Write-Output "geometry runtime: enter, into $geometry"
+    if (!$geometry) { throw 'Add-GeometryRuntime needs the payload geometry folder' }
+    $pins = Read-GeometryPins
+    $cache = Join-Path $PSScriptRoot 'out\vendor-cache'
+    New-Item -ItemType Directory -Path $cache -Force | Out-Null
+    # Windows' own bsdtar (libarchive) reads .tar.gz and .tar.zst; Git's GNU tar may be first on PATH.
+    $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (!(Test-Path -LiteralPath $tar)) { throw "Windows tar not found at $tar" }
+    foreach ($archive in $geometryArchives)
+    {
+        $file = Join-Path $cache $archive.File
+        if ((Test-Path -LiteralPath $file) -and (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $archive.Sha256)
+        {
+            Write-Output "geometry runtime: cached $($archive.File) does not match its pin - downloading again"
+            Remove-Item -LiteralPath $file
+        }
+        if (!(Test-Path -LiteralPath $file))
+        {
+            Write-Output "geometry runtime: downloading $($archive.Url)"
+            $partial = "$file.partial"
+            Invoke-WebRequest -Uri $archive.Url -OutFile $partial -UseBasicParsing
+            Move-Item -LiteralPath $partial -Destination $file -Force
+        }
+        $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+        if ($hash -ne $archive.Sha256) { throw "$($archive.File) SHA-256 $hash is not the pinned $($archive.Sha256)" }
+        Write-Output "geometry runtime: $($archive.Name) archive verified ($hash)"
+        $staging = Join-Path $OutputRoot ('vendor-extract\' + $archive.Folder)
+        if (Test-Path -LiteralPath $staging) { throw "$staging already exists" }
+        New-Item -ItemType Directory -Path $staging -Force | Out-Null
+        & $tar -xf $file -C $staging @($archive.Members.Keys)
+        if ($LASTEXITCODE) { throw "Extracting $($archive.File) failed (this needs Windows' tar with zstd: Windows 11 23H2+ or Server 2025)" }
+        $target = New-Item -ItemType Directory -Path (Join-Path $geometry $archive.Folder) -Force
+        foreach ($member in $archive.Members.Keys)
+        {
+            $name = $archive.Members[$member]
+            $relative = "geometry\$($archive.Folder)\$name"
+            if (!$pins.ContainsKey($relative)) { throw "$relative has no pin in $geometryPins" }
+            $extracted = Join-Path $staging ($member -replace '/', '\')
+            $dllHash = (Get-FileHash -LiteralPath $extracted -Algorithm SHA256).Hash
+            if ($dllHash -ne $pins[$relative]) { throw "$relative SHA-256 $dllHash is not the pinned $($pins[$relative])" }
+            Copy-Item -LiteralPath $extracted -Destination (Join-Path $target $name)
+            Write-Output "geometry runtime: $relative verified ($dllHash)"
+        }
+    }
+    Copy-Item -LiteralPath $geometryPins -Destination (Join-Path $geometry 'geometry-runtime.sha256')
+    Write-Output 'geometry runtime: exit ok'
+}
+
+# VRX's own Vulkan layer (bench\native\xgstereo), Release configuration, the layer target
+# only: no test programs, no SPIR-V validation, and not the native DX12 proxy
+# (bench\native\dx12stereo), which is never shipped. Its Vulkan and SPIR-V headers are
+# fetched by CMake at the commits pinned in its CMakeLists.txt.
+function Build-GeometryLayer([string]$layer)
+{
+    Write-Output "geometry layer: enter, into $layer"
+    if (!$layer) { throw 'Build-GeometryLayer needs the payload layer folder' }
+    $cmake = Get-Command cmake -ErrorAction SilentlyContinue
+    if (!$cmake) { throw 'CMake (3.24 or later) not found' }
+    $build = Join-Path $OutputRoot 'xgstereo-build'
+    & $cmake.Source -S (Join-Path $projectRoot 'bench\native\xgstereo') -B $build -A x64 -DVRX_XG_VALIDATE_SPIRV=OFF
+    if ($LASTEXITCODE) { throw 'Geometry layer configure failed' }
+    & $cmake.Source --build $build --config Release --target vrx_xgstereo
+    if ($LASTEXITCODE) { throw 'Geometry layer build failed' }
+    New-Item -ItemType Directory -Path $layer -Force | Out-Null
+    foreach ($name in 'vrx_xgstereo.dll', 'VkLayer_vrx_xgstereo.json')
+    {
+        $built = Join-Path $build "Release\$name"
+        if (!(Test-Path -LiteralPath $built)) { throw "Geometry layer build did not produce $name" }
+        Copy-Item -LiteralPath $built -Destination $layer
+    }
+    $manifest = Get-Content -LiteralPath (Join-Path $layer 'VkLayer_vrx_xgstereo.json') -Raw | ConvertFrom-Json
+    if ($manifest.layer.library_path -ne '.\vrx_xgstereo.dll') { throw "Unexpected layer library path $($manifest.layer.library_path)" }
+    Write-Output "geometry layer: exit ok ($($manifest.layer.name), API $($manifest.layer.api_version))"
 }
 
 function Build-Payload
@@ -49,7 +161,8 @@ function Build-Payload
         if ($LASTEXITCODE) { throw 'Native package restore failed' }
         & (Join-Path $PSScriptRoot 'build-models.ps1')
         $env:VRX_NATIVE_OUT = $nativeOutput
-        & cmd /c 'bench\native\openxr\build.bat --desktop'
+        # --no-diagnostics: the engine's test-only switches (--check-geometry...) are not compiled in.
+        & cmd /c 'bench\native\openxr\build.bat --desktop --no-diagnostics'
         if ($LASTEXITCODE) { throw 'Native build failed' }
         $env:LIB = ''
         & dotnet publish desktop/VRX.Desktop/VRX.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o $payload
@@ -91,6 +204,20 @@ function Build-Payload
         if ($LASTEXITCODE) { Get-Content $warmLog -Tail 20; throw 'Shader cache pre-warm failed' }
         if (!(Select-String -LiteralPath $warmLog -SimpleMatch "$engine\d3dcompiler_47.dll" -Quiet)) { Get-Content $warmLog -Tail 20; throw 'Shader cache pre-warm did not use the app-local d3dcompiler_47.dll' }
         Get-Content $warmLog -Tail 1
+        # A release engine must not carry the test-only geometry switches.
+        $diagnostics = & "$engine\xrplayer.exe" '--geometry-session=release-check' '--check-geometry' 2>&1 | Out-String
+        if (!$LASTEXITCODE -or $diagnostics -notmatch 'unknown option --check-geometry') { throw "engine\xrplayer.exe accepts --check-geometry: built with diagnostics" }
+        # Geometry stereo: VRX's Vulkan layer and the pinned DXVK and vkd3d-proton DLLs.
+        $geometry = Join-Path $payload 'geometry'
+        Build-GeometryLayer (Join-Path $geometry 'layer')
+        Add-GeometryRuntime $geometry
+        # Only vkd3d-proton's d3d12.dll ships: never the native DX12 proxy (bench\native\dx12stereo).
+        $pins = Read-GeometryPins
+        foreach ($d3d12 in Get-ChildItem -LiteralPath $payload -Recurse -File -Filter 'd3d12.dll')
+        {
+            $relative = [IO.Path]::GetRelativePath($payload, $d3d12.FullName)
+            if ($relative -ne 'geometry\vkd3d\d3d12.dll' -or (Get-FileHash -LiteralPath $d3d12.FullName -Algorithm SHA256).Hash -ne $pins[$relative]) { throw "Unexpected $relative in the payload" }
+        }
         Copy-Item release/licenses/*.txt $licenses
         Copy-Item "$ortPackage\LICENSE" "$licenses\ONNXRuntime-LICENSE.txt"
         Copy-Item "$ortPackage\ThirdPartyNotices.txt" "$licenses\ONNXRuntime-ThirdPartyNotices.txt"
@@ -115,6 +242,9 @@ function Build-Payload
         foreach ($library in 'onnxruntime.dll','DirectML.dll','openxr_loader.dll','d3dcompiler_47.dll') {
             $libraryVersion = (Get-Item -LiteralPath (Join-Path $engine $library)).VersionInfo.FileVersion
             "$library : $libraryVersion" | Add-Content "$payload\BUILD.txt"
+        }
+        foreach ($archive in $geometryArchives) {
+            "geometry\$($archive.Folder) : $($archive.Name) ($($archive.Url), SHA-256 $($archive.Sha256.ToLowerInvariant()))" | Add-Content "$payload\BUILD.txt"
         }
     } finally { $env:VRX_NATIVE_OUT = $oldNativeOutput; Pop-Location }
 }

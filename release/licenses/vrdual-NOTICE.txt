@@ -1,0 +1,16 @@
+vrdual
+Copyright 2026 Maciej Wakuła (also written Wakula; GitHub: adderek)
+https://github.com/adderek/vrdual
+
+This product includes software developed as part of vrdual. Redistributions
+and derivative works must keep this NOTICE (Apache License 2.0, section 4(d)),
+which names the original project and where it came from.
+
+Third-party parts:
+- third_party/Vulkan-Headers: Khronos Group, Apache-2.0 OR MIT
+  (third_party/Vulkan-Headers/LICENSE.md)
+- third_party/OpenXR-SDK (headers): Khronos Group, Apache-2.0
+  (third_party/OpenXR-SDK/LICENSE)
+- common/vrdual_font.hpp: glyph bitmaps rendered from DejaVu Sans Mono
+  (Bitstream Vera Fonts copyright, DejaVu changes in the public domain;
+  https://dejavu-fonts.github.io/License.html)

@@ -17,7 +17,24 @@ set INC=%~dp0include
 set OUT=%~dp0out
 if defined VRX_NATIVE_OUT set "OUT=%VRX_NATIVE_OUT%"
 set APP5_NAME=xrapp5
-if "%~1"=="--desktop" set APP5_NAME=xrplayer
+rem Test-only engine switches (--check-geometry, --check-geometry-resizes) are compiled in
+rem unless --no-diagnostics is given; release\build-release.ps1 builds with it.
+set "APP5_DEFINES=/DVRX_DIAGNOSTICS"
+:args
+if "%~1"=="" goto argsdone
+if "%~1"=="--desktop" (
+  set APP5_NAME=xrplayer
+) else if "%~1"=="--no-diagnostics" (
+  set "APP5_DEFINES="
+) else (
+  echo ERROR: unknown option %~1 ^(expected --desktop, --no-diagnostics^)
+  exit /b 1
+)
+rem /1 keeps %0, so %~dp0 below is still this script's folder.
+shift /1
+goto args
+:argsdone
+if defined APP5_DEFINES (echo === engine diagnostics: on) else (echo === engine diagnostics: off ^(release^))
 if not exist "%OUT%" mkdir "%OUT%"
 
 echo === include: %INC%
@@ -77,7 +94,7 @@ if errorlevel 1 (
   echo BUILD FAILED ^(xrplayer.rc^)
   exit /b 1
 )
-cl /nologo /std:c++20 /EHsc /O2 /W3 /I"%INC%" /I"%ORTINC%" /Fo"%OUT%\\" /Fe"%OUT%\%APP5_NAME%.exe" "%~dp0xrapp5.cpp" "%OUT%\xrplayer.res" ^
+cl /nologo /std:c++20 /EHsc /O2 /W3 %APP5_DEFINES% /I"%INC%" /I"%ORTINC%" /Fo"%OUT%\\" /Fe"%OUT%\%APP5_NAME%.exe" "%~dp0xrapp5.cpp" "%OUT%\xrplayer.res" ^
    /link /LIBPATH:"%ORTLIB%" onnxruntime.lib d3d12.lib d3d11.lib dxgi.lib dxguid.lib d3dcompiler.lib ole32.lib windowscodecs.lib windowsapp.lib user32.lib dwmapi.lib shcore.lib
 if errorlevel 1 (
   echo BUILD FAILED ^(xrapp5^)

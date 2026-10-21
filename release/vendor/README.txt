@@ -15,3 +15,31 @@ by Microsoft. Distributable code under the Windows SDK license terms. The engine
 copy instead of Windows' own, and the pre-compiled shader cache shipped in engine\shader-cache
 is keyed by its version, so a different compiler would change every shipped shader.
 SHA-256 a05f99734f7c4822fefc12b367af21fd0976ed6608752fb1e1e80b6ece7ecbbb
+
+Geometry stereo runtime - NOT committed here, fetched at build time. release\build-release.ps1
+downloads the official release archives once into release\out\vendor-cache (git-ignored),
+refuses any archive whose SHA-256 differs from its pin, extracts only the x64 DLLs, checks
+each against geometry-runtime.sha256 (this folder) and ships them under geometry\. The same
+file goes into the payload as geometry\geometry-runtime.sha256, for the desktop app to
+verify the DLLs at run time. They ship unmodified and unsigned, as their projects release them.
+
+DXVK 2.7.1 (zlib) - geometry\dxvk\d3d11.dll, dxgi.dll
+https://github.com/doitsujin/dxvk/releases/download/v2.7.1/dxvk-2.7.1.tar.gz
+archive SHA-256 d85ce7c79f57ecd765aaa1b9e7007cb875e6fde9f6d331df799bce73d513ce87
+(the same pin as the desktop app's DXVK download in desktop\VRX.Desktop\GeometryLaunch.cs,
+and the digest GitHub publishes for the release asset)
+
+vkd3d-proton 3.0.1 (LGPL-2.1-or-later), the latest stable release (2026-05-06) -
+geometry\vkd3d\d3d12.dll, d3d12core.dll
+https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v3.0.1/vkd3d-proton-3.0.1.tar.zst
+archive SHA-256 3cf2315522af5e43605ef6d3c41dad91387040bf97199934f3f7ab76caaa2f0c
+Source: https://github.com/HansKristian-Work/vkd3d-proton/tree/v3.0.1 (with its submodules)
+
+To move to a new version: change the URL and archive pin in build-release.ps1, the DLL
+pins in geometry-runtime.sha256, the licence texts in release\licenses if they changed,
+and THIRD-PARTY-NOTICES.txt.
+
+VRX's own Vulkan layer (geometry\layer) is built from bench\native\xgstereo by the same
+script with CMake (Release, layer target only); its Vulkan and SPIR-V headers are fetched
+at the commits pinned in that CMakeLists.txt. The native DX12 proxy (bench\native\dx12stereo)
+is not shipped.

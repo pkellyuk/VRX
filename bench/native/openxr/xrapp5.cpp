@@ -43,7 +43,9 @@
 //            --synthetic          the moving test scene (with --truth: ground-truth depth)
 //   options: --scale=N --no-warp --paired --no-smooth --tau=SECONDS
 //            --geometry-session=NAME  consume complete left/right pairs, without AI depth
+//            --geometry-pid=PID       stop (FAIL) when this game process exits
 //            --check-geometry         check pair upload/copy without starting OpenXR
+//                                     (diagnostic builds only: build.bat without --no-diagnostics)
 //            --no-foreground       disable experimental foreground crop passes
 //            --fill=mirror|stretch  disocclusion fill (default mirror, see FillHole)
 //            --dilate=N             widen foreground depth by N depth px (default 2)
@@ -328,6 +330,12 @@ static const size_t DELAYED_HISTORY = 6;
 using SourceFrames = SourceRing<SRC_RING>;
 using SourceRef = SourceFrames::ReadRef;
 static const int MAX_COLOR_W = 1920;
+// Geometry stereo: a stalled stream keeps its last pair on screen this long (as a still
+// capture keeps its last frame), then shows nothing. A stream that stays closed or
+// invalid with no replacement for GEOMETRY_FAIL_MS ends the session (FAIL).
+static const uint64_t GEOMETRY_HOLD_MS = 3000;
+static const uint64_t GEOMETRY_FAIL_MS = 10000;
+static const uint64_t GEOMETRY_RECONNECT_MS = 1000;      // closed/invalid this long: reopen the session
 static const uint32_t VIEWS = 2;
 static const float DEPTH_NEAR_Z = 0.10f, DEPTH_FAR_Z = 30.0f;
 
@@ -458,7 +466,16 @@ struct App
     bool geometryGpu = false;
     xg::PairFrame geometryFrame;
     uint64_t geometrySequence = 0;
-    bool geometryUsable = false;
+    bool geometryUsable = false;                         // a pair should be shown: fresh, or held through a stall
+    int geometryShown = -1;                              // GeometryShow, for logging changes only
+    uint64_t geometryFreshMs = 0;                        // the last time a pair was fresh (the hold starts here)
+    uint64_t geometryBrokenMs = 0;                       // closed/invalid since then, no replacement; 0 = healthy
+    uint64_t geometrySeenMs = 0;                         // the render path's last status read
+    uint64_t geometryWatchMs = 0;                        // next watchdog check
+    uint64_t geometryRetryMs = 0;                        // next reconnect attempt
+    uint32_t geometryOwner = 0;                          // the producer process the stream is pinned to
+    HANDLE geometryProcess = nullptr;                    // --geometry-pid, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
+    xg::PairFrame geometryPeek;                          // watchdog status read of the CPU transport
     ComPtr<ID3D12Resource> geometryLight;                // left eye for ambilight and room lighting
     DXGI_FORMAT srcFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
     ComPtr<ID3D12Resource> srcTex[SRC_RING];
@@ -868,11 +885,14 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
             if (!xg::ValidSession(opt->geometrySession)) { Log("ParseArgs: invalid geometry session name"); return false; }
             opt->source = SourceKind::Geometry; continue;
         }
+#ifdef VRX_DIAGNOSTICS
+        // Test fixtures only (build.bat without --no-diagnostics); a release engine rejects them.
         if (!strncmp(a,"--check-geometry-resizes=",25)) {
             char* end=nullptr;const auto count=strtol(a+25,&end,10);if(count<1 || count>8 || !end || *end){Log("ParseArgs: geometry resize check count must be 1..8");return false;}
             opt->checkGeometryResizes=int(count);opt->checkGeometry=true;continue;
         }
         if (!strcmp(a, "--check-geometry")) { opt->checkGeometry = true; continue; }
+#endif
         if (!strncmp(a, "--geometry-pid=", 15))
         {
             char* end = nullptr; const auto pid = strtoull(a + 15, &end, 10);
@@ -1840,6 +1860,40 @@ static void CaptureMain(App* app)
 }
 
 // ----------------------------------------------------------------- source
+// A geometry eye's presented size: shrunk to MAX_COLOR_W wide (as every source is),
+// even dimensions.
+static void GeometryPresentedSize(int eyeW, int eyeH, int& colorW, int& colorH)
+{
+    const double k = eyeW > MAX_COLOR_W ? (double)MAX_COLOR_W / eyeW : 1.0;
+    colorW = std::max(2, (int)(eyeW * k + 0.5) & ~1);
+    colorH = std::max(2, (int)(eyeH * k + 0.5) & ~1);
+}
+
+// --geometry-pid: a handle that can only wait for the game to exit and read its exit
+// code. A game that has already exited fails the start; one that cannot be opened
+// (protected) is judged by its stream alone (GeometryWatchdog).
+static bool OpenGeometryProcess(App& app)
+{
+    Log("OpenGeometryProcess: enter (pid %lu)", (unsigned long)app.opt.geometryPid);
+    if (!app.opt.geometryPid) { Log("OpenGeometryProcess: exit - no --geometry-pid, the stream alone decides"); return true; }
+    if (app.geometryProcess) { Log("OpenGeometryProcess: exit - already open"); return true; }
+    app.geometryProcess = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, app.opt.geometryPid);
+    if (!app.geometryProcess)
+    {
+        const DWORD error = GetLastError();
+        if (error == ERROR_INVALID_PARAMETER)
+        { Log("OpenGeometryProcess: FAIL the game (process %lu) has already exited", (unsigned long)app.opt.geometryPid); return false; }
+        Log("OpenGeometryProcess: exit - cannot watch process %lu (error %lu); its stream alone decides", (unsigned long)app.opt.geometryPid, error);
+        return true;
+    }
+    if (WaitForSingleObject(app.geometryProcess, 0) == WAIT_OBJECT_0)
+    { Log("OpenGeometryProcess: FAIL the game (process %lu) has already exited", (unsigned long)app.opt.geometryPid); return false; }
+    Log("OpenGeometryProcess: exit ok - the session ends when process %lu exits", (unsigned long)app.opt.geometryPid);
+    return true;
+}
+
+static bool ResizeGeometryPresentation(App& app, int colorW, int colorH);
+
 // Decides the source size, creates the source ring and its SRVs.
 static bool InitSource(App& app)
 {
@@ -1850,13 +1904,27 @@ static bool InitSource(App& app)
         HANDLE gpuMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, xg::GpuName(app.opt.geometrySession, L".frames").c_str());
         if (gpuMapping)
         {
+            // An open stream of another game: refuse now, not after the 15 s wait below.
+            xg::GpuHeader owner{};
+            if (const void* view = MapViewOfFile(gpuMapping, FILE_MAP_READ, 0, 0, sizeof(owner)))
+            {
+                memcpy(&owner, view, sizeof(owner));
+                UnmapViewOfFile(view);
+            }
             CloseHandle(gpuMapping);
+            if (app.opt.geometryPid && xg::ValidGpuHeader(owner) && owner.active && owner.pid != app.opt.geometryPid)
+            {
+                Log("InitSource: FAIL geometry session belongs to another process (stream of process %u, expected %lu)",
+                    owner.pid, (unsigned long)app.opt.geometryPid);
+                return false;
+            }
             const auto status=xg::WaitForGpuPair(app.device.Get(),app.opt.geometrySession,app.opt.geometryPid,
                 app.geometryGpuReader,app.geometryGpuFrame,15000);
             if (status != xg::PairRead::NewPair) { Log("InitSource: FAIL no completed GPU geometry pair after reconnecting for 15 s (%d); check producer, adapter and consumer", int(status)); return false; }
             const auto& header = app.geometryGpuReader->Header();
             app.geometryGpu = true; app.srcW = int(header.width) * 2; app.srcH = int(header.height);
             app.srcFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+            app.geometryOwner = header.pid;
             Log("InitSource: GPU texture sharing, %s eyes, no CPU pixel upload", header.kind == uint32_t(xg::GpuFrameKind::SameFrame) ? "same-frame" : "alternating-frame");
         }
         else
@@ -1878,7 +1946,9 @@ static bool InitSource(App& app)
         app.srcW = (int)app.geometryFrame.header.eyeWidth * 2;
         app.srcH = (int)app.geometryFrame.header.eyeHeight;
         app.srcFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+        app.geometryOwner = app.geometryFrame.header.producerPid;
         }
+        if (!OpenGeometryProcess(app)) return false;
     }
     else if (app.opt.source == SourceKind::Capture)
     {
@@ -1902,11 +1972,13 @@ static bool InitSource(App& app)
     app.colorH = std::max(2, (int)(app.srcH * k + 0.5) & ~1);
     if (app.opt.source == SourceKind::Geometry)
     {
-        // Keep the headset presentation size stable, as window capture does.
-        // New GPU source generations are fitted per eye after a resize.
-        app.colorW = app.srcW / 2; app.colorH = app.srcH;
+        // One eye, shrunk to MAX_COLOR_W wide like every other source. A later stream
+        // generation that is larger or another shape re-creates the colour targets
+        // (RefreshGeometrySource); a smaller one is fitted into them, as capture does.
+        GeometryPresentedSize(app.srcW / 2, app.srcH, app.colorW, app.colorH);
         if (!MakeSourceTexture(app, app.colorW, app.colorH, app.srcFormat, false, app.geometryLight)) return false;
         MakeTextureSrv(app, app.geometryLight.Get(), app.srcFormat, DESC_GEOMETRY_LIGHT);
+        Log("InitSource: geometry eye %dx%d presented at %dx%d (at most %d wide)", app.srcW / 2, app.srcH, app.colorW, app.colorH, MAX_COLOR_W);
     }
 
     const bool shared = app.opt.source == SourceKind::Capture;
@@ -1915,6 +1987,16 @@ static bool InitSource(App& app)
         if (!MakeSourceTexture(app, app.srcW, app.srcH, app.srcFormat, shared, app.srcTex[i])) return false;
         if (app.frameTransfer && shared && !MakeSourceTexture(app, app.xferW, app.xferH, app.srcFormat, true, app.smallTex[i])) return false;
         MakeTextureSrv(app, app.srcTex[i].Get(), app.srcFormat, DESC_SRC0 + i);
+    }
+    if (app.opt.source == SourceKind::Geometry && (app.srcW / 2 != app.colorW || app.srcH != app.colorH))
+    {
+        // An eye wider than MAX_COLOR_W: scaled into the presented size on the GPU.
+        ID3D12Resource* inputs[SRC_RING]{};
+        for (int i = 0; i < SRC_RING; i++) inputs[i] = app.srcTex[i].Get();
+        app.geometryFit = std::make_unique<GeometryFit>();
+        if (!app.geometryFit->Create(app.device.Get(), inputs, SRC_RING, UINT(app.colorW), UINT(app.colorH)))
+        { Log("InitSource: FAIL geometry fit %dx%d -> %dx%d", app.srcW / 2, app.srcH, app.colorW, app.colorH); return false; }
+        Log("InitSource: geometry eyes fitted %dx%d -> %dx%d", app.srcW / 2, app.srcH, app.colorW, app.colorH);
     }
 
     if (!shared && !app.geometryGpu)
@@ -1935,35 +2017,205 @@ static bool InitSource(App& app)
     return true;
 }
 
+// The GPU stream's status; a reader that was released to reconnect reads as closed.
+static xg::PairRead GeometryGpuStatus(App& app, xg::GpuSlotInfo& frame)
+{
+    if (!app.geometryGpuReader || !app.geometryGpuReader->Header().generation) return xg::PairRead::Closed;
+    return app.geometryGpuReader->Status(app.geometrySequence, frame);
+}
+
+// A GPU pair is fresh while the stream is open and the newest pair (or, with nothing
+// new, the last one taken) was published within PairMaxAgeMs.
+static bool GeometryGpuFresh(xg::PairRead status, const xg::GpuSlotInfo& frame, uint64_t now)
+{
+    return (status == xg::PairRead::NewPair || status == xg::PairRead::Unchanged || status == xg::PairRead::Empty || status == xg::PairRead::Busy) &&
+        frame.publishedMs <= now && now - frame.publishedMs <= xg::PairMaxAgeMs;
+}
+
+// The CPU transport cannot resize and must stay with its producer: either change makes
+// the stream invalid for this session (it ends after GEOMETRY_FAIL_MS). Returns the
+// status to count, sets `fresh`, and `why` for the log.
+static xg::PairRead GeometryCpuState(const App& app, const xg::PairFrame& frame, xg::PairRead status, uint64_t now, bool& fresh, const char*& why)
+{
+    why = nullptr;
+    const bool open = status == xg::PairRead::NewPair || status == xg::PairRead::Unchanged || status == xg::PairRead::Busy;
+    const bool shape = frame.header.eyeWidth * 2 == (uint32_t)app.srcW && frame.header.eyeHeight == (uint32_t)app.srcH;
+    const bool owner = !app.opt.geometryPid || frame.header.producerPid == app.opt.geometryPid;
+    fresh = open && shape && owner && frame.header.publishedMs <= now && now - frame.header.publishedMs <= xg::PairMaxAgeMs;
+    if (!open || (shape && owner)) return status;
+    why = !shape ? "the pair changed size (the CPU transport cannot resize; restart VRX)" : "the stream now belongs to another process";
+    return xg::PairRead::Invalid;
+}
+
+enum class GeometryShow { Fresh, Held, Nothing };
+
+// Records what the stream said and decides what is shown: a fresh pair, the last pair
+// held through a stall (up to GEOMETRY_HOLD_MS, as capture keeps a still frame), or
+// nothing. Closed/invalid starts the GEOMETRY_FAIL_MS clock (GeometryWatchdog); any
+// other status stops it. Logs changes only.
+static void NoteGeometryStatus(App& app, xg::PairRead status, bool fresh, uint64_t now, const char* why = nullptr)
+{
+    app.geometrySeenMs = now;
+    const bool broken = status == xg::PairRead::Closed || status == xg::PairRead::Invalid;
+    if (broken && !app.geometryBrokenMs)
+    {
+        app.geometryBrokenMs = now;
+        Log("Geometry source: stream %s%s%s - waiting up to %llu s for the game's stream to return",
+            status == xg::PairRead::Closed ? "closed" : "invalid", why ? ": " : "", why ? why : "", (unsigned long long)(GEOMETRY_FAIL_MS / 1000));
+    }
+    else if (!broken && app.geometryBrokenMs)
+    {
+        Log("Geometry source: stream back after %llu ms (status %d)", (unsigned long long)(now - app.geometryBrokenMs), (int)status);
+        app.geometryBrokenMs = 0;
+    }
+    if (fresh) app.geometryFreshMs = now;
+    const GeometryShow show = fresh ? GeometryShow::Fresh :
+        app.geometryFreshMs && now - app.geometryFreshMs <= GEOMETRY_HOLD_MS ? GeometryShow::Held : GeometryShow::Nothing;
+    if ((int)show != app.geometryShown)
+    {
+        if (show == GeometryShow::Fresh) Log("Geometry %ssource: paired %s available", app.geometryGpu ? "GPU " : "", app.geometryGpu ? "textures" : "frames");
+        else if (show == GeometryShow::Held)
+            Log("Geometry %ssource: stalled (status %d) - holding the last pair for up to %llu ms", app.geometryGpu ? "GPU " : "", (int)status,
+                (unsigned long long)GEOMETRY_HOLD_MS);
+        else Log("Geometry %ssource: unavailable (status %d) - showing nothing", app.geometryGpu ? "GPU " : "", (int)status);
+        app.geometryShown = (int)show;
+    }
+    app.geometryUsable = show != GeometryShow::Nothing;
+}
+
+// Takes over a newly opened stream generation of the same producer: new source
+// textures at its size, and new colour targets when it is larger or another shape than
+// the ones presented (else it is fitted into them, as capture fits a resized window).
+// Called between submissions only. false: resources could not be made (stop).
+static bool AdoptGeometryReader(App& app, std::unique_ptr<xg::GpuReader> next)
+{
+    if (!next || !next->Header().generation) { Log("AdoptGeometryReader: no opened reader - nothing to adopt"); return true; }
+    const auto header = next->Header();
+    Log("AdoptGeometryReader: enter generation %llu, %ux%u per eye, producer %u (presented %dx%d)",
+        (unsigned long long)header.generation, header.width, header.height, header.pid, app.colorW, app.colorH);
+    ComPtr<ID3D12Resource> textures[SRC_RING];
+    ID3D12Resource* inputs[SRC_RING]{};
+    for (int i = 0; i < SRC_RING; ++i)
+    {
+        if (!MakeSourceTexture(app, int(header.width) * 2, int(header.height), app.srcFormat, false, textures[i]))
+        { Log("AdoptGeometryReader: FAIL source texture %ux%u", header.width * 2, header.height); return false; }
+        inputs[i] = textures[i].Get();
+    }
+    WaitFence(app, app.fenceVal);
+    if (!app.sources.Reset(app.fence->GetCompletedValue(), app.fence->GetCompletedValue(), app.mlFence->GetCompletedValue(),
+                           app.xferFence ? app.xferFence->GetCompletedValue() : 0))
+    { Log("AdoptGeometryReader: exit - source frames still in use, retrying"); return true; }
+    int colorW = 0, colorH = 0;
+    GeometryPresentedSize(int(header.width), int(header.height), colorW, colorH);
+    const double shownAspect = (double)app.colorW / app.colorH, newAspect = (double)colorW / colorH;
+    const bool larger = colorW > app.colorW || colorH > app.colorH;
+    const bool reshaped = std::fabs(newAspect - shownAspect) > 0.01 * shownAspect;
+    Log("AdoptGeometryReader: new presented size %dx%d - %s", colorW, colorH,
+        larger || reshaped ? (reshaped ? "another shape, re-creating the colour targets" : "larger, re-creating the colour targets") : "fitted into the current colour targets");
+    if ((larger || reshaped) && !ResizeGeometryPresentation(app, colorW, colorH)) return false;
+    std::unique_ptr<GeometryFit> fit;
+    if (header.width != UINT(app.colorW) || header.height != UINT(app.colorH))
+    {
+        fit = std::make_unique<GeometryFit>();
+        if (!fit->Create(app.device.Get(), inputs, SRC_RING, UINT(app.colorW), UINT(app.colorH)))
+        { Log("AdoptGeometryReader: FAIL fit %ux%u -> %dx%d", header.width, header.height, app.colorW, app.colorH); return false; }
+    }
+    for (int i = 0; i < SRC_RING; ++i) { app.srcTex[i] = std::move(textures[i]); MakeTextureSrv(app, app.srcTex[i].Get(), app.srcFormat, DESC_SRC0 + i); }
+    app.geometryGpuReader = std::move(next); app.geometryFit = std::move(fit);
+    app.srcW = int(header.width) * 2; app.srcH = int(header.height); app.geometryOwner = header.pid;
+    app.geometrySequence = 0; app.geometryGpuFrame = {}; app.geometryUsable = false; app.geometryFreshMs = 0; app.ambiHistory = false;
+    Log("Geometry GPU source: reconnected generation %llu, %ux%u per eye %s %dx%d; same producer, no CPU pixel upload",
+        (unsigned long long)header.generation, header.width, header.height, app.geometryFit ? "fitted into" : "presented at", app.colorW, app.colorH);
+    return true;
+}
+
 // Called between submissions, before any frame's command list is opened.
-// Only the pinned producer/adapter may replace its own closed generation.
+// Only the pinned producer/adapter may replace its own closed generation. A stream that
+// stays closed or invalid with no replacement (for example a lock abandoned by a thread
+// that died) is released and the session opened afresh, once a second.
 static bool RefreshGeometrySource(App& app)
 {
-    if(!app.geometryGpu || GetTickCount64()<app.geometryProbeMs)return true;
-    app.geometryProbeMs=GetTickCount64()+100;
-    if(!app.geometryGpuReader->ReplacementAvailable())return true;
-    const auto owner=app.opt.geometryPid?app.opt.geometryPid:app.geometryGpuReader->Header().pid;
-    auto next=std::make_unique<xg::GpuReader>();
-    if(!next->Open(app.device.Get(),app.opt.geometrySession,owner))return true;
-    xg::GpuSlotInfo ready{};if(next->Status(0,ready)!=xg::PairRead::NewPair)return true;
-    const auto header=next->Header();
-    ComPtr<ID3D12Resource> textures[SRC_RING];ID3D12Resource* inputs[SRC_RING]{};
-    for(int i=0;i<SRC_RING;++i){
-        if(!MakeSourceTexture(app,int(header.width)*2,int(header.height),app.srcFormat,false,textures[i]))return false;
-        inputs[i]=textures[i].Get();
+    if (!app.geometryGpu || GetTickCount64() < app.geometryProbeMs) return true;
+    const uint64_t now = GetTickCount64();
+    app.geometryProbeMs = now + 100;
+    const bool connected = app.geometryGpuReader && app.geometryGpuReader->Header().generation != 0;
+    const uint32_t owner = app.opt.geometryPid ? app.opt.geometryPid : app.geometryOwner;
+    if (connected && app.geometryGpuReader->ReplacementAvailable())
+    {
+        auto next = std::make_unique<xg::GpuReader>();
+        if (!next->Open(app.device.Get(), app.opt.geometrySession, owner)) return true;
+        xg::GpuSlotInfo ready{};
+        if (next->Status(0, ready) != xg::PairRead::NewPair) return true;
+        return AdoptGeometryReader(app, std::move(next));
     }
-    std::unique_ptr<GeometryFit> fit;
-    if(header.width!=UINT(app.colorW) || header.height!=UINT(app.colorH)){
-        fit=std::make_unique<GeometryFit>();
-        if(!fit->Create(app.device.Get(),inputs,SRC_RING,UINT(app.colorW),UINT(app.colorH)))return false;
+    const bool stuck = !connected || (app.geometryBrokenMs && now - app.geometryBrokenMs >= GEOMETRY_RECONNECT_MS);
+    if (!stuck || now < app.geometryRetryMs) return true;
+    app.geometryRetryMs = now + GEOMETRY_RECONNECT_MS;
+    if (connected)
+    {
+        Log("RefreshGeometrySource: stream closed or invalid for %llu ms with no replacement - releasing generation %llu to reconnect",
+            (unsigned long long)(now - app.geometryBrokenMs), (unsigned long long)app.geometryGpuReader->Header().generation);
+        WaitFence(app, app.fenceVal);                    // no queued copy may still read its shared textures
+        app.geometryGpuReader = std::make_unique<xg::GpuReader>();   // also ends this consumer's registration
     }
-    WaitFence(app,app.fenceVal);
-    if(!app.sources.Reset(app.fence->GetCompletedValue(),app.fence->GetCompletedValue(),app.mlFence->GetCompletedValue(),app.xferFence?app.xferFence->GetCompletedValue():0))return true;
-    for(int i=0;i<SRC_RING;++i){app.srcTex[i]=std::move(textures[i]);MakeTextureSrv(app,app.srcTex[i].Get(),app.srcFormat,DESC_SRC0+i);}
-    app.geometryGpuReader=std::move(next);app.geometryFit=std::move(fit);app.srcW=int(header.width)*2;app.srcH=int(header.height);
-    app.geometrySequence=0;app.geometryGpuFrame={};app.geometryUsable=false;app.ambiHistory=false;
-    Log("Geometry GPU source: reconnected generation %llu, %ux%u per eye fitted into %dx%d; same producer, no CPU pixel upload",
-        (unsigned long long)header.generation,header.width,header.height,app.colorW,app.colorH);
+    auto next = std::make_unique<xg::GpuReader>();
+    if (!next->Open(app.device.Get(), app.opt.geometrySession, owner)) return true;   // retried every GEOMETRY_RECONNECT_MS
+    xg::GpuSlotInfo ready{};
+    if (next->Status(0, ready) != xg::PairRead::NewPair) return true;
+    Log("RefreshGeometrySource: session '%ls' open again (generation %llu)", app.opt.geometrySession.c_str(),
+        (unsigned long long)next->Header().generation);
+    return AdoptGeometryReader(app, std::move(next));
+}
+
+// Ends a geometry session (logs FAIL; the caller sets app.stop) when the game given by
+// --geometry-pid has exited, or the stream has stayed closed or invalid with no
+// replacement for GEOMETRY_FAIL_MS. Reads the stream itself when the render path has
+// not (headset asleep, a menu in front), so those sessions are judged too.
+static bool GeometryWatchdog(App& app)
+{
+    if (app.opt.source != SourceKind::Geometry) return true;
+    const uint64_t now = GetTickCount64();
+    if (now < app.geometryWatchMs) return true;
+    app.geometryWatchMs = now + 100;
+    if (app.geometryProcess && WaitForSingleObject(app.geometryProcess, 0) == WAIT_OBJECT_0)
+    {
+        DWORD code = 0;
+        GetExitCodeProcess(app.geometryProcess, &code);
+        Log("Geometry source: FAIL the game (process %lu) has exited (exit code %lu) - ending the VR session",
+            (unsigned long)app.opt.geometryPid, (unsigned long)code);
+        return false;
+    }
+    if (now - app.geometrySeenMs >= 500)
+    {
+        if (app.geometryGpu)
+        {
+            xg::GpuSlotInfo frame = app.geometryGpuFrame;            // a status read claims nothing
+            const auto status = GeometryGpuStatus(app, frame);
+            NoteGeometryStatus(app, status, GeometryGpuFresh(status, frame, now), now);
+        }
+        else
+        {
+            const auto read = app.geometryReader.Read(app.geometryPeek, app.geometrySequence);
+            bool fresh = false;
+            const char* why = nullptr;
+            const auto status = GeometryCpuState(app, read == xg::PairRead::NewPair ? app.geometryPeek : app.geometryFrame, read, now, fresh, why);
+            NoteGeometryStatus(app, status, fresh, now, why);
+        }
+    }
+    if (app.geometryBrokenMs && now - app.geometryBrokenMs >= GEOMETRY_FAIL_MS)
+    {
+        Log("Geometry source: FAIL the game's stereo stream has been closed or invalid for %llu s with no replacement - ending the VR session",
+            (unsigned long long)((now - app.geometryBrokenMs) / 1000));
+        return false;
+    }
+    // The CPU transport: open the session again (this also clears a lock abandoned by a
+    // thread that died); the GPU transport does the same in RefreshGeometrySource.
+    if (!app.geometryGpu && app.geometryBrokenMs && now - app.geometryBrokenMs >= GEOMETRY_RECONNECT_MS && now >= app.geometryRetryMs)
+    {
+        app.geometryRetryMs = now + GEOMETRY_RECONNECT_MS;
+        const bool reopened = app.geometryReader.Open(app.opt.geometrySession);
+        Log("Geometry source: reopening session '%ls' (CPU transport) %s", app.opt.geometrySession.c_str(), reopened ? "ok" : "- unavailable");
+    }
     return true;
 }
 static bool RecordGeometryPresentation(App& app,int index,ID3D12Resource* pictures,UINT width,UINT height,bool stereo,bool uploaded)
@@ -2004,29 +2256,24 @@ static SourceFrames::WriteRef RecordGeometrySource(App& app, int ringSlot)
 {
     if (app.geometryGpu)
     {
-        const auto status = app.geometryGpuReader->Status(app.geometrySequence, app.geometryGpuFrame);
+        const auto status = GeometryGpuStatus(app, app.geometryGpuFrame);
         const auto now = GetTickCount64();
-        const bool usable = (status == xg::PairRead::NewPair || status == xg::PairRead::Unchanged || status == xg::PairRead::Empty || status == xg::PairRead::Busy) &&
-            app.geometryGpuFrame.publishedMs <= now && now - app.geometryGpuFrame.publishedMs <= xg::PairMaxAgeMs;
-        if (usable != app.geometryUsable) Log("Geometry GPU source: %s", usable ? "paired textures available" : "unavailable");
-        app.geometryUsable = usable;
-        if (!usable || status != xg::PairRead::NewPair) return {};
+        const bool fresh = GeometryGpuFresh(status, app.geometryGpuFrame, now);
+        NoteGeometryStatus(app, status, fresh, now);
+        if (!fresh || status != xg::PairRead::NewPair) return {};
         auto frame = ReserveSource(app);
         if (!frame || !app.geometryGpuReader->Record(app.gfxQueue.Get(), app.cmdList.Get(), app.srcTex[frame->index].Get(), app.geometrySequence, app.geometryGpuFrame)) return {};
         app.geometrySequence = app.geometryGpuFrame.sequence;
         frame->layout=app.geometryGpuReader->Header().generation;
         return frame;
     }
-    const auto status = app.geometryReader.Read(app.geometryFrame, app.geometrySequence);
+    const auto read = app.geometryReader.Read(app.geometryFrame, app.geometrySequence);
     const uint64_t now = GetTickCount64();
-    bool usable = (status == xg::PairRead::NewPair || status == xg::PairRead::Unchanged || status == xg::PairRead::Busy) &&
-        app.geometryFrame.header.publishedMs <= now && now - app.geometryFrame.header.publishedMs <= xg::PairMaxAgeMs &&
-        app.geometryFrame.header.eyeWidth * 2 == (uint32_t)app.srcW && app.geometryFrame.header.eyeHeight == (uint32_t)app.srcH;
-    usable = usable && (!app.opt.geometryPid || app.geometryFrame.header.producerPid == app.opt.geometryPid);
-    if (usable != app.geometryUsable)
-        Log("Geometry source: %s (status %d; resize requires restarting VRX)", usable ? "paired frames available" : "unavailable", (int)status);
-    app.geometryUsable = usable;
-    if (!usable || app.geometryFrame.header.sequence == app.geometrySequence) return {};
+    bool fresh = false;
+    const char* why = nullptr;
+    const auto status = GeometryCpuState(app, app.geometryFrame, read, now, fresh, why);
+    NoteGeometryStatus(app, status, fresh, now, why);
+    if (!fresh || app.geometryFrame.header.sequence == app.geometrySequence) return {};
     auto frame = ReserveSource(app);
     if (!frame) return {};
     const auto* pixels = app.geometryFrame.rgba.data();
@@ -4121,6 +4368,114 @@ static bool MakeWarpTarget(App& app, int cw, int ch, UINT tableIndex, WarpTarget
     dev->CreateUnorderedAccessView(t.scratch.Get(), nullptr, &sv, CpuDesc(app, tableIndex + 3));
 
     Log("MakeWarpTarget: exit ok");
+    return true;
+}
+
+// A colour swapchain of w x h (arraySize views) in the session's colour format, and its images.
+static bool MakeGeometrySwapchain(App& app, int w, int h, uint32_t arraySize, XrSwapchain& sc, std::vector<XrSwapchainImageD3D12KHR>& images)
+{
+    Log("MakeGeometrySwapchain: enter %dx%d, %u view(s)", w, h, arraySize);
+    if (app.session == XR_NULL_HANDLE || !app.colorFormat) { Log("MakeGeometrySwapchain: FAIL no session"); return false; }
+    XrSwapchainCreateInfo info{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
+    info.sampleCount = 1; info.width = (uint32_t)w; info.height = (uint32_t)h; info.faceCount = 1;
+    info.arraySize = arraySize; info.mipCount = 1;
+    info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+    info.format = app.colorFormat;
+    XrSwapchain made = XR_NULL_HANDLE;
+    const XrResult r = xrCreateSwapchain_(app.session, &info, &made);
+    if (XR_FAILED(r)) { Log("MakeGeometrySwapchain: FAIL xrCreateSwapchain %s", XRStr(r)); return false; }
+    uint32_t count = 0;
+    xrEnumImages_(made, 0, &count, nullptr);
+    std::vector<XrSwapchainImageD3D12KHR> madeImages(count, { XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR });
+    if (count) xrEnumImages_(made, count, &count, (XrSwapchainImageBaseHeader*)madeImages.data());
+    if (!count || !madeImages[0].texture) { Log("MakeGeometrySwapchain: FAIL no images"); xrDestroySwapchain_(made); return false; }
+    sc = made; images = std::move(madeImages);
+    Log("MakeGeometrySwapchain: exit ok, %u images", count);
+    return true;
+}
+
+// A geometry stream generation larger than the presented size, or of another shape:
+// re-create everything that has the presented size - the warp target, the lighting
+// reference, the glow and the colour swapchains - so the session is not stuck with the
+// first (often a launcher's or splash screen's) size. Between frames only: waits for the
+// GPU, and no swapchain image is acquired. Pieces that do not exist yet (--check-geometry
+// has no session or shaders) are skipped. false: the session cannot continue.
+static bool ResizeGeometryPresentation(App& app, int colorW, int colorH)
+{
+    Log("ResizeGeometryPresentation: enter %dx%d -> %dx%d", app.colorW, app.colorH, colorW, colorH);
+    if (colorW < 2 || colorH < 2 || colorW > 4096 || colorH > 4096) { Log("ResizeGeometryPresentation: FAIL size %dx%d", colorW, colorH); return false; }
+    if (colorW == app.colorW && colorH == app.colorH) { Log("ResizeGeometryPresentation: exit - size unchanged"); return true; }
+    WaitFence(app, app.fenceVal);                       // nothing queued uses the old targets or their descriptors
+
+    ComPtr<ID3D12Resource> light;
+    if (!MakeSourceTexture(app, colorW, colorH, app.srcFormat, false, light)) { Log("ResizeGeometryPresentation: FAIL lighting reference"); return false; }
+    WarpTarget target;
+    const bool warpTarget = app.mainTarget.colorOut != nullptr;
+    if (warpTarget && !MakeWarpTarget(app, colorW, colorH, DESC_MAIN_TABLE, target)) { Log("ResizeGeometryPresentation: FAIL warp target"); return false; }
+
+    int ambiW = 0, ambiH = 0;
+    AmbiSizeFor(colorW, colorH, &ambiW, &ambiH);
+    const bool newGlow = app.ambiTex && (ambiW != app.ambiW || ambiH != app.ambiH);
+    ComPtr<ID3D12Resource> ambiTex, ambiHist;
+    if (newGlow)
+    {
+        if (ambiW <= 0 || ambiH <= 0 ||
+            !MakeTexture(app.device.Get(), ambiW, ambiH, DXGI_FORMAT_R8G8B8A8_TYPELESS, 1, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                         D3D12_HEAP_FLAG_NONE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, ambiTex) ||
+            !MakeTexture(app.device.Get(), ambiW, ambiH, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                         D3D12_HEAP_FLAG_NONE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, ambiHist))
+        { Log("ResizeGeometryPresentation: FAIL glow %dx%d", ambiW, ambiH); return false; }
+    }
+
+    // The swapchains last: a failure above leaves the session's own ones untouched.
+    XrSwapchain colorSc = XR_NULL_HANDLE, ambiSc = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageD3D12KHR> cimgs, aimgs;
+    if (app.colorSc != XR_NULL_HANDLE && !MakeGeometrySwapchain(app, colorW, colorH, VIEWS, colorSc, cimgs))
+    { Log("ResizeGeometryPresentation: FAIL colour swapchain %dx%d", colorW, colorH); return false; }
+    const bool newGlowSc = newGlow && app.ambiSc != XR_NULL_HANDLE;
+    if (newGlowSc && !MakeGeometrySwapchain(app, ambiW, ambiH, 1, ambiSc, aimgs))
+        Log("ResizeGeometryPresentation: glow swapchain %dx%d unavailable - playing without the glow", ambiW, ambiH);
+
+    app.geometryLight = light;
+    MakeTextureSrv(app, app.geometryLight.Get(), app.srcFormat, DESC_GEOMETRY_LIGHT);
+    if (warpTarget)
+    {
+        app.mainTarget = target;
+        MakePictureSrv(app, app.mainTarget.colorOut.Get(), DESC_CURVE_MAIN + 0);
+    }
+    if (newGlow)
+    {
+        app.ambiTex = ambiTex; app.ambiHist = ambiHist; app.ambiW = ambiW; app.ambiH = ambiH;
+        D3D12_UNORDERED_ACCESS_VIEW_DESC gv{};
+        gv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        gv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        app.device->CreateUnorderedAccessView(app.ambiTex.Get(), nullptr, &gv, CpuDesc(app, DESC_AMBI_UAV));
+        D3D12_UNORDERED_ACCESS_VIEW_DESC hv{};
+        hv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        hv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        app.device->CreateUnorderedAccessView(app.ambiHist.Get(), nullptr, &hv, CpuDesc(app, DESC_AMBI_UAV + 2));
+        D3D12_SHADER_RESOURCE_VIEW_DESC glowSrv{};
+        glowSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        glowSrv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        glowSrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        glowSrv.Texture2D.MipLevels = 1;
+        for (UINT index : { DESC_CURVE_MAIN + 1, DESC_CURVE_TEST + 1, DESC_ROOM + 1 })
+            app.device->CreateShaderResourceView(app.ambiTex.Get(), &glowSrv, CpuDesc(app, index));
+    }
+    if (colorSc != XR_NULL_HANDLE)
+    {
+        xrDestroySwapchain_(app.colorSc);
+        app.colorSc = colorSc; app.cimgs = std::move(cimgs);
+    }
+    if (newGlowSc)
+    {
+        xrDestroySwapchain_(app.ambiSc);
+        app.ambiSc = ambiSc; app.aimgs = std::move(aimgs);    // XR_NULL_HANDLE when it could not be made
+    }
+    app.colorW = colorW; app.colorH = colorH;
+    app.ambiHistory = false;
+    Log("ResizeGeometryPresentation: exit ok - presented %dx%d, glow %dx%d%s", app.colorW, app.colorH, app.ambiW, app.ambiH,
+        app.colorSc != XR_NULL_HANDLE ? ", swapchains re-created" : " (no session yet)");
     return true;
 }
 
@@ -8121,6 +8476,7 @@ static void RunFrameLoop(App& app)
     const DepthSlot* cur = nullptr;
     const bool useDepthSc = app.opt.submitDepth;
     WarpTarget& target = app.mainTarget;
+    int shownCw = target.cw, shownCh = target.ch;           // geometry: the presented size may be re-created
     // Curved screen (screen_curve.h): rebuilt only when the screen itself changes.
     Cylinder cylinder;
     float curveWidth = -1, curveHeight = -1, curveDistance = -1, curveFraction = -1;
@@ -8275,7 +8631,17 @@ static void RunFrameLoop(App& app)
                 }
             }
         }
-        if(!RefreshGeometrySource(app)){Log("Geometry GPU source: reconnect resource creation failed");app.stop=true;break;}
+        if(!RefreshGeometrySource(app)){Log("Geometry GPU source: FAIL reconnect resource creation failed");app.stop=true;break;}
+        if (geometry && !GeometryWatchdog(app)) { app.stop = true; break; }
+        if (geometry && (target.cw != shownCw || target.ch != shownCh))
+        {
+            // A re-created presentation (a larger or reshaped stream): the screen takes the
+            // picture's new shape. With the desktop's controls, Adjust does that every frame.
+            Log("RunFrameLoop: geometry picture %dx%d -> %dx%d", shownCw, shownCh, target.cw, target.ch);
+            if (app.opt.controlPath.empty() && !screen.pending && target.cw > 0)
+                screen.size.height = screen.size.width * (float)target.ch / (float)target.cw;
+            shownCw = target.cw; shownCh = target.ch;
+        }
         screen.Key((GetAsyncKeyState(recenterKey) & 0x8000) != 0);
         const bool dashboardKeyDown = (GetAsyncKeyState(menuKey) & 0x8000) != 0;
         if (dashboardKeyDown && !dashboardKeyWasDown) dashboardCloseRequested = true;
@@ -8682,6 +9048,19 @@ static void RunFrameLoop(App& app)
                 wasStereo = stereo;
                 if (!geometry && app.opt.paired && stereo) source = cur->source;
 
+                // The geometry pair into the warp target first. If the resources do not match
+                // the stream, the frame still ends properly: the command list (whole barrier
+                // pairs only) is submitted, which also releases the producer's claimed slot,
+                // the swapchain images are released and xrEndFrame gets no layers; then stop.
+                if (geometry && source &&
+                    !RecordGeometryPresentation(app, source->index, target.colorOut.Get(), (UINT)target.cw, (UINT)target.ch, stereo, bool(newSrc)))
+                {
+                    Log("RunFrameLoop: FAIL geometry picture resources do not match the producer (source %dx%d, presented %dx%d, fit %s) - ending the VR session",
+                        app.srcW, app.srcH, target.cw, target.ch, app.geometryFit ? "yes" : "no");
+                    source.reset();
+                    app.stop = true;
+                }
+
                 if (source)
                 {
                     // a captured frame comes from another device: make the gfx queue
@@ -8712,12 +9091,7 @@ static void RunFrameLoop(App& app)
                     c.exactLoad = (app.srcW == target.cw && app.srcH == target.ch) ? 1u : 0u;
                     c.fillMode = (uint32_t)app.opt.fillMode;
                     c.mirrorTol = MIRROR_TOL;
-                    if (geometry)
-                    {
-                        if (!RecordGeometryPresentation(app,source->index,target.colorOut.Get(),(UINT)target.cw,(UINT)target.ch,stereo,bool(newSrc)))
-                            throw std::runtime_error("geometry picture resources do not match the producer");
-                    }
-                    else RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c);
+                    if (!geometry) RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c);   // geometry: recorded above
                     if (!curvedScreen)
                         RecordCopyToSwapchain(app, target, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
                     drewSource = true;
@@ -9199,8 +9573,10 @@ static bool FirstSourceFrame(App& app)
     return true;
 }
 
+#ifdef VRX_DIAGNOSTICS
 // Exercise the actual geometry-source startup and upload path without a headset
 // or an OpenXR runtime. Read back each eye and the lighting reference exactly.
+// Test fixtures only: not compiled into a release engine (build.bat --no-diagnostics).
 static bool CheckGeometryFrame(App& app)
 {
     WarpTarget target;
@@ -9219,13 +9595,16 @@ static bool CheckGeometryFrame(App& app)
     const UINT64 sourceBase = (lightBase + lightBytes + 511) & ~UINT64(511);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT sourceFootprint{};
     UINT64 sourceBytes = 0;
-    if (app.geometryGpu)
+    // Compared with the GPU's own source texture (or the fit's output, which a CPU pair
+    // wider than MAX_COLOR_W also goes through), else with the CPU pair itself.
+    const bool fromTexture = app.geometryGpu || app.geometryFit;
+    if (fromTexture)
     {
         const auto sourceDesc = (app.geometryFit?app.geometryFit->Output():app.srcTex[source->index].Get())->GetDesc();
         app.device->GetCopyableFootprints(&sourceDesc, 0, 1, sourceBase, &sourceFootprint, nullptr, nullptr, &sourceBytes);
     }
     ComPtr<ID3D12Resource> readback;
-    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, app.geometryGpu ? sourceBase + sourceBytes : lightBase + lightBytes, D3D12_RESOURCE_FLAG_NONE,
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, fromTexture ? sourceBase + sourceBytes : lightBase + lightBytes, D3D12_RESOURCE_FLAG_NONE,
         D3D12_RESOURCE_STATE_COPY_DEST, readback, nullptr)) return false;
     if (FAILED(app.cmdAlloc[0]->Reset()) || FAILED(app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr))) return false;
     if (!RecordGeometryPresentation(app,source->index,target.colorOut.Get(),(UINT)app.colorW,(UINT)app.colorH,app.opt.doWarp,false)) return false;
@@ -9241,7 +9620,7 @@ static bool CheckGeometryFrame(App& app)
     src.pResource = app.geometryLight.Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     dst.pResource = readback.Get(); dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; dst.PlacedFootprint = lightFootprint;
     app.cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-    if (app.geometryGpu)
+    if (fromTexture)
     {
         GeometryBarrier(app.cmdList.Get(), (app.geometryFit?app.geometryFit->Output():app.srcTex[source->index].Get()), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
         src.pResource = app.geometryFit?app.geometryFit->Output():app.srcTex[source->index].Get();
@@ -9261,7 +9640,7 @@ static bool CheckGeometryFrame(App& app)
         const size_t offset = image == 1 && app.opt.doWarp ? (size_t)app.colorW * 4 : 0;
         for (int y = 0; y < app.colorH; ++y)
             ok = !memcmp(got + footprint.Offset + (size_t)y * footprint.Footprint.RowPitch,
-                app.geometryGpu ? got + sourceFootprint.Offset + (size_t)y * sourceFootprint.Footprint.RowPitch + offset :
+                fromTexture ? got + sourceFootprint.Offset + (size_t)y * sourceFootprint.Footprint.RowPitch + offset :
                 app.geometryFrame.rgba.data() + (size_t)y * app.geometryFrame.header.stride + offset, (size_t)app.colorW * 4) && ok;
     }
     readback->Unmap(0, nullptr);
@@ -9304,6 +9683,7 @@ static bool CheckGeometrySource(App& app)
     if(app.opt.checkGeometryResizes)Log("Geometry resize check: PASS - %d automatic reconnects in one consumer process",app.opt.checkGeometryResizes);
     return true;
 }
+#endif
 
 static void Shutdown(App& app)
 {
@@ -9324,6 +9704,7 @@ static void Shutdown(App& app)
         if (app.cap.pool) app.cap.pool.Close();
     } catch (const winrt::hresult_error&) {}
     if (app.cap.process) { CloseHandle(app.cap.process); app.cap.process = nullptr; }
+    if (app.geometryProcess) { CloseHandle(app.geometryProcess); app.geometryProcess = nullptr; }
 
     DumpDebugMessages(app);
 
@@ -9370,12 +9751,14 @@ int wmain(int argc, wchar_t** wideArgv)
     int rc = 1;
     try
     {
+#ifdef VRX_DIAGNOSTICS
     if (app.opt.checkGeometry)
     {
         const bool ok = CheckGeometrySource(app);
         Shutdown(app);
         return ok ? 0 : 1;
     }
+#endif
     if (app.opt.checkPackage)
     {
         Log("Package check: model %s", winrt::to_string(ModelPath(app.opt.model->file).wstring()).c_str());

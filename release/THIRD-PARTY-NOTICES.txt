@@ -24,7 +24,7 @@ See licenses/DirectML-LICENSE.txt and DirectML-ThirdPartyNotices.txt.
 
 OpenXR loader (Khronos Group; Apache-2.0)
 https://github.com/KhronosGroup/OpenXR-SDK
-Loader copied from the installed SteamVR distribution during packaging.
+The pinned copy in release/vendor, exactly as SteamVR ships it (Valve-signed).
 See licenses/OpenXR-LICENSE.txt. SteamVR itself is not bundled.
 
 Microsoft .NET desktop runtime (self-contained dotnet publish)
@@ -41,8 +41,61 @@ was built by. Distributable code under the Microsoft Windows SDK license terms
 (Windows Kits\10\Licenses\<version>\sdk_license.rtf in the SDK).
 
 Microsoft Visual C++ x64 runtime redistribution files
-App-local runtime DLLs copied from the Visual Studio redistributable directory.
+App-local runtime DLLs copied from the Visual Studio redistributable directory;
+the geometry layer links the runtime statically.
 See https://visualstudio.microsoft.com/license-terms/ for Microsoft terms.
 
+Geometry stereo runtime (folder geometry)
+
+VRX Vulkan layer (geometry\layer\vrx_xgstereo.dll), built from VRX's source
+(bench/native/xgstereo, GPL-3.0). It contains:
+- Khronos Vulkan-Headers (Apache-2.0 OR MIT), commit
+  354fab82dbd91d2526a41ee4dbfff1012a623798, https://github.com/KhronosGroup/Vulkan-Headers
+  (headers, and code generated from its vk.xml registry).
+  See licenses/Vulkan-Headers-LICENSE.txt.
+- Khronos SPIRV-Headers (MIT-style Khronos license), commit
+  04f10f650d514df88b76d25e83db360142c7b174, https://github.com/KhronosGroup/SPIRV-Headers.
+  See licenses/SPIRV-Headers-LICENSE.txt.
+- Code adapted from vrdual (Apache-2.0), Copyright 2026 Maciej Wakula (adderek),
+  https://github.com/adderek/vrdual: VRX's mirror generator and parts of its mirror
+  backend are adapted from vrdual commit b9eba4b5b64815b87e34710e04671e0fb5a2890e,
+  licensed Apache-2.0 by its author in commit c372a91f0febb2e915ac2ae9232b0a238894a39a.
+  VRX has modified these files (bench/native/xgstereo/MIRROR_ORIGIN.md describes how)
+  and distributes them as part of VRX, a GPL-3.0 work; Apache-2.0 is compatible with
+  GPL-3.0. vrdual's NOTICE is reproduced unchanged in licenses/vrdual-NOTICE.txt and
+  the Apache License 2.0 in licenses/vrdual-LICENSE.txt.
+- The Microsoft Visual C++ runtime, linked statically (see below).
+
+DXVK 2.7.1 (zlib/libpng license), Copyright (c) 2017 Philip Rebohle,
+Copyright (c) 2019 Joshua Ashton, Copyright (c) 2019 Robin Kertels,
+Copyright (c) 2023 Jeffrey Ellison. https://github.com/doitsujin/dxvk
+geometry\dxvk\d3d11.dll and dxgi.dll: the unmodified x64 DLLs from the official
+release archive dxvk-2.7.1.tar.gz (SHA-256
+d85ce7c79f57ecd765aaa1b9e7007cb875e6fde9f6d331df799bce73d513ce87). DXVK includes
+libdisplay-info (MIT; licenses/libdisplay-info-LICENSE.txt).
+See licenses/DXVK-LICENSE.txt.
+
+vkd3d-proton 3.0.1 (GNU Lesser General Public License 2.1 or later),
+Copyright 2016-2024 the vkd3d-proton project authors (licenses/vkd3d-proton-AUTHORS.txt).
+https://github.com/HansKristian-Work/vkd3d-proton
+geometry\vkd3d\d3d12.dll and d3d12core.dll: the unmodified x64 DLLs from the official
+release archive vkd3d-proton-3.0.1.tar.zst (SHA-256
+3cf2315522af5e43605ef6d3c41dad91387040bf97199934f3f7ab76caaa2f0c). They are separate
+libraries that VRX does not link to; you may replace them with your own build.
+See licenses/vkd3d-proton-COPYING.txt and licenses/vkd3d-proton-LICENSE.txt (the LGPL).
+Its binaries include dxil-spirv (MIT; licenses/dxil-spirv-LICENSE.txt, with its own
+third-party notices), dxbc-spirv (MIT; licenses/dxbc-spirv-LICENSE.txt) and the
+Khronos Vulkan and SPIR-V headers (licenses above).
+Corresponding source: the v3.0.1 tag, with its git submodules, at
+https://github.com/HansKristian-Work/vkd3d-proton/tree/v3.0.1
+(archive: https://github.com/HansKristian-Work/vkd3d-proton/archive/refs/tags/v3.0.1.tar.gz;
+the submodules are listed in its .gitmodules). For at least three years after this
+release, VRX will also provide that source on request, for no more than the cost of
+providing it: open an issue at https://github.com/pkellyuk/VRX/issues.
+
+The pinned SHA-256 of each shipped DXVK and vkd3d-proton DLL is in
+geometry\geometry-runtime.sha256.
+
+The native DX12 proxy (bench/native/dx12stereo) and MinHook are not shipped.
 Exact packaged file versions and hashes are recorded in FILES.sha256.txt and
 BUILD.txt. This notice does not change the licenses of those components.
