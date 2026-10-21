@@ -19,7 +19,16 @@ estimate and Geometry stereo. Geometry stereo reveals a secondary Geometry
 renderer dropdown. The per-game renderer is remembered when switching methods,
 and is shared with the window chooser's advanced geometry selection.
 
-Recent games appears above running windows. A successful attachment records its
+The chooser separates **Launch a game** from **Attach to something running**.
+Launch contains stopped recent games and installed Steam games; running titles
+appear only as windows under Attach, alongside whole displays. Cards and stereo
+method buttons explicitly label Launch versus Attach. The launch group starts
+collapsed when attachable windows exist, and expanded when no windows exist.
+Geometry's attach hint explains that a reviewed game restart may be needed.
+Running Steam windows retain their Steam identity for that restart path. DWM
+thumbnails hide when their containing group is collapsed.
+
+Recent games appears within Launch. A successful attachment records its
 title, executable, launch arguments and Steam identity in `recent-games.json`.
 History keeps 24 entries, deduplicated by executable, and imports an existing
 user's last game on first use. Panels retain their method/renderer settings after

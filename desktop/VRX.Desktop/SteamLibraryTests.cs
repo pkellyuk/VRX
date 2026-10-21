@@ -57,6 +57,21 @@ internal static class SteamLibraryTests
             Buttons(chooser).First(b=>b.Tag is string tag && tag==StereoPaths.Vkd3d).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }));
         Check(chooser.ShowDialog()==true && chooser.SteamTileCount==1 && chooser.Picked?.Steam==game && chooser.Picked.Backend==StereoPaths.Vkd3d && chooser.Picked.App.FullPath==exe,"installed card launches without a running window and returns the saved stereo route");
+        var runningApp=new RunningApp(123,"game.exe",exe,[new GameWindow(42,"Test gameplay")],null);
+        var recent=new GameHistory.Entry(exe,game.Title,[],game.Directory,game.AppId,DateTimeOffset.UtcNow);
+        var attachChooser=new ChooserWindow([runningApp],[],null,0,null,_=>StereoPaths.Depth,_=>StereoPaths.Vkd3d,[recent],[game],store.Root) {
+            Owner=owner,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
+        };
+        _=owner.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>{
+            attachChooser.UpdateLayout();
+            var image=new RenderTargetBitmap((int)attachChooser.ActualWidth,(int)attachChooser.ActualHeight,96,96,PixelFormats.Pbgra32);image.Render(attachChooser);
+            var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));
+            using(var file=File.Create(Path.Combine(output,"ui-chooser-attach.png"))) encoder.Save(file);
+            var depth=Buttons(attachChooser).First(b=>b.Tag is string tag && tag==StereoPaths.Depth);
+            Check(System.Windows.Automation.AutomationProperties.GetName(depth).StartsWith(Loc.Get("ChooserAttachAction"),StringComparison.Ordinal),"running choices explicitly describe attaching");
+            depth.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        }));
+        Check(attachChooser.ShowDialog()==true && attachChooser.HistoryTileCount==0 && attachChooser.SteamTileCount==0 && attachChooser.WindowTileCount==1 && attachChooser.Picked?.App.Pid==123 && attachChooser.Picked.Steam==game,"running games appear only under Attach and retain their Steam/profile identity");
         // Exercise the actual Steam-wrapper entry point and literal argument
         // forwarding, with a harmless child fixture rather than a real game.
         string childOutput=Path.Combine(root,"child.json");

@@ -2452,7 +2452,7 @@ public partial class MainWindow : Window
             }
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
                 advancedTest.UpdateLayout();
-                var expander=Controls<Expander>(advancedTest).First(); expander.IsExpanded=true; advancedTest.UpdateLayout();
+                var expander=Controls<Expander>(advancedTest).First(e=>Equals(e.Header,Loc.Get("GeometryAdvanced"))); expander.IsExpanded=true; advancedTest.UpdateLayout();
                 var renderers=Controls<ComboBox>(expander).Single();
                 if(renderers.SelectedItem is not ComboBoxItem rememberedRenderer || (string)rememberedRenderer.Tag!=StereoPaths.Vulkan) { advancedTest.Close(); return; }
                 if(!renderers.Items.Cast<ComboBoxItem>().Select(item=>(string)item.Tag).SequenceEqual(new[]{StereoPaths.GeometryAuto,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Vkd3d})) { advancedTest.Close(); return; }

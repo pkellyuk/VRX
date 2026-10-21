@@ -57,26 +57,32 @@ public sealed partial class ChooserWindow : Window
             var app=apps.FirstOrDefault(a=>a.CanAttach && string.Equals(a.FullPath,entry.Executable,StringComparison.OrdinalIgnoreCase)) ??
                 new RunningApp(0,System.IO.Path.GetFileName(entry.Executable),entry.Executable,[],RunningApps.IconFor(entry.Executable));
             var window=app.Windows.FirstOrDefault(RunningApps.IsChooserWindow) ?? new GameWindow(0,entry.Title);
+            if(app.Pid>0) continue; // Running games belong only in Attach.
             HistoryTiles.Children.Add(MakeTile(new Choice(app,window,backendFor?.Invoke(app) ?? StereoPaths.Auto,rendererFor?.Invoke(app),entry),null,false));
         }
         HistoryHeader.Visibility=HistoryTiles.Children.Count>0?Visibility.Visible:Visibility.Collapsed;
         foreach(var game in steamGames ?? []) {
             string key=SteamLibrary.ProfileKey(dataRoot!,game);
             var app=SteamLibrary.Running(game,apps) ?? new RunningApp(0,game.Title,key,[],System.IO.File.Exists(key)?RunningApps.IconFor(key):null);
+            if(app.Pid>0) continue;
             var window=app.Windows.FirstOrDefault(RunningApps.IsChooserWindow) ?? new GameWindow(0,game.Title);
             SteamTiles.Children.Add(MakeTile(new Choice(app,window,backendFor?.Invoke(app) ?? StereoPaths.Auto,rendererFor?.Invoke(app),Steam:game),null,false));
         }
         SteamHeader.Visibility=steamGames!=null?Visibility.Visible:Visibility.Collapsed;
         SteamHint.Visibility=SteamHeader.Visibility;
-        SteamHint.Text=!string.IsNullOrEmpty(steamWarning)?Loc.Get("SteamDiscoveryPartial"):SteamTiles.Children.Count==0?Loc.Get("SteamNoGames"):Loc.Get("SteamLibraryHint");
+        SteamHint.Text=!string.IsNullOrEmpty(steamWarning)?Loc.Get("SteamDiscoveryPartial"):SteamTiles.Children.Count==0?Loc.Get(steamGames?.Count>0?"ChooserSteamAllRunning":"SteamNoGames"):Loc.Get("SteamLibraryHint");
+        LaunchSection.Visibility=HistoryTiles.Children.Count>0 || steamGames!=null?Visibility.Visible:Visibility.Collapsed;
 
         // Windows, most recently used first (Windows' z-order), each with its app's icon.
         var order = RunningApps.ZOrder();
         var windows = apps.Where(a => a.CanAttach && !ScreenSources.IsScreen(a))
             .SelectMany(a => a.Windows.Where(RunningApps.IsChooserWindow).Select(w => new Choice(a, w)))
             .OrderBy(c => order.GetValueOrDefault(c.Window.Handle, int.MaxValue)).ToList();
-        foreach (var choice in windows)
-            WindowTiles.Children.Add(MakeTile(choice with { Backend = backendFor?.Invoke(choice.App) ?? StereoPaths.Depth, Renderer = rendererFor?.Invoke(choice.App) }, null, choice.Window.Handle == currentWindow));
+        foreach (var choice in windows) {
+            var steamGame=steamGames?.FirstOrDefault(g=>SteamLibrary.Inside(choice.App.FullPath,g.Directory));
+            WindowTiles.Children.Add(MakeTile(choice with { Backend = backendFor?.Invoke(choice.App) ?? StereoPaths.Depth, Renderer = rendererFor?.Invoke(choice.App),Steam=steamGame }, null, choice.Window.Handle == currentWindow));
+        }
+        LaunchSection.IsExpanded=windows.Count==0;
         NoWindows.Visibility = windows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         if(HistoryTiles.Children.Count>0 || SteamTiles.Children.Count>0) NoWindows.Text=Loc.Get("ChooserNoWindowsHistory");
 
@@ -130,16 +136,19 @@ public sealed partial class ChooserWindow : Window
             RunningApps.IsMinimized(choice.Window.Handle) ? Loc.Format("ChooserMinimized", choice.App.Name) : choice.App.Name;
         bool missing=choice.History!=null && !System.IO.File.Exists(choice.App.FullPath);
         if(choice.History!=null) detail=Loc.Get(missing?"HistoryMissing":choice.App.Pid>0?"HistoryRunning":"HistoryLaunch");
-        if(choice.Steam!=null) detail=Loc.Get(choice.App.Pid>0?"HistoryRunning":"SteamLaunch");
+        if(choice.Steam!=null) detail=choice.App.Pid>0?Loc.Format("ChooserRunningWindow",choice.Window.Title):Loc.Get("SteamLaunch");
         var caption = new StackPanel { Width = PictureWidth, Margin = new Thickness(0, 8, 0, 0) };
         caption.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = title });
         caption.Children.Add(new TextBlock { Text = detail, FontSize = 12, Foreground = (Brush)FindResource("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
+        bool launches=screen==null && choice.App.Pid==0 && (choice.History!=null || choice.Steam!=null);
+        string action=Loc.Get(screen!=null?"ChooserAttachDisplay":launches?"ChooserLaunchAction":"ChooserAttachAction");
+        caption.Children.Add(new TextBlock {Text=action,Foreground=(Brush)FindResource("Accent"),FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,8,0,0)});
         var content = new StackPanel();
         content.Children.Add(picture);
         content.Children.Add(caption);
         var button = new Button { Style = (Style)FindResource("Tile"), Content = content, Tag = current ? "Current" : null };
         if(missing) { button.IsEnabled=false; button.ToolTip=Loc.Get("ErrorHistoryMissing"); }
-        System.Windows.Automation.AutomationProperties.SetName(button, title);
+        System.Windows.Automation.AutomationProperties.SetName(button, action+": "+title);
         button.Click += (_, _) => Pick(screen==null?choice with {Backend=StereoPaths.Mode(selected)==StereoPaths.GeometryAuto?renderer:choice.Backend,Renderer=renderer}:choice);
         tiles.Add(new Tile { Choice = choice, Picture = picture, Screen = screen, Snapshot = snapshot });
         if (screen != null) return button;
@@ -153,13 +162,13 @@ public sealed partial class ChooserWindow : Window
         int column=0;
         foreach (string mode in new[] { StereoPaths.Auto, StereoPaths.Depth, StereoPaths.GeometryAuto }) {
             var route = new Button {
-                Content = new TextBlock { Text = StereoPaths.Label(mode), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }, Padding = new Thickness(4,6,4,6), Margin = new Thickness(2), FontSize = 12,
+                Content = new TextBlock { Text = Loc.Get(launches?"ChooserRouteLaunch":"ChooserRouteAttach")+"\n"+StereoPaths.Label(mode), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }, Padding = new Thickness(4,6,4,6), Margin = new Thickness(2), FontSize = 12,
                 Tag = mode==StereoPaths.GeometryAuto?renderer:mode,
                 IsEnabled = !missing,
                 ToolTip = Loc.Get(mode==StereoPaths.Auto?"PathAutoTip":mode==StereoPaths.Depth?"PathDepthTip":"PathGeometryTip"),
                 FontWeight = StereoPaths.Mode(selected)==mode ? FontWeights.Bold : FontWeights.Normal
             };
-            System.Windows.Automation.AutomationProperties.SetName(route, Loc.Format("PathForWindow", StereoPaths.Label(mode), title));
+            System.Windows.Automation.AutomationProperties.SetName(route, action+": "+Loc.Format("PathForWindow", StereoPaths.Label(mode), title));
             Grid.SetColumn(route,column++);
             route.Click += (_,_) => Pick(choice with { Backend = (string)route.Tag, Renderer=renderer }); routes.Children.Add(route);
             if(mode==StereoPaths.GeometryAuto) geometryButton=route;
@@ -268,6 +277,13 @@ public sealed partial class ChooserWindow : Window
         viewport = Rect.Transform(viewport, toDevice);
         foreach (var tile in tiles.Where(t => t.Thumbnail != 0))
         {
+            if(!tile.Picture.IsVisible) {
+                if(tile.Visible) {
+                    var hidden=new Native.ThumbnailProperties {Flags=Native.ThumbVisible,Visible=false};
+                    Native.DwmUpdateThumbnailProperties(tile.Thumbnail,ref hidden);tile.Visible=false;
+                }
+                continue;
+            }
             Rect box = Rect.Transform(tile.Picture.TransformToAncestor(this).TransformBounds(new Rect(0, 0, PictureWidth, PictureHeight)), toDevice);
             double scale = Math.Min(box.Width / tile.SourceWidth, box.Height / tile.SourceHeight);
             double width = tile.SourceWidth * scale, height = tile.SourceHeight * scale;
