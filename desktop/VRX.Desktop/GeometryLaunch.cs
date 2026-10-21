@@ -116,6 +116,42 @@ public static class GeometryLaunch
             } finally { mutex.ReleaseMutex(); }
         } catch(Exception ex) when(ex is IOException or WaitHandleCannotBeOpenedException or UnauthorizedAccessException or ArgumentException) { return false; }
     }
+    // How an attach (Attach / Play, a running window in the chooser, auto-attach) plays a game
+    // that is already running. True geometry needs its Vulkan layer and translation DLLs loaded
+    // when the game starts, so only a run VRX started can give a geometry stream.
+    public enum AttachStereo
+    {
+        Depth,                  // estimated depth: the method chosen, Easy, a display, or "Use estimated depth"
+        DepthWithGeometryHint,  // true geometry chosen but no VRX geometry stream: depth now, a restart is offered
+        GeometryStream,         // a VRX-started geometry run with a ready stream: attach to it
+        GeometryLaunched,       // the run VRX has just launched: wait for its first frame
+    }
+
+    // The attach decision, with no side effects: it never restarts or launches anything.
+    // streamReady: a ready stream of a geometry run VRX started for this very process
+    // (ExistingSession). launchedRun: VRX launched this run just now (a geometry launch).
+    public static AttachStereo DecideAttach(Profile profile,bool expert,bool depthOnly,bool wholeDisplay,bool launchedRun,bool streamReady)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        Debug.WriteLine($"[Geometry attach] DecideAttach enter: method {profile.SelectedStereoBackend}, geometry {profile.GeometryStereo}, expert {expert}, depth only {depthOnly}, display {wholeDisplay}, launched {launchedRun}, stream {streamReady}");
+        if(!profile.GeometryStereo || !expert || depthOnly || wholeDisplay)
+        {
+            Debug.WriteLine("[Geometry attach] DecideAttach exit: Depth");
+            return AttachStereo.Depth;
+        }
+        if(launchedRun)
+        {
+            Debug.WriteLine("[Geometry attach] DecideAttach exit: GeometryLaunched");
+            return AttachStereo.GeometryLaunched;
+        }
+        if(streamReady)
+        {
+            Debug.WriteLine("[Geometry attach] DecideAttach exit: GeometryStream");
+            return AttachStereo.GeometryStream;
+        }
+        Debug.WriteLine("[Geometry attach] DecideAttach exit: DepthWithGeometryHint (no VRX geometry stream for this process)");
+        return AttachStereo.DepthWithGeometryHint;
+    }
     public static string? ExistingSession(RunningApp app,Profile profile,string dataRoot) {
         var candidates=new List<string>{profile.GeometrySession,StereoPaths.Session(app.FullPath)};
         foreach(var folder in RunFolders(dataRoot)) {

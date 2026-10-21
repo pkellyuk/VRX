@@ -268,12 +268,12 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ChooserLaunchSection" xml:space="preserve"><value>Launch a game</value></data>
   <data name="ChooserLaunchHint" xml:space="preserve"><value>These games are not running. Launch starts the game with the selected stereo method, then connects VRX.</value></data>
   <data name="ChooserAttachSection" xml:space="preserve"><value>Attach to something running</value></data>
-  <data name="ChooserAttachHint" xml:space="preserve"><value>Connect to a window or display that is already running.</value></data>
+  <data name="ChooserAttachHint" xml:space="preserve"><value>Connect to a window or display that is already running. A running game plays with estimated depth unless VRX started it with true geometry.</value></data>
   <data name="ChooserLaunchAction" xml:space="preserve"><value>Launch game →</value></data>
+  <data name="ChooserLaunchGeometryAction" xml:space="preserve"><value>Play with true geometry →</value></data>
   <data name="ChooserAttachAction" xml:space="preserve"><value>Attach to window →</value></data>
   <data name="ChooserAttachDisplay" xml:space="preserve"><value>Attach to display →</value></data>
   <data name="ChooserRouteLaunch" xml:space="preserve"><value>Launch:</value></data>
-  <data name="ChooserRouteAttach" xml:space="preserve"><value>Attach:</value></data>
   <data name="ChooserSteamAllRunning" xml:space="preserve"><value>Your installed Steam games are already running. Find their windows in the attach section.</value></data>
   <data name="ChooserWindows" xml:space="preserve"><value>Windows</value></data>
   <data name="ChooserNoWindows" xml:space="preserve"><value>No windows to show. Start your game, then choose again.</value></data>
@@ -300,13 +300,16 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorGeometrySession" xml:space="preserve"><value>Geometry session must contain 1–64 letters, numbers, hyphens or underscores.</value></data>
   <data name="ErrorGeometryNeedsGame" xml:space="preserve"><value>Geometry stereo needs a compatible game and geometry stream. Select its game window instead of a whole display.</value></data>
   <data name="StereoPath" xml:space="preserve"><value>Stereo method</value></data>
+  <data name="StereoMethodNote" xml:space="preserve"><value>True geometry applies when VRX starts the game. Attaching to a game that is already running uses estimated depth.</value></data>
+  <data name="GeometryAttachDepthHint" xml:space="preserve"><value>True geometry needs VRX to start the game.</value></data>
+  <data name="GeometryRestartLink" xml:space="preserve"><value>Restart with true geometry</value></data>
   <data name="PathDepth" xml:space="preserve"><value>Estimated depth</value></data>
   <data name="PathVulkan" xml:space="preserve"><value>Native Vulkan</value></data>
   <data name="PathDxvk" xml:space="preserve"><value>DirectX 11 → Vulkan (DXVK)</value></data>
   <data name="PathDx12" xml:space="preserve"><value>DX12 · unavailable</value></data>
   <data name="PathDx12Unavailable" xml:space="preserve"><value>Native DirectX 12 geometry stereo is under development and is not available in this chooser yet. Choose depth estimation or DirectX 12 → Vulkan for a DX12 game.</value></data>
-  <data name="PathDepthTip" xml:space="preserve"><value>Play this window with VRX's estimated depth. Works with every game; no restart needed.</value></data>
-  <data name="PathGeometryTip" xml:space="preserve"><value>Experimental: the game draws both eyes itself. Shows a warning first; games with anti-cheat are refused. May need a game restart.</value></data>
+  <data name="PathDepthTip" xml:space="preserve"><value>Launch the game and play it with VRX's estimated depth. Works with every game.</value></data>
+  <data name="PathGeometryTip" xml:space="preserve"><value>Experimental: VRX starts the game and the game draws both eyes itself. Shows a warning first; games with anti-cheat are refused.</value></data>
   <data name="PathForWindow" xml:space="preserve"><value>{0} for {1}</value></data>
   <data name="GeometryRestartTitle" xml:space="preserve"><value>Try {0} stereo</value></data>
   <data name="GeometryRestartIntro" xml:space="preserve"><value>Restart {0} to try {1} geometry stereo?</value></data>
@@ -332,7 +335,6 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorGeometryFolder" xml:space="preserve"><value>Choose an existing working folder.</value></data>
   <data name="ErrorGeometrySteamId" xml:space="preserve"><value>The Steam App ID must be empty or contain digits only.</value></data>
   <data name="ErrorGeometryTuning" xml:space="preserve"><value>3D strength must be between 0.001 and 4, and screen depth between 0 and 0.01.</value></data>
-  <data name="StatusGeometryManualRestart" xml:space="preserve"><value>This saved stereo method needs a game restart. Use Choose or Attach / Play to review it; auto-attach will not restart your game.</value></data>
   <data name="StatusGeometryPreparing" xml:space="preserve"><value>Preparing the geometry stereo attempt…</value></data>
   <data name="StatusGeometryCancelled" xml:space="preserve"><value>Game restart cancelled. The game was left running.</value></data>
   <data name="StatusGeometryRestarting" xml:space="preserve"><value>Restarting the selected game with geometry stereo…</value></data>

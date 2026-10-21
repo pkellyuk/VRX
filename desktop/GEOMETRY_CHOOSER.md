@@ -1,11 +1,26 @@
 # Stereo methods in the window chooser
 
-In **Expert**, each game tile offers Estimated depth and True geometry (experimental);
-clicking the picture keeps that executable's saved selection. In **Easy** the tiles
-have no method buttons, renderer list or Steam setup review: a pick plays with
-estimated depth now, without changing the game's saved method, and Attach / Play and
-auto-attach also use depth. True geometry is only reachable in Expert, per game,
-never as a global default. Whole displays use depth capture.
+In **Expert**, each stopped game's tile (recent games, installed Steam games) offers
+launching with Estimated depth or True geometry (experimental); clicking the picture
+launches with that executable's saved selection, and reads "Play with true geometry"
+when that is true geometry. In **Easy** the tiles have no method buttons, renderer list
+or Steam setup review: a pick plays with estimated depth now, without changing the
+game's saved method, and Attach / Play and auto-attach also use depth. True geometry is
+only reachable in Expert, per game, never as a global default. Whole displays use depth
+capture.
+
+True geometry applies when VRX starts the game: the Vulkan layer and translation DLLs
+must be loaded at launch. Attaching to a game that is already running (Attach / Play, a
+running window's tile in the chooser, auto-attach) therefore follows one rule
+(`GeometryLaunch.DecideAttach`): if VRX started that very process with true geometry
+and its stream is ready (`ExistingSession`), VRX attaches to the stream; otherwise it
+plays with estimated depth, even when the game's saved method is true geometry, and the
+saved method is not changed. In Expert the status line then adds "True geometry needs
+VRX to start the game." with a **Restart with true geometry** link, until that session
+ends or another game is chosen. The link is the only way to restart a running game: it
+stops the depth session and goes through the anti-cheat check, the red warning and the
+restart dialog (a Steam game restarts through its Steam launch). An attach never shows
+the restart dialog. The Expert Stereo method setting says this in one line.
 
 True geometry shows a prominent red warning every time it is turned on for a game
 (choosing it in the main window or a chooser tile) and before every geometry launch
@@ -23,8 +38,9 @@ Auto always means estimated depth, for every game, including games with a built-
 tested geometry profile: true geometry is only used when it was chosen for that game.
 A tested profile is shown as a suggestion next to the geometry choice ("Tested
 true-geometry settings are available for this game") and only fills in the geometry
-settings. Background auto-attach only connects an existing stereo stream or uses
-depth: it never closes a game or installs a graphics DLL.
+settings. Background auto-attach follows the attach rule above: it only connects a VRX
+geometry stream or uses depth, and never closes, restarts or launches a game or
+installs a graphics DLL.
 
 Advanced geometry settings offers Automatic renderer, Native Vulkan, DirectX 11
 through DXVK, and DirectX 12 through vkd3d-proton. The automatic renderer reads the
@@ -45,12 +61,13 @@ and is shared with the window chooser's advanced geometry selection.
 
 The chooser separates **Launch a game** from **Attach to something running**.
 Launch contains stopped recent games and installed Steam games; running titles
-appear only as windows under Attach, alongside whole displays. Cards and stereo
-method buttons explicitly label Launch versus Attach. The launch group starts
+appear only as windows under Attach, alongside whole displays. Cards explicitly label
+Launch versus Attach. Running windows only attach, with the rule above: they have no
+stereo method buttons, geometry options or restart. The launch group starts
 collapsed when attachable windows exist, and expanded when no windows exist.
-Geometry's attach hint explains that a reviewed game restart may be needed.
-Running Steam windows retain their Steam identity for that restart path. DWM
-thumbnails hide when their containing group is collapsed.
+The attach group's hint says a running game plays with estimated depth unless VRX
+started it with true geometry. DWM thumbnails hide when their containing group is
+collapsed.
 
 Recent games appears within Launch. A successful attachment records its
 title, executable, launch arguments and Steam identity in `recent-games.json`. The
@@ -104,8 +121,9 @@ normally (no error box). Launch results are matched by nonce;
 timeouts point to Steam launch options/dialogs rather than claiming geometry works.
 Once setup has produced a ready stream, subsequent cold launches reuse the saved
 settings without another review, but the red warning and the anti-cheat check still
-come before every launch. Restarting a running game still requires the
-normal launch review and a graceful close; the game is never forcibly killed.
+come before every launch. A running game is restarted only from **Restart with true
+geometry**, through the normal launch review and a graceful close; the game is never
+forcibly killed.
 
 After a geometry launch VRX attaches to the run it just started, waiting up to a
 minute (with a countdown) for its first frame; a stalled loading screen gives an
@@ -123,10 +141,10 @@ deleted). The Installed Steam games section is hidden when Steam is not installe
 Selecting a stopped history game launches it directly. Geometry's launch review
 prepares the selected backend before the first process starts, so there is no
 baseline launch followed by a restart. Depth uses Steam's launch URI for Steam
-games or the recorded executable/arguments otherwise. Already-running games reuse
-their window. The chooser is also available while VR is playing: cancelling it
-keeps the current session, and choosing a replacement stops that viewer before
-attaching or reviewing a geometry restart.
+games or the recorded executable/arguments otherwise. A game that has started meanwhile is
+attached to (with the attach rule), not restarted. The chooser is also available while
+VR is playing: cancelling it keeps the current session, and choosing a replacement
+stops that viewer before attaching or launching.
 
 The System Shock remake Steam profile (482400) uses vkd3d-proton with separation
 0.5, convergence 0.002, and `-dx12 -norhithread`. The layer shifts clip space by

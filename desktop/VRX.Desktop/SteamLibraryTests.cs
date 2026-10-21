@@ -79,11 +79,14 @@ internal static class SteamLibraryTests
             var image=new RenderTargetBitmap((int)attachChooser.ActualWidth,(int)attachChooser.ActualHeight,96,96,PixelFormats.Pbgra32);image.Render(attachChooser);
             var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));
             using(var file=File.Create(Path.Combine(output,"ui-chooser-attach.png"))) encoder.Save(file);
-            var depth=Buttons(attachChooser).First(b=>b.Tag is string tag && tag==StereoPaths.Depth);
-            Check(System.Windows.Automation.AutomationProperties.GetName(depth).StartsWith(Loc.Get("ChooserAttachAction"),StringComparison.Ordinal),"running choices explicitly describe attaching");
-            depth.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            // A running Steam game only attaches: no stereo method buttons, no Steam restart route.
+            Check(!Buttons(attachChooser).Any(b=>b.Tag is string tag && StereoPaths.Valid(tag)),"running windows have no stereo method buttons");
+            var tile=Buttons(attachChooser).First(b=>b.Style==attachChooser.FindResource("Tile"));
+            Check(System.Windows.Automation.AutomationProperties.GetName(tile).StartsWith(Loc.Get("ChooserAttachAction"),StringComparison.Ordinal),"running choices explicitly describe attaching");
+            tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }));
-        Check(attachChooser.ShowDialog()==true && attachChooser.HistoryTileCount==0 && attachChooser.SteamTileCount==0 && attachChooser.WindowTileCount==1 && attachChooser.Picked?.App.Pid==123 && attachChooser.Picked.Steam==game,"running games appear only under Attach and retain their Steam/profile identity");
+        Check(attachChooser.ShowDialog()==true && attachChooser.HistoryTileCount==0 && attachChooser.SteamTileCount==0 && attachChooser.WindowTileCount==1 && attachChooser.Picked?.App.Pid==123 &&
+            attachChooser.Picked.Steam==null && attachChooser.Picked.Backend==null && !attachChooser.Picked.Restart,"running games appear only under Attach and only attach (the saved method decides; never a Steam restart)");
 #if DEBUG
         // Exercise the actual Steam-wrapper entry point and literal argument
         // forwarding, with a harmless child fixture rather than a real game.

@@ -89,6 +89,7 @@
         <ComboBoxItem Tag="depth" Content="{l:Tr PathDepth}"/>
         <ComboBoxItem Tag="geometry" Content="{l:Tr PathGeometry}"/>
        </ComboBox>
+       <TextBlock Text="{l:Tr StereoMethodNote}" Style="{StaticResource Hint}" Margin="0,6,0,0"/>
        <!-- Shown whenever true geometry is chosen for this game (GeometryWarning). -->
        <Border x:Name="GeometryWarningBanner" Background="{StaticResource WarningBack}" BorderBrush="{StaticResource WarningEdge}" BorderThickness="2" CornerRadius="6" Padding="12,8" Margin="0,8,0,0" Visibility="Collapsed">
         <TextBlock Text="{l:Tr GeometryWarningText}" Foreground="{StaticResource WarningInk}" FontWeight="SemiBold" TextWrapping="Wrap"/>
@@ -316,7 +317,12 @@
 
   <!-- Status line -->
   <Border Grid.Row="3" BorderBrush="{StaticResource CardEdge}" BorderThickness="0,1,0,0" Padding="2,10,2,0" Margin="0,8,0,0">
-   <TextBlock x:Name="Status" Text="{l:Tr StatusReady}" TextWrapping="Wrap" Foreground="{StaticResource Soft}"/>
+   <StackPanel>
+    <TextBlock x:Name="Status" Text="{l:Tr StatusReady}" TextWrapping="Wrap" Foreground="{StaticResource Soft}"/>
+    <!-- A running game whose method is true geometry plays with depth when VRX did not start
+         it; this offers the deliberate restart (MainWindow.GeometryRestartClick). -->
+    <TextBlock x:Name="GeometryRestartHint" TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0" Visibility="Collapsed"><Run Text="{l:Tr GeometryAttachDepthHint}"/> <Hyperlink x:Name="GeometryRestartLink" Click="GeometryRestartClick" Foreground="{StaticResource Accent}"><Run Text="{l:Tr GeometryRestartLink}"/></Hyperlink></TextBlock>
+   </StackPanel>
   </Border>
  </Grid>
 

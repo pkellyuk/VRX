@@ -109,6 +109,7 @@ public partial class MainWindow : Window
             autoMachine.MarkSpent(sessionWindow);
             sessionWindow = 0;
             playing = false;
+            HideGeometryRestartHint();         // the offer belongs to the session that ended
             shown = SourceShown.Game;
             // The renderer's own reason stays English (engine logs are not translated).
             sessionError = code == 0 ? "" : Loc.Format("StatusEngineFailed",
@@ -179,6 +180,9 @@ public partial class MainWindow : Window
         if (saveTimer.IsEnabled) SaveAndApply();
         profile = null; SetSettingsEnabled(false);
         var app = AppList.SelectedItem as RunningApp;
+        // Another game chosen: the restart offer was for the previous one.
+        if (geometryRestartTarget is { } offered && (app == null || app.Pid != offered.App.Pid || !string.Equals(app.FullPath, offered.App.FullPath, StringComparison.OrdinalIgnoreCase)))
+            HideGeometryRestartHint();
         WindowList.ItemsSource = app?.Windows;
         WindowList.SelectedIndex = app?.Windows.Count > 0 ? 0 : -1;
         PathLabel.Text = ScreenSources.IsScreen(app) ? Loc.Get("PathWholeScreen") : app?.FullPath.Length > 0 ? app.FullPath : Loc.Get("PathNoAccess");
@@ -879,7 +883,11 @@ public partial class MainWindow : Window
             var running=SteamLibrary.Running(game,RunningApps.List(false),binding?.Executable);
             bool geometry=saved.GeometryStereo && !depthOnly && appSettings.IsExpert;
             string executable=binding?.Executable ?? "";
-            if(geometry && (picked.ReviewSteamSetup || running==null || GeometryLaunch.ExistingSession(running,saved,store.Root)==null)) {
+            // A game that is already running is only restarted for "Restart with true geometry"
+            // (picked.Restart); otherwise it is attached to (StartSession decides the method).
+            bool mayLaunch=running==null || picked.Restart;
+            System.Diagnostics.Debug.WriteLine($"[Steam] StartFromSteam: {game.Title} ({game.AppId}), running pid {running?.Pid}, geometry {geometry}, restart {picked.Restart}, may launch {mayLaunch}");
+            if(geometry && mayLaunch && (picked.ReviewSteamSetup || running==null || GeometryLaunch.ExistingSession(running,saved,store.Root)==null)) {
                 if(executable.Length==0) {
                     var select=new Microsoft.Win32.OpenFileDialog {Title=Loc.Get("SteamSelectExecutable"),InitialDirectory=game.Directory,Filter=Loc.Get("FilterGameExecutable"),CheckFileExists=true};
                     if(select.ShowDialog(this)!=true) return;
@@ -898,7 +906,7 @@ public partial class MainWindow : Window
                 geometry=consent==GeometryConsent.Proceed;
                 depthOnly=!geometry;
             }
-            if(geometry && (picked.ReviewSteamSetup || running==null || GeometryLaunch.ExistingSession(running,saved,store.Root)==null)) {
+            if(geometry && mayLaunch && (picked.ReviewSteamSetup || running==null || GeometryLaunch.ExistingSession(running,saved,store.Root)==null)) {
                 saved.ExecutablePath=executable; TestedStereoProfiles.Apply(saved);
                 saved.GeometrySteamAppId=game.AppId;
                 if(string.IsNullOrEmpty(saved.GeometryWorkingDirectory)) saved.GeometryWorkingDirectory=game.Directory;
@@ -1034,16 +1042,22 @@ public partial class MainWindow : Window
         WindowList.SelectedItem = window;
         return profile != null && ReferenceEquals(WindowList.SelectedItem, window);
     }
-    // Attach / Play, for the button and for auto-attach alike. True when the engine started.
+    // Attach / Play, for the button, a running window in the chooser and auto-attach alike.
+    // True when the engine started. It never restarts a game, except for restartForGeometry.
     // depthOnly: play with estimated depth now (Easy, or "Use estimated depth" at the warning)
     // without changing the game's saved method. launched: the geometry run VRX just started
     // for this game - attach to it, waiting for its first frame, never falling back to depth.
-    private async Task<bool> StartSession(bool automatic = false, bool depthOnly = false, GeometryLaunch.Run? launched = null)
+    // A running game whose saved method is true geometry, with no stream from a geometry run
+    // VRX started, plays with depth (method unchanged) and the status line offers a restart.
+    // restartForGeometry: that offer was taken - the anti-cheat check, the red warning and the
+    // restart dialog, then the game restarts with geometry.
+    private async Task<bool> StartSession(bool automatic = false, bool depthOnly = false, GeometryLaunch.Run? launched = null, bool restartForGeometry = false)
     {
         if (starting || stopping || closing || choosing) return false;
         if (!SaveAndApply() || AppList.SelectedItem is not RunningApp app || WindowList.SelectedItem is not GameWindow window) return false;
-        System.Diagnostics.Debug.WriteLine($"[Session] StartSession enter: {app.FullPath}, automatic {automatic}, depth only {depthOnly}, launched run {launched?.Pid}");
-        bool started = false;
+        System.Diagnostics.Debug.WriteLine($"[Session] StartSession enter: {app.FullPath}, automatic {automatic}, depth only {depthOnly}, launched run {launched?.Pid}, restart for geometry {restartForGeometry}");
+        HideGeometryRestartHint();
+        bool started = false, offerRestart = false;
         bool refreshWasRunning = refreshTimer.IsEnabled; refreshTimer.Stop();
         starting = true; startCancellation = new CancellationTokenSource(); UpdateButtons();
         try
@@ -1054,46 +1068,26 @@ public partial class MainWindow : Window
             if (profile!.EffectiveStereoBackend == StereoPaths.Dx12) throw new InvalidOperationException(Loc.Get("PathDx12Unavailable"));
 #endif
             // Auto is estimated depth, so geometry here was chosen for this game - and only
-            // Expert uses it (Easy always plays with depth).
-            bool geometry = profile!.GeometryStereo && !depthOnly && appSettings.IsExpert;
-            if (geometry) {
-                if (window.Monitor >= 0) throw new InvalidOperationException(Loc.Get("ErrorGeometryNeedsGame"));
-                var token = startCancellation.Token;
-                string? existing = launched != null ? await WaitForFirstFrame(launched, token) : GeometryLaunch.ExistingSession(app,profile,store.Root);
-                if (existing != null) { profile.GeometrySession = existing; GeometrySessionText.Text = existing; store.Save(profile); }
-                else {
-                    if (automatic) throw new InvalidOperationException(Loc.Get("StatusGeometryManualRestart"));
-                    // Restarting the game with geometry: the red warning first, every time.
-                    var consent = AskGeometry(app.FullPath, app.Pid, GameDisplayName(window.Title, app.Name), launch: true);
-                    if (consent == GeometryConsent.Cancel) return false;
-                    geometry = consent == GeometryConsent.Proceed;
-                }
-                if (geometry && existing == null) {
-                    Status.Text = Loc.Get("StatusGeometryPreparing");
-                    var plan = await GeometryLaunch.Prepare(app, profile, store.Root, text => Status.Text = text, token);
-                    token.ThrowIfCancellationRequested();
-                    var dialog = new GeometryLaunchWindow(plan,profile) { Owner = this };
-                    if (dialog.ShowDialog() != true) { Status.Text = Loc.Get("StatusGeometryCancelled"); return false; }
-                    plan = dialog.Plan;
-                    profile.GeometryLaunchArguments = GeometryLaunch.SavedArguments(plan.Arguments);
-                    profile.GeometryWorkingDirectory = plan.WorkingDirectory; profile.GeometrySteamAppId = plan.SteamAppId;
-                    profile.GeometrySeparation = dialog.Separation; profile.GeometryConvergence = dialog.Convergence;
-                    profile.GeometrySession = plan.Session; GeometrySessionText.Text = plan.Session; store.Save(profile);
-                    Status.Text = Loc.Get("StatusGeometryRestarting");
-                    var run = await GeometryLaunch.Restart(plan, profile, store.Root, text => Status.Text = text, token);
-                    var until = Environment.TickCount64 + 15000;
-                    RunningApp? relaunched = null;
-                    while (Environment.TickCount64 < until && GeometryLaunch.IsRunning(run)) {
-                        token.ThrowIfCancellationRequested();
-                        relaunched = RunningApps.List(false).FirstOrDefault(a => a.Pid == run.Pid && string.Equals(a.FullPath,run.Executable,StringComparison.OrdinalIgnoreCase) && a.CanAttach);
-                        if (relaunched != null) break;
-                        await Task.Delay(150,token);
-                    }
-                    if (relaunched == null || !SelectChoice(new ChooserWindow.Choice(relaunched,relaunched.Windows[0],plan.Backend)))
-                        throw new InvalidOperationException(Loc.Get("StatusChoiceGone"));
-                    app = (RunningApp)AppList.SelectedItem; window = (GameWindow)WindowList.SelectedItem;
-                }
+            // Expert uses it (Easy always plays with depth). A running game plays with geometry
+            // only when VRX started it with geometry and its stream is ready; otherwise depth,
+            // with a hint offering a deliberate restart (restartForGeometry is that request).
+            var token = startCancellation.Token;
+            bool wholeDisplay = window.Monitor >= 0;
+            bool wantsGeometry = profile!.GeometryStereo && !depthOnly && appSettings.IsExpert && !wholeDisplay;
+            string? existing = wantsGeometry && launched == null ? GeometryLaunch.ExistingSession(app, profile, store.Root) : null;
+            var decision = GeometryLaunch.DecideAttach(profile, appSettings.IsExpert, depthOnly, wholeDisplay, launched != null, existing != null);
+            System.Diagnostics.Debug.WriteLine($"[Session] attach decision {decision}, existing stream {existing ?? "none"}, restart requested {restartForGeometry}");
+            bool geometry = decision is GeometryLaunch.AttachStereo.GeometryStream or GeometryLaunch.AttachStereo.GeometryLaunched;
+            offerRestart = decision == GeometryLaunch.AttachStereo.DepthWithGeometryHint && !restartForGeometry;
+            if (decision == GeometryLaunch.AttachStereo.GeometryLaunched) existing = await WaitForFirstFrame(launched!, token);
+            if (decision == GeometryLaunch.AttachStereo.DepthWithGeometryHint && restartForGeometry)
+            {
+                var restarted = await RestartWithGeometry(app, window, token);
+                if (restarted == null) return false;
+                (app, window, existing) = restarted.Value;
+                geometry = existing != null;
             }
+            if (geometry && existing != null) { profile.GeometrySession = existing; GeometrySessionText.Text = existing; store.Save(profile); }
             sessionError = lastEngineError = ""; LogBox.Clear();
             playing = false;
             shown = SourceShown.Game;
@@ -1107,6 +1101,7 @@ public partial class MainWindow : Window
             engine.Start(app, window, runtimeProfile, store.Root);
             sessionWindow = window.Handle; started = true;
             Status.Text = Loc.Format("StatusStarting", app.Name);
+            if (offerRestart) ShowGeometryRestartHint(app, window);
             try { await new GameHistory(store.Root).Record(app,window,profile!,CancellationToken.None); }
             catch(Exception ex) { System.Diagnostics.Debug.WriteLine("[Recent games] "+ex.Message); }
         }
@@ -1118,6 +1113,147 @@ public partial class MainWindow : Window
         finally { starting = false; startCancellation.Dispose(); startCancellation = null; if (refreshWasRunning && IsLoaded && !closing) refreshTimer.Start(); UpdateButtons(); }
         System.Diagnostics.Debug.WriteLine($"[Session] StartSession exit: started {started}");
         return started;
+    }
+
+    // "Restart with true geometry" for the selected running game (StartSession with
+    // restartForGeometry): the anti-cheat check and red warning, the restart dialog, a graceful
+    // close and a geometry launch, then the relaunched game and its first frame's session.
+    // Null when it was cancelled; the game is then left running. A null session: depth this
+    // time ("Use estimated depth", or anti-cheat found).
+    private async Task<(RunningApp App, GameWindow Window, string? Session)?> RestartWithGeometry(RunningApp app, GameWindow window, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(window);
+        System.Diagnostics.Debug.WriteLine($"[Session] RestartWithGeometry enter: {app.FullPath}, pid {app.Pid}");
+        if (profile == null)
+        {
+            System.Diagnostics.Debug.WriteLine("[Session] RestartWithGeometry exit: no profile");
+            return null;
+        }
+        // The red warning first, every time (a game with anti-cheat is refused).
+        var consent = AskGeometry(app.FullPath, app.Pid, GameDisplayName(window.Title, app.Name), launch: true);
+        if (consent == GeometryConsent.Cancel)
+        {
+            System.Diagnostics.Debug.WriteLine("[Session] RestartWithGeometry exit: cancelled at the warning");
+            return null;
+        }
+        if (consent != GeometryConsent.Proceed)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Session] RestartWithGeometry exit: {consent}, depth this time");
+            return (app, window, null);
+        }
+        Status.Text = Loc.Get("StatusGeometryPreparing");
+        var plan = await GeometryLaunch.Prepare(app, profile, store.Root, text => Status.Text = text, token);
+        token.ThrowIfCancellationRequested();
+        var dialog = new GeometryLaunchWindow(plan, profile) { Owner = this };
+        if (dialog.ShowDialog() != true)
+        {
+            Status.Text = Loc.Get("StatusGeometryCancelled");
+            System.Diagnostics.Debug.WriteLine("[Session] RestartWithGeometry exit: restart dialog cancelled");
+            return null;
+        }
+        plan = dialog.Plan;
+        profile.GeometryLaunchArguments = GeometryLaunch.SavedArguments(plan.Arguments);
+        profile.GeometryWorkingDirectory = plan.WorkingDirectory; profile.GeometrySteamAppId = plan.SteamAppId;
+        profile.GeometrySeparation = dialog.Separation; profile.GeometryConvergence = dialog.Convergence;
+        profile.GeometrySession = plan.Session; GeometrySessionText.Text = plan.Session; store.Save(profile);
+        Status.Text = Loc.Get("StatusGeometryRestarting");
+        var run = await GeometryLaunch.Restart(plan, profile, store.Root, text => Status.Text = text, token);
+        System.Diagnostics.Debug.WriteLine($"[Session] RestartWithGeometry: relaunched as pid {run.Pid}, session {run.Session}");
+        var until = Environment.TickCount64 + 15000;
+        RunningApp? relaunched = null;
+        while (Environment.TickCount64 < until && GeometryLaunch.IsRunning(run))
+        {
+            token.ThrowIfCancellationRequested();
+            relaunched = RunningApps.List(false).FirstOrDefault(a => a.Pid == run.Pid && string.Equals(a.FullPath, run.Executable, StringComparison.OrdinalIgnoreCase) && a.CanAttach);
+            if (relaunched != null) break;
+            await Task.Delay(150, token);
+        }
+        if (relaunched == null || !SelectChoice(new ChooserWindow.Choice(relaunched, relaunched.Windows[0])))
+            throw new InvalidOperationException(Loc.Get("StatusChoiceGone"));
+        // Like every geometry launch: wait for its first frame, never falling back to depth.
+        string session = await WaitForFirstFrame(run, token);
+        System.Diagnostics.Debug.WriteLine($"[Session] RestartWithGeometry exit: attached to pid {relaunched.Pid}, session {session}");
+        return ((RunningApp)AppList.SelectedItem, (GameWindow)WindowList.SelectedItem, session);
+    }
+
+    // The status line's "True geometry needs VRX to start the game. [Restart with true
+    // geometry]" for a session playing with depth instead. It goes when that session ends or
+    // another game is chosen.
+    private (RunningApp App, GameWindow Window)? geometryRestartTarget;
+    private void ShowGeometryRestartHint(RunningApp app, GameWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(window);
+        System.Diagnostics.Debug.WriteLine($"[Session] ShowGeometryRestartHint: {app.FullPath}, pid {app.Pid}, window {window.Handle:X}");
+        geometryRestartTarget = (app, window);
+        GeometryRestartHint.Visibility = Visibility.Visible;
+    }
+    private void HideGeometryRestartHint()
+    {
+        if (geometryRestartTarget == null && GeometryRestartHint.Visibility != Visibility.Visible) return;
+        System.Diagnostics.Debug.WriteLine($"[Session] HideGeometryRestartHint: was for {geometryRestartTarget?.App.FullPath ?? "nothing"}");
+        geometryRestartTarget = null;
+        GeometryRestartHint.Visibility = Visibility.Collapsed;
+    }
+
+    // "Restart with true geometry": stops the depth session, then restarts the game through the
+    // geometry launch review - Steam's launch for an installed Steam game, else VRX's own.
+    private async void GeometryRestartClick(object sender, RoutedEventArgs e)
+    {
+        var target = geometryRestartTarget;
+        System.Diagnostics.Debug.WriteLine($"[Session] GeometryRestartClick enter: {target?.App.FullPath ?? "no target"}");
+        if (target == null || starting || stopping || choosing)
+        {
+            System.Diagnostics.Debug.WriteLine("[Session] GeometryRestartClick exit: nothing to restart, or busy");
+            return;
+        }
+        HideGeometryRestartHint();
+        try
+        {
+            if (engine.Running)
+            {
+                await StopSession();
+                for (int i = 0; engine.Running && i < 20; ++i) await Task.Delay(50);
+                if (engine.Running)
+                {
+                    Status.Text = Loc.Get("StatusChoiceStillStopping");
+                    System.Diagnostics.Debug.WriteLine("[Session] GeometryRestartClick exit: the depth session did not stop");
+                    return;
+                }
+            }
+            var (app, window) = target.Value;
+            SteamLibrary.Discovery steam;
+            try { steam = await Task.Run(() => SteamLibrary.Discover()); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("[Session] GeometryRestartClick: Steam discovery failed: " + ex.Message);
+                steam = new([], [ex.Message], false);
+            }
+            var game = steam.Games.FirstOrDefault(g => SteamLibrary.Inside(app.FullPath, g.Directory));
+            if (game != null)
+            {
+                // The running game is the one to restart: bind it when Steam has no binding yet.
+                if (SteamLibrary.LoadBinding(store.Root, game) == null && !SteamLibrary.IsLauncher(app.FullPath))
+                    SteamLibrary.SaveBinding(store.Root, game, new(app.FullPath, false));
+                System.Diagnostics.Debug.WriteLine($"[Session] GeometryRestartClick exit: restarting through Steam app {game.AppId}");
+                await StartFromSteam(new ChooserWindow.Choice(app, window, Steam: game, Restart: true));
+                return;
+            }
+            if (!SelectChoice(new ChooserWindow.Choice(app, window)))
+            {
+                Status.Text = Loc.Get("StatusChoiceGone");
+                System.Diagnostics.Debug.WriteLine("[Session] GeometryRestartClick exit: the game is gone");
+                return;
+            }
+            await StartSession(restartForGeometry: true);
+        }
+        catch (Exception ex)
+        {
+            App.LogUnexpected("geometry restart", ex);
+            Status.Text = ex.Message;
+        }
+        System.Diagnostics.Debug.WriteLine("[Session] GeometryRestartClick exit");
     }
 
     // The run VRX just launched: wait (up to a minute, showing the time left) for a fresh frame
@@ -2231,6 +2367,7 @@ public partial class MainWindow : Window
         SmokeTestModes(output, sample, one);
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
+        SmokeTestGeometryRestartHint(sample);
         await GeometryLaunchTests.Run(output);
         await GameHistoryTests.Run(output,this);
         await SteamLibraryTests.Run(output,this);
@@ -2280,6 +2417,37 @@ public partial class MainWindow : Window
         if (Loc.Missing.Count > 0) throw new Exception("Strings asked for but missing from Strings.resx: " + string.Join(", ", Loc.Missing));
         File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; window: places remembered culture-independently and kept on screen, Easy compact and growing to its content, Expert back at its size, title bar buttons named; strings: " +
             Loc.NeutralStrings().Count.ToString(CultureInfo.InvariantCulture) + " keys, all referenced keys present, placeholders consistent, no literal text in MainWindow.xaml, pseudo-locale transforms every string; screenshots ui-easy-skin, ui-easy-skin-pseudo, ui-expert-skin, ui-expert-all-open, ui-expert-pseudo. No VR session started.");
+    }
+
+    // The status line's restart offer for a game attached with depth instead of true geometry:
+    // hidden until offered, the link text from Strings.resx, gone when another game is chosen,
+    // and the link does nothing (no stop, no restart) when nothing is offered.
+    private void SmokeTestGeometryRestartHint(RunningApp sample)
+    {
+        ArgumentNullException.ThrowIfNull(sample);
+        System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestGeometryRestartHint enter: sample {sample.FullPath}");
+        if (GeometryRestartHint.Visibility != Visibility.Collapsed || geometryRestartTarget != null)
+            throw new Exception("The true-geometry restart offer must be hidden until an attach falls back to depth");
+        var text = string.Concat(GeometryRestartHint.Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text)).Trim() + "|" +
+            string.Concat(GeometryRestartLink.Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text));
+        if (text != Loc.Get("GeometryAttachDepthHint") + "|" + Loc.Get("GeometryRestartLink"))
+            throw new Exception($"The restart offer must read from Strings.resx (got '{text}')");
+        var other = new RunningApp(int.MaxValue - 11, "other.exe", Path.Combine(Path.GetTempPath(), "vrx-smoke-other.exe"), [new GameWindow(0x7F00, "Other")], null);
+        ShowGeometryRestartHint(other, other.Windows[0]);
+        if (GeometryRestartHint.Visibility != Visibility.Visible || geometryRestartTarget?.App != other)
+            throw new Exception("The restart offer must show for the game attached with depth");
+        LoadSelected();       // the selection is not that game: another game is chosen
+        if (GeometryRestartHint.Visibility != Visibility.Collapsed || geometryRestartTarget != null)
+            throw new Exception("Choosing another game must remove the restart offer");
+        ShowGeometryRestartHint(other, other.Windows[0]);
+        HideGeometryRestartHint();
+        if (GeometryRestartHint.Visibility != Visibility.Collapsed || geometryRestartTarget != null)
+            throw new Exception("The restart offer must go when its session ends");
+        bool wasStarting = starting;
+        GeometryRestartClick(GeometryRestartLink, new RoutedEventArgs());
+        if (starting != wasStarting || engine.Running || stopping)
+            throw new Exception("The restart link must do nothing when no restart is offered");
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestGeometryRestartHint exit");
     }
 
     // Easy | Expert and the sections: defaults for new and existing users, memory, Easy
@@ -2611,7 +2779,11 @@ public partial class MainWindow : Window
             for(int i=0;i<VisualTreeHelper.GetChildrenCount(node);++i)
                 foreach(var child in PathButtons(VisualTreeHelper.GetChild(node,i))) yield return child;
         }
-        var chooser = new ChooserWindow(apps, screens, screenApp, display.Handle, new WindowPlace { Width = 820, Height = 560 })
+        // A stopped game for the launch tiles: a fixture executable that is never run.
+        string launchExe = Path.Combine(output, "chooser-launch", "LaunchFixture.exe");
+        GeometryLaunchTests.FakePe(launchExe, ["d3d11.dll"], []);
+        var launchEntry = new GameHistory.Entry(launchExe, "Launch fixture", [], Path.GetDirectoryName(launchExe)!, "", DateTimeOffset.UtcNow);
+        var chooser = new ChooserWindow(apps, screens, screenApp, display.Handle, new WindowPlace { Width = 820, Height = 560 }, null, null, [launchEntry])
         {
             Owner = this, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = -20000
         };
@@ -2624,9 +2796,15 @@ public partial class MainWindow : Window
             if (chooser.ScreenTileCount != screens.Count || chooser.WindowTileCount != expectedWindows)
                 throw new Exception($"Chooser tiles: {chooser.WindowTileCount} windows (expected {expectedWindows}), {chooser.ScreenTileCount} displays (expected {screens.Count})");
             if (chooser.Picked != null) throw new Exception("The chooser must start with nothing picked");
+            // Running windows only attach (no method buttons, no restart); a stopped game has
+            // launch choices for depth and geometry in Expert. (The launch group starts collapsed
+            // when windows exist; open it so its tiles are built.)
+            chooser.LaunchSection.IsExpanded = true; chooser.UpdateLayout();
             var paths=PathButtons(chooser).ToArray();
-            if(paths.Length!=expectedWindows*2 || paths.Any(b=>!b.IsEnabled || (string)b.Tag==StereoPaths.Dx12))
-                throw new Exception("Each window must have depth and geometry choices in Expert; native DX12 is developer-only");
+            if(PathButtons(chooser.WindowTiles).Any() || Controls<Expander>(chooser.WindowTiles).Any())
+                throw new Exception("Running windows must only attach: no stereo method buttons or geometry options on them");
+            if(chooser.HistoryTileCount!=1 || paths.Length!=2 || paths.Any(b=>!b.IsEnabled || (string)b.Tag==StereoPaths.Dx12))
+                throw new Exception($"A stopped game must have depth and geometry launch choices in Expert; native DX12 is developer-only (history tiles {chooser.HistoryTileCount}, choices {string.Join(",", paths.Select(b => (string)b.Tag + (b.IsEnabled ? "" : " disabled")))})");
             var bitmap = new RenderTargetBitmap((int)chooser.ActualWidth, (int)chooser.ActualHeight, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(chooser);
             SavePng(bitmap, Path.Combine(output, "ui-chooser.png"));
@@ -2640,7 +2818,7 @@ public partial class MainWindow : Window
         // Easy: tiles only, no stereo method buttons or geometry options; a pick plays with depth
         // without changing the game's saved method. No Steam section without Steam.
         {
-            var easyChooser=new ChooserWindow(apps.Where(a=>a.CanAttach).Take(3).ToList(),[],null,0,null,_=>StereoPaths.GeometryAuto,_=>StereoPaths.Vkd3d,[],null,store.Root,null,expert:false) {
+            var easyChooser=new ChooserWindow(apps.Where(a=>a.CanAttach).Take(3).ToList(),[],null,0,null,_=>StereoPaths.GeometryAuto,_=>StereoPaths.Vkd3d,[launchEntry],null,store.Root,null,expert:false) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             bool easyChecked=false;
@@ -2648,34 +2826,55 @@ public partial class MainWindow : Window
                 easyChooser.UpdateLayout();
                 easyChecked=PathButtons(easyChooser).Count()==0 && !easyChooser.SteamSectionShown &&
                     !Controls<Expander>(easyChooser).Any(x=>Equals(x.Header,Loc.Get("GeometryAdvanced"))) &&
-                    !Controls<Button>(easyChooser).Any(b=>Equals(b.Content,Loc.Get("SteamReviewSetup")));
+                    !Controls<Button>(easyChooser).Any(b=>Equals(b.Content,Loc.Get("SteamReviewSetup"))) &&
+                    !Controls<TextBlock>(easyChooser).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction")) && easyChooser.HistoryTileCount==1;
                 var tile=Controls<Button>(easyChooser).FirstOrDefault(b=>b.Style==easyChooser.FindResource("Tile"));
                 if(tile==null) { easyChooser.Close(); return; }
                 tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
             bool easyPicked=easyChooser.ShowDialog()==true;
-            if(!easyChecked || (easyChooser.WindowTileCount>0 && (!easyPicked || easyChooser.Picked?.DepthOnly!=true || easyChooser.Picked.Backend!=null)))
-                throw new Exception("Easy's chooser must show only tiles that play with depth, and no Steam section without Steam");
+            if(!easyChecked || !easyPicked || easyChooser.Picked?.DepthOnly!=true || easyChooser.Picked.Backend!=null)
+                throw new Exception("Easy's chooser must show only tiles that play with depth (launch tiles too), and no Steam section without Steam");
         }
-        if(apps.Any(a=>a.CanAttach && a.Windows.Any(RunningApps.IsChooserWindow))) {
-            var pickTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Dxvk) {
+        // A stopped game whose saved method is true geometry: "Play with true geometry", with the
+        // saved DXVK renderer highlighted and returned.
+        {
+            var pickTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Dxvk,null,[launchEntry]) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
-                pickTest.UpdateLayout();
-                var button=PathButtons(pickTest).First(b=>(string)b.Tag==StereoPaths.Dxvk);
-                if(button.FontWeight!=FontWeights.Bold) { pickTest.Close(); return; }
+                pickTest.LaunchSection.IsExpanded=true; pickTest.UpdateLayout();
+                bool geometryCaption=Controls<TextBlock>(pickTest.HistoryTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction"));
+                var button=PathButtons(pickTest.HistoryTiles).First(b=>(string)b.Tag==StereoPaths.Dxvk);
+                if(button.FontWeight!=FontWeights.Bold || !geometryCaption || PathButtons(pickTest.WindowTiles).Any()) { pickTest.Close(); return; }
                 button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
-            if(pickTest.ShowDialog()!=true || pickTest.Picked?.Backend!=StereoPaths.Dxvk)
-                throw new Exception("The chooser must highlight and return the saved per-game DXVK selection");
+            if(pickTest.ShowDialog()!=true || pickTest.Picked?.Backend!=StereoPaths.Dxvk || pickTest.Picked.History==null || pickTest.Picked.Restart)
+                throw new Exception("The chooser must offer Play with true geometry for a stopped geometry game and return its saved DXVK selection");
         }
+        // A running window with true geometry saved: it only attaches, with the saved method (the
+        // attach then uses a VRX geometry stream or depth) - never a restart or a Steam route.
         if(apps.Any(a=>a.CanAttach && a.Windows.Any(RunningApps.IsChooserWindow))) {
-            var advancedTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Depth,_=>StereoPaths.Vulkan) {
+            var attachTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.GeometryAuto,_=>StereoPaths.Dxvk,[],[],store.Root) {
+                Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
+            };
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
+                attachTest.UpdateLayout();
+                var tile=Controls<Button>(attachTest.WindowTiles).FirstOrDefault(b=>b.Style==attachTest.FindResource("Tile"));
+                bool attachOnly=Controls<TextBlock>(attachTest.WindowTiles).Any(t=>t.Text==Loc.Get("ChooserAttachAction")) &&
+                    !Controls<TextBlock>(attachTest.WindowTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction"));
+                if(tile==null || !attachOnly) { attachTest.Close(); return; }
+                tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }));
+            if(attachTest.ShowDialog()!=true || attachTest.Picked is not { Backend: null, Renderer: null, Steam: null, Restart: false, DepthOnly: false, ReviewSteamSetup: false })
+                throw new Exception("A running window must attach with the game's saved method, never a geometry restart or Steam route");
+        }
+        {
+            var advancedTest=new ChooserWindow(apps,[],null,0,null,_=>StereoPaths.Depth,_=>StereoPaths.Vulkan,[launchEntry]) {
                 Owner=this,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
             };
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
-                advancedTest.UpdateLayout();
+                advancedTest.LaunchSection.IsExpanded=true; advancedTest.UpdateLayout();
                 var expander=Controls<Expander>(advancedTest).First(e=>Equals(e.Header,Loc.Get("GeometryAdvanced"))); expander.IsExpanded=true; advancedTest.UpdateLayout();
                 var renderers=Controls<ComboBox>(expander).Single();
                 if(renderers.SelectedItem is not ComboBoxItem rememberedRenderer || (string)rememberedRenderer.Tag!=StereoPaths.Vulkan) { advancedTest.Close(); return; }

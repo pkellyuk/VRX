@@ -108,7 +108,9 @@ It is off by default and chosen per game in Expert only, behind a warning: it lo
 rendering layer into the game, so use it with offline games; online games with
 anti-cheat may flag it, and games with a known anti-cheat are refused. VRX copies the
 translation DLLs next to the game only while it runs and a separate guard removes them
-afterwards, even if VRX closes first. Auto and Easy mode always use estimated depth.
+afterwards, even if VRX closes first. It applies when VRX starts the game (Play with true
+geometry); attaching to a game that is already running uses estimated depth, with an
+offer to restart it with true geometry. Auto and Easy mode always use estimated depth.
 Headset comfort and game compatibility still need validation.
 
 You need Visual Studio with the C++ tools and a Windows SDK (the newest one is found

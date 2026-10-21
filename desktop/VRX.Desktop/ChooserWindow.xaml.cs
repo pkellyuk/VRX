@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -14,7 +14,9 @@ public sealed partial class ChooserWindow : Window
 {
     // DepthOnly: Easy mode's pick - play with estimated depth now, whatever this game's saved
     // method is (and without changing it). True geometry is only reachable in Expert.
-    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null, string? Renderer = null, GameHistory.Entry? History = null, SteamLibrary.Game? Steam = null, bool ReviewSteamSetup = false, bool DepthOnly = false);
+    // Restart: "Restart with true geometry" for a running Steam game (never from a tile here:
+    // running windows only attach).
+    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null, string? Renderer = null, GameHistory.Entry? History = null, SteamLibrary.Game? Steam = null, bool ReviewSteamSetup = false, bool DepthOnly = false, bool Restart = false);
 
     // Expert shows each tile's stereo method buttons and the geometry options; Easy shows
     // tiles that just play with estimated depth.
@@ -81,15 +83,15 @@ public sealed partial class ChooserWindow : Window
         SteamHint.Text=!string.IsNullOrEmpty(steamWarning)?Loc.Get("SteamDiscoveryPartial"):SteamTiles.Children.Count==0?Loc.Get(steamGames?.Count>0?"ChooserSteamAllRunning":"SteamNoGames"):Loc.Get(expert?"SteamLibraryHint":"SteamLibraryHintEasy");
         LaunchSection.Visibility=HistoryTiles.Children.Count>0 || steamGames!=null?Visibility.Visible:Visibility.Collapsed;
 
-        // Windows, most recently used first (Windows' z-order), each with its app's icon.
+        // Windows, most recently used first (Windows' z-order), each with its app's icon. A
+        // running window only attaches, with the game's saved method: geometry only when VRX
+        // started it with geometry, else estimated depth (MainWindow.StartSession decides).
         var order = RunningApps.ZOrder();
         var windows = apps.Where(a => a.CanAttach && !ScreenSources.IsScreen(a))
             .SelectMany(a => a.Windows.Where(RunningApps.IsChooserWindow).Select(w => new Choice(a, w)))
             .OrderBy(c => order.GetValueOrDefault(c.Window.Handle, int.MaxValue)).ToList();
-        foreach (var choice in windows) {
-            var steamGame=steamGames?.FirstOrDefault(g=>SteamLibrary.Inside(choice.App.FullPath,g.Directory));
-            WindowTiles.Children.Add(MakeTile(choice with { Backend = backendFor?.Invoke(choice.App) ?? StereoPaths.Depth, Renderer = rendererFor?.Invoke(choice.App),Steam=steamGame }, null, choice.Window.Handle == currentWindow));
-        }
+        foreach (var choice in windows)
+            WindowTiles.Children.Add(MakeTile(choice, null, choice.Window.Handle == currentWindow));
         LaunchSection.IsExpanded=windows.Count==0;
         NoWindows.Visibility = windows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         if(HistoryTiles.Children.Count>0 || SteamTiles.Children.Count>0) NoWindows.Text=Loc.Get("ChooserNoWindowsHistory");
@@ -151,7 +153,9 @@ public sealed partial class ChooserWindow : Window
         caption.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = title });
         caption.Children.Add(new TextBlock { Text = detail, FontSize = 12, Foreground = (Brush)FindResource("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
         bool launches=screen==null && choice.App.Pid==0 && (choice.History!=null || choice.Steam!=null);
-        string action=Loc.Get(screen!=null?"ChooserAttachDisplay":launches?"ChooserLaunchAction":"ChooserAttachAction");
+        // Expert: a stopped game whose saved method is true geometry launches with it.
+        bool launchesGeometry=launches && expert && StereoPaths.Mode(selected)==StereoPaths.GeometryAuto;
+        string action=Loc.Get(screen!=null?"ChooserAttachDisplay":launchesGeometry?"ChooserLaunchGeometryAction":launches?"ChooserLaunchAction":"ChooserAttachAction");
         caption.Children.Add(new TextBlock {Text=action,Foreground=(Brush)FindResource("Accent"),FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,8,0,0)});
         var content = new StackPanel();
         content.Children.Add(picture);
@@ -161,23 +165,26 @@ public sealed partial class ChooserWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(button, action+": "+title);
         if (!expert)
             button.Click += (_, _) => Pick(screen==null?choice with {Backend=null,Renderer=null,DepthOnly=true}:choice);
+        else if (!launches)
+            button.Click += (_, _) => Pick(choice with {Backend=null,Renderer=null});   // attach: the saved method decides
         else
-            button.Click += (_, _) => Pick(screen==null?choice with {Backend=StereoPaths.Mode(selected)==StereoPaths.GeometryAuto?renderer:choice.Backend,Renderer=renderer}:choice);
+            button.Click += (_, _) => Pick(choice with {Backend=StereoPaths.Mode(selected)==StereoPaths.GeometryAuto?renderer:choice.Backend,Renderer=renderer});
         tiles.Add(new Tile { Choice = choice, Picture = picture, Screen = screen, Snapshot = snapshot });
-        if (screen != null || !expert) return button;
+        // Only stopped games have method buttons: a running window cannot be restarted from here.
+        if (screen != null || !expert || !launches) return button;
         // Separate sibling buttons: input controls must never sit inside a tile Button.
         button.Margin = new Thickness(0);
         var card = new StackPanel { Width = PictureWidth + 24, Margin = new Thickness(0,0,14,14) };
         card.Children.Add(button);
-        // Expert only: estimated depth or true geometry for this game. Geometry still shows the
-        // red warning (and refuses games with anti-cheat) before anything is launched.
+        // Expert only: launch this stopped game with estimated depth or true geometry. Geometry
+        // still shows the red warning (and refuses games with anti-cheat) before the launch.
         var routes = new Grid { Margin = new Thickness(2,5,2,0) };
         for(int i=0;i<2;++i) routes.ColumnDefinitions.Add(new ColumnDefinition());
         Button? geometryButton=null;
         int column=0;
         foreach (string mode in new[] { StereoPaths.Depth, StereoPaths.GeometryAuto }) {
             var route = new Button {
-                Content = new TextBlock { Text = Loc.Get(launches?"ChooserRouteLaunch":"ChooserRouteAttach")+"\n"+StereoPaths.Label(mode), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }, Padding = new Thickness(4,6,4,6), Margin = new Thickness(2), FontSize = 12,
+                Content = new TextBlock { Text = Loc.Get("ChooserRouteLaunch")+"\n"+StereoPaths.Label(mode), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center }, Padding = new Thickness(4,6,4,6), Margin = new Thickness(2), FontSize = 12,
                 Tag = mode==StereoPaths.GeometryAuto?renderer:mode,
                 IsEnabled = !missing,
                 ToolTip = Loc.Get(mode==StereoPaths.Depth?"PathDepthTip":"PathGeometryTip"),

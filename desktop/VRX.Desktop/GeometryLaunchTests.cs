@@ -58,6 +58,35 @@ internal static class GeometryLaunchTests
         System.Diagnostics.Debug.WriteLine("[Smoke] GraphicsApiChecks exit");
     }
 
+    // Attaching to a running game: geometry only from a ready stream of a run VRX started (or the
+    // run it just launched); otherwise estimated depth, with the restart offered only when true
+    // geometry is the saved method in Expert. The decision never changes the saved method.
+    private static void AttachDecisionChecks(Action<bool,string> Check)
+    {
+        ArgumentNullException.ThrowIfNull(Check);
+        Debug.WriteLine("[Smoke] AttachDecisionChecks enter");
+        var depth=new Profile(); depth.SelectStereoBackend(StereoPaths.Depth);
+        var auto=new Profile(); auto.SelectStereoBackend(StereoPaths.Auto);
+        var geometry=new Profile(); geometry.SelectStereoBackend(StereoPaths.GeometryAuto);
+        var dxvk=new Profile(); dxvk.SelectStereoBackend(StereoPaths.Dxvk);
+        const GeometryLaunch.AttachStereo Depth=GeometryLaunch.AttachStereo.Depth, Hint=GeometryLaunch.AttachStereo.DepthWithGeometryHint,
+            Stream=GeometryLaunch.AttachStereo.GeometryStream, Launched=GeometryLaunch.AttachStereo.GeometryLaunched;
+        GeometryLaunch.AttachStereo Decide(Profile p,bool expert=true,bool depthOnly=false,bool display=false,bool launched=false,bool stream=false)=>
+            GeometryLaunch.DecideAttach(p,expert,depthOnly,display,launched,stream);
+        Check(Decide(depth)==Depth && Decide(auto)==Depth && Decide(depth,stream:true)==Depth,"estimated depth and Auto always attach with depth, with no restart offer");
+        Check(Decide(geometry)==Hint && Decide(dxvk)==Hint,"true geometry on a game VRX did not start attaches with depth and offers a restart");
+        Check(Decide(geometry,stream:true)==Stream && Decide(dxvk,stream:true)==Stream,"a ready stream from a VRX geometry run is attached to, with no restart");
+        Check(Decide(geometry,launched:true)==Launched && Decide(geometry,launched:true,stream:true)==Launched,"the run VRX just launched waits for its first frame");
+        Check(Decide(geometry,expert:false)==Depth && Decide(geometry,expert:false,stream:true)==Depth,"Easy always attaches with depth, with no restart offer");
+        Check(Decide(geometry,depthOnly:true)==Depth && Decide(geometry,depthOnly:true,stream:true)==Depth,"\"Use estimated depth\" attaches with depth, with no restart offer");
+        Check(Decide(geometry,display:true)==Depth && Decide(geometry,display:true,stream:true)==Depth,"a whole display attaches with depth, with no restart offer");
+        Check(geometry.SelectedStereoBackend==StereoPaths.GeometryAuto && dxvk.SelectedStereoBackend==StereoPaths.Dxvk,"deciding an attach leaves the saved stereo method unchanged");
+        bool refused=false;
+        try { GeometryLaunch.DecideAttach(null!,true,false,false,false,false); } catch(ArgumentNullException) { refused=true; }
+        Check(refused,"a missing profile is refused");
+        Debug.WriteLine("[Smoke] AttachDecisionChecks exit");
+    }
+
     // Crash-proof cleanup: the manifest's intent records, the guard (in process and as the real
     // detached --geometry-guard process) and run-folder pruning. Fixture files only.
     private static async Task GuardAndCleanupChecks(string root,string exe,string sources,Action<bool,string> Check)
@@ -120,7 +149,8 @@ internal static class GeometryLaunchTests
         static void Check(bool value,string reason) { if(!value) throw new Exception("Geometry launch: "+reason); }
         string root=Path.Combine(output,"geometry-launch-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
         string exe=Path.Combine(root,"game","fake-vrx-probe.exe"); Directory.CreateDirectory(Path.GetDirectoryName(exe)!); File.WriteAllText(exe,"fixture");
-        string[] args=["", "space in argument", "literal\"quote", @"C:\Games\trailing\", "semi;colon", "$literal", "--value=a b", "\u00e9"];
+        AttachDecisionChecks(Check);
+        string[] args=["", "space in argument","literal\"quote", @"C:\Games\trailing\", "semi;colon", "$literal", "--value=a b", "\u00e9"];
         Check(GeometryLaunch.ParseArguments(string.Join(' ',args.Select(GeometryLaunch.QuoteArgument))).SequenceEqual(args),"Windows argument quoting preserves literal values");
         Check(GeometryLaunch.ApiArguments(["-dx12","-windowed","-ResX=2560"],StereoPaths.Vulkan,true).SequenceEqual(new[]{"-windowed","-ResX=2560","-vulkan"}),"native Vulkan replaces only the old API switch");
         Check(GeometryLaunch.ApiArguments(["-vulkan","--save=a b"],StereoPaths.Dxvk,true).SequenceEqual(new[]{"--save=a b","-dx11"}),"DXVK retains unrelated arguments");
@@ -298,6 +328,8 @@ internal static class GeometryLaunchTests
         Check(GeometryLaunch.UpdateTuning(liveProfile,liveRoot)==GeometryLaunch.TuningUpdate.NextLaunch,"stale or reused process IDs cannot receive live updates");
         var app=new RunningApp(current.Id,Path.GetFileName(self),self,[new GameWindow(42,"Smoke fixture")],null);
         var trial=new Profile{ExecutablePath=self};trial.SelectStereoBackend(StereoPaths.Vulkan);
+        Check(GeometryLaunch.DecideAttach(trial,true,false,false,false,GeometryLaunch.ExistingSession(app,trial,root)!=null)==GeometryLaunch.AttachStereo.DepthWithGeometryHint,
+            "a running process VRX did not start with geometry has no stream, so attaching uses depth and offers the restart");
         var plan=await GeometryLaunch.PrepareWithLayer(app,trial,root,_=>{},CancellationToken.None,root);
         Check(plan.Arguments.Contains("--smoke-test") && current.Id==plan.App.Pid && !current.HasExited,"preflight preserves a real command line without closing the process");
         var dialog=new GeometryLaunchWindow(plan,trial) { ShowActivated=false,WindowStartupLocation=System.Windows.WindowStartupLocation.Manual,Left=-20000,Top=-20000 };
