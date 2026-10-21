@@ -287,6 +287,9 @@ void Device(ID3D12Device* device) noexcept {
     try {
         auto& s=Registry(); Lock lock(s.mutex); Drain(); if(Find(device)) return;
         auto context=std::make_shared<Context>(); context->device=device;
+#if VRX_DX12_DIAGNOSTICS
+        // Diagnostic replay switches exist only in Debug or VRX_DX12_DIAGNOSTICS
+        // builds; a release proxy ignores these variables entirely.
         wchar_t diagnostic[3]{};context->recordOnly=GetEnvironmentVariableW(L"VRX_DX12_RECORD_ONLY",diagnostic,3)==1 && diagnostic[0]==L'1';
         context->cloneOnly=GetEnvironmentVariableW(L"VRX_DX12_CLONE_ONLY",diagnostic,3)==1 && diagnostic[0]==L'1';context->recordOnly=context->recordOnly || context->cloneOnly;
         context->skipCommands=context->cloneOnly || (context->recordOnly && GetEnvironmentVariableW(L"VRX_DX12_SKIP_COMMANDS",diagnostic,3)==1 && diagnostic[0]==L'1');
@@ -297,6 +300,7 @@ void Device(ID3D12Device* device) noexcept {
             if(size>=sizeof(names))Stop(context,"diagnostic recording allowlist is too long");
             else if(size)context->recordCommands=std::string(",")+names+",";
         }
+#endif
         if(device->GetNodeCount()!=1) Stop(context,"multiple GPU nodes are unsupported");
         context->calibration.shift=Calibration(L"VRX_DX12_SHIFT",.25f,64);
         context->calibration.convergence=Calibration(L"VRX_DX12_CONVERGENCE",0,.25f);

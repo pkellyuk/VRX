@@ -7,8 +7,19 @@
 #include <vector>
 #include <algorithm>
 #include <charconv>
+#ifndef VRX_DX12_DIAGNOSTICS
+#define VRX_DX12_DIAGNOSTICS 0
+#endif
 namespace vrx::dx12::diagnostic {
-inline bool ProbesRequested() noexcept {wchar_t text[3]{};return Requested() && GetEnvironmentVariableW(L"VRX_DX12_REPLAY_PROBES",text,3)==1 && text[0]==L'1';}
+// Replay probes and pixel traces (pixel_trace.h) are diagnostic-build only:
+// without VRX_DX12_DIAGNOSTICS (Debug builds set it) they can never activate.
+inline bool ProbesRequested() noexcept {
+#if VRX_DX12_DIAGNOSTICS
+    wchar_t text[3]{};return Requested() && GetEnvironmentVariableW(L"VRX_DX12_REPLAY_PROBES",text,3)==1 && text[0]==L'1';
+#else
+    return false;
+#endif
+}
 inline uint64_t ProbeRequest(){
     const auto path=Settings().path+L".request";FILE* file=nullptr;if(_wfopen_s(&file,path.c_str(),L"rb") || !file)return 0;
     char text[64]{};const auto size=std::fread(text,1,sizeof(text),file);std::fclose(file);if(!size || size==sizeof(text))return 0;

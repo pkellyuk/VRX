@@ -55,8 +55,9 @@ The default arguments include `-dx12 -norhithread -windowed -ResX=1280
 DX12 baseline. `-Preview` performs preflight without installation or launch.
 
 `-Stereo mirror -Shift 0.008 -Session UNIQUE_NAME` additionally enables the
-explicit VRX Vulkan layer, GPU sharing and initial stereo tuning. This mirror
-backend reads its tuning file at startup; changing it requires a restart.
+explicit VRX Vulkan layer, GPU sharing and initial stereo tuning. The mirror
+backend reads its tuning file at startup and keeps polling it: changes apply
+live, to both eyes at once, through a GPU-ordered write between frames.
 It disables opaque descriptor buffers/descriptor heaps, NVIDIA low-latency
 support, shader identifiers, pipeline binaries and graphics pipeline libraries
 in the translator, and requests `single_queue`, to meet the layer's existing
@@ -122,7 +123,9 @@ Further compatibility fixes in the locally supplied layer:
 
 - Accept supported normalized 10-bit swapchain formats and check Vulkan blit
   capabilities before using the existing GPU conversion into shared RGBA8.
-  System Shock presents `VK_FORMAT_A2B10G10R10_UNORM_PACK32` (64).
+  System Shock presents `VK_FORMAT_A2B10G10R10_UNORM_PACK32` (64). This is SDR
+  (colour space `SRGB_NONLINEAR`); HDR colour spaces are refused, and sRGB
+  swapchain formats are copied byte-for-byte rather than gamma-decoded.
 - Create the transport's D3D12 textures/fences with explicit **System32** D3D12
   and DXGI modules. Resolving the game's translated DLLs produced incompatible
   resource handles. The native-module helper is independently authored and has

@@ -175,7 +175,14 @@ class AlternateDevice {
         { Stop("alternate mode stopped: invalid or unfinished capture"); return false; }
         if (gpu_)
         {
-            if (!right_ && !gpu_->Reserve()) return false; // ring full: drop the whole pair
+            if (!right_ && !gpu_->Reserve())
+            {
+                // Abandoned shared fences (a consumer process was terminated)
+                // cannot recover in this older backend; mirror mode replaces
+                // the generation instead. Stop with an explicit reason.
+                if (gpu_->Lost()) Stop("GPU geometry stopped: shared fences abandoned by a terminated consumer; restart the game to re-attach (mirror mode recovers automatically)");
+                return false; // ring full: drop the whole pair
+            }
             if (!gpu_->HasPair()) return false;
             const auto command = gpu_->Record(images_[image], extent_, right_ ? 1 : 0);
             if (!command) { Stop("GPU geometry stopped: copy recording failed"); return false; }

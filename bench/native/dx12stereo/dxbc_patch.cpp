@@ -90,15 +90,30 @@ void Emit(std::vector<uint32_t>& code,uint32_t op,std::initializer_list<uint32_t
     code.push_back(op|ENCODE_D3D10_SB_TOKENIZED_INSTRUCTION_LENGTH(uint32_t(1+operands.size()))|flags);
     code.insert(code.end(),operands);
 }
+// Same stereo model and limits as the Vulkan SPIR-V rewrite (xgstereo/clip_patch.h):
+// |w - 1| <= HudWTolerance is a HUD/full-screen pass, and the clip offset
+// shift - convergence*w is clamped to +/- MaxScreenShift*|w| (NDC units).
+constexpr float HudWTolerance=1.0e-4f,MaxScreenShift=.25f;
 void Finish(std::vector<uint32_t>& code,uint32_t position,uint32_t saved,uint32_t scratch,Options options) {
     Emit(code,D3D10_SB_OPCODE_MOV,{Destination(D3D10_SB_OPERAND_TYPE_OUTPUT,15),position,Source(D3D10_SB_OPERAND_TYPE_TEMP,0xe4),saved});
     if(options.skipUnitW) {
-        Emit(code,D3D10_SB_OPCODE_NE,{Destination(0,1),scratch,Source(0,0xff),saved,Scalar(),Bits(1.0f)});
+        // scratch.x = w < 1-tol || w > 1+tol (outside the HUD tolerance)
+        Emit(code,D3D10_SB_OPCODE_LT,{Destination(0,1),scratch,Source(0,0xff),saved,Scalar(),Bits(1.0f-HudWTolerance)});
+        Emit(code,D3D10_SB_OPCODE_LT,{Destination(0,4),scratch,Scalar(),Bits(1.0f+HudWTolerance),Source(0,0xff),saved});
+        Emit(code,D3D10_SB_OPCODE_OR,{Destination(0,1),scratch,Source(0,0),scratch,Source(0,0xaa),scratch});
         Emit(code,D3D10_SB_OPCODE_IF,{Source(0,0),scratch},ENCODE_D3D10_SB_INSTRUCTION_TEST_BOOLEAN(D3D10_SB_INSTRUCTION_TEST_NONZERO));
     }
     const float convergence=std::copysign(options.convergence,options.shift);
-    Emit(code,D3D10_SB_OPCODE_MAD,{Destination(0,2),scratch,Source(0,0xff),saved,Scalar(),Bits(-convergence),Source(0,0),saved});
-    Emit(code,D3D10_SB_OPCODE_ADD,{Destination(0,2),scratch,Source(0,0x55),scratch,Scalar(),Bits(options.shift)});
+    // scratch.y = shift - convergence*w
+    Emit(code,D3D10_SB_OPCODE_MAD,{Destination(0,2),scratch,Source(0,0xff),saved,Scalar(),Bits(-convergence),Scalar(),Bits(options.shift)});
+    // scratch.z = MaxScreenShift*|w|; clamp scratch.y to [-z, z]
+    Emit(code,D3D10_SB_OPCODE_MUL,{Destination(0,4),scratch,Source(0,0xff),saved,Scalar(),Bits(MaxScreenShift)});
+    Emit(code,D3D10_SB_OPCODE_MUL,{Destination(0,8),scratch,Source(0,0xff),saved,Scalar(),Bits(-MaxScreenShift)});
+    Emit(code,D3D10_SB_OPCODE_MAX,{Destination(0,4),scratch,Source(0,0xaa),scratch,Source(0,0xff),scratch});
+    Emit(code,D3D10_SB_OPCODE_MIN,{Destination(0,2),scratch,Source(0,0x55),scratch,Source(0,0xaa),scratch});
+    Emit(code,D3D10_SB_OPCODE_MUL,{Destination(0,8),scratch,Source(0,0xaa),scratch,Scalar(),Bits(-1.0f)});
+    Emit(code,D3D10_SB_OPCODE_MAX,{Destination(0,2),scratch,Source(0,0x55),scratch,Source(0,0xff),scratch});
+    Emit(code,D3D10_SB_OPCODE_ADD,{Destination(0,2),scratch,Source(0,0x55),scratch,Source(0,0),saved});
     Emit(code,D3D10_SB_OPCODE_MOV,{Destination(D3D10_SB_OPERAND_TYPE_OUTPUT,1),position,Source(0,0x55),scratch});
     if(options.skipUnitW) Emit(code,D3D10_SB_OPCODE_ENDIF,{});
 }

@@ -49,7 +49,23 @@ int main(int argc, char** argv)
             }
             SavePair(block ? "xgstereo-block-sbs.ppm" : "xgstereo-direct-sbs.ppm", left, right);
         }
-        std::puts("PASS: explicit Windows Vulkan layer produces expected near/far parallax; HUD stays fixed");
+        {
+            // Shift 1.0: the near post (w=2) would move 0.5 NDC = 32 px and is
+            // clamped to MaxScreenShift (0.25 NDC = 16 px); w=4 sits exactly
+            // at the limit. The HUD post has w = 1 + 5e-5, inside the HUD
+            // tolerance, and must stay put (an exact w == 1 test moved it 32 px).
+            const float hud = 1.00005f;
+            const auto mono = Render(nullptr, false, "1.0", hud), left = Render("left", false, "1.0", hud), right = Render("right", false, "1.0", hud);
+            const double expected[3] = {xg::MaxScreenShift * Width / 2, xg::MaxScreenShift * Width / 2, 0};
+            for (uint32_t post = 0; post < 3; ++post)
+            {
+                const double center = Centroid(mono, post), l = Centroid(left, post), r = Centroid(right, post);
+                std::printf("clamped post %u: mono %.2f left %.2f right %.2f (expected shifts +/-%.2f px)\n", post, center, l, r, expected[post]);
+                Require(std::abs(l - center - expected[post]) < .01 && std::abs(center - r - expected[post]) < .01,
+                    "screen-shift clamp or HUD W tolerance differs");
+            }
+        }
+        std::puts("PASS: explicit Windows Vulkan layer produces expected near/far parallax; HUD stays fixed (W tolerance); screen shift clamped");
         return 0;
     }
     catch (const std::exception& e) { std::fprintf(stderr, "FAIL: %s\n", e.what()); return 1; }

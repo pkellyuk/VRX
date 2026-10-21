@@ -32,6 +32,14 @@ MANUAL = {
     'vkUpdateDescriptorSetWithTemplate', 'vkCmdPushDescriptorSetWithTemplate',
     'vkCmdPushDescriptorSetWithTemplate2', 'vkCreateGraphicsPipelines', 'vkBeginCommandBuffer',
     'vkCreateBuffer', 'vkGetBufferDeviceAddress', 'vkCmdPushConstants', 'vkCmdPushConstants2', 'vkCmdBindPipeline', 'vkCreateComputePipelines',
+    'vkCreatePipelineLayout',
+}
+
+# Destroy wrappers notify the hand-written tables of these object types.
+DESTROY_HOOKS = {
+    'vkDestroyShaderModule': 'forget_shader_module',
+    'vkDestroyPipeline': 'forget_pipeline',
+    'vkDestroyPipelineLayout': 'forget_pipeline_layout',
 }
 
 # Mirrored commands that are fine to run on A only (no GPU-visible effect on B).
@@ -107,13 +115,20 @@ def main(xml_path, disp_path, out_path):
             for t in req.findall('type'):
                 into_types.add(t.get('name'))
 
+    max_minor = 0
     for feat in root.findall('feature'):
         if 'vulkan' not in feat.get('api', '').split(','):
             continue
         collect(feat, required_cmds, required_types)
+        m = re.match(r'^VK_VERSION_1_(\d+)$', feat.get('name', ''))
+        if m:
+            max_minor = max(max_minor, int(m.group(1)))
+    mirrored_extensions = []
     for ext in root.find('extensions').findall('extension'):
         sup = ext.get('supported', '').split(',')
         bad = 'vulkan' not in sup or ext.get('platform') or ext.get('provisional') == 'true'
+        if not bad and ext.get('type') == 'device':
+            mirrored_extensions.append(ext.get('name'))
         if bad:
             tc, tt = set(), set()
             collect(ext, tc, tt)
@@ -445,15 +460,32 @@ def main(xml_path, disp_path, out_path):
         w(f'    MDev* md = mdev_of(key({params[0].name}));')
         w(f'    if (!md) {{ auto state = FindDevice(reinterpret_cast<VkDevice>({params[0].name})); auto fn = reinterpret_cast<PFN_{name}>(state.next(state.handle, "{name}")); return fn({args}); }}')
         if name == 'vkDestroyBuffer':
-            w('    if (md) { std::lock_guard<std::mutex> l(md->addressLock); md->addresses.erase(h2u(buffer)); md->bufferSizes.erase(h2u(buffer)); }')
+            w('    forget_buffer_address(md, buffer);')
+        if name in DESTROY_HOOKS:
+            w(f'    {DESTROY_HOOKS[name]}(md, {params[1].name});')
+        # vkDestroyX(device, handle, pAllocator): after a mirror stop the
+        # right-eye twin is still destroyed (once its GPU work drained), so
+        # VRAM and handles return to normal instead of leaking.
+        simple_destroy = (name.startswith('vkDestroy') and ret == 'void' and len(params) == 3 and
+                          canon(params[0].type) == 'VkDevice' and xl_handle(params[1].type) and params[1].ptr == 0 and
+                          params[2].name == 'pAllocator')
         if ret == 'VkResult':
             w(f'    VkResult r = md->a.{name[2:]}({args});')
             w('    if (r < 0 || !md->live) return r;')
             w('    if (!md->b.' + name[2:] + ') { mirror_fail(md, "missing replay entry"); return r; }')
+        elif simple_destroy:
+            h = params[1].name
+            w(f'    md->a.{name[2:]}({args});')
+            w(f'    if (!md->live) {{ const auto twin = take_twin(md, {h}); if (twin && md->b.{name[2:]} && drain_after_stop(md)) md->b.{name[2:]}(md->bdev, twin, nullptr); return; }}')
+            w('    if (!md->b.' + name[2:] + ') { mirror_fail(md, "missing replay entry"); return; }')
         else:
             w(f'    md->a.{name[2:]}({args});')
             w('    if (!md->live) return;')
             w('    if (!md->b.' + name[2:] + ') { mirror_fail(md, "missing replay entry"); return; }')
+        if name.startswith('vkCmdDraw'):
+            w(f'    if (!push_flush(md, {params[0].name}, VK_PIPELINE_BIND_POINT_GRAPHICS)) return;')
+        elif name.startswith('vkCmdDispatch'):
+            w(f'    if (!push_flush(md, {params[0].name}, VK_PIPELINE_BIND_POINT_COMPUTE)) return;')
         if k.startswith('stub:'):
             reason = k[5:].replace('"', "'")
             stubs.append((name, reason))
@@ -533,6 +565,8 @@ def main(xml_path, disp_path, out_path):
             w(f'    else mirror_fail(md, "{name}: translation failed");')
             for l in post:
                 w(l)
+            if simple_destroy:
+                w(f'    forget_handle(md, {params[1].name});')
             w('    ctx_end(c);')
         w('}')
         table.append(name)
@@ -554,6 +588,19 @@ def main(xml_path, disp_path, out_path):
         for n in device_cmds[name][2]:
             w(f'    if (!strcmp(name, "{n}")) return (PFN_vkVoidFunction)m_{name[2:]};')
     w('    return nullptr;')
+    w('}')
+    w('')
+    w('// Device extensions of the pinned registry that the generated mirror covers:')
+    w('// every command is either wrapped, A-only, hand-written or a stopping stub.')
+    w('// Platform and provisional extensions are not generated (see the layer).')
+    w(f'static const uint32_t kMirrorRegistryMinor = {max_minor};  // newest VK_VERSION_1_x')
+    w('static bool mirror_extension_known(const char* name) {')
+    w('    static const char* const known[] = {')
+    for e in sorted(mirrored_extensions):
+        w(f'        "{e}",')
+    w('    };')
+    w('    for (const char* k : known) if (!strcmp(name, k)) return true;')
+    w('    return false;')
     w('}')
     w('')
     w('// Generated wrappers that only stop the mirror (not translatable):')

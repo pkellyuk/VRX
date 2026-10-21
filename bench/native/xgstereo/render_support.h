@@ -171,6 +171,8 @@ struct Scene {
     VkCommandPool pool = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
     VkCommandBuffer command = VK_NULL_HANDLE; // replayed unchanged to verify live eye updates
+    float hudDepth = 1; // clip W of the third ("HUD") post
+    float clearGrey = 0; // background: linear grey (0 keeps the historical black)
     explicit Scene(Gpu& g) : gpu(g) {}
     void Buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory)
     {
@@ -193,7 +195,7 @@ struct Scene {
     {
         std::vector<float> positions;
         const int corners[6][2] = {{0,0}, {1,0}, {1,1}, {0,0}, {1,1}, {0,1}};
-        const float depth[3] = {2, 4, 1};
+        const float depth[3] = {2, 4, hudDepth};
         for (int post = 0; post < 3; ++post)
             for (const auto& corner : corners)
             {
@@ -299,7 +301,8 @@ struct Scene {
         Vk(gpu.vkAllocateCommandBuffers(gpu.device, &ca, &command), "vkAllocateCommandBuffers");
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         Vk(gpu.vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer");
-        const VkClearValue clear{};
+        VkClearValue clear{};
+        if (clearGrey) clear.color = {{clearGrey, clearGrey, clearGrey, 1}};
         VkRenderPassBeginInfo rb{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         rb.renderPass = pass; rb.framebuffer = framebuffer; rb.renderArea = scissor; rb.clearValueCount = 1; rb.pClearValues = &clear;
         gpu.vkCmdBeginRenderPass(command, &rb, VK_SUBPASS_CONTENTS_INLINE);
@@ -347,12 +350,12 @@ struct Scene {
     }
 };
 
-inline std::vector<uint8_t> Render(const char* eye, bool block)
+inline std::vector<uint8_t> Render(const char* eye, bool block, const char* shift = "0.125", float hudDepth = 1)
 {
     Require(SetEnvironmentVariableA("VRX_XG_EYE", eye) != 0, "set test eye");
-    Require(SetEnvironmentVariableA("VRX_XG_SHIFT", "0.125") != 0, "set test shift");
+    Require(SetEnvironmentVariableA("VRX_XG_SHIFT", shift) != 0, "set test shift");
     Gpu gpu; gpu.Init();
-    Scene scene(gpu);
+    Scene scene(gpu); scene.hudDepth = hudDepth;
     return scene.Draw(block);
 }
 
