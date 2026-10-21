@@ -1,4 +1,32 @@
-# Stereo methods in the window chooser
+# True geometry as a per-game launch setting, and the window chooser
+
+True geometry is a per-game launch setting in Expert, not a stereo method picked when
+attaching. Expert → **3D: true geometry (experimental)** has **Start this game with true
+geometry** for the selected game: on is the saved backend being a geometry method (a
+renderer, the automatic one, or the old `GeometryStereo` checkbox), off is estimated depth
+(Auto and Depth both show off; `Profile`'s stored fields are unchanged, so existing
+profiles load as they were). Under it, used only while it is on: the renderer (automatic
+API detection, Vulkan, DXVK, vkd3d-proton), 3D strength, screen depth and the collapsed
+Developer part. **Start with true geometry** starts the selected game through VRX (a
+Steam game through its Steam launch and setup dialog, another through the direct launch
+with its saved arguments and working folder, using its recent-games entry when there is
+one); it needs the toggle on and a game VRX can start (an existing executable, or a Steam
+game bound to one). For a running game not started by VRX with true geometry it reads
+**Restart with true geometry** and runs the same flow as the status line's link. For a
+whole display, or a game VRX cannot start (an unbound Steam game, a missing executable),
+the section is disabled with one line saying why.
+
+There is no Game & window section any more. The main window owns one selected game (and
+window): the chooser sets it (clicking a tile plays as before; the small ⚙ Settings button
+on every Expert tile - running windows, recent and Steam games, displays - selects it
+without starting VR, and a running window is then what Attach / Play uses), and so do
+auto-attach and VRX's own launches. At start-up the last game is selected, running or not.
+A selected game that closes stays selected (not running); one that starts is picked up by
+the five-second refresh. The game card shows it, with its executable in the name's
+tooltip. While VR plays only the playing game can be selected. An unbound Steam game's
+settings stay in memory and become its executable's on its first play. Auto-attach and its
+countdown are in SteamVR & shortcuts; an old `"Game"` section state in `app-settings.json`
+is ignored and dropped on the next save. Easy has no ⚙ buttons.
 
 In **Expert**, each stopped game's tile (recent games, installed Steam games) offers
 launching with Estimated depth or True geometry (experimental); clicking the picture
@@ -20,13 +48,13 @@ VRX to start the game." with a **Restart with true geometry** link, until that s
 ends or another game is chosen. The link is the only way to restart a running game: it
 stops the depth session and goes through the anti-cheat check, the red warning and the
 restart dialog (a Steam game restarts through its Steam launch). An attach never shows
-the restart dialog. The Expert Stereo method setting says this in one line.
+the restart dialog. The toggle's hint says this in one line.
 
 True geometry shows a prominent red warning every time it is turned on for a game
-(choosing it in the main window or a chooser tile) and before every geometry launch
+(the toggle in the main window, or a chooser tile) and before every geometry launch
 or restart, Steam launches included: use it with offline games; online games with
-anti-cheat may detect it and the account can be banned. The main window keeps a red
-banner while geometry is chosen. Before the warning, VRX looks for anti-cheat in the
+anti-cheat may detect it and the account can be banned. The geometry section keeps a red
+banner while the toggle is on. Before the warning, VRX looks for anti-cheat in the
 game's installation (Easy Anti-Cheat folders and `start_protected_game.exe`,
 BattlEye and `BEService*`, EA Javelin, PunkBuster, GameGuard, XIGNCODE3, Tencent ACE,
 miHoYo protect, EQU8) and for anti-cheat services started from that folder or by the
@@ -53,11 +81,11 @@ layer. Unreal executables (`-Shipping.exe`) with several APIs use DXVK with `-dx
 reported instead of guessed: launching says so at once rather than failing after the
 first-frame wait. Native D3D12 command replay remains developer-only.
 
-The main window keeps these levels separate: Stereo method (the one control that
-turns geometry on) has Auto (estimated depth), Estimated depth and True geometry
-(experimental), which reveals a secondary Geometry renderer dropdown with what was
-detected. The per-game renderer is remembered when switching methods,
-and is shared with the window chooser's advanced geometry selection.
+The main window keeps these levels separate: the toggle (the one control that turns
+geometry on) and, under it, the Geometry renderer dropdown with what was detected. The
+per-game renderer is remembered while the toggle is off, and is shared with the window
+chooser's advanced geometry selection. Depth settings stay usable with the toggle on:
+attaching to a running game uses them.
 
 The chooser separates **Launch a game** from **Attach to something running**.
 Launch contains stopped recent games and installed Steam games; running titles
@@ -199,8 +227,8 @@ and the exact numbers live in the geometry section's collapsed **Developer** par
 like the launch dialog's arguments, working folder and Steam App ID.
 The desktop separates estimated-depth controls into **3D: estimated depth**
 and geometry controls into **3D: true geometry (experimental)**, with independently
-remembered expanded/collapsed states. The geometry panel exposes 3D strength
-(separation) and Screen depth (convergence) sliders whenever geometry is selected. They save with that executable's profile, accept the user's
+remembered expanded/collapsed states. The geometry panel's 3D strength
+(separation) and Screen depth (convergence) sliders are usable while the toggle is on. They save with that executable's profile, accept the user's
 decimal separator, and retain the existing calibration when switching methods.
 The sliders allow continuous live adjustment. The normal slider range is 0.001–2
 separation (a larger typed value up to 4 expands it) and 0–0.01 convergence. These

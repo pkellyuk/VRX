@@ -16,9 +16,6 @@ public sealed record GameWindow(nint Handle, string Title, int Monitor = -1)
 public sealed record RunningApp(int Pid, string Name, string FullPath, List<GameWindow> Windows, ImageSource? Icon)
 {
     public bool CanAttach => FullPath.Length > 0 && Windows.Count > 0;
-    public string Description => !CanAttach ? Loc.Get("AppNoGameWindow") :
-        ScreenSources.IsScreen(this) ? (Windows.Count == 1 ? Loc.Get("ScreenDescriptionOne") : Loc.Format("ScreenDescriptionOther", Windows.Count)) :
-        Windows.Count == 1 ? Loc.Format("AppDescriptionOne", Pid) : Loc.Format("AppDescriptionOther", Pid, Windows.Count);
 }
 public static class RunningApps
 {

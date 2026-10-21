@@ -43,8 +43,11 @@
   <data name="CardStopping" xml:space="preserve"><value>Stopping VR…</value></data>
   <data name="CardSpent" xml:space="preserve"><value>Stopped · switch to another window and back to attach again</value></data>
   <data name="CardReady" xml:space="preserve"><value>Ready · press Attach / Play</value></data>
-  <data name="CardChooseWindow" xml:space="preserve"><value>Choose the window to capture under Game &amp; window</value></data>
-  <data name="CardPickGame" xml:space="preserve"><value>Pick a game under Game &amp; window, or turn on auto-attach</value></data>
+  <data name="CardPickGame" xml:space="preserve"><value>Press Choose… to pick a game, or turn on auto-attach</value></data>
+  <data name="CardNotRunning" xml:space="preserve"><value>Not running · start it from Choose…</value></data>
+  <data name="CardPathTip" xml:space="preserve"><value>{0}
+Settings are saved separately for each executable.</value><comment>{0} = the game's executable path</comment></data>
+  <data name="CardSteamUnknownTip" xml:space="preserve"><value>VRX learns this Steam game's executable the first time it plays it. Settings are saved separately for each executable.</value></data>
 
   <!-- Buttons -->
   <data name="AttachPlay" xml:space="preserve"><value>Attach / Play</value></data>
@@ -53,8 +56,6 @@
   <data name="RecenterTip" xml:space="preserve"><value>Puts the screen straight in front of where the headset is looking now.</value></data>
   <data name="RecenterNow" xml:space="preserve"><value>Recenter now</value></data>
   <data name="DismissMenuNow" xml:space="preserve"><value>Dismiss menu now</value></data>
-  <data name="RefreshSymbol" xml:space="preserve"><value>↻</value><comment>Refresh button symbol; normally not translated.</comment></data>
-  <data name="RefreshTip" xml:space="preserve"><value>Refresh running applications</value></data>
   <data name="ResetProfile" xml:space="preserve"><value>Reset this profile</value></data>
   <data name="ResetProfileTip" xml:space="preserve"><value>Puts this game back to the base settings (or VRX's defaults if no base has been saved).</value></data>
   <data name="MakeBase" xml:space="preserve"><value>Make base settings</value></data>
@@ -63,7 +64,6 @@
   <data name="ApplyAllTip" xml:space="preserve"><value>Copies the settings shown here to every game you have already set up, after asking you to confirm. Screen placement, 3D strength, depth options, depth GPU and shortcuts are all included; each game keeps its own path and window. Games you have not set up yet still start from the base settings.</value></data>
 
   <!-- Section headers -->
-  <data name="SectionGame" xml:space="preserve"><value>Game &amp; window</value></data>
   <data name="SectionScreen" xml:space="preserve"><value>Screen</value></data>
   <data name="SectionAround" xml:space="preserve"><value>Around the screen</value></data>
   <data name="SectionRoom" xml:space="preserve"><value>Room</value></data>
@@ -73,19 +73,10 @@
   <data name="SectionProfile" xml:space="preserve"><value>Profile</value></data>
   <data name="SectionSession" xml:space="preserve"><value>Session details</value></data>
 
-  <!-- 1 Game & window -->
-  <data name="RunningApplications" xml:space="preserve"><value>Running applications</value></data>
-  <data name="ShowAllProcesses" xml:space="preserve"><value>Show all processes</value></data>
-  <data name="WindowToCapture" xml:space="preserve"><value>Window to capture</value></data>
-  <data name="PathChoose" xml:space="preserve"><value>Choose an application to get started.</value></data>
-  <data name="PathNoAccess" xml:space="preserve"><value>No accessible executable/window. Select a running game.</value></data>
-  <data name="GameHint" xml:space="preserve"><value>Settings are saved separately for each executable. Start SteamVR before playing.</value></data>
+  <!-- Auto-attach (SteamVR & shortcuts) and running applications -->
   <data name="AutoAttachCheck" xml:space="preserve"><value>Auto-attach to the game in front</value></data>
   <data name="AutoAttachCountdown" xml:space="preserve"><value>Countdown</value></data>
   <data name="AutoAttachTip" xml:space="preserve"><value>When a game is in front, VRX counts down and then attaches to it, exactly as if you had picked it and pressed Attach / Play. A window counts when it is full screen or borderless, or when it is a game you have set up before (it has saved settings; web browsers only count full screen). Steam, SteamVR, Windows itself, terminals and VRX are never attached. Switch to another window during the countdown to cancel it. After you stop VR, or if attaching fails, that window is left alone until you switch away from it and back. The countdown never starts while VRX itself is in front. Easy mode always has it on.</value></data>
-  <data name="AppDescriptionOne" xml:space="preserve"><value>PID {0} · 1 window</value><comment>{0} = process id</comment></data>
-  <data name="AppDescriptionOther" xml:space="preserve"><value>PID {0} · {1} windows</value><comment>{0} = process id, {1} = number of windows</comment></data>
-  <data name="AppNoGameWindow" xml:space="preserve"><value>No accessible game window</value></data>
   <data name="WindowUntitled" xml:space="preserve"><value>Window {0}</value><comment>{0} = window handle in hex</comment></data>
 
   <!-- 2 Screen -->
@@ -200,8 +191,9 @@
   <data name="StatusEngineFailed" xml:space="preserve"><value>VRX could not continue. {0}</value><comment>{0} = the reason (English, from the renderer) or SeeSessionDetails</comment></data>
   <data name="SeeSessionDetails" xml:space="preserve"><value>See Session details below.</value></data>
   <data name="StatusRefreshFailed" xml:space="preserve"><value>Could not refresh applications: {0}</value><comment>{0} = error message</comment></data>
-  <data name="StatusChooseWindow" xml:space="preserve"><value>Choose which window to capture for {0}</value><comment>{0} = game executable</comment></data>
   <data name="StatusReadyFor" xml:space="preserve"><value>Ready · settings for {0}</value><comment>{0} = game executable</comment></data>
+  <data name="StatusSettingsFor" xml:space="preserve"><value>Settings for {0} · not running</value><comment>{0} = game name</comment></data>
+  <data name="StatusSettingsWhilePlaying" xml:space="preserve"><value>Stop VR first to show another game's settings.</value></data>
   <data name="StatusSavedPlaying" xml:space="preserve"><value>Playing · saved for {0}</value><comment>{0} = game executable</comment></data>
   <data name="StatusSaved" xml:space="preserve"><value>Saved for {0}</value><comment>{0} = game executable</comment></data>
   <data name="StatusStarting" xml:space="preserve"><value>Starting VR · {0}</value><comment>{0} = game executable</comment></data>
@@ -265,6 +257,10 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ChooseTip" xml:space="preserve"><value>Pick a window or a whole screen from live pictures and play it in VR</value></data>
   <data name="ChooserTitle" xml:space="preserve"><value>Choose what to play</value></data>
   <data name="ChooserIntro" xml:space="preserve"><value>Launch a stopped game, or attach VRX to a window or display already running.</value></data>
+  <data name="ChooserIntroExpert" xml:space="preserve"><value>Launch a stopped game, or attach VRX to a window or display already running. A tile's ⚙ shows its settings without starting VR.</value></data>
+  <data name="ChooserSettingsSymbol" xml:space="preserve"><value>⚙</value><comment>Settings button symbol; normally not translated.</comment></data>
+  <data name="ChooserSettingsTip" xml:space="preserve"><value>Show this game's settings in VRX without starting VR</value></data>
+  <data name="ChooserSettingsFor" xml:space="preserve"><value>Settings for {0}</value><comment>{0} = game, window or display name</comment></data>
   <data name="ChooserLaunchSection" xml:space="preserve"><value>Launch a game</value></data>
   <data name="ChooserLaunchHint" xml:space="preserve"><value>These games are not running. Launch starts the game with the selected stereo method, then connects VRX.</value></data>
   <data name="ChooserAttachSection" xml:space="preserve"><value>Attach to something running</value></data>
@@ -284,8 +280,6 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="WholeScreen" xml:space="preserve"><value>Whole screen</value></data>
   <data name="ScreenTitle" xml:space="preserve"><value>Display {0} · {1} × {2}</value><comment>{0} = display number, {1} x {2} = resolution in pixels</comment></data>
   <data name="ScreenTitlePrimary" xml:space="preserve"><value>Display {0} · {1} × {2} · main</value><comment>{0} = display number, {1} x {2} = resolution in pixels</comment></data>
-  <data name="ScreenDescriptionOne" xml:space="preserve"><value>1 display</value></data>
-  <data name="ScreenDescriptionOther" xml:space="preserve"><value>{0} displays</value><comment>{0} = number of displays</comment></data>
   <data name="PathWholeScreen" xml:space="preserve"><value>Everything shown on the display. One set of settings is shared by all displays.</value></data>
   <data name="StatusChoiceGone" xml:space="preserve"><value>That window or display is no longer there. Choose again.</value></data>
   <data name="ErrorEngineBlockedPolicy" xml:space="preserve"><value>Windows blocked VRX's 3D engine (engine\xrplayer.exe). This is usually Smart App Control, which stops new programs that are not digitally signed yet, and VRX's programs are not signed yet. To play now, turn Smart App Control off in Windows Security &gt; App &amp; browser control &gt; Smart App Control settings; Windows may not let you turn it back on without a reset. On a work or school PC, ask its administrator.</value></data>
@@ -294,13 +288,18 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorRendererMissing" xml:space="preserve"><value>VRX renderer is missing. Reinstall VRX or build the project.</value></data>
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
   <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
-  <data name="GeometryHint" xml:space="preserve"><value>Both eyes come from the same game frame. Estimated-depth settings (strength, depth model, showing the desktop when you leave the game) are not used.</value></data>
+  <data name="GeometryHint" xml:space="preserve"><value>Both eyes come from the same game frame. While true geometry plays, the estimated-depth settings (strength, depth model, showing the desktop when you leave the game) are not used.</value></data>
+  <data name="GeometryToggle" xml:space="preserve"><value>Start this game with true geometry</value></data>
+  <data name="GeometryToggleHint" xml:space="preserve"><value>Used when VRX starts the game. Attaching to a game that is already running uses estimated depth unless VRX started it with true geometry. Off: estimated depth.</value></data>
+  <data name="GeometryStartButton" xml:space="preserve"><value>Start with true geometry</value></data>
+  <data name="GeometryStartTip" xml:space="preserve"><value>Starts this game through VRX with true geometry: a Steam game through Steam, others with their saved arguments. Shows the warning first; games with anti-cheat are refused.</value></data>
+  <data name="GeometryNeedsGame" xml:space="preserve"><value>Choose a game first: Choose…, then the ⚙ on its tile.</value></data>
+  <data name="GeometryNotForDisplay" xml:space="preserve"><value>True geometry is for games VRX starts, not for a whole display.</value></data>
+  <data name="GeometryUnknownGame" xml:space="preserve"><value>VRX cannot start this game: its executable is not known yet, or is missing. Play it once from Choose… first.</value></data>
   <data name="GeometrySession" xml:space="preserve"><value>Geometry session</value></data>
   <data name="GeometrySessionTip" xml:space="preserve"><value>Managed automatically by VRX. Change only when connecting to a stereo stream launched manually.</value></data>
   <data name="ErrorGeometrySession" xml:space="preserve"><value>Geometry session must contain 1–64 letters, numbers, hyphens or underscores.</value></data>
   <data name="ErrorGeometryNeedsGame" xml:space="preserve"><value>Geometry stereo needs a compatible game and geometry stream. Select its game window instead of a whole display.</value></data>
-  <data name="StereoPath" xml:space="preserve"><value>Stereo method</value></data>
-  <data name="StereoMethodNote" xml:space="preserve"><value>True geometry applies when VRX starts the game. Attaching to a game that is already running uses estimated depth.</value></data>
   <data name="GeometryAttachDepthHint" xml:space="preserve"><value>True geometry needs VRX to start the game.</value></data>
   <data name="GeometryRestartLink" xml:space="preserve"><value>Restart with true geometry</value></data>
   <data name="PathDepth" xml:space="preserve"><value>Estimated depth</value></data>
@@ -347,7 +346,6 @@ You can try another stereo method. Diagnostic logs: {1}</value></data>
   <data name="PathAuto" xml:space="preserve"><value>Auto (estimated depth)</value></data>
   <data name="PathGeometry" xml:space="preserve"><value>True geometry (experimental)</value></data>
   <data name="PathVkd3d" xml:space="preserve"><value>DirectX 12 → Vulkan (vkd3d-proton)</value></data>
-  <data name="PathAutoTip" xml:space="preserve"><value>Uses estimated depth. VRX never turns on true geometry by itself: choose it for a game yourself in Expert.</value></data>
   <data name="GeometryAdvanced" xml:space="preserve"><value>Advanced geometry settings</value></data>
   <data name="RendererAuto" xml:space="preserve"><value>Automatic (from the game's graphics API)</value></data>
   <data name="ErrorGeometryApiSeveral" xml:space="preserve"><value>This game can use several graphics APIs ({0}), so VRX will not guess. Choose a geometry renderer (Expert), or use estimated depth.</value></data>
@@ -408,7 +406,6 @@ This lets Steam start the game with VRX's saved geometry settings. VRX does not 
   <data name="GeometryTuningUpgrade" xml:space="preserve"><value>Saved. This game has an older or unsupported geometry layer; restart it once to load live tuning.</value></data>
   <data name="GeometrySeparationExact" xml:space="preserve"><value>3D strength (layer clip units)</value></data>
   <data name="GeometryConvergenceExact" xml:space="preserve"><value>Screen depth (layer convergence)</value></data>
-  <data name="GeometryOffHint" xml:space="preserve"><value>These settings apply when the stereo method for this game is “True geometry (experimental)” (Game &amp; window).</value></data>
   <data name="GeometryDeveloper" xml:space="preserve"><value>Developer</value></data>
   <data name="GeometryDeveloperHint" xml:space="preserve"><value>Exact values and the stream's connection name. VRX manages these; change them only if you know why.</value></data>
   <data name="GeometryWarningTitle" xml:space="preserve"><value>True geometry is experimental</value></data>

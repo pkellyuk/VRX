@@ -32,11 +32,13 @@ public sealed class AppSettings
     public static bool ValidMode(string? mode) => mode is EasyMode or ExpertMode;
 
     // Expert's collapsible sections: name -> open. Sections not listed use DefaultSections.
-    public const string SectionGame = "Game", SectionScreen = "Screen", SectionAround = "Around", SectionRoom = "Room",
+    // Older files may still name "Game" (the removed Game & window section): it is
+    // ignored, and dropped the next time a section is opened or closed.
+    public const string SectionScreen = "Screen", SectionAround = "Around", SectionRoom = "Room",
         SectionDepth = "Depth", SectionGeometry = "Geometry", SectionSteamVr = "SteamVr", SectionProfile = "Profile", SectionSession = "Session";
     public static readonly IReadOnlyDictionary<string, bool> DefaultSections = new Dictionary<string, bool>(StringComparer.Ordinal)
     {
-        [SectionGame] = false, [SectionScreen] = true, [SectionAround] = true, [SectionRoom] = true,
+        [SectionScreen] = true, [SectionAround] = true, [SectionRoom] = true,
         [SectionDepth] = false, [SectionGeometry] = false, [SectionSteamVr] = false, [SectionProfile] = false, [SectionSession] = false,
     };
     public Dictionary<string, bool>? Sections { get; set; }

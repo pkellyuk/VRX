@@ -63,63 +63,7 @@
   <ScrollViewer Grid.Row="2" x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
    <StackPanel x:Name="SectionsPanel" Margin="0,0,10,0">
 
-    <!-- 1 Game & window -->
-    <Expander x:Name="GameSection" Header="{l:Tr SectionGame}" Expanded="SectionToggled" Collapsed="SectionToggled">
-     <Grid>
-      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-      <DockPanel>
-       <DockPanel DockPanel.Dock="Top">
-        <Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="{l:Tr RefreshSymbol}" ToolTip="{l:Tr RefreshTip}" Click="RefreshClick" Margin="8,0,0,4" Padding="12,4" MinHeight="30"/>
-        <TextBlock Text="{l:Tr RunningApplications}" Style="{StaticResource SubHeader}" Margin="0,4,0,4" VerticalAlignment="Center"/>
-       </DockPanel>
-       <CheckBox DockPanel.Dock="Top" x:Name="ShowAll" Content="{l:Tr ShowAllProcesses}" Checked="ShowAllChanged" Unchecked="ShowAllChanged"/>
-       <ListBox x:Name="AppList" Height="230" Background="{StaticResource Well}" Foreground="{StaticResource Ink}" BorderThickness="0" SelectionChanged="AppSelected" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-        <ListBox.ItemTemplate><DataTemplate><Grid Margin="4,6"><Grid.ColumnDefinitions><ColumnDefinition Width="32"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-         <Image Source="{Binding Icon}" Width="24" Height="24" VerticalAlignment="Top"/>
-         <StackPanel Grid.Column="1"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Description}" FontSize="11" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/></StackPanel>
-        </Grid></DataTemplate></ListBox.ItemTemplate>
-       </ListBox>
-      </DockPanel>
-      <StackPanel Grid.Column="2">
-       <TextBlock Text="{l:Tr WindowToCapture}" Style="{StaticResource SubHeader}" Margin="0,4,0,6"/>
-       <ComboBox x:Name="WindowList" SelectionChanged="WindowSelected"/>
-       <TextBlock Text="{l:Tr StereoPath}" Style="{StaticResource SubHeader}" Margin="0,10,0,6"/>
-       <ComboBox x:Name="StereoPathList" SelectionChanged="StereoPathSelected">
-        <ComboBoxItem Tag="auto" Content="{l:Tr PathAuto}" ToolTip="{l:Tr PathAutoTip}"/>
-        <ComboBoxItem Tag="depth" Content="{l:Tr PathDepth}"/>
-        <ComboBoxItem Tag="geometry" Content="{l:Tr PathGeometry}"/>
-       </ComboBox>
-       <TextBlock Text="{l:Tr StereoMethodNote}" Style="{StaticResource Hint}" Margin="0,6,0,0"/>
-       <!-- Shown whenever true geometry is chosen for this game (GeometryWarning). -->
-       <Border x:Name="GeometryWarningBanner" Background="{StaticResource WarningBack}" BorderBrush="{StaticResource WarningEdge}" BorderThickness="2" CornerRadius="6" Padding="12,8" Margin="0,8,0,0" Visibility="Collapsed">
-        <TextBlock Text="{l:Tr GeometryWarningText}" Foreground="{StaticResource WarningInk}" FontWeight="SemiBold" TextWrapping="Wrap"/>
-       </Border>
-       <TextBlock x:Name="TestedHint" Text="{l:Tr TestedSystemShock}" Style="{StaticResource Hint}" Margin="0,6,0,0" Visibility="Collapsed"/>
-       <StackPanel x:Name="GeometryRendererPanel" Visibility="Collapsed">
-       <TextBlock Text="{l:Tr GeometryRenderer}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
-       <ComboBox x:Name="GeometryRendererList" SelectionChanged="GeometryRendererSelected">
-        <ComboBoxItem Tag="geometry" Content="{l:Tr RendererAuto}"/>
-        <ComboBoxItem Tag="vulkan" Content="{l:Tr PathVulkan}"/>
-        <ComboBoxItem Tag="dxvk" Content="{l:Tr PathDxvk}"/>
-        <ComboBoxItem Tag="vkd3d" Content="{l:Tr PathVkd3d}"/>
-       </ComboBox>
-       <TextBlock x:Name="RendererDetected" Style="{StaticResource Hint}" Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
-       </StackPanel>
-       <TextBlock x:Name="PathLabel" Text="{l:Tr PathChoose}" Style="{StaticResource Hint}" Margin="0,8,0,4"/>
-       <TextBlock Text="{l:Tr GameHint}" Style="{StaticResource Hint}"/>
-       <StackPanel x:Name="AutoAttachPanel" Margin="0,8,0,0" ToolTip="{l:Tr AutoAttachTip}">
-        <CheckBox x:Name="AutoAttachCheck" Content="{l:Tr AutoAttachCheck}" FontWeight="SemiBold" Checked="AutoAttachChanged" Unchecked="AutoAttachChanged"/>
-        <DockPanel Margin="26,0,0,0">
-         <TextBlock x:Name="AutoAttachValue" DockPanel.Dock="Right" Style="{StaticResource Value}" MinWidth="36" VerticalAlignment="Center"/>
-         <TextBlock DockPanel.Dock="Left" Text="{l:Tr AutoAttachCountdown}" VerticalAlignment="Center" Margin="0,0,12,0"/>
-         <Slider x:Name="AutoAttachSlider" Minimum="3" Maximum="30" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" Margin="0" ValueChanged="AutoAttachSecondsChanged"/>
-        </DockPanel>
-       </StackPanel>
-      </StackPanel>
-     </Grid>
-    </Expander>
-
-    <!-- 2 Screen -->
+    <!-- 1 Screen -->
     <Expander x:Name="ScreenSection" Header="{l:Tr SectionScreen}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="ScreenContent">
       <TextBlock Text="{l:Tr ScreenHint}" Style="{StaticResource Hint}" Margin="0,0,0,10"/>
@@ -159,7 +103,7 @@
      </StackPanel>
     </Expander>
 
-    <!-- 3 Around the screen -->
+    <!-- 2 Around the screen -->
     <Expander x:Name="AroundSection" Header="{l:Tr SectionAround}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="AroundContent">
       <CheckBox x:Name="AmbilightCheck" Content="{l:Tr Ambilight}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr AmbilightTip}"/>
@@ -176,7 +120,7 @@
      </StackPanel>
     </Expander>
 
-    <!-- 4 Room -->
+    <!-- 3 Room -->
     <Expander x:Name="RoomSection" Header="{l:Tr SectionRoom}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="RoomContent">
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" x:Name="RoomValue"/><TextBlock x:Name="RoomLabel" Style="{StaticResource Label}" Text="{l:Tr RoomLabel}"/></DockPanel>
@@ -204,7 +148,7 @@
      </StackPanel>
     </Expander>
 
-    <!-- Estimated depth stereo -->
+    <!-- 4 Estimated depth stereo -->
     <Expander x:Name="DepthSection" Header="{l:Tr SectionDepth}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="DepthContent">
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueNumber, Element=StrengthSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Strength3D}"/></DockPanel>
@@ -231,68 +175,97 @@
      </StackPanel>
     </Expander>
 
-    <!-- Geometry stereo -->
+    <!-- 5 True geometry: a per-game launch setting. It applies when VRX starts the game (a
+         Vulkan layer and translation DLLs are loaded at launch); attaching to a running game
+         uses estimated depth unless VRX started it with true geometry. -->
     <Expander x:Name="GeometrySection" Header="{l:Tr SectionGeometry}" Expanded="SectionToggled" Collapsed="SectionToggled">
-     <StackPanel x:Name="GeometryPanel">
-      <!-- The method is chosen once, under Game & window ("True geometry (experimental)"). -->
-      <TextBlock x:Name="GeometryOffHint" Text="{l:Tr GeometryOffHint}" Style="{StaticResource Hint}"/>
-      <StackPanel x:Name="GeometryContent" Visibility="Collapsed">
-       <Border Background="{StaticResource WarningBack}" BorderBrush="{StaticResource WarningEdge}" BorderThickness="2" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+     <StackPanel>
+      <!-- Why it cannot be set up for the selection: nothing chosen, a whole display, or a game VRX cannot start. -->
+      <TextBlock x:Name="GeometryUnavailableHint" Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="Collapsed"/>
+      <StackPanel x:Name="GeometryPanel">
+       <CheckBox x:Name="GeometryToggle" Content="{l:Tr GeometryToggle}" FontWeight="SemiBold" Checked="GeometryToggleChanged" Unchecked="GeometryToggleChanged" ToolTip="{l:Tr PathGeometryTip}"/>
+       <TextBlock Text="{l:Tr GeometryToggleHint}" Style="{StaticResource Hint}" Margin="26,0,0,6"/>
+       <!-- Shown while true geometry is on for this game (GeometryWarning). -->
+       <Border x:Name="GeometryWarningBanner" Background="{StaticResource WarningBack}" BorderBrush="{StaticResource WarningEdge}" BorderThickness="2" CornerRadius="6" Padding="12,8" Margin="0,4,0,0" Visibility="Collapsed">
         <TextBlock Text="{l:Tr GeometryWarningText}" Foreground="{StaticResource WarningInk}" FontWeight="SemiBold" TextWrapping="Wrap"/>
        </Border>
-       <TextBlock Text="{l:Tr GeometryHint}" Style="{StaticResource Hint}"/>
-       <Grid Margin="0,8,0,0">
-        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions>
-        <StackPanel>
-         <TextBlock Text="{l:Tr GeometrySeparation}" Style="{StaticResource Label}"/>
-         <Slider x:Name="GeometrySeparationSlider" Minimum="0.001" Maximum="2" SmallChange="0.005" LargeChange="0.05" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometrySeparationTip}" AutomationProperties.Name="{l:Tr GeometrySeparation}"/>
-        </StackPanel>
-        <StackPanel Grid.Column="2">
-         <TextBlock Text="{l:Tr GeometryConvergence}" Style="{StaticResource Label}"/>
-         <Slider x:Name="GeometryConvergenceSlider" Minimum="0" Maximum="0.01" SmallChange="0.0002" LargeChange="0.001" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
-        </StackPanel>
-       </Grid>
-       <TextBlock x:Name="GeometryTuningHint" Text="{l:Tr GeometryTuningLive}" Style="{StaticResource Hint}" Margin="0,6,0,0"/>
-       <!-- Developer: exact numbers and the stream's connection name. Not needed to play. -->
-       <Expander x:Name="GeometryDeveloper" Header="{l:Tr GeometryDeveloper}" Margin="0,8,0,0">
-        <StackPanel>
-         <TextBlock Text="{l:Tr GeometryDeveloperHint}" Style="{StaticResource Hint}"/>
-         <Grid Margin="0,4,0,0">
-          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions>
-          <StackPanel>
-           <TextBlock Text="{l:Tr GeometrySeparationExact}" Style="{StaticResource Label}"/>
-           <TextBox x:Name="GeometrySeparationText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometrySeparationTip}" AutomationProperties.Name="{l:Tr GeometrySeparationExact}"/>
-          </StackPanel>
-          <StackPanel Grid.Column="2">
-           <TextBlock Text="{l:Tr GeometryConvergenceExact}" Style="{StaticResource Label}"/>
-           <TextBox x:Name="GeometryConvergenceText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergenceExact}"/>
-          </StackPanel>
-         </Grid>
-         <TextBlock Text="{l:Tr GeometrySession}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
-         <TextBox x:Name="GeometrySessionText" MaxLength="64" TextChanged="SettingsChanged" ToolTip="{l:Tr GeometrySessionTip}"/>
-        </StackPanel>
-       </Expander>
+       <TextBlock x:Name="TestedHint" Text="{l:Tr TestedSystemShock}" Style="{StaticResource Hint}" Margin="0,6,0,0" Visibility="Collapsed"/>
+       <WrapPanel Margin="0,8,0,0"><Button x:Name="GeometryStartButton" Content="{l:Tr GeometryStartButton}" ToolTip="{l:Tr GeometryStartTip}" Click="GeometryStartClick" IsEnabled="False"/></WrapPanel>
+       <!-- The settings below are used only while the toggle is on. -->
+       <StackPanel x:Name="GeometryContent" Margin="0,10,0,0" IsEnabled="False">
+        <TextBlock Text="{l:Tr GeometryHint}" Style="{StaticResource Hint}"/>
+        <TextBlock Text="{l:Tr GeometryRenderer}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
+        <ComboBox x:Name="GeometryRendererList" SelectionChanged="GeometryRendererSelected">
+         <ComboBoxItem Tag="geometry" Content="{l:Tr RendererAuto}"/>
+         <ComboBoxItem Tag="vulkan" Content="{l:Tr PathVulkan}"/>
+         <ComboBoxItem Tag="dxvk" Content="{l:Tr PathDxvk}"/>
+         <ComboBoxItem Tag="vkd3d" Content="{l:Tr PathVkd3d}"/>
+        </ComboBox>
+        <TextBlock x:Name="RendererDetected" Style="{StaticResource Hint}" Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+        <Grid Margin="0,8,0,0">
+         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions>
+         <StackPanel>
+          <TextBlock Text="{l:Tr GeometrySeparation}" Style="{StaticResource Label}"/>
+          <Slider x:Name="GeometrySeparationSlider" Minimum="0.001" Maximum="2" SmallChange="0.005" LargeChange="0.05" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometrySeparationTip}" AutomationProperties.Name="{l:Tr GeometrySeparation}"/>
+         </StackPanel>
+         <StackPanel Grid.Column="2">
+          <TextBlock Text="{l:Tr GeometryConvergence}" Style="{StaticResource Label}"/>
+          <Slider x:Name="GeometryConvergenceSlider" Minimum="0" Maximum="0.01" SmallChange="0.0002" LargeChange="0.001" Height="32" Margin="0,4,0,0" ValueChanged="GeometryTuningSliderChanged" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergence}"/>
+         </StackPanel>
+        </Grid>
+        <TextBlock x:Name="GeometryTuningHint" Text="{l:Tr GeometryTuningLive}" Style="{StaticResource Hint}" Margin="0,6,0,0"/>
+        <!-- Developer: exact numbers and the stream's connection name. Not needed to play. -->
+        <Expander x:Name="GeometryDeveloper" Header="{l:Tr GeometryDeveloper}" Margin="0,8,0,0">
+         <StackPanel>
+          <TextBlock Text="{l:Tr GeometryDeveloperHint}" Style="{StaticResource Hint}"/>
+          <Grid Margin="0,4,0,0">
+           <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions>
+           <StackPanel>
+            <TextBlock Text="{l:Tr GeometrySeparationExact}" Style="{StaticResource Label}"/>
+            <TextBox x:Name="GeometrySeparationText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometrySeparationTip}" AutomationProperties.Name="{l:Tr GeometrySeparationExact}"/>
+           </StackPanel>
+           <StackPanel Grid.Column="2">
+            <TextBlock Text="{l:Tr GeometryConvergenceExact}" Style="{StaticResource Label}"/>
+            <TextBox x:Name="GeometryConvergenceText" MaxLength="20" TextChanged="GeometryTuningChanged" LostFocus="GeometryTuningLostFocus" ToolTip="{l:Tr GeometryConvergenceTip}" AutomationProperties.Name="{l:Tr GeometryConvergenceExact}"/>
+           </StackPanel>
+          </Grid>
+          <TextBlock Text="{l:Tr GeometrySession}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
+          <TextBox x:Name="GeometrySessionText" MaxLength="64" TextChanged="SettingsChanged" ToolTip="{l:Tr GeometrySessionTip}"/>
+         </StackPanel>
+        </Expander>
+       </StackPanel>
       </StackPanel>
       <!-- Steam launch options that start games through VRX: listed to remove before moving
-           or uninstalling VRX (SteamGeometry.ShowRemoval). -->
+           or uninstalling VRX (SteamGeometry.ShowRemoval). App-wide, so usable without a game. -->
       <Button x:Name="SteamSetupsButton" Content="{l:Tr SteamRemoveSetups}" ToolTip="{l:Tr SteamRemoveSetupsTip}" Click="SteamSetupsClick" HorizontalAlignment="Left" Margin="0,10,0,0"/>
      </StackPanel>
     </Expander>
 
     <!-- 6 SteamVR & shortcuts -->
     <Expander x:Name="SteamVrSection" Header="{l:Tr SectionSteamVr}" Expanded="SectionToggled" Collapsed="SectionToggled">
-     <StackPanel x:Name="SteamVrContent">
-      <CheckBox x:Name="DismissCheck" Content="{l:Tr DismissOnStart}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
-      <CheckBox x:Name="DesktopAwayCheck" Content="{l:Tr DesktopWhenAway}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
-      <TextBlock Text="{l:Tr DesktopWhenAwayHint}" Style="{StaticResource Hint}" Margin="26,0,0,8"/>
-      <TextBlock Text="{l:Tr KeyboardShortcuts}" Style="{StaticResource SubHeader}"/>
-      <Grid>
-       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="28"/><ColumnDefinition/></Grid.ColumnDefinitions>
-       <StackPanel><TextBlock Text="{l:Tr ShortcutRecenter}" Style="{StaticResource Label}" Margin="0,0,0,4"/><ComboBox x:Name="RecenterKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
-       <StackPanel Grid.Column="2"><TextBlock Text="{l:Tr ShortcutDismiss}" Style="{StaticResource Label}" Margin="0,0,0,4"/><ComboBox x:Name="MenuKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
-      </Grid>
-      <TextBlock Text="{l:Tr ShortcutsHint}" Style="{StaticResource Hint}" Margin="0,8,0,10"/>
-      <WrapPanel><Button x:Name="DismissButton" Content="{l:Tr DismissMenuNow}" Click="DismissClick" IsEnabled="False"/></WrapPanel>
+     <StackPanel>
+      <!-- App-wide (not per game), so it stays usable with no game chosen. -->
+      <StackPanel x:Name="AutoAttachPanel" Margin="0,0,0,10" ToolTip="{l:Tr AutoAttachTip}">
+       <CheckBox x:Name="AutoAttachCheck" Content="{l:Tr AutoAttachCheck}" FontWeight="SemiBold" Checked="AutoAttachChanged" Unchecked="AutoAttachChanged"/>
+       <DockPanel Margin="26,0,0,0">
+        <TextBlock x:Name="AutoAttachValue" DockPanel.Dock="Right" Style="{StaticResource Value}" MinWidth="36" VerticalAlignment="Center"/>
+        <TextBlock DockPanel.Dock="Left" Text="{l:Tr AutoAttachCountdown}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+        <Slider x:Name="AutoAttachSlider" Minimum="3" Maximum="30" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" Margin="0" ValueChanged="AutoAttachSecondsChanged"/>
+       </DockPanel>
+      </StackPanel>
+      <StackPanel x:Name="SteamVrContent">
+       <CheckBox x:Name="DismissCheck" Content="{l:Tr DismissOnStart}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+       <CheckBox x:Name="DesktopAwayCheck" Content="{l:Tr DesktopWhenAway}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+       <TextBlock Text="{l:Tr DesktopWhenAwayHint}" Style="{StaticResource Hint}" Margin="26,0,0,8"/>
+       <TextBlock Text="{l:Tr KeyboardShortcuts}" Style="{StaticResource SubHeader}"/>
+       <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="28"/><ColumnDefinition/></Grid.ColumnDefinitions>
+        <StackPanel><TextBlock Text="{l:Tr ShortcutRecenter}" Style="{StaticResource Label}" Margin="0,0,0,4"/><ComboBox x:Name="RecenterKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
+        <StackPanel Grid.Column="2"><TextBlock Text="{l:Tr ShortcutDismiss}" Style="{StaticResource Label}" Margin="0,0,0,4"/><ComboBox x:Name="MenuKeys" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="SettingsChanged"/></StackPanel>
+       </Grid>
+       <TextBlock Text="{l:Tr ShortcutsHint}" Style="{StaticResource Hint}" Margin="0,8,0,10"/>
+       <WrapPanel><Button x:Name="DismissButton" Content="{l:Tr DismissMenuNow}" Click="DismissClick" IsEnabled="False"/></WrapPanel>
+      </StackPanel>
      </StackPanel>
     </Expander>
 

@@ -16,10 +16,12 @@ public sealed partial class ChooserWindow : Window
     // method is (and without changing it). True geometry is only reachable in Expert.
     // Restart: "Restart with true geometry" for a running Steam game (never from a tile here:
     // running windows only attach).
-    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null, string? Renderer = null, GameHistory.Entry? History = null, SteamLibrary.Game? Steam = null, bool ReviewSteamSetup = false, bool DepthOnly = false, bool Restart = false);
+    // Settings: a tile's Settings button - select this game for the Expert sections, without
+    // starting VR.
+    public sealed record Choice(RunningApp App, GameWindow Window, string? Backend = null, string? Renderer = null, GameHistory.Entry? History = null, SteamLibrary.Game? Steam = null, bool ReviewSteamSetup = false, bool DepthOnly = false, bool Restart = false, bool Settings = false);
 
-    // Expert shows each tile's stereo method buttons and the geometry options; Easy shows
-    // tiles that just play with estimated depth.
+    // Expert shows each tile's Settings button, and stopped games' stereo method buttons and
+    // geometry options; Easy shows tiles that just play with estimated depth.
     private readonly bool expert;
 
     // What was picked; null when the chooser was closed without a pick.
@@ -56,6 +58,8 @@ public sealed partial class ChooserWindow : Window
         System.Diagnostics.Debug.WriteLine($"[Chooser] enter: {apps.Count} app(s), {screens.Count} display(s), current {currentWindow:X}, place {place?.ToString() ?? "default"}, expert {expert}, Steam {(steamGames == null ? "not installed" : steamGames.Count + " game(s)")}");
         InitializeComponent();
         Title = Loc.Get("ChooserTitle");
+        // Expert: the tiles' Settings buttons are how a game is chosen for its settings.
+        if (expert) Intro.Text = Loc.Get("ChooserIntroExpert");
         // The remembered size, never bigger than the screen it opens on (it opens centred on VRX).
         if (place is { HasSize: true })
         {
@@ -170,12 +174,19 @@ public sealed partial class ChooserWindow : Window
         else
             button.Click += (_, _) => Pick(choice with {Backend=StereoPaths.Mode(selected)==StereoPaths.GeometryAuto?renderer:choice.Backend,Renderer=renderer});
         tiles.Add(new Tile { Choice = choice, Picture = picture, Screen = screen, Snapshot = snapshot });
-        // Only stopped games have method buttons: a running window cannot be restarted from here.
-        if (screen != null || !expert || !launches) return button;
-        // Separate sibling buttons: input controls must never sit inside a tile Button.
+        if (!expert) return button;
+        // Separate sibling buttons: input controls must never sit inside a tile Button. The
+        // Settings button sits over the tile's caption (a window's live picture is drawn by DWM
+        // above everything in the picture area).
+        var holder = new Grid { Margin = button.Margin };
         button.Margin = new Thickness(0);
+        holder.Children.Add(button);
+        holder.Children.Add(SettingsButton(choice, title));
+        // Only stopped games have method buttons: a running window cannot be restarted from here.
+        if (screen != null || !launches) return holder;
+        holder.Margin = new Thickness(0);
         var card = new StackPanel { Width = PictureWidth + 24, Margin = new Thickness(0,0,14,14) };
-        card.Children.Add(button);
+        card.Children.Add(holder);
         // Expert only: launch this stopped game with estimated depth or true geometry. Geometry
         // still shows the red warning (and refuses games with anti-cheat) before the launch.
         var routes = new Grid { Margin = new Thickness(2,5,2,0) };
@@ -220,9 +231,30 @@ public sealed partial class ChooserWindow : Window
         return card;
     }
 
+    // Expert: a tile's small Settings (gear) button. It selects the tile's game, window or
+    // display for VRX's settings without starting VR (MainWindow.ShowSettingsFor).
+    private Button SettingsButton(Choice choice, string title)
+    {
+        ArgumentNullException.ThrowIfNull(choice);
+        ArgumentNullException.ThrowIfNull(title);
+        var gear = new Button
+        {
+            Content = Loc.Get("ChooserSettingsSymbol"), Tag = SettingsTag, ToolTip = Loc.Get("ChooserSettingsTip"), FontSize = 15,
+            Padding = new Thickness(8, 1, 8, 1), MinHeight = 0, MinWidth = 0, Cursor = Cursors.Hand,
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 10, 10),
+        };
+        System.Windows.Automation.AutomationProperties.SetName(gear, Loc.Format("ChooserSettingsFor", title));
+        gear.Click += (_, _) => Pick(choice with { Backend = null, Renderer = null, ReviewSteamSetup = false, DepthOnly = false, Restart = false, Settings = true });
+        System.Diagnostics.Debug.WriteLine($"[Chooser] SettingsButton: {choice.App.FullPath} '{title}'");
+        return gear;
+    }
+
+    // The Settings buttons' Tag (tests find them by it; never a stereo method).
+    public const string SettingsTag = "Settings";
+
     private void Pick(Choice choice)
     {
-        System.Diagnostics.Debug.WriteLine($"[Chooser] picked {choice.App.Name} '{choice.Window.Title}' monitor {choice.Window.Monitor}");
+        System.Diagnostics.Debug.WriteLine($"[Chooser] picked {choice.App.Name} '{choice.Window.Title}' monitor {choice.Window.Monitor}, settings only {choice.Settings}");
         Picked = choice;
         DialogResult = true;
     }
