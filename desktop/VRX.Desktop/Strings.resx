@@ -302,7 +302,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="StereoModeName" xml:space="preserve"><value>3D method for this game</value></data>
   <data name="StereoModeDepth" xml:space="preserve"><value>Depth</value></data>
   <data name="StereoModeGeometry" xml:space="preserve"><value>Geometry</value></data>
-  <data name="StereoModeTip" xml:space="preserve"><value>How VRX makes this game 3D. Depth: estimated depth, for any game or display. Geometry: true geometry (experimental), used when VRX starts the game; turning it on shows a warning first.</value></data>
+  <data name="StereoModeTip" xml:space="preserve"><value>How VRX makes this game 3D. Depth: estimated depth, for any game or display. Geometry: true geometry (experimental), used when VRX starts the game; Start (or Restart) shows a warning first.</value></data>
   <data name="GeometryNeedsGame" xml:space="preserve"><value>Choose a game first: Choose…, then the ⚙ on its tile.</value></data>
   <data name="GeometryNotForDisplay" xml:space="preserve"><value>True geometry is for games VRX starts, not for a whole display.</value></data>
   <data name="GeometryUnknownGame" xml:space="preserve"><value>VRX cannot start this game: its executable is not known yet, or is missing. Play it once from Choose… first.</value></data>
@@ -341,6 +341,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorGeometryTuning" xml:space="preserve"><value>3D strength must be between 0.001 and 4, and screen depth between 0 and 0.01.</value></data>
   <data name="StatusGeometryPreparing" xml:space="preserve"><value>Preparing the geometry stereo attempt…</value></data>
   <data name="StatusGeometryCancelled" xml:space="preserve"><value>Game restart cancelled. The game was left running.</value></data>
+  <data name="StatusGeometryStartCancelled" xml:space="preserve"><value>Start cancelled: the game was not started. It is still set to Geometry.</value></data>
   <data name="StatusGeometryRestarting" xml:space="preserve"><value>Restarting the selected game with geometry stereo…</value></data>
   <data name="ErrorGeometryFilesBusy" xml:space="preserve"><value>Another VRX operation is changing this game's launch files. Try again.</value></data>
   <data name="ErrorGeometryNativeMissing" xml:space="preserve"><value>Native DX12 stereo is missing or incompatible. Install or build the optional native backend before trying this method.</value></data>
@@ -418,12 +419,11 @@ This lets Steam start the game with VRX's saved geometry settings. VRX does not 
   <data name="GeometryAntiCheatTitle" xml:space="preserve"><value>This game uses anti-cheat</value></data>
   <data name="GeometryAntiCheatFound" xml:space="preserve"><value>This game uses anti-cheat ({0}). True geometry loads extra graphics components into the game and changes how it draws. Anti-cheat may detect this: if you play online with it, your account can be banned. Estimated depth works with this game and is the safe choice. You can still use true geometry at your own risk.</value></data>
   <data name="GeometryUseDepth" xml:space="preserve"><value>Use estimated depth</value></data>
-  <data name="GeometryAccept" xml:space="preserve"><value>I understand, use true geometry</value></data>
   <data name="GeometryAcceptLaunch" xml:space="preserve"><value>I understand, launch with true geometry</value></data>
   <data name="GeometryRiskAccept" xml:space="preserve"><value>I understand the risk</value></data>
   <data name="GeometryRiskAcceptCountdown" xml:space="preserve"><value>I understand the risk ({0})</value></data>
-  <data name="StatusGeometryAntiCheat" xml:space="preserve"><value>This game uses anti-cheat: using estimated depth instead of true geometry.</value></data>
-  <data name="StatusGeometryDepthInstead" xml:space="preserve"><value>Using estimated depth this time. The game's saved stereo method is unchanged.</value></data>
+  <data name="StatusGeometryAntiCheat" xml:space="preserve"><value>This game uses anti-cheat: starting with estimated depth instead of true geometry. The game is now set to Depth.</value></data>
+  <data name="StatusGeometryDepthInstead" xml:space="preserve"><value>Starting with estimated depth instead of true geometry. The game is now set to Depth.</value></data>
   <data name="StatusChooseFailed" xml:space="preserve"><value>Choose could not finish: {0}</value></data>
   <data name="StatusChoiceStillStopping" xml:space="preserve"><value>The current VR session is still stopping. Choose again in a moment.</value></data>
   <data name="ErrorGeometryGameClosed" xml:space="preserve"><value>The game closed before it showed its first 3D frame.</value></data>

@@ -9,8 +9,9 @@ namespace VRX.Desktop;
 // What the player answered to the true-geometry warning.
 public enum GeometryConsent { Proceed, UseDepth, Cancel }
 
-// The red true-geometry warning, shown every time geometry is turned on for a game and
-// before every geometry launch or restart (Steam launches included): offline games are
+// The red true-geometry warning, shown before every geometry launch or restart (the main
+// button's Start and Restart, chooser tiles, Steam launches; never for moving the Depth |
+// Geometry switch, which is only a setting): offline games are
 // recommended; online games with anti-cheat may flag it and the account can be banned.
 // When anti-cheat is found in the game, the anti-cheat warning replaces it: the products
 // and files found, and the choice of estimated depth (the default) or "I understand the
@@ -79,12 +80,12 @@ internal static class GeometryWarning
 
     // Asks before true geometry is used for `game`. `antiCheat`: markers found (AntiCheat);
     // any marker shows the anti-cheat warning instead of the generic one.
-    public static GeometryConsent Ask(Window? owner, string game, IReadOnlyList<AntiCheat.Marker> antiCheat, bool launch)
+    public static GeometryConsent Ask(Window? owner, string game, IReadOnlyList<AntiCheat.Marker> antiCheat)
     {
         ArgumentNullException.ThrowIfNull(game);
         ArgumentNullException.ThrowIfNull(antiCheat);
-        Debug.WriteLine($"[Geometry warning] Ask enter: {game}, launch {launch}, anti-cheat {antiCheat.Count}");
-        var prompt = Build(owner, game, antiCheat, launch);
+        Debug.WriteLine($"[Geometry warning] Ask enter: {game}, anti-cheat {antiCheat.Count}");
+        var prompt = Build(owner, game, antiCheat);
         prompt.Window.ShowDialog();
         Debug.WriteLine($"[Geometry warning] Ask exit: {prompt.Answer}");
         return prompt.Answer;
@@ -94,13 +95,13 @@ internal static class GeometryWarning
     // and Cancel / Use estimated depth (default) / I understand the risk, the last locked for
     // `countdownSeconds` counted down every `tick` (one second) from when the dialog is first
     // drawn. Without: the red warning and Cancel / Use estimated depth (default) / I understand.
-    internal static Prompt Build(Window? owner, string game, IReadOnlyList<AntiCheat.Marker> antiCheat, bool launch,
+    internal static Prompt Build(Window? owner, string game, IReadOnlyList<AntiCheat.Marker> antiCheat,
         int countdownSeconds = RiskCountdownSeconds, TimeSpan? tick = null)
     {
         ArgumentNullException.ThrowIfNull(game);
         ArgumentNullException.ThrowIfNull(antiCheat);
         ArgumentOutOfRangeException.ThrowIfNegative(countdownSeconds);
-        Debug.WriteLine($"[Geometry warning] Build enter: {game}, launch {launch}, anti-cheat {antiCheat.Count}, countdown {countdownSeconds} s, tick {tick?.TotalMilliseconds ?? 1000} ms");
+        Debug.WriteLine($"[Geometry warning] Build enter: {game}, anti-cheat {antiCheat.Count}, countdown {countdownSeconds} s, tick {tick?.TotalMilliseconds ?? 1000} ms");
         bool protectedGame = antiCheat.Count > 0;
         var window = new Window
         {
@@ -154,7 +155,7 @@ internal static class GeometryWarning
         }
         else
         {
-            accept = Add(Loc.Get(launch ? "GeometryAcceptLaunch" : "GeometryAccept"), GeometryConsent.Proceed);
+            accept = Add(Loc.Get("GeometryAcceptLaunch"), GeometryConsent.Proceed);
         }
         body.Children.Add(buttons);
         prompt = new Prompt { Window = window, CancelButton = cancel, DepthButton = depth, AcceptButton = accept, RiskButton = risk, AntiCheat = protectedGame, Timer = timer, SecondsLeft = countdownSeconds };

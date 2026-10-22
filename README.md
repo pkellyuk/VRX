@@ -107,10 +107,11 @@ through DXVK and DX12 games through vkd3d-proton (both bundled, pinned and hash-
 It is a per-game launch setting, off by default and only in Expert: pick the game with
 the ⚙ on its tile in Choose…, then set the **Depth | Geometry** switch under the game card
 to Geometry and press **Start** on the game card (it reads **Restart** for a game that is
-already running, which VRX then restarts with true geometry). Turning it on
-shows a warning: it loads a rendering layer into the game, so use it with offline games;
+already running, which VRX then restarts with true geometry). The switch is only a
+setting; pressing Start or Restart shows a warning: it loads a rendering layer into the game, so use it with offline games;
 online games with anti-cheat may flag it and your account can be banned. For a game with a
-known anti-cheat the warning says so plainly and offers estimated depth; you can still go
+known anti-cheat the warning says so plainly and offers estimated depth ("Use estimated
+depth" starts with depth and sets the game back to Depth); you can still go
 ahead at your own risk once its 5-second countdown ends. VRX copies the
 translation DLLs next to the game only while it runs and a separate guard removes them
 afterwards, even if VRX closes first. It applies only when VRX starts the game; attaching

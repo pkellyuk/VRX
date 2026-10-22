@@ -7,9 +7,10 @@ its own row, right-aligned, when the row is too narrow). It shows the selected g
 mode: Geometry is the saved backend being a geometry method (a renderer, the automatic one,
 or the old `GeometryStereo` checkbox), Depth is estimated depth (Auto and Depth both show
 Depth; `Profile`'s stored fields are unchanged, so existing profiles load as they were).
-Switching to Geometry asks first (the anti-cheat warning for a game with anti-cheat, else
-the red warning); anything but "I understand..." leaves it on Depth. Switching to Depth
-asks nothing. With no game, for a whole display or a game VRX cannot start, the switch is
+Moving the switch is only a setting: either way it is saved at once and no dialog is
+shown. The warning (the anti-cheat warning for a game with anti-cheat, else the red
+warning) comes when the main button actually starts or restarts the game with true
+geometry. With no game, for a whole display or a game VRX cannot start, the switch is
 locked on Depth and its tooltip says why. Easy hides it (Easy always uses depth). On
 Geometry the content of **3D: estimated depth** rests (disabled and dimmed); on Depth the
 content of **3D: true geometry (experimental)** does: the renderer (automatic API
@@ -82,9 +83,9 @@ through the anti-cheat check, its warning (or the red warning) and the restart d
 Steam game restarts through its Steam launch). An attach never shows the restart dialog.
 The geometry section's hint says this in one line.
 
-True geometry shows a prominent red warning every time it is turned on for a game
-(the Depth | Geometry switch in the main window) and before every geometry launch
-or restart, Steam launches included: use it with offline games; online games with
+True geometry shows a prominent red warning before every geometry launch or restart
+(the main button's Start and Restart, a chooser tile's start, Steam launches included;
+never for moving the Depth | Geometry switch): use it with offline games; online games with
 anti-cheat may detect it and the account can be banned. The geometry section keeps a red
 banner while the switch is on Geometry. Before the warning, VRX looks for anti-cheat in the
 game's installation (Easy Anti-Cheat folders and `start_protected_game.exe`,
@@ -99,9 +100,12 @@ estimated depth" (the default button) and "I understand the risk". That last but
 locked for 5 seconds with the countdown in its label ("I understand the risk (5)" ... "(1)"),
 restarting every time the dialog opens; while locked it ignores clicks and cannot take the
 keyboard focus, and its label is never an access key. It proceeds with true geometry for
-that action only: the warning is shown again when switching to Geometry and before every
-geometry launch or restart (chooser tile, the main button's Start and Restart,
-Steam launches). "Use estimated depth" at either warning plays with depth this time only.
+that action only: the warning is shown again before every geometry launch or restart
+(chooser tile, the main button's Start and Restart, Steam launches), one dialog per
+action. Cancel launches nothing and leaves the game on Geometry. "Use estimated depth"
+at either warning starts (or, for Restart, attaches to the running game) with estimated
+depth and sets the game to Depth, as the status line says, so the next Start is a normal
+one; switch back to Geometry to try true geometry again.
 
 Auto always means estimated depth, for every game, including games with a built-in
 tested geometry profile: true geometry is only used when it was chosen for that game.

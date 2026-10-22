@@ -724,9 +724,10 @@ public partial class MainWindow : Window
         SetGeometryMode(ReferenceEquals(sender, GeometryModeButton));
     }
 
-    // Geometry: the anti-cheat warning when the game uses anti-cheat, else the red warning,
-    // every time; anything but "I understand..." leaves it on Depth. Depth: no question; VRX
-    // plays the game with estimated depth, also when it starts it.
+    // Only a setting, saved at once, with no dialog either way. Geometry: the main button then
+    // starts (or restarts) the game with true geometry, and that action shows the warning (the
+    // anti-cheat one when the game uses anti-cheat). Depth: VRX plays the game with estimated
+    // depth, also when it starts it.
     private void SetGeometryMode(bool on)
     {
         System.Diagnostics.Debug.WriteLine($"[Geometry] SetGeometryMode enter: {profile?.ExecutablePath ?? "no game"}, {profile?.SelectedStereoBackend ?? "-"} -> {(on ? "true geometry" : "estimated depth")}, block {geometryBlock}");
@@ -742,28 +743,9 @@ public partial class MainWindow : Window
             System.Diagnostics.Debug.WriteLine("[Geometry] SetGeometryMode exit: unchanged");
             return;
         }
-        if (on)
-        {
-            var consent = AskGeometry(profile.ExecutablePath, selection.App.Pid, SelectionName(), launch: false);
-            if (consent != GeometryConsent.Proceed)
-            {
-                string message = Status.Text;
-                if (consent == GeometryConsent.UseDepth)
-                {
-                    profile.SelectStereoBackend(StereoPaths.Depth);
-                    SaveAndApply();
-                }
-                Status.Text = message;              // the warning's answer, not "Saved"
-                UpdateGeometryControls(); UpdateButtons();
-                System.Diagnostics.Debug.WriteLine($"[Geometry] SetGeometryMode exit: {consent}, stays on Depth");
-                return;
-            }
-            profile.SelectStereoBackend(profile.SelectedGeometryRenderer);
-        }
-        else
-        {
-            profile.SelectStereoBackend(StereoPaths.Depth);
-        }
+        // Choosing a mode is only a setting: the warning (or the anti-cheat dialog) comes when
+        // the main button actually starts or restarts the game with true geometry (AskGeometry).
+        profile.SelectStereoBackend(on ? profile.SelectedGeometryRenderer : StereoPaths.Depth);
         UpdateGeometryStream(); UpdateGeometryControls(); SaveAndApply(); UpdateButtons();
         System.Diagnostics.Debug.WriteLine($"[Geometry] SetGeometryMode exit: {profile.SelectedStereoBackend}");
     }
@@ -1240,9 +1222,12 @@ public partial class MainWindow : Window
         await StartSession(depthOnly: picked.DepthOnly);
     }
 
-    // One warning before true geometry is used for a game, after looking for anti-cheat: the
-    // anti-cheat warning when it is found (depth by default; "I understand the risk" unlocks
-    // after its countdown), else the red warning - never both. The smoke test answers itself.
+    // One warning each time the main button (or a chooser tile) starts or restarts a game with
+    // true geometry, after looking for anti-cheat: the anti-cheat warning when it is found
+    // (depth by default; "I understand the risk" unlocks after its countdown), else the red
+    // warning - never both. Moving the Depth | Geometry switch never asks. pid: the running
+    // game for a restart, 0 for a start. The status line explains anything but "I understand".
+    // The smoke test answers itself.
     internal int GeometryWarningsShown { get; private set; }
     internal int AntiCheatWarningsShown { get; private set; }
     // Smoke test only: anti-cheat to report for every game (null: really look), the answer to
@@ -1251,30 +1236,69 @@ public partial class MainWindow : Window
     internal IReadOnlyList<AntiCheat.Marker>? SmokeAntiCheat { get; set; }
     internal GeometryConsent? SmokeAnswer { get; set; }
     internal GeometryWarning.Prompt? LastSmokePrompt { get; private set; }
-    private GeometryConsent AskGeometry(string executable, int pid, string game, bool launch)
+    private GeometryConsent AskGeometry(string executable, int pid, string game)
     {
         ArgumentException.ThrowIfNullOrEmpty(executable);
         ArgumentNullException.ThrowIfNull(game);
-        System.Diagnostics.Debug.WriteLine($"[Geometry warning] AskGeometry enter: {executable}, pid {pid}, launch {launch}");
+        System.Diagnostics.Debug.WriteLine($"[Geometry warning] AskGeometry enter: {executable}, pid {pid} ({(pid > 0 ? "restart" : "start")})");
         var markers = smoke && SmokeAntiCheat != null ? SmokeAntiCheat : AntiCheat.Detect(executable, pid);
         GeometryWarningsShown++;
         if (markers.Count > 0) AntiCheatWarningsShown++;
-        var answer = smoke ? SmokeAnswerWarning(game, markers, launch) : GeometryWarning.Ask(this, game, markers, launch);
-        if (answer != GeometryConsent.Proceed) Status.Text = Loc.Get(answer == GeometryConsent.UseDepth ? (markers.Count > 0 ? "StatusGeometryAntiCheat" : "StatusGeometryDepthInstead") : "StatusGeometryCancelled");
-        System.Diagnostics.Debug.WriteLine($"[Geometry warning] AskGeometry exit: {answer} ({markers.Count} anti-cheat marker(s))");
+        var answer = smoke ? SmokeAnswerWarning(game, markers) : GeometryWarning.Ask(this, game, markers);
+        if (answer == GeometryConsent.UseDepth) Status.Text = Loc.Get(markers.Count > 0 ? "StatusGeometryAntiCheat" : "StatusGeometryDepthInstead");
+        else if (answer == GeometryConsent.Cancel) Status.Text = Loc.Get(pid > 0 ? "StatusGeometryCancelled" : "StatusGeometryStartCancelled");
+        System.Diagnostics.Debug.WriteLine($"[Geometry warning] AskGeometry exit: {answer} ({markers.Count} anti-cheat marker(s)), status '{Status.Text}'");
         return answer;
+    }
+
+    // "Use estimated depth" at the launch-time warning: this start plays with estimated depth,
+    // and the game's saved mode becomes Depth (as the status line says), so the next Start is a
+    // normal one. `saved`: the settings the launch uses; `shownKey`: the profile key the main
+    // window shows for this game when it differs (a Steam game's placeholder). A Steam game
+    // VRX does not know the executable of yet keeps its settings in memory, as SaveAndApply does.
+    private void SaveDepthChoice(Profile saved, string? shownKey = null)
+    {
+        ArgumentNullException.ThrowIfNull(saved);
+        System.Diagnostics.Debug.WriteLine($"[Geometry warning] SaveDepthChoice enter: {saved.ExecutablePath}, {saved.SelectedStereoBackend}, shown key {shownKey ?? "-"}, shown profile {profile?.ExecutablePath ?? "none"}");
+        saved.SelectStereoBackend(StereoPaths.Depth);
+        if (SteamLibrary.IsPlaceholder(store.Root, saved.ExecutablePath)) System.Diagnostics.Debug.WriteLine("[Geometry warning] SaveDepthChoice: placeholder, kept in memory");
+        else store.Save(saved);
+        var shown = profile;
+        if (shown == null || ReferenceEquals(shown, saved) ||
+            !(SamePath(shown.ExecutablePath, saved.ExecutablePath) || (shownKey != null && SamePath(shown.ExecutablePath, shownKey))))
+        {
+            UpdateGeometryStream(); UpdateGeometryControls(); UpdateButtons();
+            System.Diagnostics.Debug.WriteLine($"[Geometry warning] SaveDepthChoice exit: saved {saved.SelectedStereoBackend}, shown profile {(shown == null ? "none" : ReferenceEquals(shown, saved) ? "is the saved one" : "another game")}");
+            return;
+        }
+        shown.SelectStereoBackend(StereoPaths.Depth);
+        UpdateGeometryStream(); UpdateGeometryControls(); UpdateButtons();
+        System.Diagnostics.Debug.WriteLine($"[Geometry warning] SaveDepthChoice exit: saved and shown {shown.SelectedStereoBackend}");
+    }
+
+    // Smoke test only: when set, a start or restart stops right after the warning's answer,
+    // before anything is launched, restarted or attached, recording the path it would take
+    // ("geometry" or "depth"; null when nothing got that far, e.g. Cancel).
+    internal bool SmokeStubLaunch { get; set; }
+    internal string? SmokeLaunchChosen { get; set; }
+    private bool SmokeStubbed(bool geometry)
+    {
+        if (!smoke || !SmokeStubLaunch) return false;
+        SmokeLaunchChosen = geometry ? "geometry" : "depth";
+        System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeStubbed: would launch with {SmokeLaunchChosen}; nothing is started");
+        return true;
     }
 
     // The smoke test's answer: the real dialog is built (not shown) and its button clicked. The
     // anti-cheat "I understand the risk" ignores a click while locked, so its countdown is run
     // down first, as a player would wait for it.
-    private GeometryConsent SmokeAnswerWarning(string game, IReadOnlyList<AntiCheat.Marker> markers, bool launch)
+    private GeometryConsent SmokeAnswerWarning(string game, IReadOnlyList<AntiCheat.Marker> markers)
     {
         ArgumentNullException.ThrowIfNull(game);
         ArgumentNullException.ThrowIfNull(markers);
         var wanted = SmokeAnswer ?? (markers.Count > 0 ? GeometryConsent.UseDepth : GeometryConsent.Proceed);
         System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeAnswerWarning enter: {game}, anti-cheat {markers.Count}, answering {wanted}");
-        var prompt = GeometryWarning.Build(this, game, markers, launch);
+        var prompt = GeometryWarning.Build(this, game, markers);
         LastSmokePrompt = prompt;
         var button = wanted switch
         {
@@ -1336,10 +1360,13 @@ public partial class MainWindow : Window
                     }
                 }
                 // Every geometry launch, Steam's included: one warning (the anti-cheat one when found).
-                var consent=AskGeometry(executable,running?.Pid ?? 0,game.Title,launch:true);
+                var consent=AskGeometry(executable,running?.Pid ?? 0,game.Title);
                 if(consent==GeometryConsent.Cancel) return;
                 geometry=consent==GeometryConsent.Proceed;
                 depthOnly=!geometry;
+                // "Use estimated depth": depth this time, and the game is set to Depth from now on.
+                if(!geometry) SaveDepthChoice(saved,key);
+                if(SmokeStubbed(geometry)) return;
             }
             if(geometry && mayLaunch && (picked.ReviewSteamSetup || running==null || GeometryLaunch.ExistingSession(running,saved,store.Root)==null)) {
                 saved.ExecutablePath=executable; TestedStereoProfiles.Apply(saved);
@@ -1432,15 +1459,18 @@ public partial class MainWindow : Window
                 bool geometry=saved.GeometryStereo && !depthOnly && appSettings.IsExpert;
                 if(geometry) {
                     // Every geometry launch: one warning (the anti-cheat one when found).
-                    var consent=AskGeometry(entry.Executable,0,entry.Title,launch:true);
+                    var consent=AskGeometry(entry.Executable,0,entry.Title);
                     if(consent==GeometryConsent.Cancel) return;
                     geometry=consent==GeometryConsent.Proceed;
                     depthOnly=!geometry;
+                    // "Use estimated depth": depth this time, and the game is set to Depth from now on.
+                    if(!geometry) SaveDepthChoice(saved);
+                    if(SmokeStubbed(geometry)) return;
                 }
                 if(geometry) {
                     var plan=await GeometryLaunch.Prepare(picked.App with {Pid=0},saved,store.Root,text=>Status.Text=text,token,entry.Arguments);
                     var dialog=new GeometryLaunchWindow(plan,saved){Owner=this};
-                    if(dialog.ShowDialog()!=true) { Status.Text=Loc.Get("StatusGeometryCancelled"); return; }
+                    if(dialog.ShowDialog()!=true) { Status.Text=Loc.Get("StatusGeometryStartCancelled"); return; }
                     plan=dialog.Plan;
                     saved.GeometryLaunchArguments=GeometryLaunch.SavedArguments(plan.Arguments);
                     saved.GeometryWorkingDirectory=plan.WorkingDirectory; saved.GeometrySteamAppId=plan.SteamAppId;
@@ -1466,8 +1496,8 @@ public partial class MainWindow : Window
 
     // Attach / Play, for the button, a running window in the chooser and auto-attach alike.
     // True when the engine started. It never restarts a game, except for restartForGeometry.
-    // depthOnly: play with estimated depth now (Easy, or "Use estimated depth" at the warning)
-    // without changing the game's saved method. launched: the geometry run VRX just started
+    // depthOnly: play with estimated depth now (Easy, or after "Use estimated depth" at the
+    // warning, which also set the game to Depth: SaveDepthChoice). launched: the geometry run VRX just started
     // for this game - attach to it, waiting for its first frame, never falling back to depth.
     // A running game whose saved method is true geometry, with no stream from a geometry run
     // VRX started, plays with depth (method unchanged); in Expert the main button then reads
@@ -1549,7 +1579,7 @@ public partial class MainWindow : Window
     // restartForGeometry): the anti-cheat check and one warning (the anti-cheat one when found),
     // the restart dialog, a graceful close and a geometry launch, then the relaunched game and
     // its first frame's session. Null when it was cancelled; the game is then left running. A
-    // null session: depth this time ("Use estimated depth").
+    // null session: depth this time ("Use estimated depth", which also sets the game to Depth).
     private async Task<(RunningApp App, GameWindow Window, string? Session)?> RestartWithGeometry(RunningApp app, GameWindow window, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -1561,13 +1591,21 @@ public partial class MainWindow : Window
             return null;
         }
         // One warning first, every time (the anti-cheat one when anti-cheat is found).
-        var consent = AskGeometry(app.FullPath, app.Pid, GameDisplayName(window.Title, app.Name), launch: true);
+        var consent = AskGeometry(app.FullPath, app.Pid, GameDisplayName(window.Title, app.Name));
         if (consent == GeometryConsent.Cancel)
         {
             System.Diagnostics.Debug.WriteLine("[Session] RestartWithGeometry exit: cancelled at the warning");
             return null;
         }
-        if (consent != GeometryConsent.Proceed)
+        bool geometry = consent == GeometryConsent.Proceed;
+        // "Use estimated depth": depth this time (the game keeps running), and the game is set to Depth from now on.
+        if (!geometry) SaveDepthChoice(profile);
+        if (SmokeStubbed(geometry))
+        {
+            System.Diagnostics.Debug.WriteLine($"[Session] RestartWithGeometry exit: smoke stub, {consent}");
+            return null;
+        }
+        if (!geometry)
         {
             System.Diagnostics.Debug.WriteLine($"[Session] RestartWithGeometry exit: {consent}, depth this time");
             return (app, window, null);
@@ -1646,7 +1684,8 @@ public partial class MainWindow : Window
             await StartFromSteam(new ChooserWindow.Choice(app, window, Steam: game, Restart: true, ReviewSteamSetup: reviewSteamSetup));
             return;
         }
-        if (!SelectChoice(new ChooserWindow.Choice(app, window)))
+        // The smoke test's stubbed restart uses its fixture selection (no real process to find).
+        if (!(smoke && SmokeStubLaunch && selection != null) && !SelectChoice(new ChooserWindow.Choice(app, window)))
         {
             Status.Text = Loc.Get("StatusChoiceGone");
             System.Diagnostics.Debug.WriteLine("[Session] RestartWithGeometryFlow exit: the game is gone");
@@ -2615,10 +2654,12 @@ public partial class MainWindow : Window
             throw new Exception("On Depth the red geometry warning must be hidden and the true-geometry section's content rest (dimmed), with the depth settings usable");
         int warningsBefore = GeometryWarningsShown;
         profile = System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(one))!;   // keep `one` itself on depth
-        GeometryModeButton.IsChecked = true; GeometrySessionText.Text = "test_game";
-        if (GeometryWarningsShown != warningsBefore + 1 || GeometryWarningBanner.Visibility != Visibility.Visible || !GeometryContent.IsEnabled ||
-            LastSmokePrompt is not { AntiCheat: false, AcceptButton: not null, RiskButton: null } || LastSmokePrompt.Window.Title != Loc.Get("GeometryWarningTitle"))
-            throw new Exception("Switching to Geometry must show the red warning (dialog and banner) every time");
+        GeometryModeButton.IsChecked = true;
+        if (GeometryWarningsShown != warningsBefore || !store.Load(one.ExecutablePath).GeometryStereo)
+            throw new Exception("Switching to Geometry is only a setting: no dialog, the geometry mode saved at once");
+        GeometrySessionText.Text = "test_game";
+        if (GeometryWarningBanner.Visibility != Visibility.Visible || !GeometryContent.IsEnabled)
+            throw new Exception("On Geometry the red warning banner must show and the true-geometry settings be usable");
         var geometryProfile = ReadProfile();
         if (!geometryProfile.GeometryStereo || geometryProfile.GeometrySession != "test_game" || !GeometryPanel.IsEnabled || GeometryPanel.Opacity < 1 ||
             DepthContent.IsEnabled || AiDepthContent.IsEnabled || StrengthSlider.IsEnabled || DepthContent.Opacity >= 1 || !DesktopAwayCheck.IsEnabled || !DepthSection.IsEnabled)
@@ -2636,9 +2677,9 @@ public partial class MainWindow : Window
             throw new Exception("Geometry profile does not round-trip");
         store.Save(one);
         DepthModeButton.IsChecked = true;
-        if (GeometryWarningsShown != warningsBefore + 1) throw new Exception("Switching to Depth must not ask");
+        if (GeometryWarningsShown != warningsBefore || store.Load(one.ExecutablePath).GeometryStereo) throw new Exception("Switching to Depth must not ask and must save Depth at once");
         GeometryModeButton.IsChecked = true;
-        if (GeometryWarningsShown != warningsBefore + 2) throw new Exception("Switching to Geometry again must warn again");
+        if (GeometryWarningsShown != warningsBefore || !store.Load(one.ExecutablePath).GeometryStereo) throw new Exception("Switching to Geometry again must not ask either, and must save Geometry at once");
         GeometrySessionText.Text = "../bad";
         bool invalidGeometry = false;
         try { ReadProfile(); } catch (InvalidDataException) { invalidGeometry = true; }
@@ -2665,12 +2706,12 @@ public partial class MainWindow : Window
             throw new Exception("Anti-cheat detection: Easy Anti-Cheat, BattlEye and a clean game folder");
         if(AntiCheat.InstallRoot(protectedGame)!=Path.Combine(output,"anticheat","Game")) throw new Exception("Anti-cheat detection must scan the game's whole installation");
         int beforeProtected=GeometryWarningsShown, antiCheatBefore=AntiCheatWarningsShown;
-        if(AskGeometry(protectedGame,0,"Protected",true)!=GeometryConsent.UseDepth || LastSmokePrompt is not {AntiCheat:true,RiskButton:not null,AcceptButton:null} ||
-            AskGeometry(clean,0,"Clean",true)!=GeometryConsent.Proceed || LastSmokePrompt is not {AntiCheat:false} || GeometryWarningsShown!=beforeProtected+2 || AntiCheatWarningsShown!=antiCheatBefore+1)
+        if(AskGeometry(protectedGame,0,"Protected")!=GeometryConsent.UseDepth || LastSmokePrompt is not {AntiCheat:true,RiskButton:not null,AcceptButton:null} ||
+            AskGeometry(clean,0,"Clean")!=GeometryConsent.Proceed || LastSmokePrompt is not {AntiCheat:false} || GeometryWarningsShown!=beforeProtected+2 || AntiCheatWarningsShown!=antiCheatBefore+1)
             throw new Exception("A game with anti-cheat must get the anti-cheat warning (one dialog, depth by default); others the red warning");
         SmokeAnswer=GeometryConsent.Proceed;
         try {
-            if(AskGeometry(protectedGame,0,"Protected",true)!=GeometryConsent.Proceed || GeometryWarningsShown!=beforeProtected+3 || AntiCheatWarningsShown!=antiCheatBefore+2)
+            if(AskGeometry(protectedGame,0,"Protected")!=GeometryConsent.Proceed || GeometryWarningsShown!=beforeProtected+3 || AntiCheatWarningsShown!=antiCheatBefore+2)
                 throw new Exception("A game with anti-cheat must be playable with true geometry after \"I understand the risk\"");
         } finally { SmokeAnswer=null; }
         if(!GeometryRendererList.Items.Cast<ComboBoxItem>().Select(i=>(string)i.Tag).SequenceEqual(new[]{StereoPaths.GeometryAuto,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Vkd3d}))
@@ -2977,15 +3018,15 @@ public partial class MainWindow : Window
         RefreshSelection();
         if (Status.Text != sessionError) throw new Exception("Refreshing hid the session error");
         if (Loc.Missing.Count > 0) throw new Exception("Strings asked for but missing from Strings.resx: " + string.Join(", ", Loc.Missing));
-        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach), its controls in SteamVR & shortcuts; one selected game (Game & window section gone, chooser Settings buttons select without playing); true geometry as a per-game Depth | Geometry switch under the game card (red warning, anti-cheat warning with its 5 s countdown, saved methods, greying of the other 3D section, locked on Depth for displays and unknown games, hidden in Easy, wraps when narrow); the main button follows the selection and mode (MainButton.Decide for every row incl. Easy and busy; Start / Restart / Play / Play display / Attach / Play in the window, disabled with its reason; Start on Geometry shows one warning, cancelled, nothing launched; the geometry Start button and the restart link gone); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; window: places remembered culture-independently and kept on screen, Easy compact and growing to its content, Expert back at its size, title bar buttons named; strings: " +
+        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach), its controls in SteamVR & shortcuts; one selected game (Game & window section gone, chooser Settings buttons select without playing); true geometry as a per-game Depth | Geometry switch under the game card (only a setting: no dialog, saved at once either way; saved methods, greying of the other 3D section, locked on Depth for displays and unknown games, hidden in Easy, wraps when narrow); the main button follows the selection and mode (MainButton.Decide for every row incl. Easy and busy; Start / Restart / Play / Play display / Attach / Play in the window, disabled with its reason; Start and Restart on Geometry show one dialog per press - the red warning, or the anti-cheat warning with its 5 s countdown - Cancel launches nothing and keeps Geometry, Use estimated depth takes the depth path and saves Depth, I understand takes the geometry path, launches stubbed; the geometry Start button and the restart link gone); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; window: places remembered culture-independently and kept on screen, Easy compact and growing to its content, Expert back at its size, title bar buttons named; strings: " +
             Loc.NeutralStrings().Count.ToString(CultureInfo.InvariantCulture) + " keys, all referenced keys present, placeholders consistent, no literal text in MainWindow.xaml, pseudo-locale transforms every string; screenshots ui-easy-skin, ui-easy-skin-pseudo, ui-expert-skin, ui-expert-all-open, ui-expert-pseudo. No VR session started.");
     }
 
     // Expert, 3D: true geometry as a per-game launch setting, and the one selected game: the
     // Game & window section is gone (its saved state tolerated); auto-attach and the Depth |
     // Geometry switch sit under the game card; saved methods load into the switch unchanged;
-    // switching to Geometry warns (the anti-cheat warning for a game with anti-cheat); the
-    // other 3D section rests; the switch, the section and the Start button follow whether VRX
+    // switching either way is only a setting (no dialog, saved at once; the warning comes with
+    // the main button's Start or Restart); the other 3D section rests; the switch, the section and the Start button follow whether VRX
     // can start the game. The Start button is never pressed: nothing is launched and no DLL
     // is copied.
     private void SmokeTestGeometrySetting(string output, RunningApp sample, Profile one)
@@ -3089,12 +3130,12 @@ public partial class MainWindow : Window
             CardState.Text != Loc.Get(appSettings.AutoAttach ? "CardWaiting" : "CardNotRunning") || CardName.ToolTip as string != Loc.Format("CardPathTip", fixture))
             throw new Exception($"A stopped game VRX can start, on Depth: the main button must read Start, its tooltip the normal start, its path in the card's tooltip (got '{StartButton.Content}', enabled {StartButton.IsEnabled})");
 
-        // Turning it on: the warning every time; the main button stays Start (now with true
-        // geometry, its tooltip says so).
+        // Turning it on is only a setting: no dialog, saved at once; the main button stays Start
+        // (now with true geometry, its tooltip says so - the warning comes when it is pressed).
         int warnings = GeometryWarningsShown;
         GeometryModeButton.IsChecked = true;
-        if (GeometryWarningsShown != warnings + 1 || profile?.GeometryStereo != true || !store.Load(fixture).GeometryStereo || !GeometryContent.IsEnabled)
-            throw new Exception("Turning true geometry on must warn and save the method");
+        if (GeometryWarningsShown != warnings || profile?.GeometryStereo != true || !store.Load(fixture).GeometryStereo || !GeometryContent.IsEnabled)
+            throw new Exception("Turning true geometry on must save the method at once without any dialog");
         if (!MainShows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", SelectionName()))
             throw new Exception("On Geometry the main button must offer Start with true geometry for a stopped game VRX can start");
         if (SteamReviewSetupButton.Visibility == Visibility.Visible || SteamReviewSetupButton.IsEnabled)
@@ -3106,23 +3147,26 @@ public partial class MainWindow : Window
         if (busyEnabled || busyLabel != Loc.Get("MainStart")) throw new Exception("The main button must wait (keeping its label) while VRX is starting something");
         DepthModeButton.IsChecked = true;
         if (!MainShows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", SelectionName()) ||
-            store.Load(fixture).GeometryStereo || store.Load(fixture).SelectedStereoBackend != StereoPaths.Depth || GeometryWarningsShown != warnings + 1)
+            store.Load(fixture).GeometryStereo || store.Load(fixture).SelectedStereoBackend != StereoPaths.Depth || GeometryWarningsShown != warnings)
             throw new Exception("Switching to Depth must save estimated depth without asking, the main button back to a normal Start");
-        GeometryModeButton.IsChecked = true;
-        if (GeometryWarningsShown != warnings + 2) throw new Exception("Switching to Geometry again must warn again");
-        // Cancel and "Use estimated depth" at the red warning leave it on Depth.
-        foreach (var answer in new[] { GeometryConsent.Cancel, GeometryConsent.UseDepth })
+        // Back and forth: never a dialog (whatever answer a warning would get), each move saved at once.
+        foreach (var answer in new GeometryConsent?[] { null, GeometryConsent.Cancel, GeometryConsent.UseDepth })
         {
-            DepthModeButton.IsChecked = true;
             SmokeAnswer = answer;
-            try { GeometryModeButton.IsChecked = true; }
+            try
+            {
+                GeometryModeButton.IsChecked = true;
+                if (GeometryWarningsShown != warnings || GeometryModeButton.IsChecked != true || !store.Load(fixture).GeometryStereo || !GeometryPanel.IsEnabled || DepthContent.IsEnabled ||
+                    StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", SelectionName()))
+                    throw new Exception($"Switching to Geometry (warning answer {answer?.ToString() ?? "default"}) must save Geometry at once with no dialog");
+                DepthModeButton.IsChecked = true;
+                if (GeometryWarningsShown != warnings || store.Load(fixture).GeometryStereo || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", SelectionName()))
+                    throw new Exception("Switching back to Depth must save Depth at once with no dialog");
+            }
             finally { SmokeAnswer = null; }
-            if (GeometryModeButton.IsChecked != false || DepthModeButton.IsChecked != true || store.Load(fixture).GeometryStereo || GeometryPanel.IsEnabled || !DepthContent.IsEnabled ||
-                StartButton.ToolTip as string != Loc.Format("MainStartGameTip", SelectionName()))
-                throw new Exception($"{answer} at the warning must leave the switch (and the main button's Start) on Depth");
         }
         GeometryModeButton.IsChecked = true;
-        if (!store.Load(fixture).GeometryStereo) throw new Exception("\"I understand\" at the warning must switch to Geometry");
+        if (!store.Load(fixture).GeometryStereo || GeometryWarningsShown != warnings) throw new Exception("Switching to Geometry must save it without a dialog");
 
         // Running, not started by VRX with true geometry: Restart on Geometry, Attach / Play on Depth.
         var running = new RunningApp(int.MaxValue - 21, "Game.exe", fixture, [new GameWindow(0x7F21, "Geometry fixture")], null);
@@ -3136,9 +3180,8 @@ public partial class MainWindow : Window
         GeometryModeButton.IsChecked = true;
         if (!MainShows(Loc.Get("MainRestart"), true) || !store.Load(fixture).GeometryStereo) throw new Exception("Back on Geometry the running game's main button must be Restart again");
 
-        // A game with anti-cheat: the anti-cheat warning (one dialog, not also the red one).
-        // "Use estimated depth" (the default) and Cancel leave it on Depth; "I understand the
-        // risk", once its countdown ends, switches to Geometry.
+        // A game with anti-cheat: switching is still only a setting - no anti-cheat dialog (it
+        // comes with the main button's Start or Restart: SmokeTestAntiCheatWarning).
         string protectedGame = Path.Combine(output, "anticheat", "Game", "Binaries", "Win64", "Game.exe");
         if (File.Exists(store.FileFor(protectedGame))) File.Delete(store.FileFor(protectedGame));
         Select(new ChooserWindow.Choice(new RunningApp(0, "Game.exe", protectedGame, [], null), new GameWindow(0, "Protected")));
@@ -3146,24 +3189,12 @@ public partial class MainWindow : Window
         int antiCheatWarnings = AntiCheatWarningsShown;
         if (geometryBlock != GeometryBlock.None) throw new Exception("A stopped game VRX can start must allow setting up true geometry");
         GeometryModeButton.IsChecked = true;
-        if (GeometryWarningsShown != warnings + 1 || AntiCheatWarningsShown != antiCheatWarnings + 1 || GeometryModeButton.IsChecked != false || profile?.GeometryStereo != false ||
-            store.Load(protectedGame).GeometryStereo || Status.Text != Loc.Get("StatusGeometryAntiCheat") || !MainShows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", SelectionName()) ||
-            LastSmokePrompt is not { AntiCheat: true, RiskButton: not null } || LastSmokePrompt.Window.Title != Loc.Get("GeometryAntiCheatTitle"))
-            throw new Exception($"Switching to Geometry for a game with anti-cheat must show the anti-cheat warning, and Use estimated depth leave it on Depth (status '{Status.Text}')");
-        SmokeAnswer = GeometryConsent.Cancel;
-        try { GeometryModeButton.IsChecked = true; }
-        finally { SmokeAnswer = null; }
-        if (GeometryWarningsShown != warnings + 2 || AntiCheatWarningsShown != antiCheatWarnings + 2 || GeometryModeButton.IsChecked != false || store.Load(protectedGame).GeometryStereo ||
-            Status.Text != Loc.Get("StatusGeometryCancelled"))
-            throw new Exception("Cancel at the anti-cheat warning must leave the switch on Depth");
-        SmokeAnswer = GeometryConsent.Proceed;
-        try { GeometryModeButton.IsChecked = true; }
-        finally { SmokeAnswer = null; }
-        if (GeometryWarningsShown != warnings + 3 || AntiCheatWarningsShown != antiCheatWarnings + 3 || GeometryModeButton.IsChecked != true || !store.Load(protectedGame).GeometryStereo ||
-            StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", SelectionName()) || LastSmokePrompt?.Answer != GeometryConsent.Proceed || LastSmokePrompt.SecondsLeft != 0)
-            throw new Exception("I understand the risk at the anti-cheat warning (after its countdown) must switch the game to Geometry");
+        if (GeometryWarningsShown != warnings || AntiCheatWarningsShown != antiCheatWarnings || GeometryModeButton.IsChecked != true || profile?.GeometryStereo != true ||
+            !store.Load(protectedGame).GeometryStereo || !MainShows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", SelectionName()))
+            throw new Exception("Switching a game with anti-cheat to Geometry must save it at once with no dialog, the main button offering Start with true geometry");
         DepthModeButton.IsChecked = true;
-        if (GeometryWarningsShown != warnings + 3 || store.Load(protectedGame).GeometryStereo) throw new Exception("Switching an anti-cheat game back to Depth must not ask");
+        if (GeometryWarningsShown != warnings || AntiCheatWarningsShown != antiCheatWarnings || store.Load(protectedGame).GeometryStereo)
+            throw new Exception("Switching an anti-cheat game back to Depth must save Depth with no dialog");
 
         // A missing executable, even with true geometry saved: unavailable, with the reason.
         string missing = Path.Combine(folder, "gone", "Missing.exe");
@@ -3248,7 +3279,7 @@ public partial class MainWindow : Window
         }
 
         // Built as it opens: locked, "(5)", depth by default, Cancel on Escape.
-        var prompt = GeometryWarning.Build(this, "Protected fixture", markers, launch: true);
+        var prompt = GeometryWarning.Build(this, "Protected fixture", markers);
         var texts = Texts(prompt.Window).ToList();
         if (prompt.Window.Title != Loc.Get("GeometryAntiCheatTitle") || !prompt.AntiCheat || prompt.AcceptButton != null || prompt.RiskButton is not { } risk ||
             !texts.Contains(Loc.Format("GeometryAntiCheatFound", "Easy Anti-Cheat, BattlEye")) || !texts.Any(t => t.Contains(markers[0].Where) && t.Contains(markers[1].Where)))
@@ -3279,7 +3310,7 @@ public partial class MainWindow : Window
         prompt.Window.Close();
         foreach (var (button, answer) in new[] { (0, GeometryConsent.Cancel), (1, GeometryConsent.UseDepth) })
         {
-            var again = GeometryWarning.Build(this, "Protected fixture", markers, launch: false);
+            var again = GeometryWarning.Build(this, "Protected fixture", markers);
             if (again.SecondsLeft != 5 || again.RiskButton?.IsEnabled != false || again.RiskLabel != Loc.Format("GeometryRiskAcceptCountdown", 5))
                 throw new Exception("The countdown must restart every time the anti-cheat warning opens");
             (button == 0 ? again.CancelButton : again.DepthButton).RaiseEvent(click);
@@ -3288,7 +3319,7 @@ public partial class MainWindow : Window
         }
 
         // Its own timer: counts down only once the dialog is drawn, then unlocks (short tick).
-        var shown = GeometryWarning.Build(this, "Protected fixture", markers, launch: true, tick: TimeSpan.FromMilliseconds(40));
+        var shown = GeometryWarning.Build(this, "Protected fixture", markers, tick: TimeSpan.FromMilliseconds(40));
         shown.Window.ShowActivated = false; shown.Window.ShowInTaskbar = false;
         shown.Window.WindowStartupLocation = WindowStartupLocation.Manual; shown.Window.Left = -20000; shown.Window.Top = -20000;
         await Task.Delay(150);
@@ -3306,14 +3337,19 @@ public partial class MainWindow : Window
         if (!unlocked || labels.Count < 2 || !labels.Contains(Loc.Format("GeometryRiskAcceptCountdown", 5)))
             throw new Exception($"The dialog's own countdown must tick down visibly and unlock (saw {string.Join(", ", labels)})");
 
-        // A geometry launch of a game with anti-cheat (the main button's Start on Geometry, as a
-        // chooser tile does through StartPicked): one dialog, the anti-cheat one; Cancel
-        // launches nothing.
+        // The anti-cheat dialog comes with the main button's Start or Restart on Geometry (as a
+        // chooser tile's start does, through StartPicked), never with the switch: one dialog
+        // per press, the anti-cheat one. Cancel launches nothing and keeps Geometry; "Use
+        // estimated depth" takes the depth path and sets the game to Depth; "I understand the
+        // risk" (after its countdown) takes the geometry path. Past the dialog the launch is
+        // stubbed (SmokeStubLaunch): nothing is started.
         string protectedGame = Path.Combine(output, "anticheat", "Game", "Binaries", "Win64", "Game.exe");
         var saved = new Profile { ExecutablePath = protectedGame };
         saved.SelectStereoBackend(StereoPaths.Dxvk);
         store.Save(saved);
-        Select(new ChooserWindow.Choice(new RunningApp(0, "Game.exe", protectedGame, [], null), new GameWindow(0, "Protected")));
+        var stoppedChoice = new ChooserWindow.Choice(new RunningApp(0, "Game.exe", protectedGame, [], null), new GameWindow(0, "Protected"));
+        var runningApp = new RunningApp(int.MaxValue - 41, "Game.exe", protectedGame, [new GameWindow(0x7F41, "Protected")], null);
+        Select(stoppedChoice);
         if (geometryBlock != GeometryBlock.None || GeometryModeButton.IsChecked != true || StartButton.Content as string != Loc.Get("MainStart") || !StartButton.IsEnabled)
             throw new Exception("A stopped anti-cheat game set to Geometry must offer Start with true geometry");
         bool engineFree = true;
@@ -3322,17 +3358,51 @@ public partial class MainWindow : Window
         string launchResult = "skipped: another VRX engine is running";
         if (engineFree)
         {
+            // Start, Cancel: the real path (it stops at the dialog).
             int warnings = GeometryWarningsShown, antiCheat = AntiCheatWarningsShown;
             SmokeAnswer = GeometryConsent.Cancel;
             try { await RunMainAction(); }
             finally { SmokeAnswer = null; }
             if (GeometryWarningsShown != warnings + 1 || AntiCheatWarningsShown != antiCheat + 1 || LastSmokePrompt is not { AntiCheat: true } ||
-                Status.Text != Loc.Get("StatusGeometryCancelled") || starting || engine.Running || RunningApps.List(true).Any(a => SamePath(a.FullPath, protectedGame)))
-                throw new Exception($"A geometry launch of a game with anti-cheat must show the anti-cheat warning once (not two dialogs), and Cancel must launch nothing (status '{Status.Text}')");
-            launchResult = "one anti-cheat dialog, cancelled, nothing launched";
+                Status.Text != Loc.Get("StatusGeometryStartCancelled") || starting || engine.Running || RunningApps.List(true).Any(a => SamePath(a.FullPath, protectedGame)) ||
+                !store.Load(protectedGame).GeometryStereo || GeometryModeButton.IsChecked != true)
+                throw new Exception($"Start on Geometry for a game with anti-cheat must show the anti-cheat warning once (not two dialogs), and Cancel must launch nothing and keep Geometry (status '{Status.Text}')");
+            // Start and Restart, each answer, with the launch stubbed.
+            foreach (bool restart in new[] { false, true })
+            {
+                foreach (var answer in new[] { GeometryConsent.Cancel, GeometryConsent.UseDepth, GeometryConsent.Proceed })
+                {
+                    string what = $"{(restart ? "Restart" : "Start")}, {answer}";
+                    if (restart) { selection = new ChooserWindow.Choice(runningApp, runningApp.Windows[0]); UpdateGeometryAvailability(); UpdateButtons(); }
+                    else Select(stoppedChoice);
+                    GeometryModeButton.IsChecked = true;
+                    if (StartButton.Content as string != Loc.Get(restart ? "MainRestart" : "MainStart") || !StartButton.IsEnabled || !store.Load(protectedGame).GeometryStereo)
+                        throw new Exception($"{what}: the main button must offer {(restart ? "Restart" : "Start")} with true geometry (got '{StartButton.Content}')");
+                    warnings = GeometryWarningsShown; antiCheat = AntiCheatWarningsShown;
+                    SmokeAnswer = answer; SmokeStubLaunch = true; SmokeLaunchChosen = null;
+                    try { await RunMainAction(); }
+                    finally { SmokeAnswer = null; SmokeStubLaunch = false; }
+                    if (GeometryWarningsShown != warnings + 1 || AntiCheatWarningsShown != antiCheat + 1 || LastSmokePrompt is not { AntiCheat: true, RiskButton: not null } ||
+                        LastSmokePrompt.Window.Title != Loc.Get("GeometryAntiCheatTitle") || starting || engine.Running)
+                        throw new Exception($"{what}: exactly one dialog, the anti-cheat warning, and nothing started");
+                    bool ok = answer switch
+                    {
+                        GeometryConsent.Cancel => SmokeLaunchChosen == null && store.Load(protectedGame).GeometryStereo && GeometryModeButton.IsChecked == true &&
+                            Status.Text == Loc.Get(restart ? "StatusGeometryCancelled" : "StatusGeometryStartCancelled"),
+                        GeometryConsent.UseDepth => SmokeLaunchChosen == "depth" && !store.Load(protectedGame).GeometryStereo && profile?.GeometryStereo == false &&
+                            DepthModeButton.IsChecked == true && Status.Text == Loc.Get("StatusGeometryAntiCheat"),
+                        _ => SmokeLaunchChosen == "geometry" && store.Load(protectedGame).GeometryStereo && GeometryModeButton.IsChecked == true &&
+                            LastSmokePrompt.Answer == GeometryConsent.Proceed && LastSmokePrompt.SecondsLeft == 0,
+                    };
+                    if (!ok)
+                        throw new Exception($"{what}: wrong outcome (path {SmokeLaunchChosen ?? "none"}, saved geometry {store.Load(protectedGame).GeometryStereo}, switch on Geometry {GeometryModeButton.IsChecked}, status '{Status.Text}')");
+                }
+            }
+            launchResult = "Start and Restart: one anti-cheat dialog per press; Cancel launches nothing and keeps Geometry; Use estimated depth takes the depth path and saves Depth; I understand the risk (after 5 s) takes the geometry path (stubbed)";
         }
+        Select(stoppedChoice);
         DepthModeButton.IsChecked = true;
-        File.WriteAllText(Path.Combine(output, "anticheat-warning-pass.txt"), "PASS: anti-cheat warning (title, red text, files found; Cancel / Use estimated depth (default) / I understand the risk locked 5 s with a visible countdown that restarts per open, clicks and focus refused while locked, own timer unlocks); launch: " + launchResult);
+        File.WriteAllText(Path.Combine(output, "anticheat-warning-pass.txt"), "PASS: anti-cheat warning (title, red text, files found; Cancel / Use estimated depth (default) / I understand the risk locked 5 s with a visible countdown that restarts per open, clicks and focus refused while locked, own timer unlocks); never shown by the Depth | Geometry switch; main button: " + launchResult);
         SmokeSelect(sample, one);
         System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestAntiCheatWarning exit: launch {launchResult}");
     }
@@ -3416,14 +3486,18 @@ public partial class MainWindow : Window
             string game = SelectionName();
             if (geometryBlock != GeometryBlock.None || GeometryModeShown || !Shows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", game))
                 throw new Exception($"A stopped game VRX can start, on Depth, must read Start (got '{StartButton.Content}', enabled {StartButton.IsEnabled})");
+            // Switching is only a setting: no dialog, saved at once (the warning comes with Start).
             int warnings = GeometryWarningsShown;
             GeometryModeButton.IsChecked = true;
-            if (!GeometryModeShown || GeometryWarningsShown != warnings + 1 || !Shows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", game))
-                throw new Exception("Switching to Geometry must keep Start, now starting with true geometry (its tooltip says so)");
+            if (!GeometryModeShown || GeometryWarningsShown != warnings || !store.Load(fixture).GeometryStereo || !Shows(Loc.Get("MainStart"), true) ||
+                StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", game))
+                throw new Exception("Switching to Geometry must save it with no dialog and keep Start, now starting with true geometry (its tooltip says so)");
             DepthModeButton.IsChecked = true;
-            if (GeometryModeShown || !Shows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", game))
-                throw new Exception("Switching back to Depth must make Start a normal start again");
+            if (GeometryModeShown || GeometryWarningsShown != warnings || store.Load(fixture).GeometryStereo || !Shows(Loc.Get("MainStart"), true) ||
+                StartButton.ToolTip as string != Loc.Format("MainStartGameTip", game))
+                throw new Exception("Switching back to Depth must save Depth with no dialog and make Start a normal start again");
             GeometryModeButton.IsChecked = true;
+            if (GeometryWarningsShown != warnings) throw new Exception("Switching to Geometry again must not show a dialog");
 
             // Busy: disabled, keeping its label.
             foreach (string busy in new[] { "starting", "stopping", "choosing" })
@@ -3450,10 +3524,48 @@ public partial class MainWindow : Window
                 try { await RunMainAction(); }
                 finally { SmokeAnswer = null; SmokeAntiCheat = null; }
                 if (GeometryWarningsShown != warnings + 1 || AntiCheatWarningsShown != antiCheat || LastSmokePrompt is not { AntiCheat: false } ||
-                    Status.Text != Loc.Get("StatusGeometryCancelled") || starting || engine.Running || RunningApps.List(true).Any(a => SamePath(a.FullPath, fixture)))
+                    Status.Text != Loc.Get("StatusGeometryStartCancelled") || starting || engine.Running || RunningApps.List(true).Any(a => SamePath(a.FullPath, fixture)))
                     throw new Exception($"Start on Geometry must show one warning, and Cancel must launch nothing (status '{Status.Text}')");
                 if (!Shows(Loc.Get("MainStart"), true) || !store.Load(fixture).GeometryStereo)
                     throw new Exception("After a cancelled Start the main button must read Start again, the game still on Geometry");
+
+                // Start and Restart, each answer at the red warning, the launch stubbed
+                // (SmokeStubLaunch): one dialog per press; "Use estimated depth" takes the depth
+                // path and sets the game to Depth; "I understand..." takes the geometry path.
+                var stoppedChoice = new ChooserWindow.Choice(new RunningApp(0, "Game.exe", fixture, [], null), new GameWindow(0, "Main button fixture"));
+                var runningApp = new RunningApp(int.MaxValue - 32, "Game.exe", fixture, [new GameWindow(0x7F32, "Main button fixture")], null);
+                foreach (bool restart in new[] { false, true })
+                {
+                    foreach (var answer in new[] { GeometryConsent.Cancel, GeometryConsent.UseDepth, GeometryConsent.Proceed })
+                    {
+                        string what = $"{(restart ? "Restart" : "Start")}, {answer}";
+                        if (restart) { selection = new ChooserWindow.Choice(runningApp, runningApp.Windows[0]); UpdateGeometryAvailability(); UpdateButtons(); }
+                        else Select(stoppedChoice);
+                        GeometryModeButton.IsChecked = true;
+                        if (!Shows(Loc.Get(restart ? "MainRestart" : "MainStart"), true) || !store.Load(fixture).GeometryStereo)
+                            throw new Exception($"{what}: the main button must offer {(restart ? "Restart" : "Start")} with true geometry (got '{StartButton.Content}')");
+                        warnings = GeometryWarningsShown; antiCheat = AntiCheatWarningsShown;
+                        SmokeAntiCheat = []; SmokeAnswer = answer; SmokeStubLaunch = true; SmokeLaunchChosen = null;
+                        try { await RunMainAction(); }
+                        finally { SmokeAnswer = null; SmokeAntiCheat = null; SmokeStubLaunch = false; }
+                        if (GeometryWarningsShown != warnings + 1 || AntiCheatWarningsShown != antiCheat || LastSmokePrompt is not { AntiCheat: false, AcceptButton: not null, RiskButton: null } ||
+                            LastSmokePrompt.Window.Title != Loc.Get("GeometryWarningTitle") || LastSmokePrompt.AcceptButton.Content as string != Loc.Get("GeometryAcceptLaunch") || starting || engine.Running)
+                            throw new Exception($"{what}: exactly one dialog, the red warning, and nothing started");
+                        bool ok = answer switch
+                        {
+                            GeometryConsent.Cancel => SmokeLaunchChosen == null && store.Load(fixture).GeometryStereo && GeometryModeButton.IsChecked == true &&
+                                Status.Text == Loc.Get(restart ? "StatusGeometryCancelled" : "StatusGeometryStartCancelled"),
+                            GeometryConsent.UseDepth => SmokeLaunchChosen == "depth" && !store.Load(fixture).GeometryStereo && profile?.GeometryStereo == false &&
+                                DepthModeButton.IsChecked == true && Status.Text == Loc.Get("StatusGeometryDepthInstead") &&
+                                StartButton.Content as string == Loc.Get(restart ? "AttachPlay" : "MainStart"),
+                            _ => SmokeLaunchChosen == "geometry" && store.Load(fixture).GeometryStereo && GeometryModeButton.IsChecked == true,
+                        };
+                        if (!ok)
+                            throw new Exception($"{what}: wrong outcome (path {SmokeLaunchChosen ?? "none"}, saved geometry {store.Load(fixture).GeometryStereo}, switch on Geometry {GeometryModeButton.IsChecked}, main button '{StartButton.Content}', status '{Status.Text}')");
+                    }
+                }
+                Select(stoppedChoice);
+                GeometryModeButton.IsChecked = true;
             }
 
             // Running normally: Restart on Geometry, Attach / Play on Depth.
@@ -4186,7 +4298,9 @@ public partial class MainWindow : Window
         SaveStackedShot(Path.Combine(output, "ui-expert-all-open.png"));
         bool savedGeometry = GeometryModeButton.IsChecked == true;
         string savedGeometrySession = GeometrySessionText.Text;
+        int shotWarnings = GeometryWarningsShown;
         GeometryModeButton.IsChecked = true; GeometrySessionText.Text = "game";
+        if (GeometryWarningsShown != shotWarnings) throw new Exception("Switching to Geometry for the screenshot must not show a dialog");
         GeometryDeveloper.IsExpanded = true;
         await Settle();
         SaveStackedShot(Path.Combine(output, "ui-geometry-stereo.png"));
