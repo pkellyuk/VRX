@@ -1,29 +1,55 @@
-# True geometry as a per-game launch setting, and the window chooser
+# True geometry as an app-wide mode, and the window chooser
 
-True geometry is a per-game launch setting in Expert, not a stereo method picked when
-attaching. In Expert, the row under the game card (auto-attach and its countdown) has a
-**Depth | Geometry** switch on its right, styled like the Easy | Expert switch (it moves to
-its own row, right-aligned, when the row is too narrow). It shows the selected game's
-mode: Geometry is the saved backend being a geometry method (a renderer, the automatic one,
-or the old `GeometryStereo` checkbox), Depth is estimated depth (Auto and Depth both show
-Depth; `Profile`'s stored fields are unchanged, so existing profiles load as they were).
-Moving the switch is only a setting: either way it is saved at once and no dialog is
-shown. The warning (the anti-cheat warning for a game with anti-cheat, else the red
-warning) comes when the main button actually starts or restarts the game with true
-geometry. With no game, for a whole display or a game VRX cannot start, the switch is
-locked on Depth and its tooltip says why. Easy hides it (Easy always uses depth). On
-Geometry the content of **3D: estimated depth** rests (disabled and dimmed); on Depth the
-content of **3D: true geometry (experimental)** does: the renderer (automatic API
-detection, Vulkan, DXVK, vkd3d-proton), 3D strength, screen depth, the collapsed Developer
-part and Review Steam launch setup. Both sections still open and close; attaching to a
-running game VRX did not start still uses depth, as below. For a whole display, or a game
-VRX cannot start (an unbound Steam game, a missing executable), the section is disabled
-with one line saying why, and the switch is locked on Depth.
+True geometry is an app-wide **mode** in Expert, like Easy | Expert, not a per-game setting
+or a stereo method picked when attaching. In Expert, the row under the game card
+(auto-attach and its countdown) has a **Depth | Geometry** switch on its right, styled like
+the Easy | Expert switch (it moves to its own row, right-aligned, when the row is too
+narrow). The mode is saved in `app-settings.json` (`AppSettings.StereoMode`: `"Depth"` or
+`"Geometry"`); Depth is the default, also for files written before the switch was
+app-wide and for anything unreadable. Selecting another game (or a display) never changes
+the mode. Moving the switch is only a setting: it is saved at once, no dialog is shown and
+the selection stays as it is. The warning (the anti-cheat warning for a game with
+anti-cheat, else the red warning) comes when the main button or a chooser tile actually
+starts or restarts a game with true geometry. The switch rests only while a session starts,
+plays or stops. Easy hides it and always uses estimated depth, whatever is saved; going back
+to Expert brings the saved mode back.
 
-The main button on the game card does what fits the selection and its mode, and its label
+Each game keeps its own geometry **tuning** in its profile: the renderer (automatic API
+detection, Vulkan, DXVK, vkd3d-proton; `Profile.GeometryRenderer`), 3D strength, screen
+depth, the Developer fields and the Steam launch binding. Whether a launch uses them is the
+mode, never the profile: the method a launch or attach uses (`Profile.StereoBackend`,
+`GeometryStereo`) is set from the mode (`Profile.UseGeometry`) and never saved.
+
+On Geometry the content of **3D: estimated depth** rests (disabled and dimmed), the
+selected game's true-geometry tuning is usable, and auto-attach rests too: its controls are
+greyed and it never attaches (`AppSettings.AutoAttachActive`; `AutoAttachTick` does
+nothing, cancelling any countdown). On Depth the content of **3D: true geometry
+(experimental)** rests and auto-attach works as before. Both sections still open and close.
+For a whole display, a program that is not a game, or a game VRX cannot start (an unbound
+Steam game, a missing executable), the true-geometry section is disabled with one line
+saying why.
+
+**Programs that are not games** (`GameHistory.IsNotAGame`: Teams, Outlook, browsers, Visual
+Studio and VS Code, chat apps, Office, auto-attach's exclusions...) never get true
+geometry: in Geometry mode the chooser does not offer them, and if one is selected the main
+button is disabled with "True geometry is for games; <name> is not a game" (the true-geometry
+section says the same). A renderer saved for one means nothing. On Depth they play with
+estimated depth as before.
+
+**Migration.** Profiles saved before the switch was app-wide stored a per-game method
+(`"StereoBackend"`: depth, auto, geometry, vulkan, dxvk, vkd3d, dx12) and, earlier, a
+checkbox (`"GeometryStereo"`, meaning Vulkan). They still load: a saved renderer (or the
+checkbox's Vulkan) becomes the game's `GeometryRenderer`; depth, Auto, nothing or anything
+unknown leaves the renderer as it was (`Profile.MigrateLegacyMethod`, on load and in Apply
+to all). Nobody is switched to Geometry: the mode starts as Depth for everyone. The old
+fields are read only and leave the file the next time it is saved. A release never uses the
+development DX12 route (a saved `dx12` is ignored there).
+
+The main button on the game card does what fits the selection and the mode, and its label
 says so (the switch already shows the mode, so the label does not repeat it). The decision
-is `MainButton.Decide` (pure, unit-tested in the smoke test), which drives both the label
-and the click (`MainWindow.UpdateStartButton` / `RunMainAction`):
+is `MainButton.Decide(MainState, out MainBlock)` (pure, every row unit-tested in the smoke
+test), which drives the label, the disabled reason and the click
+(`MainWindow.UpdateStartButton` / `RunMainAction`):
 
 | Selection | Mode | Label | Action |
 |---|---|---|---|
@@ -32,8 +58,11 @@ and the click (`MainWindow.UpdateStartButton` / `RunMainAction`):
 | a running game VRX started with true geometry (its stream is ready) | either | **Play** | attaches to the stream |
 | a running game started normally | Depth | **Attach / Play** | attaches with depth |
 | a running game started normally | Geometry | **Restart** | the restart flow: stops a depth session, the warning, the restart dialog, then the game restarts with true geometry (a Steam game through its Steam launch) |
-| a whole display | (Depth) | **Play display** | plays the display |
-| nothing usable (no selection, or a stopped game VRX cannot start) | | **Attach / Play**, disabled | its tooltip says why |
+| a whole display | Depth | **Play display** | plays the display |
+| a whole display | Geometry | **Play display**, disabled | "Whole screen uses estimated depth — switch to Depth" |
+| a program that is not a game | Geometry | disabled | "True geometry is for games; <name> is not a game" (on Depth: Start or Attach / Play as for any game) |
+| a game VRX cannot start (not running; on Geometry also running without a stream) | | **Attach / Play**, disabled | its tooltip says why |
+| nothing selected | | **Attach / Play**, disabled | its tooltip says to choose a game or display |
 
 The tooltips name the full action ("Start <game> through VRX with true geometry…",
 "Restart <game> through VRX with true geometry…"). While a session starts, plays or stops,
@@ -42,52 +71,40 @@ or the chooser is open, the button waits (Stop VR is the one to use). Easy is un
 Geometry, **Review Steam launch setup…** in the true-geometry section does the same Start
 (or Restart) but always shows the launch review and Steam's setup dialog (the Launch Options
 line and its copy button), even when Steam is already set up; it is the only place that
-review is offered (the chooser's tiles no longer have it).
+review is offered (the chooser's tiles do not have it).
 
 There is no Game & window section any more. The main window owns one selected game (and
 window): the chooser sets it (clicking a tile plays as before; the small ⚙ Settings button
-on every Expert tile - running windows, recent and Steam games, displays - selects it
-without starting VR, and a running window is then what Attach / Play uses; VRX then comes
-to the front, the status line says "Showing settings for <game> (VR not started)" and the
-game card's name lights up in the accent colour, fading back over about 1.5 s), and so do
-auto-attach and VRX's own launches. At start-up the last game is selected, running or not.
-A selected game that closes stays selected (not running); one that starts is picked up by
-the five-second refresh. The game card shows it, with its executable in the name's
-tooltip. While VR plays only the playing game can be selected. An unbound Steam game's
-settings stay in memory and become its executable's on its first play. In Expert,
-auto-attach and its countdown sit on one row directly under the game card, always in view
-(outside the scrolling sections); Easy keeps auto-attach on and does not show them. An old
-`"Game"` section state in `app-settings.json` is ignored and dropped on the next save.
-Easy has no ⚙ buttons.
-
-In **Expert**, clicking a stopped game's tile (recent games, installed Steam games)
-launches it the way it is set up: with true geometry only when its saved setting says so
-(the anti-cheat check and its warning, or the red warning, come first), otherwise with estimated depth. The
-tile reads "Play with true geometry →" when it is set, else "Launch game →". Tiles have
-no per-tile method buttons, renderer list or Steam setup review: the tile's ⚙ opens the
-game's settings, where the true-geometry section holds the setting, the renderer and the
-Steam launch setup review. In **Easy** a pick plays with estimated depth now, without
-changing the game's saved method, and Attach / Play and auto-attach also use depth. True geometry is
-only reachable in Expert, per game, never as a global default. Whole displays use depth
-capture.
+on every Expert tile selects it without starting VR, and a running window is then what
+Attach / Play uses; VRX then comes to the front, the status line says "Showing settings for
+<game> (VR not started)" and the game card's name lights up in the accent colour, fading
+back over about 1.5 s), and so do auto-attach and VRX's own launches. At start-up the last
+game is selected, running or not. A selected game that closes stays selected (not running);
+one that starts is picked up by the five-second refresh. The game card shows it, with its
+executable in the name's tooltip. While VR plays only the playing game can be selected. An
+unbound Steam game's settings stay in memory and become its executable's on its first play.
+In Expert, auto-attach and its countdown sit on one row directly under the game card,
+always in view (outside the scrolling sections); Easy keeps auto-attach on and does not show
+them. An old `"Game"` section state in `app-settings.json` is ignored and dropped on the
+next save. Easy has no ⚙ buttons.
 
 True geometry applies when VRX starts the game: the Vulkan layer and translation DLLs
 must be loaded at launch. Attaching to a game that is already running (Attach / Play, a
 running window's tile in the chooser, auto-attach) therefore follows one rule
 (`GeometryLaunch.DecideAttach`): if VRX started that very process with true geometry
-and its stream is ready (`ExistingSession`), VRX attaches to the stream; otherwise it
-plays with estimated depth, even when the game's saved method is true geometry, and the
-saved method is not changed. In Expert, on Geometry, the main button then reads
-**Restart**: the only way to restart a running game. It stops a depth session and goes
-through the anti-cheat check, its warning (or the red warning) and the restart dialog (a
-Steam game restarts through its Steam launch). An attach never shows the restart dialog.
-The geometry section's hint says this in one line.
+and its stream is ready (`ExistingSession`, matched against the game's renderer), VRX
+attaches to the stream (on Depth through the main button's **Play**); otherwise it plays
+with estimated depth. In Geometry mode the main button then reads **Restart**: the only way
+to restart a running game. It stops a depth session and goes through the anti-cheat check,
+its warning (or the red warning) and the restart dialog (a Steam game restarts through its
+Steam launch). An attach never shows the restart dialog. The geometry section's hint says
+this in one line.
 
 True geometry shows a prominent red warning before every geometry launch or restart
 (the main button's Start and Restart, a chooser tile's start, Steam launches included;
 never for moving the Depth | Geometry switch): use it with offline games; online games with
 anti-cheat may detect it and the account can be banned. The geometry section keeps a red
-banner while the switch is on Geometry. Before the warning, VRX looks for anti-cheat in the
+banner in Geometry mode. Before the warning, VRX looks for anti-cheat in the
 game's installation (Easy Anti-Cheat folders and `start_protected_game.exe`,
 BattlEye and `BEService*`, EA Javelin, PunkBuster, GameGuard, XIGNCODE3, Tencent ACE,
 miHoYo protect, EQU8) and for anti-cheat services started from that folder or by the
@@ -102,18 +119,15 @@ restarting every time the dialog opens; while locked it ignores clicks and canno
 keyboard focus, and its label is never an access key. It proceeds with true geometry for
 that action only: the warning is shown again before every geometry launch or restart
 (chooser tile, the main button's Start and Restart, Steam launches), one dialog per
-action. Cancel launches nothing and leaves the game on Geometry. "Use estimated depth"
-at either warning starts (or, for Restart, attaches to the running game) with estimated
-depth and sets the game to Depth, as the status line says, so the next Start is a normal
-one; switch back to Geometry to try true geometry again.
+action. Cancel launches nothing. "Use estimated depth" at either warning starts (or, for
+Restart, attaches to the running game) with estimated depth this time, as the status line
+says. Every answer leaves the mode on Geometry and the game's tuning as it was.
 
-Auto always means estimated depth, for every game, including games with a built-in
-tested geometry profile: true geometry is only used when it was chosen for that game.
-A tested profile is shown as a suggestion next to the geometry choice ("Tested
-true-geometry settings are available for this game") and only fills in the geometry
-settings. Background auto-attach follows the attach rule above: it only connects a VRX
-geometry stream or uses depth, and never closes, restarts or launches a game or
-installs a graphics DLL.
+A built-in tested geometry profile (System Shock) never turns true geometry on: it is shown
+as a suggestion in the true-geometry section ("Tested true-geometry settings are available
+for this game") and only fills in the game's geometry tuning, used in Geometry mode.
+Background auto-attach only runs on Depth: it connects a VRX geometry stream or uses depth,
+and never closes, restarts or launches a game or installs a graphics DLL.
 
 The geometry renderer list (Expert → 3D: true geometry) offers Automatic renderer, Native
 Vulkan, DirectX 11 through DXVK, and DirectX 12 through vkd3d-proton. The automatic renderer reads the
@@ -127,21 +141,28 @@ reported instead of guessed: launching says so at once rather than failing after
 first-frame wait. Native D3D12 command replay remains developer-only.
 
 The main window keeps these levels separate: the Depth | Geometry switch under the game
-card (the one control that turns geometry on) and, in the true-geometry section, the
-Geometry renderer dropdown with what was detected. The per-game renderer is remembered
-while the switch is on Depth. On Geometry the estimated-depth settings rest (greyed out),
-by the owner's choice, although attaching to a running game VRX did not start still plays
-with depth and uses them.
+card (the one control that turns geometry on, for every game) and, in the true-geometry
+section, the selected game's renderer dropdown with what was detected. A game's renderer
+is remembered while the mode is Depth.
 
-The chooser separates **Launch a game** from **Attach to something running**.
-Launch contains stopped recent games and installed Steam games; running titles
-appear only as windows under Attach, alongside whole displays. Cards explicitly label
-Launch versus Attach. Running windows only attach, with the rule above: they have no
-stereo method buttons, geometry options or restart. The launch group starts
-collapsed when attachable windows exist, and expanded when no windows exist.
-The attach group's hint says a running game plays with estimated depth unless VRX
-started it with true geometry. DWM thumbnails hide when their containing group is
-collapsed.
+The chooser's header and contents follow the mode; which tile goes where is
+`ChooserWindow.PlaceTile` (pure, every row unit-tested in the smoke test):
+
+- **Depth** (and always in Easy): as before. **Launch a game** holds stopped recent games
+  and installed Steam games ("Launch game →", a normal launch with estimated depth);
+  **Attach to something running** holds running windows and whole displays, which only
+  attach (estimated depth, or a VRX geometry stream as above). The launch group starts
+  collapsed when attachable windows exist.
+- **Geometry**: the header says so and the attach group is gone (no running windows, no
+  displays). **Launch a game** is open and holds only games VRX can start - stopped recent
+  games whose executable exists and installed Steam games, never a program that is not a
+  game - reading "Launch with true geometry →" (one warning first). Above them, **Running
+  with true geometry** lists running games VRX started with true geometry whose stream is
+  ready, reading "Play true geometry →"; whether a run qualifies is asked once per running
+  program, only in this mode.
+
+Tiles have no per-tile method buttons, renderer list or Steam setup review: the tile's ⚙
+opens the game's settings. DWM thumbnails hide when their containing group is collapsed.
 
 Recent games appears within Launch. A successful attachment records its
 title, executable, launch arguments and Steam identity in `recent-games.json`. Programs

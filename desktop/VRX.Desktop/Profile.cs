@@ -3,6 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace VRX.Desktop;
 public sealed class Profile
@@ -17,37 +18,88 @@ public sealed class Profile
     public double Strength { get; set; } = 1;
     public bool Follow { get; set; }
     public bool Stereo { get; set; } = true;
-    // Explicit methods determine the input type. Keep the old checkbox only
-    // as a migration fallback for profiles without a method choice.
-    private bool legacyGeometryStereo;
-    // True when true geometry is chosen for this game (a specific renderer, or the automatic
-    // one even when it cannot tell the game's graphics API: that is reported, never silently
-    // turned into depth).
-    public bool GeometryStereo {
-        get => SelectedStereoBackend == StereoPaths.GeometryAuto || StereoPaths.Geometry(SelectedStereoBackend);
-        set => legacyGeometryStereo=value;
-    }
-    // Empty migrates legacy profiles from the geometry checkbox. New choices
-    // belong to this executable, never the display or base settings.
+    // Whether VRX uses true geometry is the app-wide Depth | Geometry mode
+    // (AppSettings.StereoMode), never a per-game setting. A game keeps only its geometry
+    // TUNING: the renderer below, 3D strength and screen depth, the launch fields.
+    //
+    // The method THIS launch or attach uses (StereoPaths): set from the app-wide mode when
+    // VRX shows, starts or plays a game (UseGeometry), never saved. Empty is estimated depth.
+    [JsonIgnore]
     public string StereoBackend { get; set; } = "";
+    // True when this launch or attach uses true geometry (a specific renderer, or the
+    // automatic one even when it cannot tell the game's graphics API: that is reported, never
+    // silently turned into depth).
+    [JsonIgnore]
+    public bool GeometryStereo => SelectedStereoBackend == StereoPaths.GeometryAuto || StereoPaths.Geometry(SelectedStereoBackend);
+    // Saved: the game's true-geometry renderer (GeometryAuto: follow its graphics API).
     public string GeometryRenderer { get; set; } = StereoPaths.GeometryAuto;
-    [System.Text.Json.Serialization.JsonIgnore]
+    [JsonIgnore]
     public string SelectedGeometryRenderer => StereoPaths.Renderer(SelectedStereoBackend) ? SelectedStereoBackend :
         StereoPaths.Renderer(GeometryRenderer) ? GeometryRenderer : StereoPaths.GeometryAuto;
-    [System.Text.Json.Serialization.JsonIgnore]
+    [JsonIgnore]
     public string SelectedStereoBackend => StereoPaths.Valid(StereoBackend)
 #if !DEBUG
         ? StereoBackend == StereoPaths.Dx12 ? StereoPaths.Depth : StereoBackend
 #else
         ? StereoBackend
 #endif
-        : legacyGeometryStereo ? StereoPaths.Vulkan : StereoPaths.Depth;
-    // Auto always means estimated depth: true geometry changes how the game draws, so it is
-    // only ever used when it was chosen for this game. A tested profile is a suggestion shown
-    // with the geometry choice, never a reason to pick geometry by itself. The automatic
-    // geometry renderer follows the game's graphics API (GraphicsApi); when that cannot be
-    // told it stays GeometryAuto, which launching reports instead of guessing.
-    [System.Text.Json.Serialization.JsonIgnore]
+        : StereoPaths.Depth;
+
+    // Profiles saved before the app-wide mode stored a per-game method ("StereoBackend":
+    // depth, auto, geometry, vulkan, dxvk, vkd3d, dx12) and, earlier still, a checkbox
+    // ("GeometryStereo", meaning Vulkan). Read only, never written: MigrateLegacyMethod keeps
+    // a saved renderer as the game's geometry renderer; the method itself is dropped.
+    private string? legacyStereoBackend;
+    private bool legacyGeometryStereo;
+    [JsonPropertyName("StereoBackend"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyStereoBackend { get => null; set => legacyStereoBackend = value; }
+    [JsonPropertyName("GeometryStereo"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? LegacyGeometryStereo { get => null; set => legacyGeometryStereo = value == true; }
+
+    // Brings an old per-game method into the renderer: a saved renderer (or the old geometry
+    // checkbox: Vulkan) becomes GeometryRenderer; depth, Auto or nothing leaves it as it is.
+    // True when the renderer changed. Never turns true geometry on: that is the app-wide mode.
+    public bool MigrateLegacyMethod()
+    {
+        string? legacy = legacyStereoBackend;
+        bool checkbox = legacyGeometryStereo;
+        legacyStereoBackend = null;
+        legacyGeometryStereo = false;
+        string renderer = StereoPaths.Valid(legacy) ? legacy! : checkbox ? StereoPaths.Vulkan : "";
+        if (!StereoPaths.Renderer(renderer) || renderer == GeometryRenderer)
+        {
+            if (legacy != null || checkbox) System.Diagnostics.Debug.WriteLine($"[Profile] MigrateLegacyMethod: {ExecutablePath}: old method '{legacy}' (checkbox {checkbox}) leaves the renderer {GeometryRenderer}");
+            return false;
+        }
+        System.Diagnostics.Debug.WriteLine($"[Profile] MigrateLegacyMethod: {ExecutablePath}: old method '{legacy}' (checkbox {checkbox}) -> renderer {renderer} (was {GeometryRenderer})");
+        GeometryRenderer = renderer;
+        return true;
+    }
+
+    // Sets the method this launch or attach uses: the game's geometry renderer for true
+    // geometry, else estimated depth. Not saved.
+    public void UseGeometry(bool on)
+    {
+        string was = SelectedStereoBackend;
+        StereoBackend = on ? SelectedGeometryRenderer : StereoPaths.Depth;
+        if (was != SelectedStereoBackend) System.Diagnostics.Debug.WriteLine($"[Profile] UseGeometry: {ExecutablePath}: {was} -> {SelectedStereoBackend}");
+    }
+
+    // The game's geometry renderer (a renderer from the list): saved, and used straight away
+    // when this launch uses true geometry.
+    public void ChooseGeometryRenderer(string renderer)
+    {
+        if (!StereoPaths.Renderer(renderer)) throw new ArgumentException(nameof(renderer));
+        bool geometry = GeometryStereo;
+        System.Diagnostics.Debug.WriteLine($"[Profile] ChooseGeometryRenderer: {ExecutablePath}: {GeometryRenderer} -> {renderer}, in use now {geometry}");
+        GeometryRenderer = renderer;
+        if (geometry) StereoBackend = renderer;
+    }
+
+    // The automatic geometry renderer follows the game's graphics API (GraphicsApi); when that
+    // cannot be told it stays GeometryAuto, which launching reports instead of guessing. A
+    // tested profile (System Shock) gives its renderer.
+    [JsonIgnore]
     public string EffectiveStereoBackend => SelectedStereoBackend switch {
         StereoPaths.Auto => StereoPaths.Depth,
         StereoPaths.GeometryAuto => GeometryProfileId == TestedStereoProfiles.SystemShock ? StereoPaths.Vkd3d :
@@ -90,10 +142,11 @@ public sealed class Profile
         GeometryConvergence = convergence;
         return changed;
     }
+    // Sets this launch's method directly (a renderer also becomes the game's renderer).
     public void SelectStereoBackend(string backend) {
         if (!StereoPaths.Valid(backend)) throw new ArgumentException(nameof(backend));
         GeometryRenderer = StereoPaths.Renderer(backend) ? backend : SelectedGeometryRenderer;
-        StereoBackend = backend; GeometryStereo = StereoPaths.Geometry(backend);
+        StereoBackend = backend;
     }
     public string GeometrySession { get; set; } = "game";
     public static bool ValidGeometrySession(string? session) => session is { Length: > 0 and <= 64 } &&
@@ -260,6 +313,11 @@ public sealed class ProfileStore(string root)
             loaded.ExpertWindow = AppSettings.ValidBounds(loaded.ExpertWindow);
             loaded.EasyWindow = AppSettings.ValidPosition(loaded.EasyWindow);
             loaded.ChooserWindow = AppSettings.ValidSize(loaded.ChooserWindow);
+            if (!AppSettings.ValidStereoMode(loaded.StereoMode))
+            {
+                System.Diagnostics.Debug.WriteLine($"[AppSettings] stereo mode '{loaded.StereoMode}' not set; Depth");
+                loaded.StereoMode = AppSettings.DepthStereo;
+            }
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException)
         {
@@ -299,6 +357,7 @@ public sealed class ProfileStore(string root)
             AutoAttach = settings.AutoAttach,
             AutoAttachSeconds = AppSettings.ClampSeconds(settings.AutoAttachSeconds),
             Mode = AppSettings.ValidMode(settings.Mode) ? settings.Mode : null,
+            StereoMode = AppSettings.ValidStereoMode(settings.StereoMode) ? settings.StereoMode : AppSettings.DepthStereo,
             Sections = settings.Sections == null ? null : new Dictionary<string, bool>(settings.Sections, StringComparer.Ordinal),
             ExpertWindow = AppSettings.ValidBounds(settings.ExpertWindow),
             EasyWindow = AppSettings.ValidPosition(settings.EasyWindow),
@@ -358,7 +417,8 @@ public sealed class ProfileStore(string root)
                 var copy = JsonSerializer.Deserialize<Profile>(JsonSerializer.Serialize(settings))!;
                 copy.ExecutablePath = saved.ExecutablePath;
                 copy.PreferredWindowTitle = saved.PreferredWindowTitle;
-                copy.StereoBackend = saved.StereoBackend; copy.GeometryStereo = saved.GeometryStereo;
+                // Each game keeps its own geometry renderer (an old per-game method migrates first).
+                saved.MigrateLegacyMethod();
                 copy.GeometryRenderer = saved.SelectedGeometryRenderer;
                 copy.GeometrySession = saved.GeometrySession;
                 copy.GeometryLaunchArguments = saved.GeometryLaunchArguments;
@@ -382,7 +442,6 @@ public sealed class ProfileStore(string root)
         {
             var start = BaseSettings();
             start.ExecutablePath = executable;
-            start.SelectStereoBackend(StereoPaths.Auto);
             TestedStereoProfiles.Apply(start);
             return start;
         }
@@ -395,6 +454,9 @@ public sealed class ProfileStore(string root)
             // Earlier xgpu builds stored a checkbox; it meant "any other GPU".
             if (profile.DepthOnSecondGpu && profile.DepthGpu == Gpus.Same) profile.DepthGpu = Gpus.Auto;
             profile.DepthOnSecondGpu = false;
+            // Before the app-wide Depth | Geometry mode: a saved per-game renderer stays the
+            // game's geometry renderer; the mode itself starts as Depth (AppSettings).
+            profile.MigrateLegacyMethod();
         }
         if (profile == null || !profile.Valid() || !string.Equals(profile.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException(Loc.Get("ErrorProfileInvalid"));

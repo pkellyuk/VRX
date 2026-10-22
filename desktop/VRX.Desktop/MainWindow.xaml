@@ -55,9 +55,9 @@
    </Border>
    <!-- Expert: auto-attach and its countdown, always in view under the game card (outside
         the scrolling sections). App-wide, so usable with no game chosen. Easy keeps it on
-        and does not show it (SetMode). Right of it, the selected game's Depth | Geometry
-        switch (Easy always uses depth, so Easy hides it with the row); when the row is too
-        narrow the switch moves to a second row (PlaceStereoModeSwitch). -->
+        and does not show it (SetMode); it rests in Geometry mode. Right of it, the app-wide
+        Depth | Geometry switch (Easy always uses depth, so Easy hides it with the row); when
+        the row is too narrow the switch moves to a second row (PlaceStereoModeSwitch). -->
    <Grid x:Name="AutoAttachPanel" Margin="4,-4,4,12" ToolTip="{l:Tr AutoAttachTip}">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*" MinWidth="90" MaxWidth="320"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
@@ -65,9 +65,10 @@
     <TextBlock Grid.Column="1" x:Name="AutoAttachCountdownLabel" Text="{l:Tr AutoAttachCountdown}" VerticalAlignment="Center" Foreground="{StaticResource Soft}" Margin="0,0,10,0"/>
     <Slider Grid.Column="2" x:Name="AutoAttachSlider" Minimum="3" Maximum="30" Value="5" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" Margin="0" ValueChanged="AutoAttachSecondsChanged" AutomationProperties.Name="{l:Tr AutoAttachCountdown}"/>
     <TextBlock Grid.Column="3" x:Name="AutoAttachValue" Style="{StaticResource Value}" MinWidth="36" VerticalAlignment="Center" Margin="10,0,0,0"/>
-    <!-- Depth | Geometry for the selected game (its per-game launch setting): Geometry asks
-         first (the anti-cheat warning, else the red warning); locked on Depth, with the reason
-         in its tooltip, for a whole display or a game VRX cannot start. -->
+    <!-- Depth | Geometry, app-wide (AppSettings.StereoMode), like Easy | Expert: switching never
+         asks; the main button's Start or Restart on Geometry shows the warning (the anti-cheat
+         one, else the red one). A display or a program that is not a game stays selected, the
+         main button saying why. -->
     <Border Grid.Column="5" x:Name="StereoModeSwitch" Background="{StaticResource ChromeBar}" BorderBrush="{StaticResource WindowEdge}" BorderThickness="1" CornerRadius="20" Padding="3"
             VerticalAlignment="Center" HorizontalAlignment="Right" Margin="16,0,0,0" ToolTipService.ShowOnDisabled="True" ToolTip="{l:Tr StereoModeTip}"
             AutomationProperties.Name="{l:Tr StereoModeName}">
@@ -201,17 +202,17 @@
      </StackPanel>
     </Expander>
 
-    <!-- 5 True geometry: a per-game launch setting. It applies when VRX starts the game (a
-         Vulkan layer and translation DLLs are loaded at launch); attaching to a running game
-         uses estimated depth unless VRX started it with true geometry. -->
+    <!-- 5 True geometry: the selected game's geometry tuning, used in Geometry mode when VRX
+         starts the game (a Vulkan layer and translation DLLs are loaded at launch); attaching
+         to a running game uses estimated depth unless VRX started it with true geometry. -->
     <Expander x:Name="GeometrySection" Header="{l:Tr SectionGeometry}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel>
-      <!-- Why it cannot be set up for the selection: nothing chosen, a whole display, or a game VRX cannot start. -->
+      <!-- Why it cannot be used for the selection: nothing chosen, a whole display, a program that is not a game, or a game VRX cannot start. -->
       <TextBlock x:Name="GeometryUnavailableHint" Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="Collapsed"/>
       <StackPanel x:Name="GeometryPanel">
        <!-- Usable only while the Depth | Geometry switch under the game card is on Geometry. -->
        <TextBlock x:Name="GeometryModeHint" Text="{l:Tr GeometryToggleHint}" Style="{StaticResource Hint}" Margin="0,0,0,6"/>
-       <!-- Shown while true geometry is on for this game (GeometryWarning). -->
+       <!-- Shown in Geometry mode for a game VRX can start (GeometryWarning). -->
        <Border x:Name="GeometryWarningBanner" Background="{StaticResource WarningBack}" BorderBrush="{StaticResource WarningEdge}" BorderThickness="2" CornerRadius="6" Padding="12,8" Margin="0,4,0,0" Visibility="Collapsed">
         <TextBlock Text="{l:Tr GeometryWarningText}" Foreground="{StaticResource WarningInk}" FontWeight="SemiBold" TextWrapping="Wrap"/>
        </Border>

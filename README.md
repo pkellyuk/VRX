@@ -104,19 +104,20 @@ An experimental second stereo method, **3D: true geometry**, is being developed 
 `xgstereo` ([how it works](docs/XGSTEREO.md)). Instead of estimating depth, it renders the
 game twice, once per eye, through a Vulkan layer: Vulkan games directly, DX11 games
 through DXVK and DX12 games through vkd3d-proton (both bundled, pinned and hash-checked).
-It is a per-game launch setting, off by default and only in Expert: pick the game with
-the ⚙ on its tile in Choose…, then set the **Depth | Geometry** switch under the game card
-to Geometry and press **Start** on the game card (it reads **Restart** for a game that is
-already running, which VRX then restarts with true geometry). The switch is only a
-setting; pressing Start or Restart shows a warning: it loads a rendering layer into the game, so use it with offline games;
-online games with anti-cheat may flag it and your account can be banned. For a game with a
-known anti-cheat the warning says so plainly and offers estimated depth ("Use estimated
-depth" starts with depth and sets the game back to Depth); you can still go
-ahead at your own risk once its 5-second countdown ends. VRX copies the
-translation DLLs next to the game only while it runs and a separate guard removes them
-afterwards, even if VRX closes first. It applies only when VRX starts the game; attaching
-to a game that is already running (auto-attach, a running window in Choose…) uses
-estimated depth; the game card's **Restart** restarts it with true geometry. Whole displays, Auto and Easy mode always use estimated depth.
+It is an app-wide mode, off by default and only in Expert: set the **Depth | Geometry**
+switch under the game card to Geometry (remembered like Easy | Expert; each game keeps its
+own geometry renderer, 3D strength and screen depth). Choose… then offers only games VRX
+can start - and games it already started with true geometry - and **Start** on the game
+card starts the selected game with true geometry (**Restart** for a game that is already
+running, which VRX then restarts with true geometry). Switching is only a setting; pressing
+Start or Restart shows a warning: it loads a rendering layer into the game, so use it with
+offline games; online games with anti-cheat may flag it and your account can be banned. For
+a game with a known anti-cheat the warning says so plainly and offers estimated depth ("Use
+estimated depth" starts with depth this time); you can still go ahead at your own risk once
+its 5-second countdown ends. VRX copies the translation DLLs next to the game only while it
+runs and a separate guard removes them afterwards, even if VRX closes first. Whole displays
+and programs that are not games (Teams, browsers, editors) never use true geometry, and
+auto-attach rests in Geometry mode; Depth mode and Easy always use estimated depth.
 Headset comfort and game compatibility still need validation.
 
 You need Visual Studio with the C++ tools and a Windows SDK (the newest one is found

@@ -59,8 +59,8 @@ internal static class GeometryLaunchTests
     }
 
     // Attaching to a running game: geometry only from a ready stream of a run VRX started (or the
-    // run it just launched); otherwise estimated depth, with the restart offered only when true
-    // geometry is the saved method in Expert. The decision never changes the saved method.
+    // run it just launched); otherwise estimated depth, with the restart offered only when the
+    // launch uses true geometry (Geometry mode) in Expert. The decision never changes the method.
     private static void AttachDecisionChecks(Action<bool,string> Check)
     {
         ArgumentNullException.ThrowIfNull(Check);
@@ -80,7 +80,7 @@ internal static class GeometryLaunchTests
         Check(Decide(geometry,expert:false)==Depth && Decide(geometry,expert:false,stream:true)==Depth,"Easy always attaches with depth, with no restart offer");
         Check(Decide(geometry,depthOnly:true)==Depth && Decide(geometry,depthOnly:true,stream:true)==Depth,"\"Use estimated depth\" attaches with depth, with no restart offer");
         Check(Decide(geometry,display:true)==Depth && Decide(geometry,display:true,stream:true)==Depth,"a whole display attaches with depth, with no restart offer");
-        Check(geometry.SelectedStereoBackend==StereoPaths.GeometryAuto && dxvk.SelectedStereoBackend==StereoPaths.Dxvk,"deciding an attach leaves the saved stereo method unchanged");
+        Check(geometry.SelectedStereoBackend==StereoPaths.GeometryAuto && dxvk.SelectedStereoBackend==StereoPaths.Dxvk,"deciding an attach leaves the method unchanged");
         bool refused=false;
         try { GeometryLaunch.DecideAttach(null!,true,false,false,false,false); } catch(ArgumentNullException) { refused=true; }
         Check(refused,"a missing profile is refused");
@@ -174,58 +174,85 @@ internal static class GeometryLaunchTests
         File.WriteAllText(Path.Combine(config,"localconfig.vdf"),"\"UserLocalConfigStore\"\n{\n\t\"Software\"\n\t{\n\t\t\"Valve\"\n\t\t{\n\t\t\t\"Steam\"\n\t\t\t{\n\t\t\t\t\"apps\"\n\t\t\t\t{\n\t\t\t\t\t\"482400\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"LaunchOptions\"\t\t\"\\\"C:\\\\VRX\\\\VRX.Desktop.exe\\\" --steam-game 482400 -- %command%\"\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n");
         Check(SteamLibrary.LaunchOptionsFor("482400",steamRoot)=="\"C:\\VRX\\VRX.Desktop.exe\" --steam-game 482400 -- %command%","Steam's saved Launch Options are read");
         Check(SteamLibrary.LaunchOptionsFor("570",steamRoot)==null && SteamLibrary.LaunchOptionsFor("bad",steamRoot)==null,"absent games and bad ids read as none");
-        var legacy=new Profile{GeometryStereo=true}; Check(legacy.EffectiveStereoBackend==StereoPaths.Vulkan,"old geometry profile migrates");
-        var p=new Profile{ExecutablePath=exe}; Check(p.EffectiveStereoBackend==StereoPaths.Depth,"old profiles default to depth estimate");
+        // A profile keeps the game's geometry renderer and tuning; whether a launch uses them is
+        // the app-wide Depth | Geometry mode (Profile.UseGeometry), never saved with the game.
+        var p=new Profile{ExecutablePath=exe}; Check(p.EffectiveStereoBackend==StereoPaths.Depth && !p.GeometryStereo,"a profile plays with estimated depth until the app-wide mode says Geometry");
         p.SelectStereoBackend(StereoPaths.Dxvk); p.GeometrySeparation=.8f; p.GeometryLaunchArguments="-dx11 -windowed";
         var store=new ProfileStore(Path.Combine(root,"settings")); store.Save(p);
-        Check(store.Load(exe).EffectiveStereoBackend==StereoPaths.Dxvk && store.Load(exe).GeometrySeparation==.8f,"route and calibration round-trip per executable");
-        store.SaveBase(p); Check(store.BaseSettings().EffectiveStereoBackend==StereoPaths.Depth && store.BaseSettings().GeometryLaunchArguments==null,"game launch choice never becomes a global default");
+        var reloaded=store.Load(exe);
+        Check(reloaded.SelectedGeometryRenderer==StereoPaths.Dxvk && !reloaded.GeometryStereo && reloaded.EffectiveStereoBackend==StereoPaths.Depth && reloaded.GeometrySeparation==.8f,
+            "the renderer and calibration round-trip per executable; whether a launch uses them is not saved");
+        string savedText=File.ReadAllText(store.FileFor(exe));
+        Check(!savedText.Contains("\"StereoBackend\"") && !savedText.Contains("\"GeometryStereo\"") && savedText.Contains("\"GeometryRenderer\": \"dxvk\""),"a profile saves its renderer, never a per-game method");
+        reloaded.UseGeometry(true); Check(reloaded.GeometryStereo && reloaded.EffectiveStereoBackend==StereoPaths.Dxvk,"Geometry mode uses the game's own renderer");
+        reloaded.ChooseGeometryRenderer(StereoPaths.Vulkan); Check(reloaded.EffectiveStereoBackend==StereoPaths.Vulkan && reloaded.SelectedGeometryRenderer==StereoPaths.Vulkan,"choosing a renderer in Geometry mode uses it straight away");
+        reloaded.UseGeometry(false); Check(!reloaded.GeometryStereo && reloaded.EffectiveStereoBackend==StereoPaths.Depth && reloaded.SelectedGeometryRenderer==StereoPaths.Vulkan,"Depth mode keeps the renderer for later");
+        reloaded.ChooseGeometryRenderer(StereoPaths.Dxvk); Check(!reloaded.GeometryStereo && reloaded.SelectedGeometryRenderer==StereoPaths.Dxvk,"choosing a renderer on Depth never turns true geometry on");
+        bool badRenderer=false; try { reloaded.ChooseGeometryRenderer(StereoPaths.Depth); } catch(ArgumentException) { badRenderer=true; }
+        Check(badRenderer,"estimated depth is not a geometry renderer");
+        store.SaveBase(p); Check(store.BaseSettings().EffectiveStereoBackend==StereoPaths.Depth && store.BaseSettings().SelectedGeometryRenderer==StereoPaths.GeometryAuto && store.BaseSettings().GeometryLaunchArguments==null,"a game's launch choices never become a global default");
         var settings=new Profile{ExecutablePath=Path.Combine(root,"other.exe"),Width=7};
         store.ApplyToAll(settings,out int skipped,out int failed);
-        Check(skipped==0 && failed==0 && store.Load(exe).EffectiveStereoBackend==StereoPaths.Dxvk && store.Load(exe).GeometryLaunchArguments==p.GeometryLaunchArguments && store.Load(exe).Width==7,"Apply to all preserves each game's launch choice");
+        Check(skipped==0 && failed==0 && store.Load(exe).SelectedGeometryRenderer==StereoPaths.Dxvk && store.Load(exe).GeometryLaunchArguments==p.GeometryLaunchArguments && store.Load(exe).Width==7,"Apply to all preserves each game's renderer and launch choices");
         Check(StereoPaths.Session(exe)==StereoPaths.Session(exe.ToUpperInvariant()) && Profile.ValidGeometrySession(StereoPaths.Session(exe)),"session identity is stable and valid");
+        // Profiles saved before the app-wide mode: a per-game method (or the old checkbox) keeps
+        // its renderer as the game's geometry renderer; nothing loads in Geometry, and the old
+        // fields leave the file the next time it is saved.
+        var migrations=new List<(string Fields,string Renderer,string What)>{
+            (",\"StereoBackend\":\"dxvk\"",StereoPaths.Dxvk,"a saved DXVK method"),
+            (",\"StereoBackend\":\"vkd3d\",\"GeometryRenderer\":\"vulkan\"",StereoPaths.Vkd3d,"a saved vkd3d method over an older renderer"),
+            (",\"StereoBackend\":\"geometry\",\"GeometryRenderer\":\"dxvk\"",StereoPaths.GeometryAuto,"the automatic renderer"),
+            (",\"GeometryStereo\":true",StereoPaths.Vulkan,"the old geometry checkbox"),
+            (",\"StereoBackend\":\"depth\",\"GeometryStereo\":true,\"GeometryRenderer\":\"vkd3d\"",StereoPaths.Vkd3d,"depth (with a contradictory old checkbox) and a renderer kept from before"),
+            (",\"StereoBackend\":\"auto\"",StereoPaths.GeometryAuto,"Auto"),
+            (",\"StereoBackend\":\"nonsense\"",StereoPaths.GeometryAuto,"an unknown method"),
+            ("",StereoPaths.GeometryAuto,"no method"),
 #if DEBUG
-        string[] backends=[StereoPaths.Depth,StereoPaths.Vulkan,StereoPaths.Dxvk,StereoPaths.Dx12];
+            (",\"StereoBackend\":\"dx12\"",StereoPaths.Dx12,"the development DX12 route"),
 #else
-        string[] backends=[StereoPaths.Depth,StereoPaths.Vulkan,StereoPaths.Dxvk];
-        // The native DX12 proxy is development-only: a saved DX12 choice loads as depth in a release.
-        var native=new Profile{ExecutablePath=Path.Combine(root,"dx12.exe"),StereoBackend=StereoPaths.Dx12}; store.Save(native);
-        Check(store.Load(native.ExecutablePath).EffectiveStereoBackend==StereoPaths.Depth && !StereoPaths.Geometry(StereoPaths.Dx12),"a release never uses the native DX12 route");
+            (",\"StereoBackend\":\"dx12\"",StereoPaths.GeometryAuto,"the development DX12 route (never used by a release)"),
+#endif
+        };
+        for(int i=0;i<migrations.Count;i++){
+            var (fields,renderer,what)=migrations[i];
+            string old=Path.Combine(root,"legacy","game"+i+".exe");
+            File.WriteAllText(store.FileFor(old),"{\"ExecutablePath\":"+System.Text.Json.JsonSerializer.Serialize(old)+fields+"}");
+            var migrated=store.Load(old);
+            Check(migrated.SelectedGeometryRenderer==renderer && !migrated.GeometryStereo && migrated.EffectiveStereoBackend==StereoPaths.Depth,$"an old profile with {what} keeps its renderer ({renderer}, got {migrated.SelectedGeometryRenderer}) and loads on depth");
+            store.Save(migrated);
+            string resaved=File.ReadAllText(store.FileFor(old));
+            Check(store.Load(old).SelectedGeometryRenderer==renderer && !resaved.Contains("StereoBackend") && !resaved.Contains("\"GeometryStereo\""),$"an old profile with {what} is saved again without its per-game method");
+        }
+#if !DEBUG
+        // The native DX12 proxy is development-only: a release never uses it.
+        var native=new Profile{StereoBackend=StereoPaths.Dx12};
+        Check(native.EffectiveStereoBackend==StereoPaths.Depth && !StereoPaths.Geometry(StereoPaths.Dx12) && !StereoPaths.Renderer(StereoPaths.Dx12),"a release never uses the native DX12 route");
         Check(GeometryLaunch.InstalledNames(StereoPaths.Dx12).Length==0,"a release never installs the native DX12 proxy");
 #endif
-        foreach(string backend in backends){
-            var choice=new Profile{ExecutablePath=Path.Combine(root,backend+".exe"),StereoBackend=backend,GeometryStereo=backend==StereoPaths.Depth};
-            bool geometry=backend!=StereoPaths.Depth;
-            Check(choice.GeometryStereo==geometry && StereoPaths.FromGeometryChoice(geometry,backend)==backend,"explicit method determines the geometry checkbox without changing the selected backend");
-            store.Save(choice);var loaded=store.Load(choice.ExecutablePath);
-            Check(loaded.EffectiveStereoBackend==backend && loaded.GeometryStereo==geometry,"all render methods round-trip despite a contradictory legacy checkbox");
-            Check(StereoPaths.FromGeometryChoice(false,backend)==StereoPaths.Depth,"unchecking geometry selects depth estimation");
-        }
-        Check(StereoPaths.FromGeometryChoice(true,StereoPaths.Depth)==StereoPaths.Vulkan,"legacy checkbox still selects Vulkan");
         var separate=new Profile{ExecutablePath=Path.Combine(root,"separate.exe"),GeometrySeparation=.5f};
-        separate.SelectStereoBackend(StereoPaths.Vkd3d); separate.SelectStereoBackend(StereoPaths.Depth); store.Save(separate);
+        separate.ChooseGeometryRenderer(StereoPaths.Vkd3d); store.Save(separate);
         separate=store.Load(separate.ExecutablePath);
-        Check(separate.SelectedStereoBackend==StereoPaths.Depth && separate.SelectedGeometryRenderer==StereoPaths.Vkd3d && separate.GeometrySeparation==.5f,"secondary renderer and stereo tuning survive switching to depth and reloading");
-        separate.SelectStereoBackend(separate.SelectedGeometryRenderer);
-        Check(separate.EffectiveStereoBackend==StereoPaths.Vkd3d,"returning to geometry restores its renderer");
+        Check(!separate.GeometryStereo && separate.SelectedGeometryRenderer==StereoPaths.Vkd3d && separate.GeometrySeparation==.5f,"the renderer and stereo tuning survive reloading, on depth");
+        separate.UseGeometry(true);
+        Check(separate.EffectiveStereoBackend==StereoPaths.Vkd3d,"Geometry mode restores its renderer");
         store.Save(separate); store.SaveBase(separate);
-        Check(store.BaseSettings().SelectedGeometryRenderer==StereoPaths.GeometryAuto,"base settings never inherit a game's secondary renderer");
+        Check(store.BaseSettings().SelectedGeometryRenderer==StereoPaths.GeometryAuto,"base settings never inherit a game's renderer");
         store.ApplyToAll(settings,out _,out _);
-        Check(store.Load(separate.ExecutablePath).SelectedGeometryRenderer==StereoPaths.Vkd3d,"Apply to all preserves secondary renderer selection");
+        Check(store.Load(separate.ExecutablePath).SelectedGeometryRenderer==StereoPaths.Vkd3d,"Apply to all preserves the game's renderer");
         Check(GeometryLaunch.ApiArguments(["-dx11","-norhithread"],StereoPaths.Vkd3d,true).SequenceEqual(new[]{"-norhithread","-dx12"}),"vkd3d selects D3D12 and retains the tested thread setting");
         string shockApps=Path.Combine(root,"shock","steamapps"), shockExe=Path.Combine(shockApps,"common","System Shock","SystemShock","Binaries","Win64","SystemReShock-Win64-Shipping.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(shockExe)!);
         File.WriteAllText(Path.Combine(shockApps,"appmanifest_482400.acf"),"\"appid\" \"482400\"\n\"installdir\" \"System Shock\"");
         var tested=store.Load(shockExe);
-        // Auto is always estimated depth, even for a game with tested geometry settings.
-        Check(tested.SelectedStereoBackend==StereoPaths.Auto && tested.EffectiveStereoBackend==StereoPaths.Depth && !tested.GeometryStereo,"a new System Shock profile resolves to depth");
+        // Tested geometry settings never turn true geometry on: that is the app-wide mode.
+        Check(tested.SelectedStereoBackend==StereoPaths.Depth && tested.EffectiveStereoBackend==StereoPaths.Depth && !tested.GeometryStereo,"a new System Shock profile plays with depth until Geometry mode");
         Check(tested.GeometryProfileId==TestedStereoProfiles.SystemShock && tested.GeometrySeparation==TestedStereoProfiles.SystemShockSeparation &&
             tested.GeometryConvergence==TestedStereoProfiles.SystemShockConvergence && tested.GeometryConvergence>0 && tested.GeometryLaunchArguments!.Contains("-norhithread"),"the tested System Shock calibration is only a suggestion, with the screen plane in front of infinity");
-        var chosen=store.Load(shockExe); chosen.SelectStereoBackend(StereoPaths.GeometryAuto);
-        Check(chosen.EffectiveStereoBackend==StereoPaths.Vkd3d,"choosing geometry for System Shock uses its tested renderer");
+        var chosen=store.Load(shockExe); chosen.UseGeometry(true);
+        Check(chosen.EffectiveStereoBackend==StereoPaths.Vkd3d,"Geometry mode uses System Shock's tested renderer");
         tested.GeometrySeparation=.35f; tested.GeometryConvergence=.004f; store.Save(tested);
         var remembered=store.Load(shockExe);
-        Check(remembered.GeometrySeparation==.35f && remembered.GeometryConvergence==.004f && remembered.SelectedStereoBackend==StereoPaths.Auto,"reloading Auto preserves user calibration");
+        Check(remembered.GeometrySeparation==.35f && remembered.GeometryConvergence==.004f && remembered.SelectedStereoBackend==StereoPaths.Depth,"reloading preserves user calibration");
         Check(!remembered.GeometryLaunchArguments!.Contains("-Res") && !remembered.GeometryLaunchArguments.Contains("-windowed"),"the game controls its saved resolution and display mode");
         remembered.GeometryProfileId="system-shock-vkd3d-v1";
         remembered.GeometryLaunchArguments="-norhithread -windowed -ResX=1280 -ResY=720 -dx12";
@@ -245,10 +272,9 @@ internal static class GeometryLaunchTests
         remembered.GeometryProfileId="system-shock-vkd3d-v2"; remembered.GeometryLaunchArguments="-dx12 -norhithread -windowed -ResX=2560 -ResY=1440";
         store.Save(remembered); remembered=store.Load(shockExe);
         Check(remembered.GeometryLaunchArguments!.Contains("-ResX=2560"),"explicit custom launch settings survive the default-profile migration");
-        remembered.SelectStereoBackend(StereoPaths.Depth); store.Save(remembered);
-        Check(store.Load(shockExe).EffectiveStereoBackend==StereoPaths.Depth,"an explicit depth choice overrides the built-in profile");
+        Check(store.Load(shockExe).EffectiveStereoBackend==StereoPaths.Depth,"Depth mode plays System Shock with estimated depth despite its tested geometry settings");
         var unknown=store.Load(Path.Combine(root,"unknown.exe"));
-        Check(unknown.SelectedStereoBackend==StereoPaths.Auto && unknown.EffectiveStereoBackend==StereoPaths.Depth,"unknown games default to external depth capture");
+        Check(unknown.SelectedStereoBackend==StereoPaths.Depth && unknown.EffectiveStereoBackend==StereoPaths.Depth,"unknown games default to external depth capture");
         var translated=new GeometryLaunch.Plan(new RunningApp(1,"fixture",exe,[],null),0,StereoPaths.Vkd3d,root,[],root,"482400","fixture",root,[],root);
         var start=new ProcessStartInfo(exe); start.Environment["VKD3D_CONFIG"]="existing";
         start.Environment["__COMPAT_LAYER"]="RUNASINVOKER DPIUNAWARE";

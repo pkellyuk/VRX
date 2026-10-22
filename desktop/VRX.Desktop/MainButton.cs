@@ -3,11 +3,11 @@ using System.Diagnostics;
 namespace VRX.Desktop;
 
 // What the main button on the game card does now (its label says so). Expert follows the
-// selection and its Depth | Geometry mode; Easy is always Attach / Play for a running window
-// or display, as before.
+// selection and the app-wide Depth | Geometry mode; Easy is always Attach / Play for a running
+// window or display, as before.
 public enum MainAction
 {
-    None,                   // nothing usable: disabled, its tooltip says why
+    None,                   // nothing usable: disabled, its tooltip says why (MainBlock)
     Busy,                   // a session is starting, playing or stopping, or the chooser is open: disabled
     AttachPlay,             // attach to the running game (estimated depth), or Easy's Attach / Play
     PlayStream,             // attach to the geometry stream of a run VRX started
@@ -22,67 +22,94 @@ public enum MainBlock
 {
     None,
     NoSelection,            // nothing chosen (or a display that is not there)
-    CannotStart,            // a stopped game VRX cannot start
+    CannotStart,            // a game VRX cannot start (and, on Depth, not running)
+    DisplayNeedsDepth,      // Geometry mode, a whole display: it only plays with estimated depth
+    NotAGame,               // Geometry mode, a program on the non-game list (GameHistory.IsNotAGame)
 }
+
+// Everything the main button depends on, as plain values (so the decision can be tested).
+// HasSelection: a game or display is selected and its settings are loaded. IsDisplay: the
+// selection is a whole display. IsRunning: its window (or display) is there. StreamReady: VRX
+// started this very process with true geometry and its stream is ready
+// (GeometryLaunch.ExistingSession, as DecideAttach uses it). GeometryMode: the app-wide Depth |
+// Geometry switch is on Geometry (AppSettings.StereoMode). CanStart: VRX can start the game (an
+// existing executable, or a Steam game bound to one). NotAGame: the program is on the non-game
+// list (Teams, browsers, editors...). Easy: Easy mode (always estimated depth). Busy: a session
+// is starting, running or stopping, or the chooser is gathering games.
+public readonly record struct MainState(bool HasSelection, bool IsDisplay, bool IsRunning, bool StreamReady, bool GeometryMode,
+    bool CanStart, bool NotAGame, bool Easy, bool Busy);
 
 public static class MainButton
 {
-    // The main button's action, with no side effects.
-    // hasSelection: a game or display is selected and its settings are loaded.
-    // isDisplay: the selection is a whole display. isRunning: its window (or display) is there.
-    // streamReady: VRX started this very process with true geometry and its stream is ready
-    // (GeometryLaunch.ExistingSession, as DecideAttach uses it). geometryMode: the Depth |
-    // Geometry switch shows Geometry. canStart: VRX can start the game (an existing executable,
-    // or a Steam game bound to one). easy: Easy mode. busy: a session is starting, running or
-    // stopping, or the chooser is gathering games.
-    public static MainAction Decide(bool hasSelection, bool isDisplay, bool isRunning, bool streamReady, bool geometryMode, bool canStart, bool easy, bool busy)
+    // The main button's action, with no side effects; `block` says why when it is None.
+    // Depth: Start / Attach / Play / Play (a VRX geometry stream) / Play display, as before true
+    // geometry existed. Geometry: Start (true geometry) for a stopped game VRX can start, Play
+    // for VRX's own geometry run, Restart for a game running normally; never a display or a
+    // program that is not a game.
+    public static MainAction Decide(MainState state, out MainBlock block)
     {
-        Debug.WriteLine($"[Main button] Decide enter: selection {hasSelection}, display {isDisplay}, running {isRunning}, stream {streamReady}, geometry {geometryMode}, can start {canStart}, easy {easy}, busy {busy}");
-        if (busy)
+        Debug.WriteLine($"[Main button] Decide enter: {state}");
+        block = MainBlock.None;
+        if (state.Busy)
         {
             Debug.WriteLine("[Main button] Decide exit: Busy");
             return MainAction.Busy;
         }
-        if (!hasSelection)
+        if (!state.HasSelection)
         {
+            block = MainBlock.NoSelection;
             Debug.WriteLine("[Main button] Decide exit: None (no selection)");
             return MainAction.None;
         }
-        if (easy)
+        if (state.Easy)
         {
             // Easy as before: Attach / Play for a running window or display, nothing else.
-            var easyAction = isRunning ? MainAction.AttachPlay : MainAction.None;
+            var easyAction = state.IsRunning ? MainAction.AttachPlay : MainAction.None;
             Debug.WriteLine($"[Main button] Decide exit: {easyAction} (Easy)");
             return easyAction;
         }
-        if (isDisplay)
-        {
-            var displayAction = isRunning ? MainAction.PlayDisplay : MainAction.None;
-            Debug.WriteLine($"[Main button] Decide exit: {displayAction} (display)");
-            return displayAction;
-        }
-        bool geometry = geometryMode && canStart;
-        if (isRunning)
-        {
-            var runningAction = streamReady ? MainAction.PlayStream : geometry ? MainAction.RestartWithGeometry : MainAction.AttachPlay;
-            Debug.WriteLine($"[Main button] Decide exit: {runningAction} (running)");
-            return runningAction;
-        }
-        if (!canStart)
-        {
-            Debug.WriteLine("[Main button] Decide exit: None (not running, VRX cannot start it)");
-            return MainAction.None;
-        }
-        var stoppedAction = geometry ? MainAction.StartWithGeometry : MainAction.StartGame;
-        Debug.WriteLine($"[Main button] Decide exit: {stoppedAction} (not running)");
-        return stoppedAction;
+        var action = state.GeometryMode ? DecideGeometry(state, out block) : DecideDepth(state, out block);
+        Debug.WriteLine($"[Main button] Decide exit: {action}, block {block} ({(state.GeometryMode ? "Geometry" : "Depth")})");
+        return action;
     }
 
-    // Why Decide gave None (for the disabled button's tooltip); MainBlock.None otherwise.
-    public static MainBlock Why(MainAction action, bool hasSelection, bool isDisplay, bool isRunning)
+    // Depth mode, Expert: everything plays with estimated depth, except Play for the stream of
+    // a run VRX started with true geometry.
+    private static MainAction DecideDepth(MainState state, out MainBlock block)
     {
-        if (action != MainAction.None) return MainBlock.None;
-        if (!hasSelection || isDisplay || isRunning) return MainBlock.NoSelection;
-        return MainBlock.CannotStart;
+        block = MainBlock.None;
+        if (state.IsDisplay)
+        {
+            if (state.IsRunning) return MainAction.PlayDisplay;
+            block = MainBlock.NoSelection;
+            return MainAction.None;
+        }
+        if (state.IsRunning) return state.StreamReady ? MainAction.PlayStream : MainAction.AttachPlay;
+        if (state.CanStart) return MainAction.StartGame;
+        block = MainBlock.CannotStart;
+        return MainAction.None;
+    }
+
+    // Geometry mode, Expert: only games VRX starts (or started) with true geometry.
+    private static MainAction DecideGeometry(MainState state, out MainBlock block)
+    {
+        block = MainBlock.None;
+        if (state.IsDisplay)
+        {
+            block = MainBlock.DisplayNeedsDepth;
+            return MainAction.None;
+        }
+        if (state.NotAGame)
+        {
+            block = MainBlock.NotAGame;
+            return MainAction.None;
+        }
+        if (state.IsRunning && state.StreamReady) return MainAction.PlayStream;
+        if (!state.CanStart)
+        {
+            block = MainBlock.CannotStart;
+            return MainAction.None;
+        }
+        return state.IsRunning ? MainAction.RestartWithGeometry : MainAction.StartWithGeometry;
     }
 }

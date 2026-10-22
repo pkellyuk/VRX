@@ -31,6 +31,22 @@ public sealed class AppSettings
     public bool IsExpert => Mode == ExpertMode;
     public static bool ValidMode(string? mode) => mode is EasyMode or ExpertMode;
 
+    // Expert's Depth | Geometry switch: "Depth" (estimated depth, the default, also for files
+    // written before the switch was app-wide) or "Geometry" (true geometry for games VRX
+    // starts). Easy always uses estimated depth, whatever is saved here. Each game keeps its
+    // own geometry tuning (Profile), but this decides whether a launch uses it.
+    public const string DepthStereo = "Depth";
+    public const string GeometryStereo = "Geometry";
+    public string StereoMode { get; set; } = DepthStereo;
+    public static bool ValidStereoMode(string? mode) => mode is DepthStereo or GeometryStereo;
+    // True when VRX uses true geometry now: Expert on Geometry.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool UsesGeometry => IsExpert && StereoMode == GeometryStereo;
+    // Auto-attach polls the window in front only while it is on and not resting: it attaches
+    // with estimated depth, so it rests in Geometry mode (Easy always uses depth).
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool AutoAttachActive => AutoAttach && !UsesGeometry;
+
     // Expert's collapsible sections: name -> open. Sections not listed use DefaultSections.
     // Older files may still name "Game" (the removed Game & window section): it is
     // ignored, and dropped the next time a section is opened or closed.

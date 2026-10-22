@@ -53,7 +53,7 @@ internal static class GameHistoryTests
         // profiles stay.
         string oldRoot=Path.Combine(root,"old-history"); var oldHistory=new GameHistory(oldRoot);
         var oldStore=new ProfileStore(oldRoot);
-        var teamsProfile=new Profile{ExecutablePath=teams}; teamsProfile.SelectStereoBackend(StereoPaths.GeometryAuto); oldStore.Save(teamsProfile);
+        var teamsProfile=new Profile{ExecutablePath=teams}; oldStore.Save(teamsProfile);
         GameHistory.Entry[] saved=[first with {Executable=teams,Title="Fraegra - TRS Data | Per-Scent LTD | Microsoft Teams",LastPlayedUtc=DateTimeOffset.UtcNow.AddMinutes(1)},first];
         ProfileStore.AtomicWrite(Path.Combine(oldRoot,"recent-games.json"),System.Text.Json.JsonSerializer.Serialize(saved));
         Check(oldHistory.Load().Select(e=>e.Executable).SequenceEqual(new[]{first.Executable}),"an existing Teams entry is dropped from recent games when they load");
@@ -83,7 +83,7 @@ internal static class GameHistoryTests
                 foreach(var child in Tiles(chooser,VisualTreeHelper.GetChild(node,i))) yield return child;
         }
         var missing=first with {Executable=Path.Combine(root,"missing.exe"),Title="Missing game"};
-        var chooser=new ChooserWindow([],[],null,0,null,_=>StereoPaths.GeometryAuto,[first,missing]) {
+        var chooser=new ChooserWindow([],[],null,0,null,[first,missing]) {
             Owner=owner,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
         };
         _=owner.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>{
