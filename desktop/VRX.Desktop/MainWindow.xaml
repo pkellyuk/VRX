@@ -29,7 +29,9 @@
    </Border>
   </Grid>
 
-  <!-- Always visible: the game card with Attach / Play and Stop VR (Easy adds Recenter) -->
+  <!-- Always visible: the game card with the main button (Expert: Start, Restart, Play, Play
+       display or Attach / Play, MainWindow.UpdateStartButton; Easy: Attach / Play) and Stop VR
+       (Easy adds Recenter) -->
   <StackPanel Grid.Row="1" x:Name="TopArea">
    <TextBlock x:Name="EasyIntro" Text="{l:Tr EasyIntro}" FontSize="18" TextWrapping="Wrap" Margin="2,0,0,14"/>
    <Border x:Name="GameCard" Background="{StaticResource Card}" BorderBrush="{StaticResource CardEdge}" BorderThickness="1" CornerRadius="12" Padding="18,14,10,6" Margin="0,0,0,14">
@@ -215,8 +217,8 @@
        </Border>
        <TextBlock x:Name="TestedHint" Text="{l:Tr TestedSystemShock}" Style="{StaticResource Hint}" Margin="0,6,0,0" Visibility="Collapsed"/>
        <WrapPanel Margin="0,8,0,0">
-        <Button x:Name="GeometryStartButton" Content="{l:Tr GeometryStartButton}" ToolTip="{l:Tr GeometryStartTip}" Click="GeometryStartClick" IsEnabled="False"/>
-        <!-- Steam games only: the launch review and Steam's setup dialog, shown again. -->
+        <!-- Steam games only: the launch review and Steam's setup dialog, shown again (the
+             main button on the game card starts or restarts the game with true geometry). -->
         <Button x:Name="SteamReviewSetupButton" Content="{l:Tr SteamReviewSetup}" ToolTip="{l:Tr SteamReviewSetupTip}" Click="SteamReviewSetupClick" IsEnabled="False" Visibility="Collapsed"/>
        </WrapPanel>
        <!-- The settings below are used only while the switch is on Geometry. -->
@@ -311,9 +313,6 @@
   <Border Grid.Row="3" BorderBrush="{StaticResource CardEdge}" BorderThickness="0,1,0,0" Padding="2,10,2,0" Margin="0,8,0,0">
    <StackPanel>
     <TextBlock x:Name="Status" Text="{l:Tr StatusReady}" TextWrapping="Wrap" Foreground="{StaticResource Soft}"/>
-    <!-- A running game whose method is true geometry plays with depth when VRX did not start
-         it; this offers the deliberate restart (MainWindow.GeometryRestartClick). -->
-    <TextBlock x:Name="GeometryRestartHint" TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0" Visibility="Collapsed"><Run Text="{l:Tr GeometryAttachDepthHint}"/> <Hyperlink x:Name="GeometryRestartLink" Click="GeometryRestartClick" Foreground="{StaticResource Accent}"><Run Text="{l:Tr GeometryRestartLink}"/></Hyperlink></TextBlock>
    </StackPanel>
   </Border>
  </Grid>

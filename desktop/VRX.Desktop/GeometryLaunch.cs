@@ -122,7 +122,7 @@ public static class GeometryLaunch
     public enum AttachStereo
     {
         Depth,                  // estimated depth: the method chosen, Easy, a display, or "Use estimated depth"
-        DepthWithGeometryHint,  // true geometry chosen but no VRX geometry stream: depth now, a restart is offered
+        DepthWithGeometryHint,  // true geometry chosen but no VRX geometry stream: depth now (Expert's main button reads "Restart")
         GeometryStream,         // a VRX-started geometry run with a ready stream: attach to it
         GeometryLaunched,       // the run VRX has just launched: wait for its first frame
     }

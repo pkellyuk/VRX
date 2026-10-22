@@ -122,7 +122,6 @@ public partial class MainWindow : Window
             sessionWindow = 0;
             playing = false;
             sessionGeometry = false;
-            HideGeometryRestartHint();         // the offer belongs to the session that ended
             shown = SourceShown.Game;
             // The renderer's own reason stays English (engine logs are not translated).
             sessionError = code == 0 ? "" : Loc.Format("StatusEngineFailed",
@@ -231,9 +230,6 @@ public partial class MainWindow : Window
         sessionError = "";
         profile = null; SetSettingsEnabled(false);
         var app = choice.App;
-        // Another game chosen: the restart offer was for the previous one.
-        if (geometryRestartTarget is { } offered && (app.Pid != offered.App.Pid || !SamePath(app.FullPath, offered.App.FullPath)))
-            HideGeometryRestartHint();
         // Only what identifies the game is kept: how it was picked is not.
         selection = choice with { ReviewSteamSetup = false, DepthOnly = false, Restart = false, Settings = false };
         if (app.FullPath.Length > 0)
@@ -313,7 +309,6 @@ public partial class MainWindow : Window
             if (changed)
             {
                 System.Diagnostics.Debug.WriteLine($"[Selection] RefreshSelection: {chosen.App.FullPath} pid {chosen.App.Pid} window {chosen.Window.Handle:X} -> pid {updated.App.Pid} window {updated.Window.Handle:X}");
-                if (geometryRestartTarget is { } offered && offered.App.Pid != updated.App.Pid) HideGeometryRestartHint();
             }
         }
         catch (Exception ex) { Status.Text = Loc.Format("StatusRefreshFailed", ex.Message); }
@@ -339,13 +334,14 @@ public partial class MainWindow : Window
         UpdateGeometryControls();
     }
 
-    // Whether VRX's geometry stream for the running selection is ready: the Start button then
-    // attaches to it rather than offering a restart. Looked up only while geometry is on.
+    // Whether VRX's geometry stream for the running selection is ready (VRX started this very
+    // process with true geometry): the main button then reads "Play" and attaches to it, in
+    // either mode, rather than offering a restart.
     private void UpdateGeometryStream()
     {
         bool was = geometryStreamReady;
         geometryStreamReady = false;
-        if (selection is { } chosen && profile?.GeometryStereo == true && geometryBlock == GeometryBlock.None && SelectedWindow != null)
+        if (selection is { } chosen && profile != null && geometryBlock == GeometryBlock.None && SelectedWindow != null)
         {
             try { geometryStreamReady = GeometryLaunch.ExistingSession(chosen.App, profile, store.Root) != null; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -531,8 +527,8 @@ public partial class MainWindow : Window
 
     // The owner's rule for the two 3D sections: on Geometry the estimated-depth section's
     // content rests (dimmed); on Depth the true-geometry section's content does (renderer,
-    // strength, screen depth, Developer, Start / Review). The sections still open and close.
-    // Attaching to a running game VRX did not start still uses depth (StartSession).
+    // strength, screen depth, Developer, Review Steam launch setup). The sections still open and
+    // close. Attaching to a running game VRX did not start still uses depth (StartSession).
     private void ApplyStereoModeGreying(bool settingsOn)
     {
         if (DepthContent == null || GeometryPanel == null) return;
@@ -639,23 +635,68 @@ public partial class MainWindow : Window
         // A tested profile is only a suggestion next to the geometry choice; Auto stays depth.
         TestedHint.Visibility = profile?.GeometryProfileId == TestedStereoProfiles.SystemShock ? Visibility.Visible : Visibility.Collapsed;
         GeometryContent.IsEnabled = geometry;
-        UpdateGeometryStartButton();
+        UpdateSteamReviewButton();
+        UpdateStartButton();
     }
 
-    // "Start with true geometry": usable while the toggle is on for a game VRX can start. For a
-    // running game VRX did not start with true geometry it is "Restart with true geometry".
-    private void UpdateGeometryStartButton()
+    // "Review Steam launch setup...": a Steam game only, usable while the switch is on Geometry
+    // for a game VRX can start, and not while something starts or a geometry session plays.
+    private void UpdateSteamReviewButton()
     {
-        if (GeometryStartButton == null) return;
-        bool restart = SelectedWindow != null && !geometryStreamReady;
-        GeometryStartButton.Content = Loc.Get(restart ? "GeometryRestartLink" : "GeometryStartButton");
-        GeometryStartButton.IsEnabled = profile?.GeometryStereo == true && geometryBlock == GeometryBlock.None && !starting && !stopping && !choosing &&
-            !(engine.Running && sessionGeometry);
-        // "Review Steam launch setup...": a Steam game only, usable when Start is.
         if (SteamReviewSetupButton == null) return;
         bool steamGame = SelectedSteamAppId() != null;
         SteamReviewSetupButton.Visibility = steamGame ? Visibility.Visible : Visibility.Collapsed;
-        SteamReviewSetupButton.IsEnabled = steamGame && GeometryStartButton.IsEnabled;
+        SteamReviewSetupButton.IsEnabled = steamGame && GeometryModeShown && !starting && !stopping && !choosing && !(engine.Running && sessionGeometry);
+        System.Diagnostics.Debug.WriteLine($"[Geometry] UpdateSteamReviewButton: Steam game {steamGame}, enabled {SteamReviewSetupButton.IsEnabled}");
+    }
+
+    // True while the main button waits: a session starts, plays or stops, or the chooser is open.
+    private bool MainButtonBusy => engine.Running || starting || stopping || choosing;
+
+    // The main button's action for the selection and its mode now (MainButton.Decide).
+    private MainAction MainActionNow(bool busy)
+    {
+        var chosen = selection;
+        bool hasSelection = chosen != null && profile != null && chosen.App.FullPath.Length > 0;
+        bool display = chosen != null && ScreenSources.IsScreen(chosen.App);
+        return MainButton.Decide(hasSelection, display, SelectedWindow != null, geometryStreamReady, GeometryModeShown,
+            geometryBlock == GeometryBlock.None, !appSettings.IsExpert, busy);
+    }
+
+    // The main button on the game card says what it will do (Expert: Start, Restart, Play,
+    // Play display or Attach / Play; Easy: always Attach / Play) and is usable when there is
+    // something to do and nothing else is going on. Disabled in Expert, its tooltip says why.
+    private void UpdateStartButton()
+    {
+        if (StartButton == null) return;
+        var idle = MainActionNow(busy: false);
+        var action = MainButtonBusy ? MainActionNow(busy: true) : idle;
+        StartButton.Content = Loc.Get(idle switch
+        {
+            MainAction.PlayStream => "MainPlay",
+            MainAction.PlayDisplay => "MainPlayDisplay",
+            MainAction.StartGame or MainAction.StartWithGeometry => "MainStart",
+            MainAction.RestartWithGeometry => "MainRestart",
+            _ => "AttachPlay",
+        });
+        StartButton.IsEnabled = action is not (MainAction.None or MainAction.Busy);
+        string game = SelectionName();
+        string? tip = null;
+        if (appSettings.IsExpert)
+        {
+            tip = action switch
+            {
+                MainAction.StartGame => Loc.Format("MainStartGameTip", game),
+                MainAction.StartWithGeometry => Loc.Format("MainStartGeometryTip", game),
+                MainAction.RestartWithGeometry => Loc.Format("MainRestartTip", game),
+                MainAction.None => MainButton.Why(action, profile != null && selection != null, selection != null && ScreenSources.IsScreen(selection.App), SelectedWindow != null) == MainBlock.CannotStart ?
+                    Loc.Get("MainCannotStart") : Loc.Get("MainNeedsGame"),
+                _ => null,
+            };
+        }
+        StartButton.ToolTip = tip;
+        ToolTipService.SetShowOnDisabled(StartButton, true);
+        System.Diagnostics.Debug.WriteLine($"[Main button] UpdateStartButton: {idle} -> '{StartButton.Content}', enabled {StartButton.IsEnabled} ({action})");
     }
 
     // With the automatic geometry renderer: what the game's graphics API is and which route that
@@ -969,8 +1010,6 @@ public partial class MainWindow : Window
     {
         bool running = engine.Running;
         SetSettingsEnabled(profile != null && !stopping && !starting);
-        // Attach / Play attaches to the selected running window or display.
-        StartButton.IsEnabled = !running && !starting && !choosing && profile != null && SelectedWindow != null;
         ChooseButton.IsEnabled = !stopping && !starting && !choosing;
         StopButton.IsEnabled = running && !stopping;
         RecenterButton.IsEnabled = EasyRecenterButton.IsEnabled = DismissButton.IsEnabled = running && !stopping;
@@ -981,7 +1020,9 @@ public partial class MainWindow : Window
         GeometrySessionText.IsEnabled = !running && !starting && profile != null && !stopping;
         GeometrySeparationText.IsEnabled=GeometryConvergenceText.IsEnabled=!starting && !stopping && profile!=null;
         GeometrySeparationSlider.IsEnabled=GeometryConvergenceSlider.IsEnabled=GeometrySeparationText.IsEnabled;
-        UpdateGeometryStartButton();
+        UpdateSteamReviewButton();
+        // The main button: the action that fits the selection and its mode (UpdateStartButton).
+        UpdateStartButton();
         UpdateGameCard();
     }
 
@@ -1058,7 +1099,49 @@ public partial class MainWindow : Window
     private string ProfileName(string? path) =>
         path != null && string.Equals(path, ScreenSources.ProfileKey(store.Root), StringComparison.OrdinalIgnoreCase) ? Loc.Get("WholeScreen") : Path.GetFileName(path) ?? "";
 
-    private async void StartClick(object sender, RoutedEventArgs e) => await StartSession();
+    private async void StartClick(object sender, RoutedEventArgs e) => await RunMainAction();
+
+    // The main button: does what its label says (UpdateStartButton, MainButton.Decide).
+    internal async Task RunMainAction()
+    {
+        var action = MainActionNow(MainButtonBusy);
+        System.Diagnostics.Debug.WriteLine($"[Main button] RunMainAction enter: {action} for {selection?.App.FullPath ?? "nothing"}");
+        try
+        {
+            switch (action)
+            {
+                case MainAction.AttachPlay:
+                case MainAction.PlayDisplay:
+                    await StartSession();
+                    break;
+                case MainAction.PlayStream:
+                    await StartSession(playStream: true);
+                    break;
+                case MainAction.StartGame:
+                case MainAction.StartWithGeometry:
+                    // The saved mode decides: depth launches normally, geometry warns first.
+                    await StartSelectedGame(reviewSteamSetup: false);
+                    break;
+                case MainAction.RestartWithGeometry:
+                    if (selection is not { } chosen || SelectedWindow is not { } window)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[Main button] RunMainAction exit: the game is no longer running");
+                        return;
+                    }
+                    await RestartWithGeometryFlow(chosen.App, window);
+                    break;
+                default:
+                    System.Diagnostics.Debug.WriteLine("[Main button] RunMainAction exit: nothing to do");
+                    return;
+            }
+        }
+        catch (Exception ex)
+        {
+            App.LogUnexpected("main button", ex);
+            Status.Text = ex.Message;
+        }
+        System.Diagnostics.Debug.WriteLine($"[Main button] RunMainAction exit: {action} done");
+    }
 
     // "Choose...": pick a window or a whole display from live pictures, then play it at once,
     // through the same path as picking it in the lists and pressing Attach / Play. While the
@@ -1235,7 +1318,7 @@ public partial class MainWindow : Window
             var running=SteamLibrary.Running(game,RunningApps.List(false),binding?.Executable);
             bool geometry=saved.GeometryStereo && !depthOnly && appSettings.IsExpert;
             string executable=binding?.Executable ?? "";
-            // A game that is already running is only restarted for "Restart with true geometry"
+            // A game that is already running is only restarted for the main button's "Restart" (true geometry)
             // (picked.Restart); otherwise it is attached to (StartSession decides the method).
             bool mayLaunch=running==null || picked.Restart;
             System.Diagnostics.Debug.WriteLine($"[Steam] StartFromSteam: {game.Title} ({game.AppId}), running pid {running?.Pid}, geometry {geometry}, restart {picked.Restart}, may launch {mayLaunch}");
@@ -1387,17 +1470,18 @@ public partial class MainWindow : Window
     // without changing the game's saved method. launched: the geometry run VRX just started
     // for this game - attach to it, waiting for its first frame, never falling back to depth.
     // A running game whose saved method is true geometry, with no stream from a geometry run
-    // VRX started, plays with depth (method unchanged) and the status line offers a restart.
-    // restartForGeometry: that offer was taken - the anti-cheat check and its warning (else the
-    // red warning), the restart dialog, then the game restarts with geometry.
-    private async Task<bool> StartSession(bool automatic = false, bool depthOnly = false, GeometryLaunch.Run? launched = null, bool restartForGeometry = false)
+    // VRX started, plays with depth (method unchanged); in Expert the main button then reads
+    // "Restart" (RestartWithGeometryFlow). restartForGeometry: that restart - the anti-cheat
+    // check and its warning (else the red warning), the restart dialog, then the game restarts
+    // with geometry. playStream: the main button's "Play" - attach to the geometry stream of a
+    // run VRX started even when the switch now shows Depth (depth when that stream has gone).
+    private async Task<bool> StartSession(bool automatic = false, bool depthOnly = false, GeometryLaunch.Run? launched = null, bool restartForGeometry = false, bool playStream = false)
     {
         if (starting || stopping || closing || choosing) return false;
         if (!SaveAndApply() || selection is not { } chosen || SelectedWindow is not { } window) return false;
         var app = chosen.App;
-        System.Diagnostics.Debug.WriteLine($"[Session] StartSession enter: {app.FullPath}, automatic {automatic}, depth only {depthOnly}, launched run {launched?.Pid}, restart for geometry {restartForGeometry}");
-        HideGeometryRestartHint();
-        bool started = false, offerRestart = false;
+        System.Diagnostics.Debug.WriteLine($"[Session] StartSession enter: {app.FullPath}, automatic {automatic}, depth only {depthOnly}, launched run {launched?.Pid}, restart for geometry {restartForGeometry}, play stream {playStream}");
+        bool started = false;
         bool refreshWasRunning = refreshTimer.IsEnabled; refreshTimer.Stop();
         starting = true; startCancellation = new CancellationTokenSource(); UpdateButtons();
         try
@@ -1409,16 +1493,23 @@ public partial class MainWindow : Window
 #endif
             // Auto is estimated depth, so geometry here was chosen for this game - and only
             // Expert uses it (Easy always plays with depth). A running game plays with geometry
-            // only when VRX started it with geometry and its stream is ready; otherwise depth,
-            // with a hint offering a deliberate restart (restartForGeometry is that request).
+            // only when VRX started it with geometry and its stream is ready; otherwise depth
+            // (restartForGeometry: the main button's deliberate restart).
             var token = startCancellation.Token;
             bool wholeDisplay = window.Monitor >= 0;
-            bool wantsGeometry = profile!.GeometryStereo && !depthOnly && appSettings.IsExpert && !wholeDisplay;
-            string? existing = wantsGeometry && launched == null ? GeometryLaunch.ExistingSession(app, profile, store.Root) : null;
-            var decision = GeometryLaunch.DecideAttach(profile, appSettings.IsExpert, depthOnly, wholeDisplay, launched != null, existing != null);
+            // "Play" on Depth: the stream's own run is played with the game's geometry renderer.
+            var attachProfile = profile!;
+            if (playStream && !attachProfile.GeometryStereo)
+            {
+                attachProfile = System.Text.Json.JsonSerializer.Deserialize<Profile>(System.Text.Json.JsonSerializer.Serialize(profile))!;
+                attachProfile.SelectStereoBackend(profile!.SelectedGeometryRenderer);
+                System.Diagnostics.Debug.WriteLine($"[Session] StartSession: playing the stream with {attachProfile.SelectedStereoBackend} for this session");
+            }
+            bool wantsGeometry = attachProfile.GeometryStereo && !depthOnly && appSettings.IsExpert && !wholeDisplay;
+            string? existing = wantsGeometry && launched == null ? GeometryLaunch.ExistingSession(app, attachProfile, store.Root) : null;
+            var decision = GeometryLaunch.DecideAttach(attachProfile, appSettings.IsExpert, depthOnly, wholeDisplay, launched != null, existing != null);
             System.Diagnostics.Debug.WriteLine($"[Session] attach decision {decision}, existing stream {existing ?? "none"}, restart requested {restartForGeometry}");
             bool geometry = decision is GeometryLaunch.AttachStereo.GeometryStream or GeometryLaunch.AttachStereo.GeometryLaunched;
-            offerRestart = decision == GeometryLaunch.AttachStereo.DepthWithGeometryHint && !restartForGeometry;
             if (decision == GeometryLaunch.AttachStereo.GeometryLaunched) existing = await WaitForFirstFrame(launched!, token);
             if (decision == GeometryLaunch.AttachStereo.DepthWithGeometryHint && restartForGeometry)
             {
@@ -1427,11 +1518,11 @@ public partial class MainWindow : Window
                 (app, window, existing) = restarted.Value;
                 geometry = existing != null;
             }
-            if (geometry && existing != null) { profile.GeometrySession = existing; GeometrySessionText.Text = existing; store.Save(profile); }
+            if (geometry && existing != null) { profile!.GeometrySession = existing; GeometrySessionText.Text = existing; store.Save(profile); }
             sessionError = lastEngineError = ""; LogBox.Clear();
             playing = false;
             shown = SourceShown.Game;
-            var runtimeProfile=profile!;
+            var runtimeProfile = attachProfile;
             if (runtimeProfile.GeometryStereo && !geometry)
             {
                 // Depth for this session only; the game's saved method is unchanged.
@@ -1441,7 +1532,6 @@ public partial class MainWindow : Window
             engine.Start(app, window, runtimeProfile, store.Root);
             sessionWindow = window.Handle; started = true; sessionGeometry = geometry;
             Status.Text = Loc.Format("StatusStarting", app.Name);
-            if (offerRestart) ShowGeometryRestartHint(app, window);
             try { await new GameHistory(store.Root).Record(app,window,profile!,CancellationToken.None); }
             catch(Exception ex) { System.Diagnostics.Debug.WriteLine("[Recent games] "+ex.Message); }
         }
@@ -1455,7 +1545,7 @@ public partial class MainWindow : Window
         return started;
     }
 
-    // "Restart with true geometry" for the selected running game (StartSession with
+    // The main button's "Restart" (true geometry) for the selected running game (StartSession with
     // restartForGeometry): the anti-cheat check and one warning (the anti-cheat one when found),
     // the restart dialog, a graceful close and a geometry launch, then the relaunched game and
     // its first frame's session. Null when it was cancelled; the game is then left running. A
@@ -1517,48 +1607,8 @@ public partial class MainWindow : Window
         return (selection!.App, SelectedWindow!, session);
     }
 
-    // The status line's "True geometry needs VRX to start the game. [Restart with true
-    // geometry]" for a session playing with depth instead. It goes when that session ends or
-    // another game is chosen.
-    private (RunningApp App, GameWindow Window)? geometryRestartTarget;
-    private void ShowGeometryRestartHint(RunningApp app, GameWindow window)
-    {
-        ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(window);
-        System.Diagnostics.Debug.WriteLine($"[Session] ShowGeometryRestartHint: {app.FullPath}, pid {app.Pid}, window {window.Handle:X}");
-        geometryRestartTarget = (app, window);
-        GeometryRestartHint.Visibility = Visibility.Visible;
-    }
-    private void HideGeometryRestartHint()
-    {
-        if (geometryRestartTarget == null && GeometryRestartHint.Visibility != Visibility.Visible) return;
-        System.Diagnostics.Debug.WriteLine($"[Session] HideGeometryRestartHint: was for {geometryRestartTarget?.App.FullPath ?? "nothing"}");
-        geometryRestartTarget = null;
-        GeometryRestartHint.Visibility = Visibility.Collapsed;
-    }
-
-    // The status line's "Restart with true geometry" link.
-    private async void GeometryRestartClick(object sender, RoutedEventArgs e)
-    {
-        var target = geometryRestartTarget;
-        System.Diagnostics.Debug.WriteLine($"[Session] GeometryRestartClick enter: {target?.App.FullPath ?? "no target"}");
-        if (target == null || starting || stopping || choosing)
-        {
-            System.Diagnostics.Debug.WriteLine("[Session] GeometryRestartClick exit: nothing to restart, or busy");
-            return;
-        }
-        HideGeometryRestartHint();
-        try { await RestartWithGeometryFlow(target.Value.App, target.Value.Window); }
-        catch (Exception ex)
-        {
-            App.LogUnexpected("geometry restart", ex);
-            Status.Text = ex.Message;
-        }
-        System.Diagnostics.Debug.WriteLine("[Session] GeometryRestartClick exit");
-    }
-
-    // "Restart with true geometry" (the status line's link, or the Start button for a running
-    // game): stops a depth session, then restarts the game through the geometry launch review -
+    // "Restart" (the main button for a running game in Geometry mode that VRX did not start
+    // with true geometry): stops a depth session, then restarts the game through the geometry launch review -
     // Steam's launch for an installed Steam game, else VRX's own. A game VRX already started
     // with true geometry is attached to, not restarted (StartSession's attach rule).
     // reviewSteamSetup: "Review Steam launch setup..." - a Steam game shows its launch review
@@ -1606,30 +1656,35 @@ public partial class MainWindow : Window
         System.Diagnostics.Debug.WriteLine("[Session] RestartWithGeometryFlow exit");
     }
 
-    // Expert, 3D: true geometry, "Start with true geometry": starts the selected game through
-    // VRX with true geometry - a Steam game through its Steam launch (with the setup dialog when
-    // needed), another through the direct launch with its saved arguments and working folder.
-    // For a running game it is the restart above. The anti-cheat check and one warning (the
-    // anti-cheat one when found) come first, as before every geometry launch.
-    private async void GeometryStartClick(object sender, RoutedEventArgs e)
-    {
-        System.Diagnostics.Debug.WriteLine("[Geometry] GeometryStartClick enter");
-        await StartWithGeometry(reviewSteamSetup: false);
-        System.Diagnostics.Debug.WriteLine("[Geometry] GeometryStartClick exit");
-    }
-
-    // Expert, 3D: true geometry, "Review Steam launch setup..." (Steam games only): the same
-    // start as above, but the launch review and Steam's setup dialog (the Launch Options line
-    // with its copy button) are always shown, even when Steam is already set up.
+    // Expert, 3D: true geometry, "Review Steam launch setup..." (Steam games only, on Geometry):
+    // the main button's Start (or, running, Restart) with true geometry, but the launch review
+    // and Steam's setup dialog (the Launch Options line with its copy button) are always shown,
+    // even when Steam is already set up.
     private async void SteamReviewSetupClick(object sender, RoutedEventArgs e)
     {
-        System.Diagnostics.Debug.WriteLine($"[Geometry] SteamReviewSetupClick enter: Steam game {SelectedSteamAppId() ?? "none"}");
-        if (SelectedSteamAppId() == null)
+        System.Diagnostics.Debug.WriteLine($"[Geometry] SteamReviewSetupClick enter: Steam game {SelectedSteamAppId() ?? "none"}, geometry {GeometryModeShown}");
+        if (SelectedSteamAppId() == null || !GeometryModeShown || starting || stopping || choosing)
         {
-            System.Diagnostics.Debug.WriteLine("[Geometry] SteamReviewSetupClick exit: not a Steam game");
+            System.Diagnostics.Debug.WriteLine("[Geometry] SteamReviewSetupClick exit: not a Steam game on Geometry, or busy");
             return;
         }
-        await StartWithGeometry(reviewSteamSetup: true);
+        try
+        {
+            if (selection is { } chosen && SelectedWindow is { } window)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Geometry] SteamReviewSetupClick: running pid {chosen.App.Pid}, restart flow");
+                await RestartWithGeometryFlow(chosen.App, window, reviewSteamSetup: true);
+            }
+            else
+            {
+                await StartSelectedGame(reviewSteamSetup: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.LogUnexpected("Steam launch review", ex);
+            Status.Text = ex.Message;
+        }
         System.Diagnostics.Debug.WriteLine("[Geometry] SteamReviewSetupClick exit");
     }
 
@@ -1645,46 +1700,40 @@ public partial class MainWindow : Window
         return string.IsNullOrEmpty(id) ? null : id;
     }
 
-    // Starts (or, running, restarts) the selected game with true geometry; reviewSteamSetup
-    // always shows a Steam game's launch review and setup dialog.
-    private async Task StartWithGeometry(bool reviewSteamSetup)
+    // The main button's "Start" for a selected game that is not running and VRX can start, the
+    // way it is set up (as a chooser tile for a stopped game does, through StartPicked): on
+    // Geometry with true geometry - the anti-cheat check and one warning first, then a Steam game
+    // through its Steam launch (with the setup dialog when needed), another through the direct
+    // launch with its saved arguments and working folder; on Depth normally (Steam's
+    // steam:// launch, else the recent-games entry), attaching with estimated depth once its
+    // window appears. reviewSteamSetup always shows a Steam game's launch review and setup dialog.
+    private async Task StartSelectedGame(bool reviewSteamSetup)
     {
         var chosen = selection;
         var saved = profile;
-        System.Diagnostics.Debug.WriteLine($"[Geometry] StartWithGeometry enter: {chosen?.App.FullPath ?? "nothing"}, pid {chosen?.App.Pid}, block {geometryBlock}, review Steam setup {reviewSteamSetup}");
-        if (chosen == null || saved?.GeometryStereo != true || geometryBlock != GeometryBlock.None || starting || stopping || choosing)
+        System.Diagnostics.Debug.WriteLine($"[Main button] StartSelectedGame enter: {chosen?.App.FullPath ?? "nothing"}, geometry {saved?.GeometryStereo}, block {geometryBlock}, review Steam setup {reviewSteamSetup}");
+        if (chosen == null || saved == null || geometryBlock != GeometryBlock.None || SelectedWindow != null || starting || stopping || choosing)
         {
-            System.Diagnostics.Debug.WriteLine("[Geometry] StartWithGeometry exit: not available");
+            System.Diagnostics.Debug.WriteLine("[Main button] StartSelectedGame exit: not available (nothing VRX can start, already running, or busy)");
             return;
         }
-        try
+        if (!SaveAndApply())
         {
-            if (SelectedWindow is { } window)
-            {
-                HideGeometryRestartHint();
-                await RestartWithGeometryFlow(chosen.App, window, reviewSteamSetup);
-                System.Diagnostics.Debug.WriteLine("[Geometry] StartWithGeometry exit: restart flow");
-                return;
-            }
-            if (!SaveAndApply()) return;
-            SteamLibrary.Discovery steam;
-            try { steam = await Task.Run(() => SteamLibrary.Discover()); }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine("[Geometry] StartWithGeometry: Steam discovery failed: " + ex.Message);
-                steam = new([], [ex.Message], false);
-            }
-            var launch = chosen with { ReviewSteamSetup = reviewSteamSetup };
-            if (chosen.Steam == null && chosen.History == null) launch = launch with { History = LaunchEntryFor(saved, chosen) };
-            System.Diagnostics.Debug.WriteLine($"[Geometry] StartWithGeometry: launching (Steam {launch.Steam?.AppId ?? "-"}, recent {launch.History != null})");
-            await StartPicked(launch, steam);
+            System.Diagnostics.Debug.WriteLine("[Main button] StartSelectedGame exit: settings not saved");
+            return;
         }
+        SteamLibrary.Discovery steam;
+        try { steam = await Task.Run(() => SteamLibrary.Discover()); }
         catch (Exception ex)
         {
-            App.LogUnexpected("geometry start", ex);
-            Status.Text = ex.Message;
+            System.Diagnostics.Debug.WriteLine("[Main button] StartSelectedGame: Steam discovery failed: " + ex.Message);
+            steam = new([], [ex.Message], false);
         }
-        System.Diagnostics.Debug.WriteLine("[Geometry] StartWithGeometry exit");
+        var launch = chosen with { ReviewSteamSetup = reviewSteamSetup };
+        if (chosen.Steam == null && chosen.History == null) launch = launch with { History = LaunchEntryFor(saved, chosen) };
+        System.Diagnostics.Debug.WriteLine($"[Main button] StartSelectedGame: launching (Steam {launch.Steam?.AppId ?? "-"}, recent {launch.History != null})");
+        await StartPicked(launch, steam);
+        System.Diagnostics.Debug.WriteLine("[Main button] StartSelectedGame exit");
     }
 
     // A direct launch for a game with no recent-games entry: its executable with its saved
@@ -1887,6 +1936,7 @@ public partial class MainWindow : Window
         if (changed) SaveAppSettings();
         UpdateAutoTimer();
         UpdateGameCard();
+        UpdateStartButton();                   // Easy: always Attach / Play; Expert: the selection's action
         System.Diagnostics.Debug.WriteLine($"[Mode] SetMode exit: {appSettings.Mode}, auto-attach {appSettings.AutoAttach}, saved {changed}");
     }
 
@@ -2879,7 +2929,7 @@ public partial class MainWindow : Window
         await SmokeTestAntiCheatWarning(output, sample, one);
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
-        SmokeTestGeometryRestartHint(sample);
+        await SmokeTestMainButton(output, sample, one);
         await GeometryLaunchTests.Run(output);
         await GameHistoryTests.Run(output,this);
         await SteamLibraryTests.Run(output,this);
@@ -2927,7 +2977,7 @@ public partial class MainWindow : Window
         RefreshSelection();
         if (Status.Text != sessionError) throw new Exception("Refreshing hid the session error");
         if (Loc.Missing.Count > 0) throw new Exception("Strings asked for but missing from Strings.resx: " + string.Join(", ", Loc.Missing));
-        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach), its controls in SteamVR & shortcuts; one selected game (Game & window section gone, chooser Settings buttons select without playing); true geometry as a per-game Depth | Geometry switch under the game card (red warning, anti-cheat warning with its 5 s countdown, saved methods, greying of the other 3D section, locked on Depth for displays and unknown games, hidden in Easy, wraps when narrow, Start button rules); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; window: places remembered culture-independently and kept on screen, Easy compact and growing to its content, Expert back at its size, title bar buttons named; strings: " +
+        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach), its controls in SteamVR & shortcuts; one selected game (Game & window section gone, chooser Settings buttons select without playing); true geometry as a per-game Depth | Geometry switch under the game card (red warning, anti-cheat warning with its 5 s countdown, saved methods, greying of the other 3D section, locked on Depth for displays and unknown games, hidden in Easy, wraps when narrow); the main button follows the selection and mode (MainButton.Decide for every row incl. Easy and busy; Start / Restart / Play / Play display / Attach / Play in the window, disabled with its reason; Start on Geometry shows one warning, cancelled, nothing launched; the geometry Start button and the restart link gone); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; window: places remembered culture-independently and kept on screen, Easy compact and growing to its content, Expert back at its size, title bar buttons named; strings: " +
             Loc.NeutralStrings().Count.ToString(CultureInfo.InvariantCulture) + " keys, all referenced keys present, placeholders consistent, no literal text in MainWindow.xaml, pseudo-locale transforms every string; screenshots ui-easy-skin, ui-easy-skin-pseudo, ui-expert-skin, ui-expert-all-open, ui-expert-pseudo. No VR session started.");
     }
 
@@ -3032,28 +3082,32 @@ public partial class MainWindow : Window
                 geometryBlock != GeometryBlock.None)
                 throw new Exception($"A saved profile with {what} must load unchanged with the switch on {(on ? "Geometry" : "Depth")} and the other 3D section resting");
         }
-        if (SelectedWindow != null || StartButton.IsEnabled || CardState.Text != Loc.Get(appSettings.AutoAttach ? "CardWaiting" : "CardNotRunning") ||
-            CardName.ToolTip as string != Loc.Format("CardPathTip", fixture))
-            throw new Exception("A game that is not running is selected for its settings: no Attach / Play, its path in the card's tooltip");
+        // The main button says what it will do (UpdateStartButton): "Start" for a stopped game
+        // VRX can start, in both modes (the switch shows which).
+        bool MainShows(string label, bool enabled) => StartButton.Content as string == label && StartButton.IsEnabled == enabled;
+        if (SelectedWindow != null || !MainShows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", SelectionName()) ||
+            CardState.Text != Loc.Get(appSettings.AutoAttach ? "CardWaiting" : "CardNotRunning") || CardName.ToolTip as string != Loc.Format("CardPathTip", fixture))
+            throw new Exception($"A stopped game VRX can start, on Depth: the main button must read Start, its tooltip the normal start, its path in the card's tooltip (got '{StartButton.Content}', enabled {StartButton.IsEnabled})");
 
-        // Turning it on: the warning every time (with the toggle off, never the Start button);
-        // then Start with true geometry is there for the stopped game.
+        // Turning it on: the warning every time; the main button stays Start (now with true
+        // geometry, its tooltip says so).
         int warnings = GeometryWarningsShown;
-        if (GeometryStartButton.IsEnabled) throw new Exception("Start with true geometry needs the switch on Geometry");
         GeometryModeButton.IsChecked = true;
         if (GeometryWarningsShown != warnings + 1 || profile?.GeometryStereo != true || !store.Load(fixture).GeometryStereo || !GeometryContent.IsEnabled)
             throw new Exception("Turning true geometry on must warn and save the method");
-        if (!GeometryStartButton.IsEnabled || GeometryStartButton.Content as string != Loc.Get("GeometryStartButton"))
-            throw new Exception("Start with true geometry must be offered for a stopped game VRX can start");
+        if (!MainShows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", SelectionName()))
+            throw new Exception("On Geometry the main button must offer Start with true geometry for a stopped game VRX can start");
         if (SteamReviewSetupButton.Visibility == Visibility.Visible || SteamReviewSetupButton.IsEnabled)
             throw new Exception("Review Steam launch setup is only for Steam games");
         starting = true; UpdateButtons();
-        bool busyEnabled = GeometryStartButton.IsEnabled;
+        bool busyEnabled = StartButton.IsEnabled;
+        string busyLabel = StartButton.Content as string ?? "";
         starting = false; UpdateButtons();
-        if (busyEnabled) throw new Exception("Start with true geometry must wait while VRX is starting something");
+        if (busyEnabled || busyLabel != Loc.Get("MainStart")) throw new Exception("The main button must wait (keeping its label) while VRX is starting something");
         DepthModeButton.IsChecked = true;
-        if (GeometryStartButton.IsEnabled || store.Load(fixture).GeometryStereo || store.Load(fixture).SelectedStereoBackend != StereoPaths.Depth || GeometryWarningsShown != warnings + 1)
-            throw new Exception("Switching to Depth must save estimated depth without asking, and rest the Start button");
+        if (!MainShows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", SelectionName()) ||
+            store.Load(fixture).GeometryStereo || store.Load(fixture).SelectedStereoBackend != StereoPaths.Depth || GeometryWarningsShown != warnings + 1)
+            throw new Exception("Switching to Depth must save estimated depth without asking, the main button back to a normal Start");
         GeometryModeButton.IsChecked = true;
         if (GeometryWarningsShown != warnings + 2) throw new Exception("Switching to Geometry again must warn again");
         // Cancel and "Use estimated depth" at the red warning leave it on Depth.
@@ -3063,18 +3117,24 @@ public partial class MainWindow : Window
             SmokeAnswer = answer;
             try { GeometryModeButton.IsChecked = true; }
             finally { SmokeAnswer = null; }
-            if (GeometryModeButton.IsChecked != false || DepthModeButton.IsChecked != true || store.Load(fixture).GeometryStereo || GeometryPanel.IsEnabled || !DepthContent.IsEnabled)
-                throw new Exception($"{answer} at the warning must leave the switch on Depth");
+            if (GeometryModeButton.IsChecked != false || DepthModeButton.IsChecked != true || store.Load(fixture).GeometryStereo || GeometryPanel.IsEnabled || !DepthContent.IsEnabled ||
+                StartButton.ToolTip as string != Loc.Format("MainStartGameTip", SelectionName()))
+                throw new Exception($"{answer} at the warning must leave the switch (and the main button's Start) on Depth");
         }
         GeometryModeButton.IsChecked = true;
         if (!store.Load(fixture).GeometryStereo) throw new Exception("\"I understand\" at the warning must switch to Geometry");
 
-        // Running, not started by VRX with true geometry: the button is the restart.
+        // Running, not started by VRX with true geometry: Restart on Geometry, Attach / Play on Depth.
         var running = new RunningApp(int.MaxValue - 21, "Game.exe", fixture, [new GameWindow(0x7F21, "Geometry fixture")], null);
         selection = new ChooserWindow.Choice(running, running.Windows[0]);
         UpdateGeometryAvailability(); UpdateButtons();
-        if (!GeometryStartButton.IsEnabled || GeometryStartButton.Content as string != Loc.Get("GeometryRestartLink") || !StartButton.IsEnabled)
-            throw new Exception("For a running game not started with true geometry the button must offer the restart");
+        if (!MainShows(Loc.Get("MainRestart"), true) || StartButton.ToolTip as string != Loc.Format("MainRestartTip", SelectionName()))
+            throw new Exception("For a running game not started with true geometry, on Geometry, the main button must offer the restart");
+        DepthModeButton.IsChecked = true;
+        if (!MainShows(Loc.Get("AttachPlay"), true) || StartButton.ToolTip != null)
+            throw new Exception("For a running game on Depth the main button must be Attach / Play");
+        GeometryModeButton.IsChecked = true;
+        if (!MainShows(Loc.Get("MainRestart"), true) || !store.Load(fixture).GeometryStereo) throw new Exception("Back on Geometry the running game's main button must be Restart again");
 
         // A game with anti-cheat: the anti-cheat warning (one dialog, not also the red one).
         // "Use estimated depth" (the default) and Cancel leave it on Depth; "I understand the
@@ -3087,7 +3147,7 @@ public partial class MainWindow : Window
         if (geometryBlock != GeometryBlock.None) throw new Exception("A stopped game VRX can start must allow setting up true geometry");
         GeometryModeButton.IsChecked = true;
         if (GeometryWarningsShown != warnings + 1 || AntiCheatWarningsShown != antiCheatWarnings + 1 || GeometryModeButton.IsChecked != false || profile?.GeometryStereo != false ||
-            store.Load(protectedGame).GeometryStereo || Status.Text != Loc.Get("StatusGeometryAntiCheat") || GeometryStartButton.IsEnabled ||
+            store.Load(protectedGame).GeometryStereo || Status.Text != Loc.Get("StatusGeometryAntiCheat") || !MainShows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", SelectionName()) ||
             LastSmokePrompt is not { AntiCheat: true, RiskButton: not null } || LastSmokePrompt.Window.Title != Loc.Get("GeometryAntiCheatTitle"))
             throw new Exception($"Switching to Geometry for a game with anti-cheat must show the anti-cheat warning, and Use estimated depth leave it on Depth (status '{Status.Text}')");
         SmokeAnswer = GeometryConsent.Cancel;
@@ -3100,7 +3160,7 @@ public partial class MainWindow : Window
         try { GeometryModeButton.IsChecked = true; }
         finally { SmokeAnswer = null; }
         if (GeometryWarningsShown != warnings + 3 || AntiCheatWarningsShown != antiCheatWarnings + 3 || GeometryModeButton.IsChecked != true || !store.Load(protectedGame).GeometryStereo ||
-            !GeometryStartButton.IsEnabled || LastSmokePrompt?.Answer != GeometryConsent.Proceed || LastSmokePrompt.SecondsLeft != 0)
+            StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", SelectionName()) || LastSmokePrompt?.Answer != GeometryConsent.Proceed || LastSmokePrompt.SecondsLeft != 0)
             throw new Exception("I understand the risk at the anti-cheat warning (after its countdown) must switch the game to Geometry");
         DepthModeButton.IsChecked = true;
         if (GeometryWarningsShown != warnings + 3 || store.Load(protectedGame).GeometryStereo) throw new Exception("Switching an anti-cheat game back to Depth must not ask");
@@ -3112,8 +3172,9 @@ public partial class MainWindow : Window
         store.Save(missingProfile);
         Select(new ChooserWindow.Choice(new RunningApp(0, "Missing.exe", missing, [], null), new GameWindow(0, "Missing")));
         if (geometryBlock != GeometryBlock.UnknownGame || GeometryPanel.IsEnabled || GeometryUnavailableHint.Visibility != Visibility.Visible ||
-            GeometryUnavailableHint.Text != Loc.Get("GeometryUnknownGame") || GeometryStartButton.IsEnabled || profile?.GeometryStereo != true)
-            throw new Exception("A game VRX cannot start must show true geometry unavailable, with the reason, and no Start button");
+            GeometryUnavailableHint.Text != Loc.Get("GeometryUnknownGame") || !MainShows(Loc.Get("AttachPlay"), false) || StartButton.ToolTip as string != Loc.Get("MainCannotStart") ||
+            !ToolTipService.GetShowOnDisabled(StartButton) || profile?.GeometryStereo != true)
+            throw new Exception("A stopped game VRX cannot start must show true geometry unavailable, with the reason, and a disabled Attach / Play saying why");
         if (GeometryModeButton.IsEnabled || !StereoModeSwitch.IsEnabled || DepthModeButton.IsChecked != true || GeometryModeButton.IsChecked != false || GeometryModeButton.ToolTip as string != Loc.Get("GeometryUnknownGame") ||
             !DepthContent.IsEnabled || DepthContent.Opacity < 1)
             throw new Exception("A game VRX cannot start must lock the switch on Depth with the reason, its depth settings usable");
@@ -3123,7 +3184,7 @@ public partial class MainWindow : Window
         {
             Select(new ChooserWindow.Choice(screens, screens.Windows[0]));
             if (geometryBlock != GeometryBlock.Display || GeometryPanel.IsEnabled || GeometryUnavailableHint.Text != Loc.Get("GeometryNotForDisplay") ||
-                GeometryStartButton.IsEnabled || !StartButton.IsEnabled || CardName.ToolTip as string != Loc.Get("PathWholeScreen"))
+                !MainShows(Loc.Get("MainPlayDisplay"), true) || StartButton.ToolTip != null || CardName.ToolTip as string != Loc.Get("PathWholeScreen"))
                 throw new Exception("A whole display must show true geometry unavailable and still attach");
             if (GeometryModeButton.IsEnabled || !StereoModeSwitch.IsEnabled || DepthModeButton.IsChecked != true || GeometryModeButton.ToolTip as string != Loc.Get("GeometryNotForDisplay") || !DepthContent.IsEnabled ||
                 !ToolTipService.GetShowOnDisabled(GeometryModeButton))
@@ -3137,7 +3198,7 @@ public partial class MainWindow : Window
         if (File.Exists(bindingFile)) File.Delete(bindingFile);
         string placeholder = SteamLibrary.ProfileKey(store.Root, steamGame);
         Select(new ChooserWindow.Choice(new RunningApp(0, steamGame.Title, placeholder, [], null), new GameWindow(0, steamGame.Title), Steam: steamGame));
-        if (geometryBlock != GeometryBlock.UnknownGame || GeometryStartButton.IsEnabled || CardName.ToolTip as string != Loc.Get("CardSteamUnknownTip") || SteamReviewSetupButton.IsEnabled ||
+        if (geometryBlock != GeometryBlock.UnknownGame || !MainShows(Loc.Get("AttachPlay"), false) || StartButton.ToolTip as string != Loc.Get("MainCannotStart") || CardName.ToolTip as string != Loc.Get("CardSteamUnknownTip") || SteamReviewSetupButton.IsEnabled ||
             GeometryModeButton.IsEnabled || DepthModeButton.IsChecked != true || GeometryModeButton.ToolTip as string != Loc.Get("GeometryUnknownGame"))
             throw new Exception("An unbound Steam game must show true geometry unavailable, the switch locked on Depth");
         WidthSlider.Value = 6.1;
@@ -3147,8 +3208,8 @@ public partial class MainWindow : Window
         try
         {
             Select(new ChooserWindow.Choice(new RunningApp(0, steamGame.Title, SteamLibrary.ProfileKey(store.Root, steamGame), [], null), new GameWindow(0, steamGame.Title), Steam: steamGame));
-            if (geometryBlock != GeometryBlock.None || profile?.GeometryStereo != true || !GeometryStartButton.IsEnabled)
-                throw new Exception("A Steam game bound to its executable must offer Start with true geometry");
+            if (geometryBlock != GeometryBlock.None || profile?.GeometryStereo != true || !MainShows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", SelectionName()))
+                throw new Exception("A Steam game bound to its executable must offer Start with true geometry on the main button");
             // The Steam launch setup review (no longer on the chooser's tiles) lives here.
             if (SteamReviewSetupButton.Visibility != Visibility.Visible || !SteamReviewSetupButton.IsEnabled || !Within(SteamReviewSetupButton, GeometryPanel) ||
                 SteamReviewSetupButton.Content as string != Loc.Get("SteamReviewSetup"))
@@ -3245,14 +3306,15 @@ public partial class MainWindow : Window
         if (!unlocked || labels.Count < 2 || !labels.Contains(Loc.Format("GeometryRiskAcceptCountdown", 5)))
             throw new Exception($"The dialog's own countdown must tick down visibly and unlock (saw {string.Join(", ", labels)})");
 
-        // A geometry launch of a game with anti-cheat (Start with true geometry, as a chooser
-        // tile does through StartPicked): one dialog, the anti-cheat one; Cancel launches nothing.
+        // A geometry launch of a game with anti-cheat (the main button's Start on Geometry, as a
+        // chooser tile does through StartPicked): one dialog, the anti-cheat one; Cancel
+        // launches nothing.
         string protectedGame = Path.Combine(output, "anticheat", "Game", "Binaries", "Win64", "Game.exe");
         var saved = new Profile { ExecutablePath = protectedGame };
         saved.SelectStereoBackend(StereoPaths.Dxvk);
         store.Save(saved);
         Select(new ChooserWindow.Choice(new RunningApp(0, "Game.exe", protectedGame, [], null), new GameWindow(0, "Protected")));
-        if (geometryBlock != GeometryBlock.None || GeometryModeButton.IsChecked != true || !GeometryStartButton.IsEnabled)
+        if (geometryBlock != GeometryBlock.None || GeometryModeButton.IsChecked != true || StartButton.Content as string != Loc.Get("MainStart") || !StartButton.IsEnabled)
             throw new Exception("A stopped anti-cheat game set to Geometry must offer Start with true geometry");
         bool engineFree = true;
         try { EngineSession.EnsureAvailable(); }
@@ -3262,7 +3324,7 @@ public partial class MainWindow : Window
         {
             int warnings = GeometryWarningsShown, antiCheat = AntiCheatWarningsShown;
             SmokeAnswer = GeometryConsent.Cancel;
-            try { await StartWithGeometry(reviewSteamSetup: false); }
+            try { await RunMainAction(); }
             finally { SmokeAnswer = null; }
             if (GeometryWarningsShown != warnings + 1 || AntiCheatWarningsShown != antiCheat + 1 || LastSmokePrompt is not { AntiCheat: true } ||
                 Status.Text != Loc.Get("StatusGeometryCancelled") || starting || engine.Running || RunningApps.List(true).Any(a => SamePath(a.FullPath, protectedGame)))
@@ -3275,35 +3337,173 @@ public partial class MainWindow : Window
         System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestAntiCheatWarning exit: launch {launchResult}");
     }
 
-    // The status line's restart offer for a game attached with depth instead of true geometry:
-    // hidden until offered, the link text from Strings.resx, gone when another game is chosen,
-    // and the link does nothing (no stop, no restart) when nothing is offered.
-    private void SmokeTestGeometryRestartHint(RunningApp sample)
+    // The main button on the game card: MainButton.Decide for every row of the owner's table
+    // (Easy and busy included), then the real window - its label, enabled state and tooltip
+    // follow the selection and the Depth | Geometry switch; the old geometry Start button and
+    // the status line's restart link are gone; and Start on Geometry for a fixture shows one
+    // warning (cancelled: nothing is launched). No VR session or game is started.
+    private async Task SmokeTestMainButton(string output, RunningApp sample, Profile one)
     {
+        ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(sample);
-        System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestGeometryRestartHint enter: sample {sample.FullPath}");
-        if (GeometryRestartHint.Visibility != Visibility.Collapsed || geometryRestartTarget != null)
-            throw new Exception("The true-geometry restart offer must be hidden until an attach falls back to depth");
-        var text = string.Concat(GeometryRestartHint.Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text)).Trim() + "|" +
-            string.Concat(GeometryRestartLink.Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text));
-        if (text != Loc.Get("GeometryAttachDepthHint") + "|" + Loc.Get("GeometryRestartLink"))
-            throw new Exception($"The restart offer must read from Strings.resx (got '{text}')");
-        var other = new RunningApp(int.MaxValue - 11, "other.exe", Path.Combine(Path.GetTempPath(), "vrx-smoke-other.exe"), [new GameWindow(0x7F00, "Other")], null);
-        ShowGeometryRestartHint(other, other.Windows[0]);
-        if (GeometryRestartHint.Visibility != Visibility.Visible || geometryRestartTarget?.App != other)
-            throw new Exception("The restart offer must show for the game attached with depth");
-        Select(new ChooserWindow.Choice(sample, sample.Windows[0]));       // another game is chosen
-        if (GeometryRestartHint.Visibility != Visibility.Collapsed || geometryRestartTarget != null)
-            throw new Exception("Choosing another game must remove the restart offer");
-        ShowGeometryRestartHint(other, other.Windows[0]);
-        HideGeometryRestartHint();
-        if (GeometryRestartHint.Visibility != Visibility.Collapsed || geometryRestartTarget != null)
-            throw new Exception("The restart offer must go when its session ends");
-        bool wasStarting = starting;
-        GeometryRestartClick(GeometryRestartLink, new RoutedEventArgs());
-        if (starting != wasStarting || engine.Running || stopping)
-            throw new Exception("The restart link must do nothing when no restart is offered");
-        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestGeometryRestartHint exit");
+        ArgumentNullException.ThrowIfNull(one);
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestMainButton enter");
+
+        // The decision: (selection, display, running, stream, geometry, can start, easy, busy).
+        var rows = new (bool Selection, bool Display, bool Running, bool Stream, bool Geometry, bool CanStart, bool Easy, bool Busy, MainAction Expected, string What)[]
+        {
+            (true, false, false, false, true, true, false, false, MainAction.StartWithGeometry, "stopped, VRX can start it, Geometry"),
+            (true, false, false, false, false, true, false, false, MainAction.StartGame, "stopped, VRX can start it, Depth"),
+            (true, false, true, true, true, true, false, false, MainAction.PlayStream, "running with VRX's geometry stream, Geometry"),
+            (true, false, true, true, false, true, false, false, MainAction.PlayStream, "running with VRX's geometry stream, Depth"),
+            (true, false, true, false, false, true, false, false, MainAction.AttachPlay, "running normally, Depth"),
+            (true, false, true, false, false, false, false, false, MainAction.AttachPlay, "running normally, VRX cannot start it"),
+            (true, false, true, false, true, true, false, false, MainAction.RestartWithGeometry, "running normally, Geometry"),
+            (true, false, true, false, true, false, false, false, MainAction.AttachPlay, "running normally, Geometry but VRX cannot start it"),
+            (true, true, true, false, false, false, false, false, MainAction.PlayDisplay, "a display"),
+            (true, true, false, false, false, false, false, false, MainAction.None, "a display that is not there"),
+            (false, false, false, false, false, false, false, false, MainAction.None, "no selection"),
+            (true, false, false, false, false, false, false, false, MainAction.None, "stopped, VRX cannot start it, Depth"),
+            (true, false, false, false, true, false, false, false, MainAction.None, "stopped, VRX cannot start it, Geometry"),
+            // Easy as before: Attach / Play for a running window or display, nothing else.
+            (true, false, true, false, false, true, true, false, MainAction.AttachPlay, "Easy, running"),
+            (true, false, true, true, true, true, true, false, MainAction.AttachPlay, "Easy, running with a stream, Geometry saved"),
+            (true, true, true, false, false, false, true, false, MainAction.AttachPlay, "Easy, a display"),
+            (true, false, false, false, true, true, true, false, MainAction.None, "Easy, stopped (VRX could start it)"),
+            (true, false, false, false, false, true, true, false, MainAction.None, "Easy, stopped, Depth"),
+            (false, false, false, false, false, false, true, false, MainAction.None, "Easy, no selection"),
+            // Starting, playing, stopping or choosing: always waits.
+            (true, false, true, false, false, true, false, true, MainAction.Busy, "busy, running, Depth"),
+            (true, false, false, false, true, true, false, true, MainAction.Busy, "busy, stopped, Geometry"),
+            (true, true, true, false, false, false, false, true, MainAction.Busy, "busy, a display"),
+            (true, false, true, false, false, true, true, true, MainAction.Busy, "busy, Easy"),
+            (false, false, false, false, false, false, false, true, MainAction.Busy, "busy, no selection"),
+        };
+        foreach (var row in rows)
+        {
+            var got = MainButton.Decide(row.Selection, row.Display, row.Running, row.Stream, row.Geometry, row.CanStart, row.Easy, row.Busy);
+            if (got != row.Expected) throw new Exception($"Main button for {row.What}: expected {row.Expected}, got {got}");
+        }
+        if (MainButton.Why(MainAction.None, true, false, false) != MainBlock.CannotStart || MainButton.Why(MainAction.None, false, false, false) != MainBlock.NoSelection ||
+            MainButton.Why(MainAction.None, true, true, false) != MainBlock.NoSelection || MainButton.Why(MainAction.StartGame, true, false, false) != MainBlock.None)
+            throw new Exception("The main button's disabled reason must be 'cannot start' only for a stopped game");
+
+        // The separate geometry Start / Restart button and the status line's restart link are gone.
+        foreach (string name in new[] { "GeometryStartButton", "GeometryRestartHint", "GeometryRestartLink" })
+            if (FindName(name) != null) throw new Exception($"{name} must be gone: the main button starts and restarts with true geometry");
+        foreach (string key in new[] { "GeometryStartButton", "GeometryStartTip", "GeometryAttachDepthHint", "GeometryRestartLink" })
+            if (Loc.NeutralStrings().ContainsKey(key)) throw new Exception($"The string {key} must be gone with the removed button and link");
+        if (Loc.Get("MainStart") != "Start" || Loc.Get("MainRestart") != "Restart" || Loc.Get("MainPlay") != "Play" || Loc.Get("MainPlayDisplay") != "Play display" || Loc.Get("AttachPlay") != "Attach / Play")
+            throw new Exception("The main button's labels must be Start, Restart, Play, Play display and Attach / Play");
+
+        bool Shows(string label, bool enabled) => StartButton.Content as string == label && StartButton.IsEnabled == enabled;
+        var savedMode = appSettings.Mode;
+        try
+        {
+            appSettings.Mode = AppSettings.ExpertMode;
+            // Nothing selected: disabled Attach / Play, saying why.
+            selection = null; profile = null; UpdateGeometryAvailability(); UpdateButtons();
+            if (!Shows(Loc.Get("AttachPlay"), false) || StartButton.ToolTip as string != Loc.Get("MainNeedsGame") || !ToolTipService.GetShowOnDisabled(StartButton))
+                throw new Exception("With nothing selected the main button must be a disabled Attach / Play saying why");
+
+            // A stopped fixture VRX can start: Start on Depth and on Geometry, following the switch.
+            string folder = Path.Combine(output, "main-button");
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+            string fixture = Path.Combine(folder, "Game.exe");
+            GeometryLaunchTests.FakePe(fixture, ["d3d11.dll"], []);
+            if (File.Exists(store.FileFor(fixture))) File.Delete(store.FileFor(fixture));
+            Select(new ChooserWindow.Choice(new RunningApp(0, "Game.exe", fixture, [], null), new GameWindow(0, "Main button fixture")));
+            string game = SelectionName();
+            if (geometryBlock != GeometryBlock.None || GeometryModeShown || !Shows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", game))
+                throw new Exception($"A stopped game VRX can start, on Depth, must read Start (got '{StartButton.Content}', enabled {StartButton.IsEnabled})");
+            int warnings = GeometryWarningsShown;
+            GeometryModeButton.IsChecked = true;
+            if (!GeometryModeShown || GeometryWarningsShown != warnings + 1 || !Shows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGeometryTip", game))
+                throw new Exception("Switching to Geometry must keep Start, now starting with true geometry (its tooltip says so)");
+            DepthModeButton.IsChecked = true;
+            if (GeometryModeShown || !Shows(Loc.Get("MainStart"), true) || StartButton.ToolTip as string != Loc.Format("MainStartGameTip", game))
+                throw new Exception("Switching back to Depth must make Start a normal start again");
+            GeometryModeButton.IsChecked = true;
+
+            // Busy: disabled, keeping its label.
+            foreach (string busy in new[] { "starting", "stopping", "choosing" })
+            {
+                if (busy == "starting") starting = true; else if (busy == "stopping") stopping = true; else choosing = true;
+                UpdateButtons();
+                bool ok = Shows(Loc.Get("MainStart"), false);
+                starting = stopping = choosing = false;
+                UpdateButtons();
+                if (!ok) throw new Exception($"While {busy} the main button must wait, keeping its label");
+            }
+
+            // Start on Geometry: exactly one warning (the red one: no anti-cheat here), Cancel
+            // launches nothing and starts no session.
+            bool engineFree = true;
+            try { EngineSession.EnsureAvailable(); }
+            catch (InvalidOperationException) { engineFree = false; }
+            if (engineFree)
+            {
+                SmokeAntiCheat = [];
+                SmokeAnswer = GeometryConsent.Cancel;
+                warnings = GeometryWarningsShown;
+                int antiCheat = AntiCheatWarningsShown;
+                try { await RunMainAction(); }
+                finally { SmokeAnswer = null; SmokeAntiCheat = null; }
+                if (GeometryWarningsShown != warnings + 1 || AntiCheatWarningsShown != antiCheat || LastSmokePrompt is not { AntiCheat: false } ||
+                    Status.Text != Loc.Get("StatusGeometryCancelled") || starting || engine.Running || RunningApps.List(true).Any(a => SamePath(a.FullPath, fixture)))
+                    throw new Exception($"Start on Geometry must show one warning, and Cancel must launch nothing (status '{Status.Text}')");
+                if (!Shows(Loc.Get("MainStart"), true) || !store.Load(fixture).GeometryStereo)
+                    throw new Exception("After a cancelled Start the main button must read Start again, the game still on Geometry");
+            }
+
+            // Running normally: Restart on Geometry, Attach / Play on Depth.
+            var running = new RunningApp(int.MaxValue - 31, "Game.exe", fixture, [new GameWindow(0x7F31, "Main button fixture")], null);
+            selection = new ChooserWindow.Choice(running, running.Windows[0]);
+            UpdateGeometryAvailability(); UpdateButtons();
+            if (!Shows(Loc.Get("MainRestart"), true) || StartButton.ToolTip as string != Loc.Format("MainRestartTip", SelectionName()))
+                throw new Exception("A running game VRX did not start, on Geometry, must read Restart");
+            DepthModeButton.IsChecked = true;
+            if (!Shows(Loc.Get("AttachPlay"), true) || StartButton.ToolTip != null)
+                throw new Exception("A running game on Depth must read Attach / Play");
+
+            // Easy as before: Attach / Play for the running game (whatever its mode), disabled with
+            // no reason for a stopped one.
+            appSettings.Mode = AppSettings.EasyMode;
+            UpdateButtons();
+            if (!Shows(Loc.Get("AttachPlay"), true) || StartButton.ToolTip != null) throw new Exception("Easy: a running game must read Attach / Play");
+            Select(new ChooserWindow.Choice(new RunningApp(0, "Game.exe", fixture, [], null), new GameWindow(0, "Main button fixture")));
+            if (!Shows(Loc.Get("AttachPlay"), false) || StartButton.ToolTip != null) throw new Exception("Easy: a stopped game must leave Attach / Play disabled, as before");
+            appSettings.Mode = AppSettings.ExpertMode;
+            UpdateButtons();
+            if (!Shows(Loc.Get("MainStart"), true)) throw new Exception("Back in Expert the stopped game's main button must read Start");
+
+            // A stopped game VRX cannot start: disabled Attach / Play saying why.
+            string missing = Path.Combine(folder, "gone", "Missing.exe");
+            Select(new ChooserWindow.Choice(new RunningApp(0, "Missing.exe", missing, [], null), new GameWindow(0, "Missing")));
+            if (!Shows(Loc.Get("AttachPlay"), false) || StartButton.ToolTip as string != Loc.Get("MainCannotStart"))
+                throw new Exception("A stopped game VRX cannot start must leave a disabled Attach / Play saying why");
+
+            // A display: Play display (Easy: Attach / Play).
+            if (ScreenSources.App(store.Root, ScreenSources.List()) is { } screens)
+            {
+                Select(new ChooserWindow.Choice(screens, screens.Windows[0]));
+                if (!Shows(Loc.Get("MainPlayDisplay"), true) || StartButton.ToolTip != null) throw new Exception("A display must read Play display");
+                appSettings.Mode = AppSettings.EasyMode;
+                UpdateButtons();
+                if (!Shows(Loc.Get("AttachPlay"), true)) throw new Exception("Easy: a display must read Attach / Play, as before");
+                appSettings.Mode = AppSettings.ExpertMode;
+                UpdateButtons();
+            }
+            if (engine.Running || starting || stopping) throw new Exception("The main button tests must never start VR or a game");
+        }
+        finally
+        {
+            appSettings.Mode = savedMode;
+            starting = stopping = choosing = false;
+            SmokeSelect(sample, one);
+            UpdateButtons();
+        }
+        System.Diagnostics.Debug.WriteLine("[Smoke] SmokeTestMainButton exit");
     }
 
     // Easy | Expert and the sections: defaults for new and existing users, memory, Easy

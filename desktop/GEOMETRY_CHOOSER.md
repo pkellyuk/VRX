@@ -14,18 +14,34 @@ locked on Depth and its tooltip says why. Easy hides it (Easy always uses depth)
 Geometry the content of **3D: estimated depth** rests (disabled and dimmed); on Depth the
 content of **3D: true geometry (experimental)** does: the renderer (automatic API
 detection, Vulkan, DXVK, vkd3d-proton), 3D strength, screen depth, the collapsed Developer
-part and the Start / Review buttons. Both sections still open and close; attaching to a
-running game VRX did not start still uses depth, as below. **Start with true geometry** starts the selected game through VRX (a
-Steam game through its Steam launch and setup dialog, another through the direct launch
-with its saved arguments and working folder, using its recent-games entry when there is
-one); it needs the switch on Geometry and a game VRX can start (an existing executable, or a Steam
-game bound to one). For a Steam game, **Review Steam launch setup…** beside it does the
-same start but always shows the launch review and Steam's setup dialog (the Launch Options
+part and Review Steam launch setup. Both sections still open and close; attaching to a
+running game VRX did not start still uses depth, as below. For a whole display, or a game
+VRX cannot start (an unbound Steam game, a missing executable), the section is disabled
+with one line saying why, and the switch is locked on Depth.
+
+The main button on the game card does what fits the selection and its mode, and its label
+says so (the switch already shows the mode, so the label does not repeat it). The decision
+is `MainButton.Decide` (pure, unit-tested in the smoke test), which drives both the label
+and the click (`MainWindow.UpdateStartButton` / `RunMainAction`):
+
+| Selection | Mode | Label | Action |
+|---|---|---|---|
+| a game that is not running, which VRX can start (an existing executable, or a Steam game bound to one) | Geometry | **Start** | the anti-cheat warning or the red warning (one dialog), then the geometry launch: a Steam game through its Steam launch and setup dialog when needed, another through the direct launch with its saved arguments and working folder (its recent-games entry when there is one); then VRX waits for the stream and plays |
+| the same | Depth | **Start** | launches the game normally (Steam's `steam://` launch, else its recent-games entry or executable), waits for its window and attaches with depth |
+| a running game VRX started with true geometry (its stream is ready) | either | **Play** | attaches to the stream |
+| a running game started normally | Depth | **Attach / Play** | attaches with depth |
+| a running game started normally | Geometry | **Restart** | the restart flow: stops a depth session, the warning, the restart dialog, then the game restarts with true geometry (a Steam game through its Steam launch) |
+| a whole display | (Depth) | **Play display** | plays the display |
+| nothing usable (no selection, or a stopped game VRX cannot start) | | **Attach / Play**, disabled | its tooltip says why |
+
+The tooltips name the full action ("Start <game> through VRX with true geometry…",
+"Restart <game> through VRX with true geometry…"). While a session starts, plays or stops,
+or the chooser is open, the button waits (Stop VR is the one to use). Easy is unchanged:
+**Attach / Play** for a running window or display, disabled otherwise. For a Steam game on
+Geometry, **Review Steam launch setup…** in the true-geometry section does the same Start
+(or Restart) but always shows the launch review and Steam's setup dialog (the Launch Options
 line and its copy button), even when Steam is already set up; it is the only place that
-review is offered (the chooser's tiles no longer have it). For a running game not started by VRX with true geometry it reads
-**Restart with true geometry** and runs the same flow as the status line's link. For a
-whole display, or a game VRX cannot start (an unbound Steam game, a missing executable),
-the section is disabled with one line saying why, and the switch is locked on Depth.
+review is offered (the chooser's tiles no longer have it).
 
 There is no Game & window section any more. The main window owns one selected game (and
 window): the chooser sets it (clicking a tile plays as before; the small ⚙ Settings button
@@ -60,12 +76,11 @@ running window's tile in the chooser, auto-attach) therefore follows one rule
 (`GeometryLaunch.DecideAttach`): if VRX started that very process with true geometry
 and its stream is ready (`ExistingSession`), VRX attaches to the stream; otherwise it
 plays with estimated depth, even when the game's saved method is true geometry, and the
-saved method is not changed. In Expert the status line then adds "True geometry needs
-VRX to start the game." with a **Restart with true geometry** link, until that session
-ends or another game is chosen. The link is the only way to restart a running game: it
-stops the depth session and goes through the anti-cheat check, its warning (or the red
-warning) and the restart dialog (a Steam game restarts through its Steam launch). An attach
-never shows the restart dialog. The geometry section's hint says this in one line.
+saved method is not changed. In Expert, on Geometry, the main button then reads
+**Restart**: the only way to restart a running game. It stops a depth session and goes
+through the anti-cheat check, its warning (or the red warning) and the restart dialog (a
+Steam game restarts through its Steam launch). An attach never shows the restart dialog.
+The geometry section's hint says this in one line.
 
 True geometry shows a prominent red warning every time it is turned on for a game
 (the Depth | Geometry switch in the main window) and before every geometry launch
@@ -85,7 +100,7 @@ locked for 5 seconds with the countdown in its label ("I understand the risk (5)
 restarting every time the dialog opens; while locked it ignores clicks and cannot take the
 keyboard focus, and its label is never an access key. It proceeds with true geometry for
 that action only: the warning is shown again when switching to Geometry and before every
-geometry launch or restart (chooser tile, Start with true geometry, the Restart link,
+geometry launch or restart (chooser tile, the main button's Start and Restart,
 Steam launches). "Use estimated depth" at either warning plays with depth this time only.
 
 Auto always means estimated depth, for every game, including games with a built-in

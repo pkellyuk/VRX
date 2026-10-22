@@ -51,6 +51,15 @@ Settings are saved separately for each executable.</value><comment>{0} = the gam
 
   <!-- Buttons -->
   <data name="AttachPlay" xml:space="preserve"><value>Attach / Play</value></data>
+  <data name="MainStart" xml:space="preserve"><value>Start</value></data>
+  <data name="MainRestart" xml:space="preserve"><value>Restart</value></data>
+  <data name="MainPlay" xml:space="preserve"><value>Play</value></data>
+  <data name="MainPlayDisplay" xml:space="preserve"><value>Play display</value></data>
+  <data name="MainStartGameTip" xml:space="preserve"><value>Start {0} normally, then play it with estimated depth once its window appears.</value></data>
+  <data name="MainStartGeometryTip" xml:space="preserve"><value>Start {0} through VRX with true geometry: a Steam game through Steam, others with their saved arguments. Shows the warning first (the anti-cheat warning for a game that uses anti-cheat).</value></data>
+  <data name="MainRestartTip" xml:space="preserve"><value>Restart {0} through VRX with true geometry: closes the running game and starts it again. Shows the warning and the restart dialog first.</value></data>
+  <data name="MainNeedsGame" xml:space="preserve"><value>Choose a game or a display first (Choose…).</value></data>
+  <data name="MainCannotStart" xml:space="preserve"><value>This game is not running, and VRX cannot start it: its executable is not known yet, or is missing. Start the game yourself, or play it once from Choose… first.</value></data>
   <data name="StopVr" xml:space="preserve"><value>Stop VR</value></data>
   <data name="Recenter" xml:space="preserve"><value>Recenter</value></data>
   <data name="RecenterTip" xml:space="preserve"><value>Puts the screen straight in front of where the headset is looking now.</value></data>
@@ -289,13 +298,11 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
   <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
   <data name="GeometryHint" xml:space="preserve"><value>Both eyes come from the same game frame. While true geometry plays, the estimated-depth settings (strength, depth model, showing the desktop when you leave the game) are not used.</value></data>
-  <data name="GeometryToggleHint" xml:space="preserve"><value>Turn it on with the Depth | Geometry switch under the game card. Used when VRX starts the game; attaching to a game that is already running uses estimated depth unless VRX started it with true geometry.</value></data>
+  <data name="GeometryToggleHint" xml:space="preserve"><value>Turn it on with the Depth | Geometry switch under the game card; the Start button then starts the game with true geometry (Restart for a game that is already running). It needs VRX to start the game: auto-attach and running windows in Choose… use estimated depth unless VRX started the game with true geometry.</value></data>
   <data name="StereoModeName" xml:space="preserve"><value>3D method for this game</value></data>
   <data name="StereoModeDepth" xml:space="preserve"><value>Depth</value></data>
   <data name="StereoModeGeometry" xml:space="preserve"><value>Geometry</value></data>
   <data name="StereoModeTip" xml:space="preserve"><value>How VRX makes this game 3D. Depth: estimated depth, for any game or display. Geometry: true geometry (experimental), used when VRX starts the game; turning it on shows a warning first.</value></data>
-  <data name="GeometryStartButton" xml:space="preserve"><value>Start with true geometry</value></data>
-  <data name="GeometryStartTip" xml:space="preserve"><value>Starts this game through VRX with true geometry: a Steam game through Steam, others with their saved arguments. Shows the warning first (the anti-cheat warning for a game that uses anti-cheat).</value></data>
   <data name="GeometryNeedsGame" xml:space="preserve"><value>Choose a game first: Choose…, then the ⚙ on its tile.</value></data>
   <data name="GeometryNotForDisplay" xml:space="preserve"><value>True geometry is for games VRX starts, not for a whole display.</value></data>
   <data name="GeometryUnknownGame" xml:space="preserve"><value>VRX cannot start this game: its executable is not known yet, or is missing. Play it once from Choose… first.</value></data>
@@ -303,8 +310,6 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="GeometrySessionTip" xml:space="preserve"><value>Managed automatically by VRX. Change only when connecting to a stereo stream launched manually.</value></data>
   <data name="ErrorGeometrySession" xml:space="preserve"><value>Geometry session must contain 1–64 letters, numbers, hyphens or underscores.</value></data>
   <data name="ErrorGeometryNeedsGame" xml:space="preserve"><value>Geometry stereo needs a compatible game and geometry stream. Select its game window instead of a whole display.</value></data>
-  <data name="GeometryAttachDepthHint" xml:space="preserve"><value>True geometry needs VRX to start the game.</value></data>
-  <data name="GeometryRestartLink" xml:space="preserve"><value>Restart with true geometry</value></data>
   <data name="PathDepth" xml:space="preserve"><value>Estimated depth</value></data>
   <data name="PathVulkan" xml:space="preserve"><value>Native Vulkan</value></data>
   <data name="PathDxvk" xml:space="preserve"><value>DirectX 11 → Vulkan (DXVK)</value></data>

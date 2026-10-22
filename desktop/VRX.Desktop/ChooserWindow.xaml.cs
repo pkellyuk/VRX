@@ -19,7 +19,7 @@ public sealed partial class ChooserWindow : Window
     // a tile here).
     // DepthOnly: Easy mode's pick - play with estimated depth now, whatever this game's saved
     // method is (and without changing it). True geometry is only reachable in Expert.
-    // Restart: "Restart with true geometry" for a running Steam game (never from a tile here:
+    // Restart: the main button's "Restart" (true geometry) for a running Steam game (never from a tile here:
     // running windows only attach).
     // Settings: a tile's Settings button - select this game for the Expert sections, without
     // starting VR.
