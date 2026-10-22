@@ -542,7 +542,15 @@ public partial class MainWindow : Window
         // Disabled text does not dim by itself: rest the whole content visibly.
         DepthContent.Opacity = settingsOn && geometry ? RestingOpacity : 1;
         GeometryPanel.Opacity = settingsOn && !geometry && geometryBlock == GeometryBlock.None ? RestingOpacity : 1;
-        System.Diagnostics.Debug.WriteLine($"[Geometry] ApplyStereoModeGreying: settings {settingsOn}, geometry {geometry}, block {geometryBlock} -> depth {DepthContent.IsEnabled}, geometry {GeometryPanel.IsEnabled}");
+        // Auto-attach belongs to estimated depth (it attaches to whatever runs in front), so it
+        // rests with the depth settings while the selected game is in Geometry mode. Only its
+        // controls rest: the switch beside them stays usable.
+        foreach (UIElement control in new UIElement[] { AutoAttachCheck, AutoAttachCountdownLabel, AutoAttachSlider, AutoAttachValue })
+        {
+            control.IsEnabled = !geometry;
+            control.Opacity = geometry ? RestingOpacity : 1;
+        }
+        System.Diagnostics.Debug.WriteLine($"[Geometry] ApplyStereoModeGreying: settings {settingsOn}, geometry {geometry}, block {geometryBlock} -> depth {DepthContent.IsEnabled}, geometry {GeometryPanel.IsEnabled}, auto-attach {!geometry}");
     }
 
     private const double RestingOpacity = 0.55;
@@ -559,15 +567,21 @@ public partial class MainWindow : Window
         GeometryModeButton.IsChecked = geometry;
         DepthModeButton.IsChecked = !geometry;
         loading = wasLoading;
-        StereoModeSwitch.IsEnabled = geometryBlock == GeometryBlock.None && profile != null && !engine.Running && !starting && !stopping;
-        StereoModeSwitch.ToolTip = geometryBlock switch
+        // The whole switch rests only while a session starts, plays or stops. A display or a game
+        // VRX cannot start locks just the Geometry half, so Depth still reads clearly as the mode
+        // in use; the Geometry half's tooltip (shown while disabled) says why.
+        StereoModeSwitch.IsEnabled = !engine.Running && !starting && !stopping;
+        DepthModeButton.IsEnabled = true;
+        GeometryModeButton.IsEnabled = geometryBlock == GeometryBlock.None && profile != null;
+        GeometryModeButton.ToolTip = geometryBlock switch
         {
             GeometryBlock.Display => Loc.Get("GeometryNotForDisplay"),
             GeometryBlock.UnknownGame => Loc.Get("GeometryUnknownGame"),
             GeometryBlock.NoGame => Loc.Get("GeometryNeedsGame"),
-            _ => Loc.Get("StereoModeTip"),
+            _ => profile == null ? Loc.Get("GeometryNeedsGame") : Loc.Get("StereoModeTip"),
         };
-        System.Diagnostics.Debug.WriteLine($"[Geometry] UpdateStereoModeSwitch: {(geometry ? "Geometry" : "Depth")}, enabled {StereoModeSwitch.IsEnabled}, block {geometryBlock}");
+        ToolTipService.SetShowOnDisabled(GeometryModeButton, true);
+        System.Diagnostics.Debug.WriteLine($"[Geometry] UpdateStereoModeSwitch: {(geometry ? "Geometry" : "Depth")}, switch enabled {StereoModeSwitch.IsEnabled}, geometry half enabled {GeometryModeButton.IsEnabled}, block {geometryBlock}");
     }
 
     // The switch sits right of the countdown; when the row is too narrow for both (a narrow
@@ -2964,7 +2978,7 @@ public partial class MainWindow : Window
         if (appSettings.IsExpert && !StereoModeSwitch.IsVisible) throw new Exception("The Depth | Geometry switch must be visible in Expert");
         var noGame = (selection, profile);
         selection = null; profile = null; UpdateGeometryAvailability(); UpdateButtons();
-        if (StereoModeSwitch.IsEnabled || DepthModeButton.IsChecked != true || StereoModeSwitch.ToolTip as string != Loc.Get("GeometryNeedsGame"))
+        if (GeometryModeButton.IsEnabled || DepthModeButton.IsChecked != true || !DepthModeButton.IsEnabled || GeometryModeButton.ToolTip as string != Loc.Get("GeometryNeedsGame"))
             throw new Exception("With no game the Depth | Geometry switch must be locked on Depth, saying why");
         (selection, profile) = noGame; UpdateGeometryAvailability(); UpdateButtons();
         SetSettingsEnabled(false);
@@ -3011,8 +3025,9 @@ public partial class MainWindow : Window
             string json = "{\"ExecutablePath\":" + System.Text.Json.JsonSerializer.Serialize(fixture) + method + "}";
             File.WriteAllText(store.FileFor(fixture), json);
             Select(fixtureChoice);
-            if (GeometryModeButton.IsChecked != on || DepthModeButton.IsChecked == on || !StereoModeSwitch.IsEnabled || StereoModeSwitch.ToolTip as string != Loc.Get("StereoModeTip") ||
+            if (GeometryModeButton.IsChecked != on || DepthModeButton.IsChecked == on || !StereoModeSwitch.IsEnabled || !GeometryModeButton.IsEnabled || GeometryModeButton.ToolTip as string != Loc.Get("StereoModeTip") ||
                 GeometryContent.IsEnabled != on || (GeometryWarningBanner.Visibility == Visibility.Visible) != on ||
+                AutoAttachCheck.IsEnabled == on || AutoAttachSlider.IsEnabled == on || !DepthModeButton.IsEnabled ||
                 profile?.GeometryStereo != on || File.ReadAllText(store.FileFor(fixture)) != json || GeometryPanel.IsEnabled != on || DepthContent.IsEnabled == on ||
                 geometryBlock != GeometryBlock.None)
                 throw new Exception($"A saved profile with {what} must load unchanged with the switch on {(on ? "Geometry" : "Depth")} and the other 3D section resting");
@@ -3099,7 +3114,7 @@ public partial class MainWindow : Window
         if (geometryBlock != GeometryBlock.UnknownGame || GeometryPanel.IsEnabled || GeometryUnavailableHint.Visibility != Visibility.Visible ||
             GeometryUnavailableHint.Text != Loc.Get("GeometryUnknownGame") || GeometryStartButton.IsEnabled || profile?.GeometryStereo != true)
             throw new Exception("A game VRX cannot start must show true geometry unavailable, with the reason, and no Start button");
-        if (StereoModeSwitch.IsEnabled || DepthModeButton.IsChecked != true || GeometryModeButton.IsChecked != false || StereoModeSwitch.ToolTip as string != Loc.Get("GeometryUnknownGame") ||
+        if (GeometryModeButton.IsEnabled || !StereoModeSwitch.IsEnabled || DepthModeButton.IsChecked != true || GeometryModeButton.IsChecked != false || GeometryModeButton.ToolTip as string != Loc.Get("GeometryUnknownGame") ||
             !DepthContent.IsEnabled || DepthContent.Opacity < 1)
             throw new Exception("A game VRX cannot start must lock the switch on Depth with the reason, its depth settings usable");
 
@@ -3110,8 +3125,8 @@ public partial class MainWindow : Window
             if (geometryBlock != GeometryBlock.Display || GeometryPanel.IsEnabled || GeometryUnavailableHint.Text != Loc.Get("GeometryNotForDisplay") ||
                 GeometryStartButton.IsEnabled || !StartButton.IsEnabled || CardName.ToolTip as string != Loc.Get("PathWholeScreen"))
                 throw new Exception("A whole display must show true geometry unavailable and still attach");
-            if (StereoModeSwitch.IsEnabled || DepthModeButton.IsChecked != true || StereoModeSwitch.ToolTip as string != Loc.Get("GeometryNotForDisplay") || !DepthContent.IsEnabled ||
-                !ToolTipService.GetShowOnDisabled(StereoModeSwitch))
+            if (GeometryModeButton.IsEnabled || !StereoModeSwitch.IsEnabled || DepthModeButton.IsChecked != true || GeometryModeButton.ToolTip as string != Loc.Get("GeometryNotForDisplay") || !DepthContent.IsEnabled ||
+                !ToolTipService.GetShowOnDisabled(GeometryModeButton))
                 throw new Exception("A whole display must lock the switch on Depth, with the reason shown while it is locked");
         }
 
@@ -3123,7 +3138,7 @@ public partial class MainWindow : Window
         string placeholder = SteamLibrary.ProfileKey(store.Root, steamGame);
         Select(new ChooserWindow.Choice(new RunningApp(0, steamGame.Title, placeholder, [], null), new GameWindow(0, steamGame.Title), Steam: steamGame));
         if (geometryBlock != GeometryBlock.UnknownGame || GeometryStartButton.IsEnabled || CardName.ToolTip as string != Loc.Get("CardSteamUnknownTip") || SteamReviewSetupButton.IsEnabled ||
-            StereoModeSwitch.IsEnabled || DepthModeButton.IsChecked != true || StereoModeSwitch.ToolTip as string != Loc.Get("GeometryUnknownGame"))
+            GeometryModeButton.IsEnabled || DepthModeButton.IsChecked != true || GeometryModeButton.ToolTip as string != Loc.Get("GeometryUnknownGame"))
             throw new Exception("An unbound Steam game must show true geometry unavailable, the switch locked on Depth");
         WidthSlider.Value = 6.1;
         if (!SaveAndApply() || store.HasProfile(placeholder) || profile?.Width != 6.1)
