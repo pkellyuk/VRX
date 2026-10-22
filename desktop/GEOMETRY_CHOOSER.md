@@ -1,23 +1,31 @@
 # True geometry as a per-game launch setting, and the window chooser
 
 True geometry is a per-game launch setting in Expert, not a stereo method picked when
-attaching. Expert → **3D: true geometry (experimental)** has **Start this game with true
-geometry** for the selected game: on is the saved backend being a geometry method (a
-renderer, the automatic one, or the old `GeometryStereo` checkbox), off is estimated depth
-(Auto and Depth both show off; `Profile`'s stored fields are unchanged, so existing
-profiles load as they were). Under it, used only while it is on: the renderer (automatic
-API detection, Vulkan, DXVK, vkd3d-proton), 3D strength, screen depth and the collapsed
-Developer part. **Start with true geometry** starts the selected game through VRX (a
+attaching. In Expert, the row under the game card (auto-attach and its countdown) has a
+**Depth | Geometry** switch on its right, styled like the Easy | Expert switch (it moves to
+its own row, right-aligned, when the row is too narrow). It shows the selected game's
+mode: Geometry is the saved backend being a geometry method (a renderer, the automatic one,
+or the old `GeometryStereo` checkbox), Depth is estimated depth (Auto and Depth both show
+Depth; `Profile`'s stored fields are unchanged, so existing profiles load as they were).
+Switching to Geometry asks first (the anti-cheat warning for a game with anti-cheat, else
+the red warning); anything but "I understand..." leaves it on Depth. Switching to Depth
+asks nothing. With no game, for a whole display or a game VRX cannot start, the switch is
+locked on Depth and its tooltip says why. Easy hides it (Easy always uses depth). On
+Geometry the content of **3D: estimated depth** rests (disabled and dimmed); on Depth the
+content of **3D: true geometry (experimental)** does: the renderer (automatic API
+detection, Vulkan, DXVK, vkd3d-proton), 3D strength, screen depth, the collapsed Developer
+part and the Start / Review buttons. Both sections still open and close; attaching to a
+running game VRX did not start still uses depth, as below. **Start with true geometry** starts the selected game through VRX (a
 Steam game through its Steam launch and setup dialog, another through the direct launch
 with its saved arguments and working folder, using its recent-games entry when there is
-one); it needs the toggle on and a game VRX can start (an existing executable, or a Steam
+one); it needs the switch on Geometry and a game VRX can start (an existing executable, or a Steam
 game bound to one). For a Steam game, **Review Steam launch setup…** beside it does the
 same start but always shows the launch review and Steam's setup dialog (the Launch Options
 line and its copy button), even when Steam is already set up; it is the only place that
 review is offered (the chooser's tiles no longer have it). For a running game not started by VRX with true geometry it reads
 **Restart with true geometry** and runs the same flow as the status line's link. For a
 whole display, or a game VRX cannot start (an unbound Steam game, a missing executable),
-the section is disabled with one line saying why.
+the section is disabled with one line saying why, and the switch is locked on Depth.
 
 There is no Game & window section any more. The main window owns one selected game (and
 window): the chooser sets it (clicking a tile plays as before; the small ⚙ Settings button
@@ -37,7 +45,7 @@ Easy has no ⚙ buttons.
 
 In **Expert**, clicking a stopped game's tile (recent games, installed Steam games)
 launches it the way it is set up: with true geometry only when its saved setting says so
-(the anti-cheat check and the red warning come first), otherwise with estimated depth. The
+(the anti-cheat check and its warning, or the red warning, come first), otherwise with estimated depth. The
 tile reads "Play with true geometry →" when it is set, else "Launch game →". Tiles have
 no per-tile method buttons, renderer list or Steam setup review: the tile's ⚙ opens the
 game's settings, where the true-geometry section holds the setting, the renderer and the
@@ -55,21 +63,30 @@ plays with estimated depth, even when the game's saved method is true geometry, 
 saved method is not changed. In Expert the status line then adds "True geometry needs
 VRX to start the game." with a **Restart with true geometry** link, until that session
 ends or another game is chosen. The link is the only way to restart a running game: it
-stops the depth session and goes through the anti-cheat check, the red warning and the
-restart dialog (a Steam game restarts through its Steam launch). An attach never shows
-the restart dialog. The toggle's hint says this in one line.
+stops the depth session and goes through the anti-cheat check, its warning (or the red
+warning) and the restart dialog (a Steam game restarts through its Steam launch). An attach
+never shows the restart dialog. The geometry section's hint says this in one line.
 
 True geometry shows a prominent red warning every time it is turned on for a game
-(the toggle in the main window) and before every geometry launch
+(the Depth | Geometry switch in the main window) and before every geometry launch
 or restart, Steam launches included: use it with offline games; online games with
 anti-cheat may detect it and the account can be banned. The geometry section keeps a red
-banner while the toggle is on. Before the warning, VRX looks for anti-cheat in the
+banner while the switch is on Geometry. Before the warning, VRX looks for anti-cheat in the
 game's installation (Easy Anti-Cheat folders and `start_protected_game.exe`,
 BattlEye and `BEService*`, EA Javelin, PunkBuster, GameGuard, XIGNCODE3, Tencent ACE,
 miHoYo protect, EQU8) and for anti-cheat services started from that folder or by the
 game, and for Riot Vanguard (`vgk`) when its client runs or the game is a Riot game.
-A game with anti-cheat is refused geometry and offered estimated depth. "Use
-estimated depth" at the warning plays with depth this time only.
+A game with anti-cheat is warned, not refused: the anti-cheat warning ("This game uses
+anti-cheat") replaces the red warning for that action, so only one dialog is shown. It
+keeps the red explanation (playing online with true geometry can get the account banned;
+the player may still go ahead at their own risk) and the files found, with Cancel, "Use
+estimated depth" (the default button) and "I understand the risk". That last button is
+locked for 5 seconds with the countdown in its label ("I understand the risk (5)" ... "(1)"),
+restarting every time the dialog opens; while locked it ignores clicks and cannot take the
+keyboard focus, and its label is never an access key. It proceeds with true geometry for
+that action only: the warning is shown again when switching to Geometry and before every
+geometry launch or restart (chooser tile, Start with true geometry, the Restart link,
+Steam launches). "Use estimated depth" at either warning plays with depth this time only.
 
 Auto always means estimated depth, for every game, including games with a built-in
 tested geometry profile: true geometry is only used when it was chosen for that game.
@@ -90,10 +107,12 @@ layer. Unreal executables (`-Shipping.exe`) with several APIs use DXVK with `-dx
 reported instead of guessed: launching says so at once rather than failing after the
 first-frame wait. Native D3D12 command replay remains developer-only.
 
-The main window keeps these levels separate: the toggle (the one control that turns
-geometry on) and, under it, the Geometry renderer dropdown with what was detected. The
-per-game renderer is remembered while the toggle is off. Depth settings stay usable with the toggle on:
-attaching to a running game uses them.
+The main window keeps these levels separate: the Depth | Geometry switch under the game
+card (the one control that turns geometry on) and, in the true-geometry section, the
+Geometry renderer dropdown with what was detected. The per-game renderer is remembered
+while the switch is on Depth. On Geometry the estimated-depth settings rest (greyed out),
+by the owner's choice, although attaching to a running game VRX did not start still plays
+with depth and uses them.
 
 The chooser separates **Launch a game** from **Attach to something running**.
 Launch contains stopped recent games and installed Steam games; running titles
@@ -242,7 +261,7 @@ like the launch dialog's arguments, working folder and Steam App ID.
 The desktop separates estimated-depth controls into **3D: estimated depth**
 and geometry controls into **3D: true geometry (experimental)**, with independently
 remembered expanded/collapsed states. The geometry panel's 3D strength
-(separation) and Screen depth (convergence) sliders are usable while the toggle is on. They save with that executable's profile, accept the user's
+(separation) and Screen depth (convergence) sliders are usable while the switch is on Geometry. They save with that executable's profile, accept the user's
 decimal separator, and retain the existing calibration when switching methods.
 The sliders allow continuous live adjustment. The normal slider range is 0.001–2
 separation (a larger typed value up to 4 expands it) and 0–0.01 convergence. These
@@ -268,9 +287,9 @@ buffer reuse and acknowledges GPU completion; neither CPU writes to in-flight
 shader data nor device-idle waits are used. Invalid/partial files retain the last
 valid pair of values. A paused/non-presenting game may leave the UI at applying
 until presentation resumes. Values continue to save per game for later launches.
-Graphics layers and translation DLLs can be blocked or reported by anti-cheat:
-games with detected anti-cheat are refused, and the red warning comes before every
-geometry launch or restart.
+Graphics layers and translation DLLs can be blocked or reported by anti-cheat: games
+with detected anti-cheat get the anti-cheat warning (with its 5-second "I understand the
+risk"), others the red warning, before every geometry launch or restart.
 
 Validation: desktop `--smoke-test` covers route/profile persistence, calibration,
 chooser controls and rendered UI. Add `--geometry-launch-integration-test` and

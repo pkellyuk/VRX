@@ -289,10 +289,13 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
   <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
   <data name="GeometryHint" xml:space="preserve"><value>Both eyes come from the same game frame. While true geometry plays, the estimated-depth settings (strength, depth model, showing the desktop when you leave the game) are not used.</value></data>
-  <data name="GeometryToggle" xml:space="preserve"><value>Start this game with true geometry</value></data>
-  <data name="GeometryToggleHint" xml:space="preserve"><value>Used when VRX starts the game. Attaching to a game that is already running uses estimated depth unless VRX started it with true geometry. Off: estimated depth.</value></data>
+  <data name="GeometryToggleHint" xml:space="preserve"><value>Turn it on with the Depth | Geometry switch under the game card. Used when VRX starts the game; attaching to a game that is already running uses estimated depth unless VRX started it with true geometry.</value></data>
+  <data name="StereoModeName" xml:space="preserve"><value>3D method for this game</value></data>
+  <data name="StereoModeDepth" xml:space="preserve"><value>Depth</value></data>
+  <data name="StereoModeGeometry" xml:space="preserve"><value>Geometry</value></data>
+  <data name="StereoModeTip" xml:space="preserve"><value>How VRX makes this game 3D. Depth: estimated depth, for any game or display. Geometry: true geometry (experimental), used when VRX starts the game; turning it on shows a warning first.</value></data>
   <data name="GeometryStartButton" xml:space="preserve"><value>Start with true geometry</value></data>
-  <data name="GeometryStartTip" xml:space="preserve"><value>Starts this game through VRX with true geometry: a Steam game through Steam, others with their saved arguments. Shows the warning first; games with anti-cheat are refused.</value></data>
+  <data name="GeometryStartTip" xml:space="preserve"><value>Starts this game through VRX with true geometry: a Steam game through Steam, others with their saved arguments. Shows the warning first (the anti-cheat warning for a game that uses anti-cheat).</value></data>
   <data name="GeometryNeedsGame" xml:space="preserve"><value>Choose a game first: Choose…, then the ⚙ on its tile.</value></data>
   <data name="GeometryNotForDisplay" xml:space="preserve"><value>True geometry is for games VRX starts, not for a whole display.</value></data>
   <data name="GeometryUnknownGame" xml:space="preserve"><value>VRX cannot start this game: its executable is not known yet, or is missing. Play it once from Choose… first.</value></data>
@@ -307,7 +310,6 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="PathDxvk" xml:space="preserve"><value>DirectX 11 → Vulkan (DXVK)</value></data>
   <data name="PathDx12" xml:space="preserve"><value>DX12 · unavailable</value></data>
   <data name="PathDx12Unavailable" xml:space="preserve"><value>Native DirectX 12 geometry stereo is under development and is not available in this chooser yet. Choose depth estimation or DirectX 12 → Vulkan for a DX12 game.</value></data>
-  <data name="PathGeometryTip" xml:space="preserve"><value>Experimental: VRX starts the game and the game draws both eyes itself. Shows a warning first; games with anti-cheat are refused.</value></data>
   <data name="GeometryRestartTitle" xml:space="preserve"><value>Try {0} stereo</value></data>
   <data name="GeometryRestartIntro" xml:space="preserve"><value>Restart {0} to try {1} geometry stereo?</value></data>
   <data name="GeometryRestartSave" xml:space="preserve"><value>Save your progress first. VRX will close this game normally and restart it with the selected stereo path. Other games keep running.</value></data>
@@ -372,7 +374,7 @@ VRX is still running. The details were saved in {1}.</value></data>
   <data name="GeometryLaunchInfo" xml:space="preserve"><value>The selected graphics components will be prepared before the game starts. Your saved stereo tuning will be used.</value></data>
   <data name="ChooserNoWindowsHistory" xml:space="preserve"><value>No running game windows. You can launch a game above.</value></data>
   <data name="SteamReviewSetup" xml:space="preserve"><value>Review Steam launch setup…</value></data>
-  <data name="SteamReviewSetupTip" xml:space="preserve"><value>Shows the Launch Options line that lets Steam start this game through VRX, with a copy button, then starts the game with true geometry. Shows the warning first; games with anti-cheat are refused.</value></data>
+  <data name="SteamReviewSetupTip" xml:space="preserve"><value>Shows the Launch Options line that lets Steam start this game through VRX, with a copy button, then starts the game with true geometry. Shows the warning first (the anti-cheat warning for a game that uses anti-cheat).</value></data>
   <data name="ChooserSteam" xml:space="preserve"><value>Installed Steam games</value></data>
   <data name="SteamLibraryHint" xml:space="preserve"><value>Launch through Steam with your saved stereo settings. Geometry needs a one-time Steam launch-options setup.</value></data>
   <data name="SteamDiscoveryPartial" xml:space="preserve"><value>Some Steam library files could not be read. Available installed games are shown; reopen the chooser to refresh.</value></data>
@@ -408,12 +410,14 @@ This lets Steam start the game with VRX's saved geometry settings. VRX does not 
   <data name="GeometryDeveloperHint" xml:space="preserve"><value>Exact values and the stream's connection name. VRX manages these; change them only if you know why.</value></data>
   <data name="GeometryWarningTitle" xml:space="preserve"><value>True geometry is experimental</value></data>
   <data name="GeometryWarningText" xml:space="preserve"><value>Warning: true geometry changes how the game draws by loading extra graphics components into it. Use it with offline games. Online games with anti-cheat may detect it, and your account can be banned.</value></data>
-  <data name="GeometryAntiCheatTitle" xml:space="preserve"><value>True geometry is not allowed for this game</value></data>
-  <data name="GeometryAntiCheatFound" xml:space="preserve"><value>This game uses anti-cheat ({0}). True geometry would change how it draws, which anti-cheat may report and which can get your account banned, so VRX will not use it here. Estimated depth works with this game.</value></data>
+  <data name="GeometryAntiCheatTitle" xml:space="preserve"><value>This game uses anti-cheat</value></data>
+  <data name="GeometryAntiCheatFound" xml:space="preserve"><value>This game uses anti-cheat ({0}). True geometry loads extra graphics components into the game and changes how it draws. Anti-cheat may detect this: if you play online with it, your account can be banned. Estimated depth works with this game and is the safe choice. You can still use true geometry at your own risk.</value></data>
   <data name="GeometryUseDepth" xml:space="preserve"><value>Use estimated depth</value></data>
   <data name="GeometryAccept" xml:space="preserve"><value>I understand, use true geometry</value></data>
   <data name="GeometryAcceptLaunch" xml:space="preserve"><value>I understand, launch with true geometry</value></data>
-  <data name="StatusGeometryAntiCheat" xml:space="preserve"><value>This game uses anti-cheat, so true geometry is not used. Estimated depth is available.</value></data>
+  <data name="GeometryRiskAccept" xml:space="preserve"><value>I understand the risk</value></data>
+  <data name="GeometryRiskAcceptCountdown" xml:space="preserve"><value>I understand the risk ({0})</value></data>
+  <data name="StatusGeometryAntiCheat" xml:space="preserve"><value>This game uses anti-cheat: using estimated depth instead of true geometry.</value></data>
   <data name="StatusGeometryDepthInstead" xml:space="preserve"><value>Using estimated depth this time. The game's saved stereo method is unchanged.</value></data>
   <data name="StatusChooseFailed" xml:space="preserve"><value>Choose could not finish: {0}</value></data>
   <data name="StatusChoiceStillStopping" xml:space="preserve"><value>The current VR session is still stopping. Choose again in a moment.</value></data>

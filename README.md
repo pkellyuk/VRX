@@ -105,10 +105,12 @@ An experimental second stereo method, **3D: true geometry**, is being developed 
 game twice, once per eye, through a Vulkan layer: Vulkan games directly, DX11 games
 through DXVK and DX12 games through vkd3d-proton (both bundled, pinned and hash-checked).
 It is a per-game launch setting, off by default and only in Expert: pick the game with
-the ⚙ on its tile in Choose…, then turn on **Start this game with true geometry** under
-3D: true geometry and press **Start with true geometry**. Turning it on shows a warning: it
-loads a rendering layer into the game, so use it with offline games; online games with
-anti-cheat may flag it, and games with a known anti-cheat are refused. VRX copies the
+the ⚙ on its tile in Choose…, then set the **Depth | Geometry** switch under the game card
+to Geometry and press **Start with true geometry** under 3D: true geometry. Turning it on
+shows a warning: it loads a rendering layer into the game, so use it with offline games;
+online games with anti-cheat may flag it and your account can be banned. For a game with a
+known anti-cheat the warning says so plainly and offers estimated depth; you can still go
+ahead at your own risk once its 5-second countdown ends. VRX copies the
 translation DLLs next to the game only while it runs and a separate guard removes them
 afterwards, even if VRX closes first. It applies only when VRX starts the game; attaching
 to a game that is already running uses estimated depth, with an offer to restart it with

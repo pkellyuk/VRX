@@ -272,21 +272,29 @@
   <Style x:Key="ModeSegment" TargetType="RadioButton">
    <Setter Property="Foreground" Value="#C9D5E8"/>
    <Setter Property="MinWidth" Value="140"/>
+   <Setter Property="Padding" Value="22,7"/>
    <Setter Property="Cursor" Value="Hand"/>
    <Setter Property="Template">
     <Setter.Value>
      <ControlTemplate TargetType="RadioButton">
-      <Border x:Name="Segment" Background="Transparent" CornerRadius="20" Padding="22,7">
+      <Border x:Name="Segment" Background="Transparent" CornerRadius="20" Padding="{TemplateBinding Padding}">
        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
       </Border>
       <ControlTemplate.Triggers>
        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Segment" Property="Background" Value="{StaticResource Hover}"/></Trigger>
        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Segment" Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="{StaticResource OnAccent}"/></Trigger>
        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Segment" Property="BorderBrush" Value="#E8EEF8"/><Setter TargetName="Segment" Property="BorderThickness" Value="1"/></Trigger>
+       <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
       </ControlTemplate.Triggers>
      </ControlTemplate>
     </Setter.Value>
    </Setter>
+  </Style>
+  <!-- Depth | Geometry under the game card: the same switch, smaller. -->
+  <Style x:Key="ModeSegmentCompact" TargetType="RadioButton" BasedOn="{StaticResource ModeSegment}">
+   <Setter Property="MinWidth" Value="84"/>
+   <Setter Property="Padding" Value="14,4"/>
+   <Setter Property="FontWeight" Value="SemiBold"/>
   </Style>
 
   <!-- A collapsible section: a card whose header row opens and closes it. -->

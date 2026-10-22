@@ -4,9 +4,11 @@ using Microsoft.Win32;
 
 namespace VRX.Desktop;
 
-// Games protected by anti-cheat are refused true geometry: its Vulkan layer and translation
-// DLLs change how the game draws, which anti-cheat may report and which can get the
-// player's account banned. Checked before every geometry launch or restart: the game's
+// Games protected by anti-cheat get the anti-cheat warning instead of the generic one before
+// true geometry (GeometryWarning): its Vulkan layer and translation DLLs change how the game
+// draws, which anti-cheat may report and which can get the player's account banned; the
+// player may still go ahead at their own risk. Checked before every geometry launch or
+// restart and when geometry is turned on: the game's
 // install folder (EasyAntiCheat, BattlEye, EA Javelin, PunkBuster, GameGuard, XIGNCODE3,
 // Tencent ACE, miHoYo protect, EQU8, Riot Vanguard files), anti-cheat processes started
 // from that folder or by the game, and Riot Vanguard's kernel service (vgk) while its
@@ -156,7 +158,7 @@ internal static class AntiCheat
         }
     }
 
-    // Riot Vanguard is a boot-time kernel driver (service vgk): refuse when it is installed and
+    // Riot Vanguard is a boot-time kernel driver (service vgk): report it when it is installed and
     // either the game is a Riot game or Vanguard's client (vgc) is running.
     private static void ScanVanguard(string executable, List<Marker> found)
     {

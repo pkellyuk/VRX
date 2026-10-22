@@ -187,8 +187,9 @@ public sealed partial class ChooserWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(button, action+": "+title);
         // Easy: a game or window plays with estimated depth now. Expert: a running window
         // attaches and a stopped game launches the way it is set up - true geometry only when
-        // its saved setting says so (StartFromHistory / StartFromSteam show the anti-cheat
-        // check and the red warning first), else estimated depth. The tile's ⚙ changes that.
+        // its saved setting says so (StartFromHistory / StartFromSteam check for anti-cheat and
+        // show its warning, else the red warning, first), else estimated depth. The tile's ⚙
+        // changes that.
         if (!expert)
             button.Click += (_, _) => Pick(screen==null?choice with {DepthOnly=true}:choice);
         else
