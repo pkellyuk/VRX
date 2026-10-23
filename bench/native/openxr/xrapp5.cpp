@@ -9531,17 +9531,31 @@ static bool FirstSourceFrame(App& app)
     if (app.opt.source == SourceKind::Geometry)
     {
         SourceFrames::WriteRef source;
-        const auto deadline = GetTickCount64() + 5000;
+        // A game that VRX has just started (through vkd3d-proton or DXVK) compiles shaders and
+        // recreates its swapchain while it loads, so its stream can close, return and read as
+        // invalid for a while before the first pair. Wait as long as the desktop does for a fresh
+        // launch (60 s) while the game runs; end at once if it exits or the session is stopped.
+        const ULONGLONG started = GetTickCount64(), deadline = started + 60000;
+        ULONGLONG nextReport = started + 5000;
         do {
+            if (app.stop.load()) { Log("FirstSourceFrame: exit - stopped while waiting for the game's first pair"); return false; }
+            if (app.geometryProcess && WaitForSingleObject(app.geometryProcess, 0) == WAIT_OBJECT_0)
+            { Log("FirstSourceFrame: FAIL the game (process %lu) exited before its first pair", (unsigned long)app.opt.geometryPid); return false; }
+            if (GetTickCount64() >= nextReport)
+            {
+                Log("FirstSourceFrame: still waiting for the game's first pair (%llu s; the game may still be loading)", (GetTickCount64() - started) / 1000);
+                nextReport += 5000;
+            }
             if(!RefreshGeometrySource(app))return false;
             if(FAILED(app.cmdAlloc[0]->Reset()) || FAILED(app.cmdList->Reset(app.cmdAlloc[0].Get(),nullptr)))return false;
             source=RecordGeometrySource(app,0);
             if(source)GeometryBarrier(app.cmdList.Get(),app.srcTex[source->index].Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_COMMON);
             if(FAILED(app.cmdList->Close()))return false;
             if(source || !app.geometryGpu)break;
-            Sleep(1);
+            Sleep(15);
         }while(GetTickCount64()<deadline);
-        if(!source){Log("FirstSourceFrame: FAIL geometry pair unavailable after startup");return false;}
+        if(!source){Log("FirstSourceFrame: FAIL no stereo pair from the game within %llu s of starting", (GetTickCount64() - started) / 1000);return false;}
+        Log("FirstSourceFrame: first geometry pair after %llu ms", GetTickCount64() - started);
         const UINT64 fv = SubmitAndSignal(app);
         WaitFence(app, fv);
         app.sources.Publish(source, fv, NowSeconds());
