@@ -108,6 +108,13 @@ internal static class SteamLibraryTests
         Check(wrapper.ExitCode==0 && File.Exists(childOutput),"ordinary Steam wrapper launch starts and waits for its child");
         using var child=JsonDocument.Parse(File.ReadAllText(childOutput));
         Check(child.RootElement.GetProperty("Arguments").EnumerateArray().Select(a=>a.GetString()).Skip(1).SequenceEqual(new[]{"literal space","quote\"value"}) && child.RootElement.GetProperty("Marker").GetString()=="inherited" && child.RootElement.GetProperty("Directory").GetString()==root,"wrapper preserves Steam arguments, working directory, and environment");
+        // A geometry request's profile goes through JSON without its per-launch method (the mode
+        // is app-wide and never saved), so the wrapper must set true geometry itself.
+        var asked=new Profile{ExecutablePath=exe}; asked.ChooseGeometryRenderer(StereoPaths.Vkd3d); asked.UseGeometry(true);
+        var arrived=JsonSerializer.Deserialize<SteamGeometry.Request>(JsonSerializer.Serialize(new SteamGeometry.Request("nonce",exe,asked,DateTimeOffset.UtcNow.AddMinutes(3))))!.Profile;
+        Check(!arrived.GeometryStereo,"the per-launch method is not saved with a request's profile");
+        SteamGeometry.RequestedGeometry(arrived);
+        Check(arrived.GeometryStereo && arrived.EffectiveStereoBackend==StereoPaths.Vkd3d,"a Steam geometry request is true geometry in the wrapper, with the game's renderer");
         // A cancelled or expired request: the next ordinary Steam launch starts the game normally.
         string expiredRoot=Path.Combine(root,"expired-data"), expiredChild=Path.Combine(root,"expired-child.json");
         var expired=new SteamGeometry.Request("nonce",exe,new Profile{ExecutablePath=exe},DateTimeOffset.MinValue);

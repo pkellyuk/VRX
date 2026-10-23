@@ -263,10 +263,10 @@
   </Style>
 
   <!-- Text roles -->
-  <Style x:Key="Label" TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,0,0,2"/></Style>
-  <Style x:Key="Value" TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Soft}"/><Setter Property="Margin" Value="12,0,0,0"/><Setter Property="HorizontalAlignment" Value="Right"/></Style>
-  <Style x:Key="Hint" TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="FontSize" Value="12"/><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,2,0,8"/></Style>
-  <Style x:Key="SubHeader" TargetType="TextBlock"><Setter Property="FontSize" Value="15"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,10,0,6"/></Style>
+  <Style x:Key="Label" TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,0,0,2"/><Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></Style.Triggers></Style>
+  <Style x:Key="Value" TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Soft}"/><Setter Property="Margin" Value="12,0,0,0"/><Setter Property="HorizontalAlignment" Value="Right"/><Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></Style.Triggers></Style>
+  <Style x:Key="Hint" TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="FontSize" Value="12"/><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,2,0,8"/><Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></Style.Triggers></Style>
+  <Style x:Key="SubHeader" TargetType="TextBlock"><Setter Property="FontSize" Value="15"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,10,0,6"/><Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></Style.Triggers></Style>
 
   <!-- Easy | Expert: a two-segment switch. -->
   <Style x:Key="ModeSegment" TargetType="RadioButton">

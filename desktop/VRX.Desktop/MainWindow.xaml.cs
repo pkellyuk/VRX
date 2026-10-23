@@ -674,6 +674,23 @@ public partial class MainWindow : Window
 
     // The main button's action for the selection and the app-wide mode now (MainButton.Decide);
     // `block` says why when there is nothing to do.
+    // The game card's second line names what the main button will do, so the two never
+    // disagree (it used to say "start it from Choose…" next to an enabled Start).
+    internal static string CardStateText(MainAction action, bool running)
+    {
+        string text = action switch
+        {
+            MainAction.StartGame or MainAction.StartWithGeometry => Loc.Get("CardStart"),
+            MainAction.RestartWithGeometry => Loc.Get("CardRestart"),
+            MainAction.PlayStream => Loc.Get("CardPlayStream"),
+            MainAction.AttachPlay => Loc.Get("CardReady"),
+            MainAction.PlayDisplay => Loc.Get("CardReadyDisplay"),
+            _ => running ? Loc.Get("CardRunning") : Loc.Get("CardNotRunning"),
+        };
+        System.Diagnostics.Debug.WriteLine($"[Card] CardStateText: {action}, running {running} -> '{text}'");
+        return text;
+    }
+
     private MainAction MainActionNow(bool busy, out MainBlock block)
     {
         var chosen = selection;
@@ -1088,7 +1105,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            state = Loc.Get(SelectedWindow != null ? "CardReady" : "CardNotRunning");
+            state = CardStateText(MainActionNow(false, out _), SelectedWindow != null);
         }
         CardName.Text = name;
         CardName.ToolTip = tip;
@@ -3251,7 +3268,7 @@ public partial class MainWindow : Window
             DepthModeButton.IsChecked = true;
             if (GeometryMode || profile?.GeometryStereo != false || GeometryWarningsShown != warnings) throw new Exception("Switching back to Depth must not ask");
         }
-        if (SelectedWindow != null || CardState.Text != Loc.Get(appSettings.AutoAttachActive ? "CardWaiting" : "CardNotRunning") || CardName.ToolTip as string != Loc.Format("CardPathTip", fixture))
+        if (SelectedWindow != null || CardState.Text != (appSettings.AutoAttachActive ? Loc.Get("CardWaiting") : CardStateText(MainActionNow(false, out _), false)) || CardName.ToolTip as string != Loc.Format("CardPathTip", fixture))
             throw new Exception("A stopped game VRX can start must show its path in the card's tooltip");
 
         // Back and forth: never a dialog (whatever answer a warning would get); the mode is
@@ -3901,6 +3918,13 @@ public partial class MainWindow : Window
         if (store.LoadAppSettings().AutoAttach || !appSettings.IsExpert) throw new Exception("Turning auto-attach off in Expert must be saved and keep Expert");
         UpdateGameCard();
         if (CardState.Text != Loc.Get("CardReady")) throw new Exception($"With a game and window chosen, the card must be ready (shows '{CardState.Text}')");
+        // The card's second line names the main button's action, never contradicting it.
+        foreach (var (action, running, key) in new (MainAction, bool, string)[] {
+            (MainAction.StartGame, false, "CardStart"), (MainAction.StartWithGeometry, false, "CardStart"),
+            (MainAction.RestartWithGeometry, true, "CardRestart"), (MainAction.PlayStream, true, "CardPlayStream"),
+            (MainAction.AttachPlay, true, "CardReady"), (MainAction.PlayDisplay, true, "CardReadyDisplay"),
+            (MainAction.None, false, "CardNotRunning"), (MainAction.None, true, "CardRunning") })
+            if (CardStateText(action, running) != Loc.Get(key)) throw new Exception($"The card must say {key} for {action} (running {running})");
 
         // Sections in the window: each toggle is saved; PutSections puts saved states back;
         // opening the log after a failure is not remembered.

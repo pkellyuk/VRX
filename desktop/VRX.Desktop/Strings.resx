@@ -44,7 +44,12 @@
   <data name="CardSpent" xml:space="preserve"><value>Stopped · switch to another window and back to attach again</value></data>
   <data name="CardReady" xml:space="preserve"><value>Ready · press Attach / Play</value></data>
   <data name="CardPickGame" xml:space="preserve"><value>Press Choose… to pick a game, or turn on auto-attach</value></data>
-  <data name="CardNotRunning" xml:space="preserve"><value>Not running · start it from Choose…</value></data>
+  <data name="CardNotRunning" xml:space="preserve"><value>Not running</value></data>
+  <data name="CardRunning" xml:space="preserve"><value>Running</value></data>
+  <data name="CardStart" xml:space="preserve"><value>Not running · press Start</value></data>
+  <data name="CardRestart" xml:space="preserve"><value>Running · press Restart to start it again with true geometry</value></data>
+  <data name="CardPlayStream" xml:space="preserve"><value>Running with true geometry · press Play</value></data>
+  <data name="CardReadyDisplay" xml:space="preserve"><value>Ready · press Play display</value></data>
   <data name="CardPathTip" xml:space="preserve"><value>{0}
 Settings are saved separately for each executable.</value><comment>{0} = the game's executable path</comment></data>
   <data name="CardSteamUnknownTip" xml:space="preserve"><value>VRX learns this Steam game's executable the first time it plays it. Settings are saved separately for each executable.</value></data>

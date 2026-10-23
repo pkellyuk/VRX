@@ -127,6 +127,16 @@ internal static class SteamGeometry
     internal static string[] MergeArguments(string[] steamArguments,Profile profile) => GeometryLaunch.ApiArguments(
         steamArguments.Concat(GeometryLaunch.ParseArguments(profile.GeometryLaunchArguments ?? "").Where(a=>!steamArguments.Contains(a,StringComparer.Ordinal))),
         profile.EffectiveStereoBackend,Path.GetFileName(profile.ExecutablePath).EndsWith("-Shipping.exe",StringComparison.OrdinalIgnoreCase));
+    // A pending request only ever exists for a true-geometry launch (VRX asked, warned and the
+    // user agreed). The per-launch method is not saved with the profile (the Depth | Geometry
+    // mode is app-wide), so the request's profile arrives as depth: set it before anything reads
+    // the method (the game's API arguments, Prepare).
+    internal static void RequestedGeometry(Profile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        profile.UseGeometry(true);
+        Debug.WriteLine($"[Steam wrapper] RequestedGeometry: {profile.ExecutablePath} with {profile.EffectiveStereoBackend}");
+    }
     public static Task<int> Run(string id,string[] command) => RunCore(id,command,DataRoot,null,true);
     internal static Task<int> RunFixture(string id,string[] command,string dataRoot,IReadOnlyList<SteamLibrary.Game> games) => RunCore(id,command,dataRoot,games,false);
     private static async Task<int> RunCore(string id,string[] command,string dataRoot,IReadOnlyList<SteamLibrary.Game>? games,bool showErrors)
@@ -166,6 +176,7 @@ internal static class SteamGeometry
             if(installed==null || !SteamLibrary.Inside(command[0],installed.Directory) || !SteamLibrary.Inside(request.Executable,installed.Directory)) throw new InvalidOperationException(Loc.Get("SteamCommandMismatch"));
             var profile=request.Profile;
             if(!profile.Valid() || !profile.ExecutablePath.Equals(request.Executable,StringComparison.OrdinalIgnoreCase) || profile.GeometrySteamAppId!=id) throw new InvalidDataException(Loc.Get("SteamCommandInvalid"));
+            RequestedGeometry(profile);
             profile.GeometryLaunchArguments=string.Join(' ',MergeArguments(command.Skip(1).ToArray(),profile).Select(GeometryLaunch.QuoteArgument));
             if(string.IsNullOrEmpty(profile.GeometryWorkingDirectory)) profile.GeometryWorkingDirectory=Environment.CurrentDirectory;
             var app=new RunningApp(0,Path.GetFileName(request.Executable),request.Executable,[],null);
