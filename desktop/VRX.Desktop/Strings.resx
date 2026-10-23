@@ -409,6 +409,8 @@ The new line names VRX's launcher, not a VRX folder, so it keeps working if you 
 
 This lets Steam start the game with VRX's saved geometry settings. VRX does not edit Steam's configuration. The line names VRX's launcher, not a VRX folder, so it keeps working if you move, reinstall or uninstall VRX (without VRX, the game simply starts normally).</value></data>
   <data name="SteamCopyOptions" xml:space="preserve"><value>Copy launch options</value></data>
+  <data name="SteamCopied" xml:space="preserve"><value>Copied ✓</value></data>
+  <data name="SteamCopyFailed" xml:space="preserve"><value>Another program is using the clipboard. The launch options above are selected - press Ctrl+C to copy them.</value></data>
   <data name="SteamSetupLaunch" xml:space="preserve"><value>I've added these options — launch through Steam</value></data>
   <data name="SteamUsePublishedApp" xml:space="preserve"><value>Run the VRX desktop executable to configure Steam geometry launches.</value></data>
   <data name="SteamLaunchBusy" xml:space="preserve"><value>A Steam geometry launch is already pending for this game. Wait for it to finish or cancel it in VRX.</value></data>

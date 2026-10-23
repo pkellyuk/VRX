@@ -76,9 +76,22 @@ internal static class SteamGeometry
         window.Background=(System.Windows.Media.Brush)owner.FindResource("Page"); window.Foreground=(System.Windows.Media.Brush)owner.FindResource("Ink");
         var body=new StackPanel {Margin=new Thickness(24)}; window.Content=body;
         body.Children.Add(new TextBlock {Text=Loc.Format(replacing?"SteamSetupReplace":"SteamSetupInfo",game.Title),TextWrapping=TextWrapping.Wrap});
-        body.Children.Add(new TextBox {Text=options,IsReadOnly=true,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,12)});
+        var optionsBox=new TextBox {Text=options,IsReadOnly=true,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,12)};
+        body.Children.Add(optionsBox);
         var copy=new Button {Content=Loc.Get("SteamCopyOptions"),Margin=new Thickness(0,0,0,12)};
-        copy.Click+=(_,_)=>Clipboard.SetText(options); body.Children.Add(copy);
+        var copyHint=new TextBlock {Text=Loc.Get("SteamCopyFailed"),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12),Visibility=Visibility.Collapsed};
+        copy.Click+=async (_,_)=>{
+            copy.IsEnabled=false;
+            bool copied=await ClipboardText.Copy(options);
+            copy.IsEnabled=true;
+            Debug.WriteLine($"[Steam setup] copy launch options: {(copied?"copied":"clipboard busy, text selected for Ctrl+C")}");
+            copy.Content=Loc.Get(copied?"SteamCopied":"SteamCopyOptions");
+            copyHint.Visibility=copied?Visibility.Collapsed:Visibility.Visible;
+            if(copied) return;
+            // Windows would not let VRX use the clipboard: select the line for the player to copy.
+            optionsBox.Focus(); optionsBox.SelectAll();
+        };
+        body.Children.Add(copy); body.Children.Add(copyHint);
         var launch=new Button {Content=Loc.Get("SteamSetupLaunch")}; launch.Click+=(_,_)=>window.DialogResult=true; body.Children.Add(launch);
         return window.ShowDialog()==true;
     }
