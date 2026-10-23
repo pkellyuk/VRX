@@ -54,7 +54,7 @@ internal static class SteamLibraryTests
             "a Steam launch attaches to the bound executable, or the game rather than its launcher");
         string[] merged=SteamGeometry.MergeArguments(["--bundle-dir","data","literal space","-dx11"],new Profile {ExecutablePath="game-Shipping.exe",StereoBackend=StereoPaths.Vkd3d,GeometryLaunchArguments="-dx12 -norhithread"});
         Check(merged.Contains("literal space") && merged.Take(2).SequenceEqual(new[]{"--bundle-dir","data"}) && !merged.Contains("-dx11") && merged.Count(a=>a=="-dx12")==1,"Steam arguments retained literally while the selected Unreal renderer is applied");
-        var chooser=new ChooserWindow([],[],null,0,null,[],[game],store.Root,geometryMode:true) {
+        var chooser=new ChooserWindow([],[],null,0,null,[game],store.Root,geometryMode:true) {
             Owner=owner,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
         };
         static IEnumerable<Button> Buttons(DependencyObject node) {
@@ -77,8 +77,7 @@ internal static class SteamLibraryTests
         Check(chooser.ShowDialog()==true && chooser.SteamSectionShown && chooser.SteamTileCount==1 && chooser.Picked?.Steam==game && !chooser.Picked.ReviewSteamSetup && !chooser.Picked.DepthOnly &&
             chooser.Picked.App.FullPath==exe,"installed card launches without a running window, as the mode says");
         var runningApp=new RunningApp(123,"game.exe",exe,[new GameWindow(42,"Test gameplay")],null);
-        var recent=new GameHistory.Entry(exe,game.Title,[],game.Directory,game.AppId,DateTimeOffset.UtcNow);
-        var attachChooser=new ChooserWindow([runningApp],[],null,0,null,[recent],[game],store.Root) {
+        var attachChooser=new ChooserWindow([runningApp],[],null,0,null,[game],store.Root) {
             Owner=owner,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
         };
         _=owner.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>{
@@ -92,7 +91,7 @@ internal static class SteamLibraryTests
             Check(System.Windows.Automation.AutomationProperties.GetName(tile).StartsWith(Loc.Get("ChooserAttachAction"),StringComparison.Ordinal),"running choices explicitly describe attaching");
             tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         }));
-        Check(attachChooser.ShowDialog()==true && attachChooser.HistoryTileCount==0 && attachChooser.SteamTileCount==0 && attachChooser.WindowTileCount==1 && attachChooser.Picked?.App.Pid==123 &&
+        Check(attachChooser.ShowDialog()==true && attachChooser.SteamTileCount==0 && attachChooser.WindowTileCount==1 && attachChooser.Picked?.App.Pid==123 &&
             attachChooser.Picked.Steam==null && !attachChooser.Picked.Restart && !attachChooser.Picked.ReviewSteamSetup,"running games appear only under Attach and only attach (the saved method decides; never a Steam restart)");
 #if DEBUG
         // Exercise the actual Steam-wrapper entry point and literal argument

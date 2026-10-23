@@ -77,26 +77,6 @@ internal static class GameHistoryTests
         ProfileStore.AtomicWrite(Path.Combine(importRoot,"last-game.txt"),first.Executable);
         var legacyHistory=new GameHistory(importRoot); legacyHistory.ImportLastGame(legacyStore);
         Check(legacyHistory.Load().Single().Executable==first.Executable,"existing users get their last used game without needing another launch");
-        static IEnumerable<Button> Tiles(ChooserWindow chooser,DependencyObject node) {
-            if(node is Button button && button.Style==chooser.FindResource("Tile")) yield return button;
-            for(int i=0;i<VisualTreeHelper.GetChildrenCount(node);++i)
-                foreach(var child in Tiles(chooser,VisualTreeHelper.GetChild(node,i))) yield return child;
-        }
-        var missing=first with {Executable=Path.Combine(root,"missing.exe"),Title="Missing game"};
-        var chooser=new ChooserWindow([],[],null,0,null,[first,missing]) {
-            Owner=owner,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
-        };
-        _=owner.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>{
-            chooser.UpdateLayout();
-            var tiles=Tiles(chooser,chooser).ToArray();
-            if(chooser.HistoryTileCount!=2 || chooser.WindowTileCount!=0 || tiles.Count(b=>b.IsEnabled)!=1 || tiles.Count(b=>!b.IsEnabled)!=1) { chooser.Close(); return; }
-            var image=new RenderTargetBitmap((int)chooser.ActualWidth,(int)chooser.ActualHeight,96,96,PixelFormats.Pbgra32); image.Render(chooser);
-            var encoder=new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image));
-            using(var file=File.Create(Path.Combine(output,"ui-chooser-history.png"))) encoder.Save(file);
-            tiles.First(b=>b.IsEnabled).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        }));
-        Check(chooser.ShowDialog()==true && chooser.Picked?.History==first && chooser.Picked.App.Pid==0 && !chooser.Picked.DepthOnly && !chooser.Picked.Settings,
-            "a stopped game's history tile launches it the way it is set up without needing a live window; a missing game's tile is disabled");
-        File.WriteAllText(Path.Combine(output,"game-history-pass.txt"),"PASS: persistent bounded history; case-insensitive deduplication; actual process launch capture; literal argument preservation; missing-game and invalid Steam handling; non-games (desktop apps, browsers, shell, VRX) never recorded and dropped on load, profiles kept; Steam games recorded; history tiles launch with the saved setting without a running window.");
+        File.WriteAllText(Path.Combine(output,"game-history-pass.txt"),"PASS: persistent bounded history; case-insensitive deduplication; actual process launch capture; literal argument preservation; missing-game and invalid Steam handling; non-games (desktop apps, browsers, shell, VRX) never recorded and dropped on load, profiles kept; Steam games recorded.");
     }
 }

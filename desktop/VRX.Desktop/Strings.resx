@@ -282,7 +282,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ChooserLaunchHint" xml:space="preserve"><value>These games are not running. Clicking one starts it the way it is set up, then connects VRX.</value></data>
   <data name="ChooserLaunchHintGeometry" xml:space="preserve"><value>Clicking a game starts it with true geometry (a warning comes first), then connects VRX. Only games VRX can start are shown.</value></data>
   <data name="ChooserStreams" xml:space="preserve"><value>Running with true geometry</value></data>
-  <data name="ChooserNoGeometryGames" xml:space="preserve"><value>No games to start with true geometry yet. Switch to Depth and play a game once (Choose…), or install one with Steam.</value></data>
+  <data name="ChooserNoGeometryGames" xml:space="preserve"><value>No Steam games to start with true geometry. Install one with Steam, or switch to Depth to attach to a game that is already running.</value></data>
   <data name="ChooserAttachSection" xml:space="preserve"><value>Attach to something running</value></data>
   <data name="ChooserAttachHint" xml:space="preserve"><value>Connect to a window or display that is already running. A running game plays with estimated depth unless VRX started it with true geometry.</value></data>
   <data name="ChooserLaunchAction" xml:space="preserve"><value>Launch game →</value></data>
@@ -378,9 +378,6 @@ VRX is still running. The details were saved in {1}.</value></data>
   <data name="ErrorUnexpectedTitle" xml:space="preserve"><value>VRX</value></data>
   <data name="ErrorGeometryNotChosen" xml:space="preserve"><value>True geometry is not on. Switch the Depth | Geometry switch to Geometry first.</value></data>
   <data name="ErrorPreviousGeometryStop" xml:space="preserve"><value>The previous game viewer did not stop. Close its VR session, then try Attach / Play again.</value></data>
-  <data name="ChooserHistory" xml:space="preserve"><value>Recent games</value></data>
-  <data name="HistoryMissing" xml:space="preserve"><value>Game no longer found</value></data>
-  <data name="HistoryLaunch" xml:space="preserve"><value>Launch with your saved settings</value></data>
   <data name="ErrorHistoryEntry" xml:space="preserve"><value>The saved game launch details are invalid.</value></data>
   <data name="ErrorHistoryMissing" xml:space="preserve"><value>This game executable is no longer available.</value></data>
   <data name="ErrorHistoryWindow" xml:space="preserve"><value>The game was launched but its window did not appear. Check Steam or the game launcher, then try again.</value></data>

@@ -1218,7 +1218,7 @@ public partial class MainWindow : Window
         System.Diagnostics.Debug.WriteLine($"[Chooser] ChooseClick exit: {picked.App.Name}");
     }
 
-    // Gathers running windows, displays, recent and installed Steam games, and shows the
+    // Gathers running windows, displays and installed Steam games, and shows the
     // chooser (Easy: tiles that play with depth; Expert: as the Depth | Geometry switch says).
     private async Task<(ChooserWindow.Choice?, SteamLibrary.Discovery)> ShowChooser()
     {
@@ -1236,7 +1236,7 @@ public partial class MainWindow : Window
         bool geometry = GeometryMode;
         System.Diagnostics.Debug.WriteLine($"[Chooser] ShowChooser: {apps.Count} app(s), {screens.Count} display(s), expert {appSettings.IsExpert}, geometry mode {geometry}");
         var chooser = new ChooserWindow(apps, screens, ScreenSources.App(store.Root, screens), SelectedWindow?.Handle ?? 0,
-            appSettings.ChooserWindow, history.Load(), steam.Installed ? steam.Games : null, store.Root, string.Join("\n", steam.Errors),
+            appSettings.ChooserWindow, steam.Installed ? steam.Games : null, store.Root, string.Join("\n", steam.Errors),
             appSettings.IsExpert, geometry, GeometryRunReady) { Owner = this };
         bool chose = chooser.ShowDialog() == true;
         if (chooser.Place != null)
@@ -1274,7 +1274,15 @@ public partial class MainWindow : Window
             for(int i=0;engine.Running && i<20;++i) await Task.Delay(50);
             if(engine.Running) { Status.Text=Loc.Get("StatusChoiceStillStopping"); return; }
         }
-        if(picked.Steam!=null) { await StartFromSteam(picked); return; }
+        if(picked.Steam!=null) {
+            // The card shows the picked game at once, so it stays chosen when its launch is
+            // cancelled or fails (the executable picker, the warning, Steam's setup).
+            if(!SamePath(selection?.App.FullPath,picked.App.FullPath)) {
+                System.Diagnostics.Debug.WriteLine($"[Chooser] StartPicked: selecting {picked.Steam.Title} ({picked.Steam.AppId}) before its launch");
+                Select(picked);
+            }
+            await StartFromSteam(picked); return;
+        }
         if(picked.History!=null) {
             var installed=steam.Games.FirstOrDefault(g=>g.AppId==picked.History.SteamAppId && SteamLibrary.LoadBinding(store.Root,g)!=null);
             if(installed!=null) await StartFromSteam(picked with {Steam=installed});
@@ -4153,7 +4161,11 @@ public partial class MainWindow : Window
         string launchExe = Path.Combine(output, "chooser-launch", "LaunchFixture.exe");
         GeometryLaunchTests.FakePe(launchExe, ["d3d11.dll"], []);
         var launchEntry = new GameHistory.Entry(launchExe, "Launch fixture", [], Path.GetDirectoryName(launchExe)!, "", DateTimeOffset.UtcNow);
-        var chooser = new ChooserWindow(apps, screens, screenApp, display.Handle, new WindowPlace { Width = 820, Height = 560 }, [launchEntry])
+        // The same stopped game as an installed Steam game whose executable VRX knows: the
+        // chooser's launch tiles are Steam games.
+        var launchSteam = new SteamLibrary.Game("4000001", "Launch fixture", Path.GetDirectoryName(launchExe)!);
+        SteamLibrary.SaveBinding(store.Root, launchSteam, new(launchExe));
+        var chooser = new ChooserWindow(apps, screens, screenApp, display.Handle, new WindowPlace { Width = 820, Height = 560 }, [launchSteam], store.Root)
         {
             Owner = this, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = -20000
         };
@@ -4171,13 +4183,13 @@ public partial class MainWindow : Window
             // launches the way it is set up, and its ⚙ is how that is changed. (The launch group
             // starts collapsed when windows exist; open it so its tiles are built.)
             chooser.LaunchSection.IsExpanded = true; chooser.UpdateLayout();
-            if(chooser.HistoryTileCount!=1 || PathButtons(chooser).Any() || Controls<Expander>(chooser.Sections).Any(x=>x!=chooser.LaunchSection && x!=chooser.AttachSection) ||
+            if(chooser.SteamTileCount!=1 || PathButtons(chooser).Any() || Controls<Expander>(chooser.Sections).Any(x=>x!=chooser.LaunchSection && x!=chooser.AttachSection) ||
                 Controls<ComboBox>(chooser).Any() || Controls<Button>(chooser).Any(b=>Equals(b.Content,Loc.Get("SteamReviewSetup"))))
-                throw new Exception($"Tiles must have no stereo method buttons, renderer list, geometry options or Steam setup review (history tiles {chooser.HistoryTileCount}, method buttons {PathButtons(chooser).Count()})");
-            // Expert: every tile (running windows, recent games, displays) has a Settings button.
+                throw new Exception($"Tiles must have no stereo method buttons, renderer list, geometry options or Steam setup review (Steam tiles {chooser.SteamTileCount}, method buttons {PathButtons(chooser).Count()})");
+            // Expert: every tile (running windows, Steam games, displays) has a Settings button.
             int gears = Controls<Button>(chooser).Count(b => Equals(b.Tag, ChooserWindow.SettingsTag));
-            if (gears != chooser.WindowTileCount + chooser.HistoryTileCount + chooser.ScreenTileCount)
-                throw new Exception($"Every tile must have a Settings button in Expert ({gears} for {chooser.WindowTileCount + chooser.HistoryTileCount + chooser.ScreenTileCount} tiles)");
+            if (gears != chooser.WindowTileCount + chooser.SteamTileCount + chooser.ScreenTileCount)
+                throw new Exception($"Every tile must have a Settings button in Expert ({gears} for {chooser.WindowTileCount + chooser.SteamTileCount + chooser.ScreenTileCount} tiles)");
             var bitmap = new RenderTargetBitmap((int)chooser.ActualWidth, (int)chooser.ActualHeight, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(chooser);
             SavePng(bitmap, Path.Combine(output, "ui-chooser.png"));
@@ -4189,18 +4201,18 @@ public partial class MainWindow : Window
         }
         finally { chooser.Close(); }
         // Easy: tiles only, no stereo method buttons or geometry options; a pick plays with depth
-        // without changing the game's saved method. No Steam section without Steam.
+        // without changing the game's saved method.
         {
-            var easyChooser=new ChooserWindow(apps.Where(a=>a.CanAttach).Take(3).ToList(),[],null,0,null,[launchEntry],null,store.Root,null,expert:false,geometryMode:true) {
+            var easyChooser=new ChooserWindow(apps.Where(a=>a.CanAttach).Take(3).ToList(),[],null,0,null,[launchSteam],store.Root,null,expert:false,geometryMode:true) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             bool easyChecked=false;
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
                 easyChooser.UpdateLayout();
-                easyChecked=PathButtons(easyChooser).Count()==0 && !easyChooser.SteamSectionShown && easyChooser.AttachSectionShown && easyChooser.StreamTileCount==0 &&
+                easyChecked=PathButtons(easyChooser).Count()==0 && easyChooser.SteamSectionShown && easyChooser.AttachSectionShown && easyChooser.StreamTileCount==0 &&
                     !Controls<ComboBox>(easyChooser).Any() &&
                     !Controls<Button>(easyChooser).Any(b=>Equals(b.Content,Loc.Get("SteamReviewSetup"))) &&
-                    !Controls<TextBlock>(easyChooser).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction")) && easyChooser.HistoryTileCount==1 &&
+                    !Controls<TextBlock>(easyChooser).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction")) && easyChooser.SteamTileCount==1 &&
                     !Controls<Button>(easyChooser).Any(b=>Equals(b.Tag,ChooserWindow.SettingsTag));
                 var tile=Controls<Button>(easyChooser).FirstOrDefault(b=>b.Style==easyChooser.FindResource("Tile"));
                 if(tile==null) { easyChooser.Close(); return; }
@@ -4208,26 +4220,26 @@ public partial class MainWindow : Window
             }));
             bool easyPicked=easyChooser.ShowDialog()==true;
             if(!easyChecked || !easyPicked || easyChooser.Picked?.DepthOnly!=true || easyChooser.Picked.Settings)
-                throw new Exception("Easy's chooser must show only tiles that play with depth (launch tiles too, even with Geometry saved), no Settings buttons, and no Steam section without Steam");
+                throw new Exception("Easy's chooser must show only tiles that play with depth (Steam launch tiles too, even with Geometry saved) and no Settings buttons");
         }
         // A tile's Settings button picks the game for its settings only: VRX selects it (the
         // Expert sections edit its profile, nothing is saved) without starting VR or the game.
         {
             if (File.Exists(store.FileFor(launchExe))) File.Delete(store.FileFor(launchExe));
-            var gearTest=new ChooserWindow(apps,[],null,0,null,[launchEntry]) {
+            var gearTest=new ChooserWindow(apps,[],null,0,null,[launchSteam],store.Root) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
                 gearTest.LaunchSection.IsExpanded=true; gearTest.UpdateLayout();
-                var gear=Controls<Button>(gearTest.HistoryTiles).FirstOrDefault(b=>Equals(b.Tag,ChooserWindow.SettingsTag));
+                var gear=Controls<Button>(gearTest.SteamTiles).FirstOrDefault(b=>Equals(b.Tag,ChooserWindow.SettingsTag));
                 if(gear==null || gear.ToolTip as string!=Loc.Get("ChooserSettingsTip") || AutomationProperties.GetName(gear)!=Loc.Format("ChooserSettingsFor","Launch fixture")) { gearTest.Close(); return; }
                 gear.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
-            if(gearTest.ShowDialog()!=true || gearTest.Picked is not { Settings: true, DepthOnly: false, ReviewSteamSetup: false, History: not null } gearPick)
+            if(gearTest.ShowDialog()!=true || gearTest.Picked is not { Settings: true, DepthOnly: false, ReviewSteamSetup: false, Steam: not null } gearPick)
                 throw new Exception("A tile's Settings button must pick the game for its settings only");
             CardName.ClearValue(TextBlock.ForegroundProperty);
             ShowSettingsFor(gearPick);
-            if(engine.Running || starting || selection?.History!=launchEntry || !SamePath(profile?.ExecutablePath,launchExe) || SelectedWindow!=null ||
+            if(engine.Running || starting || selection?.Steam!=launchSteam || !SamePath(profile?.ExecutablePath,launchExe) || SelectedWindow!=null ||
                 store.HasProfile(launchExe) || CardName.Text!="Launch fixture" || geometryBlock!=GeometryBlock.None || GeometryModeButton.IsChecked!=false || !SettingsEnabled)
                 throw new Exception("A stopped game's Settings button must select it for the Expert sections without saving or starting anything");
             // ...and visibly so: the status line says whose settings these are (VR not started)
@@ -4247,45 +4259,45 @@ public partial class MainWindow : Window
             }
         }
         // In Geometry mode a stopped game's tile reads "Launch with true geometry", and clicking it
-        // launches - the pick carries no method of its own (StartFromHistory follows the mode,
+        // launches - the pick carries no method of its own (StartFromSteam follows the mode,
         // warning first).
         {
-            var pickTest=new ChooserWindow(apps,[],null,0,null,[launchEntry],geometryMode:true,streamReady:_=>false) {
+            var pickTest=new ChooserWindow(apps,[],null,0,null,[launchSteam],store.Root,geometryMode:true,streamReady:_=>false) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
                 pickTest.LaunchSection.IsExpanded=true; pickTest.UpdateLayout();
-                bool geometryCaption=Controls<TextBlock>(pickTest.HistoryTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction"));
-                var tile=Controls<Button>(pickTest.HistoryTiles).FirstOrDefault(b=>b.Style==pickTest.FindResource("Tile"));
+                bool geometryCaption=Controls<TextBlock>(pickTest.SteamTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction"));
+                var tile=Controls<Button>(pickTest.SteamTiles).FirstOrDefault(b=>b.Style==pickTest.FindResource("Tile"));
                 if(tile==null || !geometryCaption || PathButtons(pickTest).Any() ||
                     !AutomationProperties.GetName(tile).StartsWith(Loc.Get("ChooserLaunchGeometryAction"),StringComparison.Ordinal)) { pickTest.Close(); return; }
                 tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
-            if(pickTest.ShowDialog()!=true || pickTest.Picked is not { History: not null, Restart: false, DepthOnly: false, ReviewSteamSetup: false, Settings: false })
+            if(pickTest.ShowDialog()!=true || pickTest.Picked is not { Steam: not null, Restart: false, DepthOnly: false, ReviewSteamSetup: false, Settings: false })
                 throw new Exception("In Geometry mode a stopped game's tile must read Launch with true geometry and launch it");
         }
         // In Depth mode: the normal launch caption, and the same pick.
         {
-            var depthTest=new ChooserWindow(apps,[],null,0,null,[launchEntry]) {
+            var depthTest=new ChooserWindow(apps,[],null,0,null,[launchSteam],store.Root) {
                 Owner=this,ShowActivated=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-20000,Top=-20000
             };
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
                 depthTest.LaunchSection.IsExpanded=true; depthTest.UpdateLayout();
-                bool depthCaption=Controls<TextBlock>(depthTest.HistoryTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchAction")) &&
-                    !Controls<TextBlock>(depthTest.HistoryTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction"));
-                var tile=Controls<Button>(depthTest.HistoryTiles).FirstOrDefault(b=>b.Style==depthTest.FindResource("Tile"));
+                bool depthCaption=Controls<TextBlock>(depthTest.SteamTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchAction")) &&
+                    !Controls<TextBlock>(depthTest.SteamTiles).Any(t=>t.Text==Loc.Get("ChooserLaunchGeometryAction"));
+                var tile=Controls<Button>(depthTest.SteamTiles).FirstOrDefault(b=>b.Style==depthTest.FindResource("Tile"));
                 if(tile==null || !depthCaption) { depthTest.Close(); return; }
                 var bitmap=new RenderTargetBitmap((int)depthTest.ActualWidth,(int)depthTest.ActualHeight,96,96,PixelFormats.Pbgra32);
                 bitmap.Render(depthTest); SavePng(bitmap,Path.Combine(output,"ui-chooser-launch.png"));
                 tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }));
-            if(depthTest.ShowDialog()!=true || depthTest.Picked is not { History: not null, DepthOnly: false, ReviewSteamSetup: false, Settings: false })
+            if(depthTest.ShowDialog()!=true || depthTest.Picked is not { Steam: not null, DepthOnly: false, ReviewSteamSetup: false, Settings: false })
                 throw new Exception("In Depth mode a stopped game's tile must show the normal launch caption and launch it");
         }
         // In Depth mode a running window only attaches (with estimated depth, or a VRX geometry
         // stream) - never a restart or a Steam route.
         if(apps.Any(a=>a.CanAttach && a.Windows.Any(RunningApps.IsChooserWindow))) {
-            var attachTest=new ChooserWindow(apps,[],null,0,null,[],[],store.Root) {
+            var attachTest=new ChooserWindow(apps,[],null,0,null,[],store.Root) {
                 Owner=this, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000
             };
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=> {
@@ -4303,62 +4315,58 @@ public partial class MainWindow : Window
         // launch and attach tile, as before; Geometry only games VRX can start and its own
         // geometry runs - no other window, no display, nothing that is not a game.
         {
-            const ChooserWindow.TileSource Recent = ChooserWindow.TileSource.RecentGame, Steam = ChooserWindow.TileSource.SteamGame,
+            const ChooserWindow.TileSource Steam = ChooserWindow.TileSource.SteamGame,
                 Window = ChooserWindow.TileSource.RunningWindow, Display = ChooserWindow.TileSource.Display;
             const ChooserWindow.TilePlace Hidden = ChooserWindow.TilePlace.Hidden, Launch = ChooserWindow.TilePlace.Launch,
                 Stream = ChooserWindow.TilePlace.Stream, Attach = ChooserWindow.TilePlace.Attach;
-            var placeRows = new (ChooserWindow.TileSource Source, bool Running, bool Geometry, bool NotAGame, bool Missing, bool Stream, ChooserWindow.TilePlace Expected, string What)[]
+            var placeRows = new (ChooserWindow.TileSource Source, bool Running, bool Geometry, bool NotAGame, bool Stream, ChooserWindow.TilePlace Expected, string What)[]
             {
-                (Recent, false, false, false, false, false, Launch, "Depth, a stopped recent game"),
-                (Recent, true, false, false, false, false, Hidden, "Depth, a running recent game (attached to instead)"),
-                (Recent, false, false, false, true, false, Launch, "Depth, a missing recent game (shown disabled)"),
-                (Recent, false, false, true, false, false, Launch, "Depth, a recent program that is not a game"),
-                (Steam, false, false, false, false, false, Launch, "Depth, an installed Steam game"),
-                (Steam, true, false, false, false, false, Hidden, "Depth, a running Steam game"),
-                (Window, true, false, false, false, false, Attach, "Depth, a running window"),
-                (Window, true, false, false, false, true, Attach, "Depth, VRX's geometry run (attached; the main button plays its stream)"),
-                (Window, true, false, true, false, false, Attach, "Depth, a program that is not a game"),
-                (Display, true, false, false, false, false, Attach, "Depth, a display"),
-                (Recent, false, true, false, false, false, Launch, "Geometry, a stopped recent game"),
-                (Recent, false, true, true, false, false, Hidden, "Geometry, a recent program that is not a game"),
-                (Recent, false, true, false, true, false, Hidden, "Geometry, a missing recent game"),
-                (Recent, true, true, false, false, false, Hidden, "Geometry, a running recent game"),
-                (Steam, false, true, false, false, false, Launch, "Geometry, an installed Steam game"),
-                (Steam, false, true, true, false, false, Hidden, "Geometry, a Steam entry that is not a game"),
-                (Steam, true, true, false, false, false, Hidden, "Geometry, a running Steam game"),
-                (Window, true, true, false, false, true, Stream, "Geometry, VRX's geometry run"),
-                (Window, true, true, false, false, false, Hidden, "Geometry, a game running normally"),
-                (Window, true, true, true, false, false, Hidden, "Geometry, a program that is not a game"),
-                (Window, true, true, true, false, true, Hidden, "Geometry, a program that is not a game, even with a stream"),
-                (Display, true, true, false, false, false, Hidden, "Geometry, a display"),
+                (Steam, false, false, false, false, Launch, "Depth, an installed Steam game"),
+                (Steam, false, false, true, false, Launch, "Depth, a Steam entry that is not a game"),
+                (Steam, true, false, false, false, Hidden, "Depth, a running Steam game (attached to instead)"),
+                (Window, true, false, false, false, Attach, "Depth, a running window"),
+                (Window, true, false, false, true, Attach, "Depth, VRX's geometry run (attached; the main button plays its stream)"),
+                (Window, true, false, true, false, Attach, "Depth, a program that is not a game"),
+                (Display, true, false, false, false, Attach, "Depth, a display"),
+                (Steam, false, true, false, false, Launch, "Geometry, an installed Steam game"),
+                (Steam, false, true, true, false, Hidden, "Geometry, a Steam entry that is not a game"),
+                (Steam, true, true, false, false, Hidden, "Geometry, a running Steam game"),
+                (Window, true, true, false, true, Stream, "Geometry, VRX's geometry run"),
+                (Window, true, true, false, false, Hidden, "Geometry, a game running normally"),
+                (Window, true, true, true, false, Hidden, "Geometry, a program that is not a game"),
+                (Window, true, true, true, true, Hidden, "Geometry, a program that is not a game, even with a stream"),
+                (Display, true, true, false, false, Hidden, "Geometry, a display"),
             };
             foreach (var row in placeRows)
             {
-                var got = ChooserWindow.PlaceTile(row.Source, row.Running, row.Geometry, row.NotAGame, row.Missing, row.Stream);
+                var got = ChooserWindow.PlaceTile(row.Source, row.Running, row.Geometry, row.NotAGame, row.Stream);
                 if (got != row.Expected) throw new Exception($"Chooser tile for {row.What}: expected {row.Expected}, got {got}");
             }
         }
-        // The chooser itself, opened in each mode with the same running programs and recent
+        // The chooser itself, opened in each mode with the same running programs and Steam
         // games: a game VRX started with true geometry (its stream ready), a game running
-        // normally, Teams (claiming a stream: still never offered), the displays; a stopped
-        // game, a stopped non-game (Slack), a missing game and the running game's entry.
+        // normally, Teams (claiming a stream: still never offered), the displays; as Steam
+        // games, a stopped game, a stopped non-game (Slack) and the running game.
         {
             string geometryFolder = Path.Combine(output, "chooser-geometry");
-            string streamExe = Path.Combine(geometryFolder, "StreamGame.exe"), normalExe = Path.Combine(geometryFolder, "NormalGame.exe");
-            string teamsExe = Path.Combine(geometryFolder, "apps", "ms-teams.exe"), slackExe = Path.Combine(geometryFolder, "apps", "slack.exe");
+            string streamExe = Path.Combine(geometryFolder, "StreamGame.exe"), normalExe = Path.Combine(geometryFolder, "normal", "NormalGame.exe");
+            string teamsExe = Path.Combine(geometryFolder, "apps", "ms-teams.exe"), slackExe = Path.Combine(geometryFolder, "chat", "slack.exe");
             foreach (string exe in new[] { streamExe, normalExe, teamsExe, slackExe }) GeometryLaunchTests.FakePe(exe, ["d3d11.dll"], []);
             var streamApp = new RunningApp(int.MaxValue - 61, "StreamGame.exe", streamExe, [new GameWindow(0x7F61, "Stream game")], null);
             var normalApp = new RunningApp(int.MaxValue - 62, "NormalGame.exe", normalExe, [new GameWindow(0x7F62, "Normal game")], null);
             var teamsApp = new RunningApp(int.MaxValue - 63, "ms-teams.exe", teamsExe, [new GameWindow(0x7F63, "Microsoft Teams")], null);
-            GameHistory.Entry[] recents = [launchEntry, launchEntry with { Executable = slackExe, Title = "Slack" },
-                launchEntry with { Executable = Path.Combine(geometryFolder, "gone", "Gone.exe"), Title = "Gone game" }, launchEntry with { Executable = normalExe, Title = "Normal game" }];
+            var slackSteam = new SteamLibrary.Game("4000002", "Slack", Path.GetDirectoryName(slackExe)!);
+            var normalSteam = new SteamLibrary.Game("4000003", "Normal game", Path.GetDirectoryName(normalExe)!);
+            SteamLibrary.SaveBinding(store.Root, slackSteam, new(slackExe));
+            SteamLibrary.SaveBinding(store.Root, normalSteam, new(normalExe));
+            SteamLibrary.Game[] steamGames = [launchSteam, slackSteam, normalSteam];
             var asked = new List<int>();
             bool StreamFor(RunningApp app)
             {
                 asked.Add(app.Pid);
                 return app.Pid == streamApp.Pid || app.Pid == teamsApp.Pid;
             }
-            ChooserWindow Open(bool geometry) => new ChooserWindow([streamApp, normalApp, teamsApp], screens, screenApp, 0, null, recents, null, store.Root, null, true, geometry, StreamFor)
+            ChooserWindow Open(bool geometry) => new ChooserWindow([streamApp, normalApp, teamsApp], screens, screenApp, 0, null, steamGames, store.Root, null, true, geometry, StreamFor)
             {
                 Owner = this, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = -20000
             };
@@ -4370,11 +4378,11 @@ public partial class MainWindow : Window
                 var streamTile = Controls<Button>(geometryChooser.StreamTiles).FirstOrDefault(b => b.Style == geometryChooser.FindResource("Tile"));
                 int gears = Controls<Button>(geometryChooser).Count(b => Equals(b.Tag, ChooserWindow.SettingsTag));
                 geometryProblem = geometryChooser.StreamTileCount != 1 || geometryChooser.WindowTileCount != 0 || geometryChooser.ScreenTileCount != 0 ? $"tiles: {geometryChooser.StreamTileCount} geometry runs, {geometryChooser.WindowTileCount} windows, {geometryChooser.ScreenTileCount} displays" :
-                    geometryChooser.HistoryTileCount != 1 ? $"{geometryChooser.HistoryTileCount} recent games (only the stopped game VRX can start belongs)" :
+                    geometryChooser.SteamTileCount != 1 ? $"{geometryChooser.SteamTileCount} Steam games (only the stopped game VRX can start belongs)" :
                     geometryChooser.AttachSectionShown || !geometryChooser.LaunchSection.IsExpanded || geometryChooser.LaunchSection.Visibility != Visibility.Visible ? "Attach must be hidden and Launch a game open" :
                     geometryChooser.Intro.Text != Loc.Get("ChooserIntroGeometry") || geometryChooser.LaunchHint.Text != Loc.Get("ChooserLaunchHintGeometry") ? "the header must explain Geometry mode" :
                     geometryChooser.StreamHeader.Visibility != Visibility.Visible || geometryChooser.StreamHeader.Text != Loc.Get("ChooserStreams") || geometryChooser.NoGeometryGames.Visibility == Visibility.Visible ? "the geometry runs' header" :
-                    !Controls<TextBlock>(geometryChooser.HistoryTiles).Any(t => t.Text == Loc.Get("ChooserLaunchGeometryAction")) || Controls<TextBlock>(geometryChooser.HistoryTiles).Any(t => t.Text == Loc.Get("ChooserLaunchAction")) ? "a stopped game must read Launch with true geometry" :
+                    !Controls<TextBlock>(geometryChooser.SteamTiles).Any(t => t.Text == Loc.Get("ChooserLaunchGeometryAction")) || Controls<TextBlock>(geometryChooser.SteamTiles).Any(t => t.Text == Loc.Get("ChooserLaunchAction")) ? "a stopped game must read Launch with true geometry" :
                     streamTile == null || !AutomationProperties.GetName(streamTile).StartsWith(Loc.Get("ChooserPlayStreamAction"), StringComparison.Ordinal) ? "the geometry run must read Play true geometry" :
                     gears != 2 ? $"{gears} Settings buttons for 2 tiles" :
                     asked.Distinct().Count() != asked.Count || asked.Except(new[] { streamApp.Pid, normalApp.Pid, teamsApp.Pid }).Any() ? $"the stream must be asked once per running program (asked {string.Join(", ", asked)})" : "";
@@ -4392,7 +4400,7 @@ public partial class MainWindow : Window
             {
                 depthChooser.LaunchSection.IsExpanded = true; depthChooser.UpdateLayout();
                 depthProblem = depthChooser.StreamTileCount != 0 || depthChooser.WindowTileCount != 3 || depthChooser.ScreenTileCount != screens.Count ? $"tiles: {depthChooser.StreamTileCount} geometry runs, {depthChooser.WindowTileCount} windows, {depthChooser.ScreenTileCount} displays" :
-                    depthChooser.HistoryTileCount != 3 ? $"{depthChooser.HistoryTileCount} recent games (stopped ones, the missing one disabled)" :
+                    depthChooser.SteamTileCount != 2 ? $"{depthChooser.SteamTileCount} Steam games (the stopped ones, not the running one)" :
                     !depthChooser.AttachSectionShown || depthChooser.Intro.Text == Loc.Get("ChooserIntroGeometry") || depthChooser.LaunchHint.Text != Loc.Get("ChooserLaunchHint") ? "both sections and the usual header" :
                     Controls<TextBlock>(depthChooser).Any(t => t.Text == Loc.Get("ChooserLaunchGeometryAction") || t.Text == Loc.Get("ChooserPlayStreamAction")) ? "nothing reads true geometry on Depth" :
                     asked.Count != 0 ? "the stream must not be asked on Depth" : "";
@@ -4422,8 +4430,18 @@ public partial class MainWindow : Window
                         bool ok = GeometryWarningsShown == warnings + 1 && LastSmokePrompt is { AntiCheat: false } && !starting && !engine.Running &&
                             !RunningApps.List(true).Any(a => SamePath(a.FullPath, launchExe)) && GeometryMode &&
                             (answer == GeometryConsent.Cancel ? SmokeLaunchChosen == null && Status.Text == Loc.Get("StatusGeometryStartCancelled") : SmokeLaunchChosen == "geometry");
-                        if (!ok) throw new Exception($"A launch tile in Geometry mode must ask once and, answered {answer}, take the right path (path {SmokeLaunchChosen ?? "none"}, status '{Status.Text}')");
+                        if (!ok) throw new Exception($"Start for a stopped game in Geometry mode must ask once and, answered {answer}, take the right path (path {SmokeLaunchChosen ?? "none"}, status '{Status.Text}')");
                     }
+                    // A Steam tile picked while another game is on the card: the card shows the
+                    // picked game at once and keeps it when the launch is cancelled (here at the
+                    // warning), rather than going back to the game that was there.
+                    Select(new ChooserWindow.Choice(screenApp, display));
+                    var steamPick = new ChooserWindow.Choice(new RunningApp(0, "Launch fixture", launchExe, [], null), new GameWindow(0, "Launch fixture"), Steam: launchSteam);
+                    SmokeAntiCheat = []; SmokeAnswer = GeometryConsent.Cancel; SmokeStubLaunch = true; SmokeLaunchChosen = null;
+                    try { await StartPicked(steamPick, new SteamLibrary.Discovery([launchSteam], [], true)); }
+                    finally { SmokeAnswer = null; SmokeAntiCheat = null; SmokeStubLaunch = false; }
+                    if (selection?.Steam != launchSteam || !SamePath(selection.App.FullPath, launchExe) || CardName.Text != "Launch fixture" || SmokeLaunchChosen != null || starting || engine.Running)
+                        throw new Exception($"A Steam game picked in the chooser must be on the card even when its launch is cancelled (card '{CardName.Text}', selected {selection?.App.FullPath ?? "nothing"})");
                 }
                 finally { DepthModeButton.IsChecked = true; }
             }

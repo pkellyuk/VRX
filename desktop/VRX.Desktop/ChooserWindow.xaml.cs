@@ -17,6 +17,8 @@ public sealed partial class ChooserWindow : Window
     // ReviewSteamSetup: the true-geometry section's "Review Steam launch setup..." - show the
     // launch review and Steam's setup dialog again before a Steam geometry launch (never from
     // a tile here).
+    // History: the main button's Start for a stopped game that is not a Steam game (its
+    // recorded launch; the chooser itself offers only Steam games to launch).
     // DepthOnly: Easy mode's pick - play with estimated depth now. True geometry is only
     // reachable in Expert.
     // Restart: the main button's "Restart" (true geometry) for a running Steam game (never from a tile here:
@@ -34,24 +36,23 @@ public sealed partial class ChooserWindow : Window
 
     // Where a tile goes (PlaceTile). Stream: a running game VRX started with true geometry,
     // whose stream is ready - played as it is ("Running with true geometry").
-    public enum TileSource { RecentGame, SteamGame, RunningWindow, Display }
+    public enum TileSource { SteamGame, RunningWindow, Display }
     public enum TilePlace { Hidden, Launch, Stream, Attach }
 
-    // Which tiles show where, with no side effects. Depth (and Easy): stopped recent and Steam
-    // games under "Launch a game", running windows and displays under "Attach to something
-    // running". Geometry: only games VRX can start (not running, not missing, not on the
-    // non-game list) under "Launch a game", and running games VRX started with true geometry
-    // (stream ready, a game) under "Running with true geometry"; no other window, no display.
-    public static TilePlace PlaceTile(TileSource source, bool running, bool geometryMode, bool notAGame, bool missing, bool streamReady)
+    // Which tiles show where, with no side effects. Depth (and Easy): stopped Steam games under
+    // "Launch a game", running windows and displays under "Attach to something running".
+    // Geometry: only Steam games VRX can start (not running, not on the non-game list) under
+    // "Launch a game", and running games VRX started with true geometry (stream ready, a game)
+    // under "Running with true geometry"; no other window, no display.
+    public static TilePlace PlaceTile(TileSource source, bool running, bool geometryMode, bool notAGame, bool streamReady)
     {
         TilePlace place = source switch
         {
-            TileSource.RecentGame or TileSource.SteamGame => running ? TilePlace.Hidden :
-                geometryMode && (notAGame || missing) ? TilePlace.Hidden : TilePlace.Launch,
+            TileSource.SteamGame => running || (geometryMode && notAGame) ? TilePlace.Hidden : TilePlace.Launch,
             TileSource.RunningWindow => !geometryMode ? TilePlace.Attach : streamReady && !notAGame ? TilePlace.Stream : TilePlace.Hidden,
             _ => geometryMode ? TilePlace.Hidden : TilePlace.Attach,
         };
-        System.Diagnostics.Debug.WriteLine($"[Chooser] PlaceTile: {source}, running {running}, geometry {geometryMode}, not a game {notAGame}, missing {missing}, stream {streamReady} -> {place}");
+        System.Diagnostics.Debug.WriteLine($"[Chooser] PlaceTile: {source}, running {running}, geometry {geometryMode}, not a game {notAGame}, stream {streamReady} -> {place}");
         return place;
     }
 
@@ -83,7 +84,7 @@ public sealed partial class ChooserWindow : Window
     // geometryMode: Expert's Depth | Geometry switch is on Geometry (PlaceTile decides which
     // tiles show). streamReady: whether VRX started a running game with true geometry and its
     // stream is ready (asked only in Geometry mode, once per running game).
-    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null, IReadOnlyList<GameHistory.Entry>? history = null, IReadOnlyList<SteamLibrary.Game>? steamGames = null, string? dataRoot = null, string? steamWarning = null, bool expert = true, bool geometryMode = false, Func<RunningApp, bool>? streamReady = null)
+    public ChooserWindow(IReadOnlyList<RunningApp> apps, IReadOnlyList<ScreenSource> screens, RunningApp? screenApp, nint currentWindow, WindowPlace? place = null, IReadOnlyList<SteamLibrary.Game>? steamGames = null, string? dataRoot = null, string? steamWarning = null, bool expert = true, bool geometryMode = false, Func<RunningApp, bool>? streamReady = null)
     {
         ArgumentNullException.ThrowIfNull(apps);
         ArgumentNullException.ThrowIfNull(screens);
@@ -105,21 +106,13 @@ public sealed partial class ChooserWindow : Window
             Height = Math.Clamp(place.Height, MinHeight, Math.Max(MinHeight, SystemParameters.WorkArea.Height));
         }
         bool maximize = place?.Maximized == true;
-        foreach(var entry in history ?? []) {
-            var app=apps.FirstOrDefault(a=>a.CanAttach && string.Equals(a.FullPath,entry.Executable,StringComparison.OrdinalIgnoreCase)) ??
-                new RunningApp(0,System.IO.Path.GetFileName(entry.Executable),entry.Executable,[],RunningApps.IconFor(entry.Executable));
-            var window=app.Windows.FirstOrDefault(RunningApps.IsChooserWindow) ?? new GameWindow(0,entry.Title);
-            // Running games are attached to (or, in Geometry mode, played from their stream) below.
-            if(PlaceTile(TileSource.RecentGame,app.Pid>0,this.geometryMode,GameHistory.IsNotAGame(entry.Executable),!System.IO.File.Exists(entry.Executable),false)!=TilePlace.Launch) continue;
-            HistoryTiles.Children.Add(MakeTile(new Choice(app,window,entry),null,false));
-        }
-        HistoryHeader.Visibility=HistoryTiles.Children.Count>0?Visibility.Visible:Visibility.Collapsed;
         bool steamRunning=false;
         foreach(var game in steamGames ?? []) {
             string key=SteamLibrary.ProfileKey(dataRoot!,game);
             var app=SteamLibrary.Running(game,apps) ?? new RunningApp(0,game.Title,key,[],System.IO.File.Exists(key)?RunningApps.IconFor(key):null);
             steamRunning|=app.Pid>0;
-            if(PlaceTile(TileSource.SteamGame,app.Pid>0,this.geometryMode,GameHistory.IsNotAGame(key),false,false)!=TilePlace.Launch) continue;
+            // Running games are attached to (or, in Geometry mode, played from their stream) below.
+            if(PlaceTile(TileSource.SteamGame,app.Pid>0,this.geometryMode,GameHistory.IsNotAGame(key),false)!=TilePlace.Launch) continue;
             var window=app.Windows.FirstOrDefault(RunningApps.IsChooserWindow) ?? new GameWindow(0,game.Title);
             SteamTiles.Children.Add(MakeTile(new Choice(app,window,Steam:game),null,false));
         }
@@ -145,20 +138,20 @@ public sealed partial class ChooserWindow : Window
                 stream = streamReady(choice.App);
                 streams[choice.App.Pid] = stream;
             }
-            var where = PlaceTile(TileSource.RunningWindow, true, this.geometryMode, GameHistory.IsNotAGame(choice.App.FullPath), false, stream);
+            var where = PlaceTile(TileSource.RunningWindow, true, this.geometryMode, GameHistory.IsNotAGame(choice.App.FullPath), stream);
             if (where == TilePlace.Attach) WindowTiles.Children.Add(MakeTile(choice, null, choice.Window.Handle == currentWindow));
             else if (where == TilePlace.Stream) StreamTiles.Children.Add(MakeTile(choice, null, choice.Window.Handle == currentWindow, stream: true));
         }
         StreamHeader.Visibility = StreamTiles.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         NoWindows.Visibility = WindowTiles.Children.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        if(HistoryTiles.Children.Count>0 || SteamTiles.Children.Count>0) NoWindows.Text=Loc.Get("ChooserNoWindowsHistory");
+        if(SteamTiles.Children.Count>0) NoWindows.Text=Loc.Get("ChooserNoWindowsHistory");
 
         if (screenApp != null)
             foreach (var screen in screens)
             {
                 var window = screenApp.Windows.FirstOrDefault(w => w.Monitor == screen.Index);
                 if (window == null) continue;
-                if (PlaceTile(TileSource.Display, true, this.geometryMode, false, false, false) != TilePlace.Attach) continue;
+                if (PlaceTile(TileSource.Display, true, this.geometryMode, false, false) != TilePlace.Attach) continue;
                 ScreenTiles.Children.Add(MakeTile(new Choice(screenApp, window), screen, window.Handle == currentWindow));
             }
         ScreensHeader.Visibility = ScreenTiles.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -166,8 +159,8 @@ public sealed partial class ChooserWindow : Window
 
         // Geometry: "Launch a game" open, holding everything; "Attach to something running"
         // gone. Depth: launching is open when there is nothing running to attach to.
-        int launchTiles = HistoryTiles.Children.Count + SteamTiles.Children.Count + StreamTiles.Children.Count;
-        LaunchSection.Visibility = this.geometryMode || HistoryTiles.Children.Count > 0 || steamGames != null ? Visibility.Visible : Visibility.Collapsed;
+        int launchTiles = SteamTiles.Children.Count + StreamTiles.Children.Count;
+        LaunchSection.Visibility = this.geometryMode || steamGames != null ? Visibility.Visible : Visibility.Collapsed;
         LaunchSection.IsExpanded = this.geometryMode || WindowTiles.Children.Count == 0;
         AttachSection.Visibility = this.geometryMode ? Visibility.Collapsed : Visibility.Visible;
         NoGeometryGames.Visibility = this.geometryMode && launchTiles == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -186,7 +179,6 @@ public sealed partial class ChooserWindow : Window
 
     // The number of tiles, for the smoke test.
     public int WindowTileCount => WindowTiles.Children.Count;
-    public int HistoryTileCount => HistoryTiles.Children.Count;
     public int SteamTileCount => SteamTiles.Children.Count;
     public int StreamTileCount => StreamTiles.Children.Count;
     public int ScreenTileCount => ScreenTiles.Children.Count;
@@ -210,17 +202,15 @@ public sealed partial class ChooserWindow : Window
             RenderOptions.SetBitmapScalingMode(snapshot, BitmapScalingMode.HighQuality);
             picture.Children.Add(snapshot);
         }
-        string title = screen != null ? screen.Title : choice.Steam?.Title ?? choice.History?.Title ?? MainWindow.GameDisplayName(choice.Window.Title, choice.App.Name);
+        string title = screen != null ? screen.Title : choice.Steam?.Title ?? MainWindow.GameDisplayName(choice.Window.Title, choice.App.Name);
         string detail = screen != null ? (screen.Primary ? Loc.Get("ChooserMainDisplay") : Loc.Get("WholeScreen")) :
             RunningApps.IsMinimized(choice.Window.Handle) ? Loc.Format("ChooserMinimized", choice.App.Name) : choice.App.Name;
-        bool missing=choice.History!=null && !System.IO.File.Exists(choice.App.FullPath);
-        // Running games appear only under Attach, so these tiles are always stopped games.
-        if(choice.History!=null) detail=Loc.Get(missing?"HistoryMissing":"HistoryLaunch");
+        // Running games appear only under Attach, so Steam tiles are always stopped games.
         if(choice.Steam!=null && choice.App.Pid==0) detail=Loc.Get("SteamLaunch");
         var caption = new StackPanel { Width = PictureWidth, Margin = new Thickness(0, 8, 0, 0) };
         caption.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = title });
         caption.Children.Add(new TextBlock { Text = detail, FontSize = 12, Foreground = (Brush)FindResource("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
-        bool launches=screen==null && choice.App.Pid==0 && (choice.History!=null || choice.Steam!=null);
+        bool launches=screen==null && choice.App.Pid==0 && choice.Steam!=null;
         // Geometry mode: a stopped game launches with true geometry.
         bool launchesGeometry=launches && geometryMode;
         string action=Loc.Get(screen!=null?"ChooserAttachDisplay":stream?"ChooserPlayStreamAction":launchesGeometry?"ChooserLaunchGeometryAction":launches?"ChooserLaunchAction":"ChooserAttachAction");
@@ -229,19 +219,18 @@ public sealed partial class ChooserWindow : Window
         content.Children.Add(picture);
         content.Children.Add(caption);
         var button = new Button { Style = (Style)FindResource("Tile"), Content = content, Tag = current ? "Current" : null };
-        if(missing) { button.IsEnabled=false; button.ToolTip=Loc.Get("ErrorHistoryMissing"); }
         System.Windows.Automation.AutomationProperties.SetName(button, action+": "+title);
         // Easy: a game or window plays with estimated depth now. Expert: a running window
         // attaches (a VRX geometry run plays its stream) and a stopped game launches - with true
-        // geometry in Geometry mode (StartFromHistory / StartFromSteam check for anti-cheat and
-        // show its warning, else the red warning, first), else normally with estimated depth.
+        // geometry in Geometry mode (StartFromSteam checks for anti-cheat and
+        // shows its warning, else the red warning, first), else normally with estimated depth.
         // The tile's ⚙ shows the game's settings.
         if (!expert)
             button.Click += (_, _) => Pick(screen==null?choice with {DepthOnly=true}:choice);
         else
             button.Click += (_, _) => Pick(choice);
         tiles.Add(new Tile { Choice = choice, Picture = picture, Screen = screen, Snapshot = snapshot });
-        System.Diagnostics.Debug.WriteLine($"[Chooser] MakeTile: '{title}', launches {launches}, geometry caption {launchesGeometry}, stream {stream}, missing {missing}, expert {expert}");
+        System.Diagnostics.Debug.WriteLine($"[Chooser] MakeTile: '{title}', launches {launches}, geometry caption {launchesGeometry}, stream {stream}, expert {expert}");
         if (!expert) return button;
         // Separate sibling buttons: input controls must never sit inside a tile Button. The
         // Settings button sits over the tile's caption (a window's live picture is drawn by DWM

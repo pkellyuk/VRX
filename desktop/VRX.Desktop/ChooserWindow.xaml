@@ -63,8 +63,6 @@
      <TextBlock x:Name="StreamHeader" Text="{l:Tr ChooserStreams}" Style="{StaticResource SubHeader}" Margin="0,10,0,8" Visibility="Collapsed"/>
      <WrapPanel x:Name="StreamTiles"/>
      <TextBlock x:Name="NoGeometryGames" Text="{l:Tr ChooserNoGeometryGames}" Style="{StaticResource Hint}" TextWrapping="Wrap" FontSize="13" Visibility="Collapsed"/>
-     <TextBlock x:Name="HistoryHeader" Text="{l:Tr ChooserHistory}" Style="{StaticResource SubHeader}" Margin="0,10,0,8" Visibility="Collapsed"/>
-     <WrapPanel x:Name="HistoryTiles"/>
      <TextBlock x:Name="SteamHeader" Text="{l:Tr ChooserSteam}" Style="{StaticResource SubHeader}" Margin="0,10,0,2" Visibility="Collapsed"/>
      <TextBlock x:Name="SteamHint" Style="{StaticResource Hint}" TextWrapping="Wrap" FontSize="13" Margin="0,0,0,8" Visibility="Collapsed"/>
      <WrapPanel x:Name="SteamTiles"/>
