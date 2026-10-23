@@ -30,6 +30,10 @@ public partial class MainWindow : Window
     // launches; at start-up the last game. App.Pid 0 with no window: a game that is not running
     // (a recent or Steam game), whose settings can still be edited and which VRX can start.
     private ChooserWindow.Choice? selection;
+    // Geometry mode is only for Steam games: a selection that is not one (a whole display, a
+    // program, a game from outside Steam) is set aside while Geometry is on and comes back
+    // when the mode returns to Depth (ApplyGeometrySelectionRule). Any new pick drops it.
+    private ChooserWindow.Choice? setAsideForGeometry;
     // Why true geometry cannot be set up for the selection (a Strings.resx key), null when VRX
     // can start it; and whether VRX's geometry stream for the running selection is ready.
     private GeometryBlock geometryBlock = GeometryBlock.NoGame;
@@ -231,6 +235,7 @@ public partial class MainWindow : Window
         System.Diagnostics.Debug.WriteLine($"[Selection] Select enter: {choice.App.FullPath}, pid {choice.App.Pid}, window {choice.Window.Handle:X} monitor {choice.Window.Monitor}, recent {choice.History != null}, Steam {choice.Steam?.AppId ?? "-"}");
         if (saveTimer.IsEnabled) SaveAndApply();
         sessionError = "";
+        setAsideForGeometry = null;
         profile = null; SetSettingsEnabled(false);
         var app = choice.App;
         // Only what identifies the game is kept: how it was picked is not.
@@ -329,6 +334,7 @@ public partial class MainWindow : Window
     // can, else estimated depth (Profile.UseGeometry; never saved).
     private void UpdateGeometryAvailability()
     {
+        if (ApplyGeometrySelectionRule()) return;   // it selected again, which ran this
         var chosen = selection;
         System.Diagnostics.Debug.WriteLine($"[Selection] UpdateGeometryAvailability enter: {chosen?.App.FullPath ?? "nothing"}, mode {appSettings.StereoMode}, expert {appSettings.IsExpert}");
         selectionCanStart = chosen != null && profile != null && !ScreenSources.IsScreen(chosen.App) &&
@@ -347,6 +353,57 @@ public partial class MainWindow : Window
 
     // The app-wide Depth | Geometry mode is on Geometry (Expert; Easy always uses depth).
     private bool GeometryMode => appSettings.UsesGeometry;
+
+    // Geometry: a selection that is not a Steam game is set aside (nothing selected, the status
+    // line saying why). Depth: a selection set aside comes back when nothing else was chosen.
+    // Never while a session starts, plays or stops. True when it selected again (Select has
+    // then brought the rest of the window up to date).
+    private bool ApplyGeometrySelectionRule()
+    {
+        if (engine.Running || starting || stopping) return false;
+        if (GeometryMode && selection is { } held && !IsSteamGame(held))
+        {
+            string name = SelectionName();
+            System.Diagnostics.Debug.WriteLine($"[Selection] ApplyGeometrySelectionRule: {held.App.FullPath} is not a Steam game - set aside while Geometry is on");
+            if (saveTimer.IsEnabled) SaveAndApply();
+            setAsideForGeometry = held;
+            selection = null; profile = null; SetSettingsEnabled(false);
+            Status.Text = Loc.Format("StatusGeometrySteamOnly", name);
+            return false;
+        }
+        if (!GeometryMode && selection == null && setAsideForGeometry is { } back)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Selection] ApplyGeometrySelectionRule: Depth - {back.App.FullPath} selected again");
+            Select(back);
+            return true;
+        }
+        return false;
+    }
+
+    // A Steam game: picked from the Steam library, or an executable whose settings or folder
+    // name a Steam app (a Steam library's steamapps\common). Never a whole display.
+    private bool IsSteamGame(ChooserWindow.Choice chosen)
+    {
+        ArgumentNullException.ThrowIfNull(chosen);
+        if (chosen.Steam != null) return true;
+        if (ScreenSources.IsScreen(chosen.App) || chosen.App.FullPath.Length == 0) return false;
+        if (!string.IsNullOrEmpty(profile?.GeometrySteamAppId) && SamePath(profile.ExecutablePath, chosen.App.FullPath)) return true;
+        return IsSteamExecutable(chosen.App.FullPath);
+    }
+
+    private static bool IsSteamExecutable(string executable)
+    {
+        ArgumentNullException.ThrowIfNull(executable);
+        try
+        {
+            return GeometryLaunch.FindSteamAppId(executable).Length > 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Selection] IsSteamExecutable: {executable}: {ex.Message}; not a Steam game");
+            return false;
+        }
+    }
 
     // True geometry for the selection: Geometry mode and a game VRX can start.
     private bool GeometryForSelection => GeometryMode && geometryBlock == GeometryBlock.None;
@@ -769,11 +826,11 @@ public partial class MainWindow : Window
     }
 
     // The app-wide mode (like Easy | Expert), saved at once in the app settings, with no dialog
-    // either way; the selection stays as it is. Geometry: the main button then starts (or
-    // restarts) a game VRX can start with true geometry, and that action shows the warning (the
-    // anti-cheat one when the game uses anti-cheat); a display or a program that is not a game
-    // gets a disabled main button saying why; auto-attach rests. Depth: everything plays with
-    // estimated depth, as before true geometry existed.
+    // either way. Geometry is only for Steam games: the main button then starts (or restarts)
+    // one with true geometry, and that action shows the warning (the anti-cheat one when the
+    // game uses anti-cheat); a selection that is not a Steam game (a display, a program, a game
+    // from outside Steam) is set aside until Depth (ApplyGeometrySelectionRule); auto-attach
+    // rests. Depth: everything plays with estimated depth, as before true geometry existed.
     private void SetGeometryMode(bool on)
     {
         System.Diagnostics.Debug.WriteLine($"[Geometry] SetGeometryMode enter: {appSettings.StereoMode} -> {(on ? "Geometry" : "Depth")}, selection {selection?.App.FullPath ?? "none"}, block {geometryBlock}");
@@ -1101,7 +1158,7 @@ public partial class MainWindow : Window
         {
             name = Loc.Get("CardNoGame");
             icon = null;
-            state = Loc.Get("CardPickGame");
+            state = Loc.Get(GeometryMode ? "CardPickSteamGame" : "CardPickGame");
         }
         else
         {
@@ -1247,14 +1304,22 @@ public partial class MainWindow : Window
         return (chose ? chooser.Picked : null, steam);
     }
 
-    // Whether VRX started this running game with true geometry and its stream is ready (the
-    // chooser's "Running with true geometry" in Geometry mode). An unreadable profile: no.
+    // Whether VRX started this running Steam game with true geometry and its stream is ready
+    // (the chooser's "Running with true geometry" in Geometry mode). An unreadable profile, or
+    // a game from outside Steam: no.
     private bool GeometryRunReady(RunningApp app)
     {
         ArgumentNullException.ThrowIfNull(app);
         try
         {
-            bool ready = GeometryLaunch.ExistingSession(app, WithGeometry(store.Load(app.FullPath)), store.Root) != null;
+            // Geometry mode is only for Steam games (ApplyGeometrySelectionRule).
+            var settings = store.Load(app.FullPath);
+            if (string.IsNullOrEmpty(settings.GeometrySteamAppId) && !IsSteamExecutable(app.FullPath))
+            {
+                System.Diagnostics.Debug.WriteLine($"[Chooser] GeometryRunReady: {app.FullPath} pid {app.Pid} is not a Steam game -> false");
+                return false;
+            }
+            bool ready = GeometryLaunch.ExistingSession(app, WithGeometry(settings), store.Root) != null;
             System.Diagnostics.Debug.WriteLine($"[Chooser] GeometryRunReady: {app.FullPath} pid {app.Pid} -> {ready}");
             return ready;
         }
@@ -2594,7 +2659,7 @@ public partial class MainWindow : Window
         if (EngineSession.BlockedMessage(2) != null) throw new Exception("Other engine start errors must keep Windows' own message");
         var observed = RunningApps.List(false);
         File.WriteAllLines(Path.Combine(output, "enumerated-apps.txt"), observed.Select(a => $"{a.Pid} | {a.FullPath} | {string.Join("; ", a.Windows)}"));
-        var one = new Profile { ExecutablePath = Path.Combine(output, "one", "game.exe"), Width = 6.25, Distance = 3.5, Height = .2, Horizontal = .4, Strength = .8, MenuKey = 0x78 };
+        var one = new Profile { ExecutablePath = Path.Combine(SmokeSteamFolder(output, "one", "4000020"), "game.exe"), Width = 6.25, Distance = 3.5, Height = .2, Horizontal = .4, Strength = .8, MenuKey = 0x78 };
         var two = new Profile { ExecutablePath = Path.Combine(output, "two", "game.exe"), Width = 4, ForegroundRefinement = false, MatchFrameToDepth = true, FastDepthModel = false };
         store.Save(one); store.Save(two);
         if (store.Load(one.ExecutablePath).Width != 6.25 || store.Load(two.ExecutablePath).Width != 4 || store.FileFor(one.ExecutablePath) == store.FileFor(two.ExecutablePath))
@@ -2762,10 +2827,10 @@ public partial class MainWindow : Window
             GeometryWarningBanner.Visibility != Visibility.Collapsed || !AiDepthContent.IsEnabled || profile?.GeometryStereo != false)
             throw new Exception("On Depth the switch must show Depth, with the geometry settings resting");
         // Anti-cheat: a game folder with Easy Anti-Cheat or BattlEye is refused geometry.
-        string protectedGame=Path.Combine(output,"anticheat","Game","Binaries","Win64","Game.exe");
+        string protectedGame=Path.Combine(SmokeSteamFolder(output, "Game", "4000023"),"Binaries","Win64","Game.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(protectedGame)!); File.WriteAllText(protectedGame,"fixture");
-        Directory.CreateDirectory(Path.Combine(output,"anticheat","Game","EasyAntiCheat"));
-        File.WriteAllText(Path.Combine(output,"anticheat","Game","start_protected_game.exe"),"fixture");
+        Directory.CreateDirectory(Path.Combine(SmokeSteamFolder(output, "Game", "4000023"),"EasyAntiCheat"));
+        File.WriteAllText(Path.Combine(SmokeSteamFolder(output, "Game", "4000023"),"start_protected_game.exe"),"fixture");
         string battlEye=Path.Combine(output,"anticheat-be","bin","x64","game.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(battlEye)!); File.WriteAllText(battlEye,"fixture");
         File.WriteAllText(Path.Combine(output,"anticheat-be","BEService_x64.exe"),"fixture");
@@ -2776,7 +2841,7 @@ public partial class MainWindow : Window
             !AntiCheat.Detect(battlEye).Any(m=>m.Name=="BattlEye") || AntiCheat.Detect(clean).Count!=0 ||
             !AntiCheat.Matches("EasyAntiCheat_EOS_Setup.exe","EasyAntiCheat*") || !AntiCheat.Matches("DayZ_BE.exe","*_BE.exe") || AntiCheat.Matches("Bees.exe","BEService*"))
             throw new Exception("Anti-cheat detection: Easy Anti-Cheat, BattlEye and a clean game folder");
-        if(AntiCheat.InstallRoot(protectedGame)!=Path.Combine(output,"anticheat","Game")) throw new Exception("Anti-cheat detection must scan the game's whole installation");
+        if(AntiCheat.InstallRoot(protectedGame)!=Path.Combine(SmokeSteamFolder(output, "Game", "4000023"))) throw new Exception("Anti-cheat detection must scan the game's whole installation");
         int beforeProtected=GeometryWarningsShown, antiCheatBefore=AntiCheatWarningsShown;
         if(AskGeometry(protectedGame,0,"Protected")!=GeometryConsent.UseDepth || LastSmokePrompt is not {AntiCheat:true,RiskButton:not null,AcceptButton:null} ||
             AskGeometry(clean,0,"Clean")!=GeometryConsent.Proceed || LastSmokePrompt is not {AntiCheat:false} || GeometryWarningsShown!=beforeProtected+2 || AntiCheatWarningsShown!=antiCheatBefore+1)
@@ -3093,7 +3158,7 @@ public partial class MainWindow : Window
         RefreshSelection();
         if (Status.Text != sessionError) throw new Exception("Refreshing hid the session error");
         if (Loc.Missing.Count > 0) throw new Exception("Strings asked for but missing from Strings.resx: " + string.Join(", ", Loc.Missing));
-        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach), its controls in SteamVR & shortcuts; one selected game (Game & window section gone, chooser Settings buttons select without playing); true geometry as an app-wide Depth | Geometry mode under the game card (app-settings.json, Depth by default and for old files; only a setting: no dialog, saved at once either way; switching games or Easy never changes it; Easy hides it and uses depth; old per-game methods keep only their renderer; greying of the other 3D section and auto-attach, which does nothing in Geometry mode; displays, programs that are not games and games VRX cannot start keep the selection with the reason; wraps when narrow); the chooser per mode (PlaceTile for every row; Geometry: only games VRX can start and its own geometry runs, no attach section, a tile launch asks once); the main button follows the selection and mode (MainButton.Decide for every row incl. displays, non-games, Easy and busy; Start / Restart / Play / Play display / Attach / Play in the window, disabled with its reason; Start and Restart on Geometry show one dialog per press - the red warning, or the anti-cheat warning with its 5 s countdown - Cancel launches nothing, Use estimated depth takes the depth path this time, I understand takes the geometry path, launches stubbed, Geometry mode kept); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; window: places remembered culture-independently and kept on screen, Easy compact and growing to its content, Expert back at its size, title bar buttons named; strings: " +
+        File.WriteAllText(Path.Combine(output, "smoke-pass.txt"), "PASS: WPF loaded/rendered; process enumeration; profile round-trip and path isolation; shortcut conflicts; control snapshot emitted; session error survives save/refresh; auto-attach settings, rules and state machine (no real windows, no attach), its controls in SteamVR & shortcuts; one selected game (Game & window section gone, chooser Settings buttons select without playing); true geometry as an app-wide Depth | Geometry mode under the game card (app-settings.json, Depth by default and for old files; only a setting: no dialog, saved at once either way; switching games or Easy never changes it; Easy hides it and uses depth; old per-game methods keep only their renderer; greying of the other 3D section and auto-attach, which does nothing in Geometry mode; Geometry only for Steam games: displays and other programs set aside on Geometry and selected again on Depth, a Steam game VRX cannot start keeps the selection with the reason; wraps when narrow); the chooser per mode (PlaceTile for every row; Geometry: only games VRX can start and its own geometry runs, no attach section, a tile launch asks once); the main button follows the selection and mode (MainButton.Decide for every row incl. displays, non-games, Easy and busy; Start / Restart / Play / Play display / Attach / Play in the window, disabled with its reason; Start and Restart on Geometry show one dialog per press - the red warning, or the anti-cheat warning with its 5 s countdown - Cancel launches nothing, Use estimated depth takes the depth path this time, I understand takes the geometry path, launches stubbed, Geometry mode kept); Easy/Expert mode defaults, memory and auto-attach; sections round-trip; window: places remembered culture-independently and kept on screen, Easy compact and growing to its content, Expert back at its size, title bar buttons named; strings: " +
             Loc.NeutralStrings().Count.ToString(CultureInfo.InvariantCulture) + " keys, all referenced keys present, placeholders consistent, no literal text in MainWindow.xaml, pseudo-locale transforms every string; screenshots ui-easy-skin, ui-easy-skin-pseudo, ui-expert-skin, ui-expert-all-open, ui-expert-pseudo. No VR session started.");
     }
 
@@ -3103,9 +3168,26 @@ public partial class MainWindow : Window
     // per game, and switching games (or Easy) never changes it; switching either way is only a
     // setting (no dialog; the warning comes with the main button's Start or Restart); old
     // per-game methods only keep their renderer; the other 3D section and auto-attach rest; a
-    // display, a program that is not a game and a game VRX cannot start keep the selection with
-    // a disabled main button saying why. The main button is never pressed here: nothing is
+    // display or a program that is not a Steam game is set aside on Geometry and comes back on
+    // Depth; a Steam game VRX cannot start keeps the selection with a disabled main button
+    // saying why. The main button is never pressed here: nothing is
     // launched and no DLL is copied.
+    // Smoke test: a folder laid out as an installed Steam game (steamapps\common\<name> with
+    // its app manifest), so a fixture in it is a Steam game - Geometry mode is only for Steam
+    // games (ApplyGeometrySelectionRule).
+    private static string SmokeSteamFolder(string output, string name, string appId)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(appId);
+        string steamapps = Path.Combine(output, "steam-library", "steamapps");
+        string folder = Path.Combine(steamapps, "common", name);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(steamapps, $"appmanifest_{appId}.acf"), $"\"AppState\"\n{{\n\t\"appid\"\t\t\"{appId}\"\n\t\"installdir\"\t\t\"{name}\"\n}}\n");
+        System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeSteamFolder: {folder} as Steam app {appId}");
+        return folder;
+    }
+
     private void SmokeTestGeometrySetting(string output, RunningApp sample, Profile one)
     {
         ArgumentNullException.ThrowIfNull(output);
@@ -3234,7 +3316,7 @@ public partial class MainWindow : Window
         // Profiles saved with a per-game method (a renderer, automatic, the old checkbox, depth,
         // Auto or none): loading never changes the mode, never writes the file, and keeps the
         // saved renderer as the game's geometry renderer - used only in Geometry mode.
-        string folder = Path.Combine(output, "geometry-setting");
+        string folder = SmokeSteamFolder(output, "geometry-setting", "4000021");
         if (Directory.Exists(folder)) Directory.Delete(folder, true);
         string fixture = Path.Combine(folder, "Game.exe");
         GeometryLaunchTests.FakePe(fixture, ["d3d11.dll"], []);
@@ -3320,7 +3402,7 @@ public partial class MainWindow : Window
 
         // A game with anti-cheat: switching is still only a setting - no anti-cheat dialog (it
         // comes with the main button's Start or Restart: SmokeTestAntiCheatWarning).
-        string protectedGame = Path.Combine(output, "anticheat", "Game", "Binaries", "Win64", "Game.exe");
+        string protectedGame = Path.Combine(SmokeSteamFolder(output, "Game", "4000023"), "Binaries", "Win64", "Game.exe");
         if (File.Exists(store.FileFor(protectedGame))) File.Delete(store.FileFor(protectedGame));
         warnings = GeometryWarningsShown;
         int antiCheatWarnings = AntiCheatWarningsShown;
@@ -3347,45 +3429,46 @@ public partial class MainWindow : Window
         if (!MainShows(Loc.Get("AttachPlay"), false) || StartButton.ToolTip as string != Loc.Get("MainCannotStart") || !DepthContent.IsEnabled || DepthContent.Opacity < 1)
             throw new Exception("On Depth a stopped game VRX cannot start must keep a disabled Attach / Play saying why, its depth settings usable");
 
-        // A program that is not a game (Teams, a browser...): never true geometry. On Geometry it
-        // stays selected with the main button disabled and the reason shown; on Depth it plays
-        // with estimated depth as before. Its saved renderer means nothing.
-        string teams = Path.Combine(folder, "apps", "ms-teams.exe");
+        // Geometry mode is only for Steam games. A program that is not one (Teams here, or a
+        // game from outside Steam) and a whole display are set aside on Geometry - nothing
+        // selected, the status line saying why - and come back on Depth, where they play with
+        // estimated depth as before. A new pick drops what was set aside.
+        string teams = Path.Combine(output, "apps", "ms-teams.exe");
         GeometryLaunchTests.FakePe(teams, ["d3d11.dll"], []);
         var teamsProfile = new Profile { ExecutablePath = teams };
         teamsProfile.ChooseGeometryRenderer(StereoPaths.Dxvk);
         store.Save(teamsProfile);
         var teamsRunning = new RunningApp(int.MaxValue - 23, "ms-teams.exe", teams, [new GameWindow(0x7F23, "Microsoft Teams")], null);
-        GeometryModeButton.IsChecked = true;
-        foreach (var teamsChoice in new[] { new ChooserWindow.Choice(new RunningApp(0, "ms-teams.exe", teams, [], null), new GameWindow(0, "Microsoft Teams")), new ChooserWindow.Choice(teamsRunning, teamsRunning.Windows[0]) })
+        var setAsideChoices = new List<(ChooserWindow.Choice Choice, string Main)>
         {
-            if (teamsChoice.App.Pid > 0) { selection = teamsChoice; UpdateGeometryAvailability(); UpdateButtons(); }
-            else Select(teamsChoice);
-            string reason = Loc.Format("GeometryNotAGame", SelectionName());
-            if (!GeometryMode || geometryBlock != GeometryBlock.NotAGame || profile?.GeometryStereo != false || StartButton.IsEnabled || StartButton.ToolTip as string != reason ||
-                GeometryPanel.IsEnabled || GeometryUnavailableHint.Text != reason || GeometryUnavailableHint.Visibility != Visibility.Visible || !SamePath(selection?.App.FullPath, teams) ||
-                !reason.Contains("is not a game"))
-                throw new Exception($"In Geometry mode a program that is not a game ({(teamsChoice.App.Pid > 0 ? "running" : "stopped")}) must stay selected with a disabled main button and the reason (tooltip '{StartButton.ToolTip}')");
-            DepthModeButton.IsChecked = true;
-            if (!MainShows(Loc.Get(teamsChoice.App.Pid > 0 ? "AttachPlay" : "MainStart"), true) || profile?.GeometryStereo != false)
-                throw new Exception("On Depth a program that is not a game plays (or starts) with estimated depth as before");
-            GeometryModeButton.IsChecked = true;
-        }
-
-        // A whole display: never true geometry. On Geometry it stays selected, its main button
-        // disabled saying to switch to Depth; on Depth it plays.
+            (new ChooserWindow.Choice(new RunningApp(0, "ms-teams.exe", teams, [], null), new GameWindow(0, "Microsoft Teams")), "MainStart"),
+            (new ChooserWindow.Choice(teamsRunning, teamsRunning.Windows[0]), "AttachPlay"),
+        };
         if (ScreenSources.App(store.Root, ScreenSources.List()) is { } screens)
+            setAsideChoices.Add((new ChooserWindow.Choice(screens, screens.Windows[0]), "MainPlayDisplay"));
+        foreach (var (choice, main) in setAsideChoices)
         {
-            Select(new ChooserWindow.Choice(screens, screens.Windows[0]));
-            if (!GeometryMode || geometryBlock != GeometryBlock.Display || GeometryPanel.IsEnabled || GeometryUnavailableHint.Text != Loc.Get("GeometryNotForDisplay") ||
-                !MainShows(Loc.Get("MainPlayDisplay"), false) || StartButton.ToolTip as string != Loc.Get("MainDisplayNeedsDepth") || !ToolTipService.GetShowOnDisabled(StartButton) ||
-                !ScreenSources.IsScreen(selection?.App) || CardName.ToolTip as string != Loc.Get("PathWholeScreen") || profile?.GeometryStereo != false)
-                throw new Exception("In Geometry mode a whole display must stay selected, its main button disabled saying to switch to Depth");
             DepthModeButton.IsChecked = true;
-            if (!MainShows(Loc.Get("MainPlayDisplay"), true) || StartButton.ToolTip != null || !DepthContent.IsEnabled)
-                throw new Exception("On Depth a whole display must play");
+            Select(choice);
+            string name = SelectionName();
+            if (!SamePath(selection?.App.FullPath, choice.App.FullPath) || GeometryMode)
+                throw new Exception($"On Depth {name} must be selected");
             GeometryModeButton.IsChecked = true;
+            if (selection != null || profile != null || !GeometryMode || Status.Text != Loc.Format("StatusGeometrySteamOnly", name) ||
+                CardName.Text != Loc.Get("CardNoGame") || CardState.Text != Loc.Get("CardPickSteamGame") || StartButton.IsEnabled || StartButton.ToolTip as string != Loc.Get("MainNeedsGame"))
+                throw new Exception($"Switching to Geometry must set {name} aside: nothing selected, the status saying why (status '{Status.Text}', card '{CardName.Text}')");
+            DepthModeButton.IsChecked = true;
+            if (!SamePath(selection?.App.FullPath, choice.App.FullPath) || !MainShows(Loc.Get(main), true) || profile?.GeometryStereo != false)
+                throw new Exception($"Switching back to Depth must select {name} again, playing with estimated depth ('{StartButton.Content}', enabled {StartButton.IsEnabled})");
         }
+        // Picking something else while one is set aside: it stays picked on Depth.
+        Select(setAsideChoices[0].Choice);
+        GeometryModeButton.IsChecked = true;
+        Select(fixtureChoice);
+        DepthModeButton.IsChecked = true;
+        if (!SamePath(selection?.App.FullPath, fixture))
+            throw new Exception("A new pick must drop the selection set aside for Geometry");
+        GeometryModeButton.IsChecked = true;
 
         // A Steam game: unbound (VRX does not know its executable) is unavailable and keeps its
         // settings in memory; bound to its executable it can be started.
@@ -3452,7 +3535,7 @@ public partial class MainWindow : Window
         if (Loc.NeutralStrings()["GeometryAntiCheatTitle"].Contains("not allowed") || found.Contains("will not use") || !found.Contains("banned") || !found.Contains("online") ||
             !found.Contains("own risk") || Loc.NeutralStrings().Values.Any(v => v.Contains("anti-cheat are refused")))
             throw new Exception("The anti-cheat warning must warn (online play, bans, your own risk), never say the game is refused");
-        IReadOnlyList<AntiCheat.Marker> markers = [new("Easy Anti-Cheat", Path.Combine(output, "anticheat", "Game", "EasyAntiCheat")), new("BattlEye", Path.Combine(output, "anticheat", "Game", "BEService_x64.exe"))];
+        IReadOnlyList<AntiCheat.Marker> markers = [new("Easy Anti-Cheat", Path.Combine(SmokeSteamFolder(output, "Game", "4000023"), "EasyAntiCheat")), new("BattlEye", Path.Combine(SmokeSteamFolder(output, "Game", "4000023"), "BEService_x64.exe"))];
         IEnumerable<string> Texts(DependencyObject node)
         {
             if (node is TextBlock block) yield return block.Text;
@@ -3525,7 +3608,7 @@ public partial class MainWindow : Window
         // the depth path this time; "I understand the risk" (after its countdown) takes the
         // geometry path. Every answer leaves VRX in Geometry mode and the game's renderer as it
         // was. Past the dialog the launch is stubbed (SmokeStubLaunch): nothing is started.
-        string protectedGame = Path.Combine(output, "anticheat", "Game", "Binaries", "Win64", "Game.exe");
+        string protectedGame = Path.Combine(SmokeSteamFolder(output, "Game", "4000023"), "Binaries", "Win64", "Game.exe");
         var saved = new Profile { ExecutablePath = protectedGame };
         saved.ChooseGeometryRenderer(StereoPaths.Dxvk);
         store.Save(saved);
@@ -3670,7 +3753,7 @@ public partial class MainWindow : Window
                 throw new Exception("With nothing selected the main button must be a disabled Attach / Play saying why");
 
             // A stopped fixture VRX can start: Start on Depth and on Geometry, following the switch.
-            string folder = Path.Combine(output, "main-button");
+            string folder = SmokeSteamFolder(output, "main-button", "4000022");
             if (Directory.Exists(folder)) Directory.Delete(folder, true);
             string fixture = Path.Combine(folder, "Game.exe");
             GeometryLaunchTests.FakePe(fixture, ["d3d11.dll"], []);
@@ -3790,16 +3873,18 @@ public partial class MainWindow : Window
             if (!Shows(Loc.Get("AttachPlay"), false) || StartButton.ToolTip as string != Loc.Get("MainCannotStart"))
                 throw new Exception("A stopped game VRX cannot start must leave a disabled Attach / Play saying why");
 
-            // A display: Play display on Depth; on Geometry disabled, saying to switch to Depth
-            // (Easy: Attach / Play).
+            // A display: Play display on Depth; on Geometry set aside (not a Steam game), so the
+            // main button needs a game; back on Depth it plays again (Easy: Attach / Play).
             if (ScreenSources.App(store.Root, ScreenSources.List()) is { } screens)
             {
                 Select(new ChooserWindow.Choice(screens, screens.Windows[0]));
                 if (!Shows(Loc.Get("MainPlayDisplay"), true) || StartButton.ToolTip != null) throw new Exception("A display must read Play display");
                 GeometryModeButton.IsChecked = true;
-                if (!Shows(Loc.Get("MainPlayDisplay"), false) || StartButton.ToolTip as string != Loc.Get("MainDisplayNeedsDepth") || !ScreenSources.IsScreen(selection?.App))
-                    throw new Exception("On Geometry a display must stay selected, Play display disabled saying to switch to Depth");
+                if (!Shows(Loc.Get("AttachPlay"), false) || StartButton.ToolTip as string != Loc.Get("MainNeedsGame") || selection != null)
+                    throw new Exception("On Geometry a display must be set aside, the main button needing a game");
                 DepthModeButton.IsChecked = true;
+                if (!Shows(Loc.Get("MainPlayDisplay"), true) || !ScreenSources.IsScreen(selection?.App))
+                    throw new Exception("Back on Depth the display must be selected again and read Play display");
                 appSettings.Mode = AppSettings.EasyMode;
                 UpdateButtons();
                 if (!Shows(Loc.Get("AttachPlay"), true)) throw new Exception("Easy: a display must read Attach / Play, as before");
@@ -4158,7 +4243,7 @@ public partial class MainWindow : Window
                 foreach(var child in PathButtons(VisualTreeHelper.GetChild(node,i))) yield return child;
         }
         // A stopped game for the launch tiles: a fixture executable that is never run.
-        string launchExe = Path.Combine(output, "chooser-launch", "LaunchFixture.exe");
+        string launchExe = Path.Combine(SmokeSteamFolder(output, "chooser-launch", "4000024"), "LaunchFixture.exe");
         GeometryLaunchTests.FakePe(launchExe, ["d3d11.dll"], []);
         var launchEntry = new GameHistory.Entry(launchExe, "Launch fixture", [], Path.GetDirectoryName(launchExe)!, "", DateTimeOffset.UtcNow);
         // The same stopped game as an installed Steam game whose executable VRX knows: the

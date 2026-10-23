@@ -43,6 +43,7 @@
   <data name="CardStopping" xml:space="preserve"><value>Stopping VR…</value></data>
   <data name="CardSpent" xml:space="preserve"><value>Stopped · switch to another window and back to attach again</value></data>
   <data name="CardReady" xml:space="preserve"><value>Ready · press Attach / Play</value></data>
+  <data name="CardPickSteamGame" xml:space="preserve"><value>Press Choose… to pick a Steam game</value></data>
   <data name="CardPickGame" xml:space="preserve"><value>Press Choose… to pick a game, or turn on auto-attach</value></data>
   <data name="CardNotRunning" xml:space="preserve"><value>Not running</value></data>
   <data name="CardRunning" xml:space="preserve"><value>Running</value></data>
@@ -406,6 +407,7 @@ The new line names VRX's launcher, not a VRX folder, so it keeps working if you 
 
 This lets Steam start the game with VRX's saved geometry settings. VRX does not edit Steam's configuration. The line names VRX's launcher, not a VRX folder, so it keeps working if you move, reinstall or uninstall VRX (without VRX, the game simply starts normally).</value></data>
   <data name="SteamCopyOptions" xml:space="preserve"><value>Copy launch options</value></data>
+  <data name="StatusGeometrySteamOnly" xml:space="preserve"><value>Geometry mode is for Steam games. {0} comes back when you switch to Depth.</value></data>
   <data name="SteamCopied" xml:space="preserve"><value>Copied ✓</value></data>
   <data name="SteamCopyFailed" xml:space="preserve"><value>Another program is using the clipboard. The launch options above are selected - press Ctrl+C to copy them.</value></data>
   <data name="SteamSetupLaunch" xml:space="preserve"><value>I've added these options — launch through Steam</value></data>
