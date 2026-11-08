@@ -627,6 +627,7 @@ struct App
     double postStageMs[8] = {};         // per-stage totals since the last report (see PostProcessDepth)
     unsigned postFused = 0, postSteadied = 0, postPasses = 0;
     double postTrustSum = 0, postAgeSum = 0;
+    double postStillSum = 0;            // steadied passes: summed share of the picture held as still
     bool motionUnavailableLogged = false, fuseModelLogged = false;
 
     // Anchor model (Depth Anything V2) on its own thread and queue on the depth GPU.
@@ -3006,7 +3007,7 @@ float FrameH(int face, float3 p, float fa, float fb)
     else ch = min(1.0, BarH(p.y, yF, ROOM_FRAME_W, fb) + BarH(p.y, transomY, ROOM_FRAME_W, fb) + BarH(p.y, yC, ROOM_FRAME_W, fb));
     return 1.0 - (1.0 - cv) * (1.0 - ch);
 }
-
+)HLSL" /* two literals (the text is unchanged): one is limited to 16380 characters by the VS 2022 compiler */ R"HLSL(
 // room.h RoomHash: a 1 m floor tile's tone, 0..65535.
 uint HashH(int i, int j)
 {
@@ -5413,11 +5414,20 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
 
     if (steady)
     {
-        if (prevIndex >= 0)
+        if (app.steadyHave && app.steadyPrevSeq != src->seq)
         {
-            const fusion::Motion m = fusion::MotionFromVectors(vectors[prevIndex].data(), bw, bh, W, H);
-            const fusion::Image trust = fusion::MotionTrust(luma, app.steadyPrevLuma, m);
-            out = fusion::Steady(out, fusion::Remap(app.steadyPrevOut, m), trust);
+            // Unchanged parts of the picture keep their depth (STILL_HOLD); the rest
+            // blends in the previous depth moved by the motion, where it is verified.
+            fusion::Image moved, trust;
+            if (prevIndex >= 0)
+            {
+                const fusion::Motion m = fusion::MotionFromVectors(vectors[prevIndex].data(), bw, bh, W, H);
+                trust = fusion::MotionTrust(luma, app.steadyPrevLuma, m);
+                moved = fusion::Remap(app.steadyPrevOut, m);
+            }
+            const fusion::Image still = fusion::Stillness(luma, app.steadyPrevLuma);
+            out = fusion::Steady(out, moved, trust, app.steadyPrevOut, still);
+            if (still.valid()) app.postStillSum += std::accumulate(still.v.begin(), still.v.end(), 0.0) / still.v.size();
             app.postSteadied++;
         }
         app.steadyPrevOut = out;
@@ -5628,13 +5638,13 @@ static void WorkerMain(App* app)
                 // estimates, CPU maths), how many passes each changed, anchor state.
                 auto& p = app->postMs;
                 std::sort(p.begin(), p.end());
-                Log("Worker: steady %s, fuse %s | post ms p50 %.1f p95 %.1f | steadied %u, fused %u of %u | anchor passes %u, mean age %.0f ms, motion trust %.2f",
+                Log("Worker: steady %s, fuse %s | post ms p50 %.1f p95 %.1f | steadied %u (%.0f%% still), fused %u of %u | anchor passes %u, mean age %.0f ms, motion trust %.2f",
                     app->steadyEnabled.load() ? "on" : "off", FuseActive(*app) ? "on" : "off", p[p.size() / 2], p[std::min(p.size() - 1, p.size() * 95 / 100)],
-                    app->postSteadied, app->postFused, app->postPasses, app->anchorPasses.exchange(0),
+                    app->postSteadied, app->postSteadied ? app->postStillSum / app->postSteadied * 100.0 : 0.0, app->postFused, app->postPasses, app->anchorPasses.exchange(0),
                     app->postFused ? app->postAgeSum / app->postFused * 1000.0 : 0.0, app->postFused ? app->postTrustSum / app->postFused : 0.0);
                 p.clear();
                 app->postSteadied = app->postFused = app->postPasses = 0;
-                app->postAgeSum = app->postTrustSum = 0;
+                app->postAgeSum = app->postTrustSum = app->postStillSum = 0;
             }
             nextSummary = NowSeconds() + 2.0;
         }

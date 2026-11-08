@@ -559,6 +559,54 @@ static void TestDepthFusion()
     Check(std::fabs(fusion::Steady(cur, prev, fusion::Image(w, h, 1.0f)).at(9, 9) - (0.4f + fusion::STEADY_ALPHA * 0.4f)) < 1e-6f, "trusted steadying blends by alpha");
     Check(fusion::Steady(cur, fusion::Image(), fusion::Image()).at(9, 9) == 0.4f, "steadying without history is a no-op");
 
+    // Stillness: an unchanged picture is still everywhere; one changed pixel unsettles
+    // its neighbourhood fully (not diluted) and nothing far from it.
+    const fusion::Image allStill = fusion::Stillness(luma, luma);
+    Check(allStill.valid() && allStill.at(0, 0) == 1.0f && allStill.at(40, 20) == 1.0f, "an unchanged picture is still");
+    fusion::Image poked = luma;
+    poked.at(40, 20) += 40.0f;
+    const fusion::Image pokedStill = fusion::Stillness(poked, luma);
+    Check(pokedStill.at(40, 20) == 0.0f && pokedStill.at(40 + fusion::STILL_REACH, 20 - fusion::STILL_REACH) == 0.0f, "one changed pixel is not still, nor are its neighbours");
+    Check(pokedStill.at(40 + fusion::STILL_REACH + 1, 20) > 0.0f && pokedStill.at(40 + fusion::STILL_REACH + 1, 20) < 1.0f, "the edge of a change is softened");
+    Check(pokedStill.at(10, 5) == 1.0f && pokedStill.at(60, 30) == 1.0f, "a change leaves far pixels still");
+    fusion::Image noisy = luma;
+    for (size_t i = 0; i < noisy.v.size(); i++) noisy.v[i] += (i % 2) ? 2.0f : -2.0f;
+    Check(fusion::Stillness(noisy, luma).at(40, 20) == 1.0f, "a 2-level flicker still counts as still");
+
+    // Steadying with a stillness map: still pixels hold the previous output by STILL_HOLD
+    // (in place, whatever the motion says); changed ones follow the plain blend.
+    const fusion::Image moved(w, h, 0.6f);
+    const fusion::Image held = fusion::Steady(cur, moved, fusion::Image(w, h, 1.0f), prev, fusion::Image(w, h, 1.0f));
+    Check(std::fabs(held.at(9, 9) - (0.4f + fusion::STILL_HOLD * 0.4f)) < 1e-6f, "still pixels hold the previous output");
+    const fusion::Image fresh = fusion::Steady(cur, moved, fusion::Image(w, h, 1.0f), prev, fusion::Image(w, h, 0.0f));
+    Check(std::fabs(fresh.at(9, 9) - (0.4f + fusion::STEADY_ALPHA * 0.2f)) < 1e-6f, "changed pixels blend the moved output");
+    const fusion::Image noMotion = fusion::Steady(cur, fusion::Image(), fusion::Image(), prev, fusion::Image(w, h, 0.0f));
+    Check(noMotion.at(9, 9) == 0.4f, "changed pixels without motion keep the new estimate");
+    const fusion::Image noStill = fusion::Steady(cur, moved, fusion::Image(w, h, 1.0f), fusion::Image(), fusion::Image());
+    Check(std::fabs(noStill.at(9, 9) - (0.4f + fusion::STEADY_ALPHA * 0.2f)) < 1e-6f, "no stillness map is plain steadying");
+
+    // Noise on a still picture: repeated passes of independent noise settle far closer
+    // to the truth than STEADY_ALPHA alone does.
+    {
+        const fusion::Image one(1, 1, 1.0f);
+        float plainOut = 0.5f, heldOut = 0.5f;
+        double plainVar = 0, heldVar = 0;
+        unsigned seed = 12345;
+        const int passes = 4000;
+        for (int k = 0; k < passes; k++)
+        {
+            seed = seed * 1664525u + 1013904223u;
+            const float raw = 0.5f + (((seed >> 8) & 0xFFFF) / 65535.0f - 0.5f) * 0.2f;
+            const fusion::Image c(1, 1, raw);
+            plainOut = fusion::Steady(c, fusion::Image(1, 1, plainOut), one).v[0];
+            heldOut = fusion::Steady(c, fusion::Image(1, 1, heldOut), one, fusion::Image(1, 1, heldOut), one).v[0];
+            if (k >= 100) { plainVar += (plainOut - 0.5) * (plainOut - 0.5); heldVar += (heldOut - 0.5) * (heldOut - 0.5); }
+        }
+        const double ratio = std::sqrt(heldVar / plainVar);
+        std::printf("  still-picture depth noise: held %.2f of plain steadying\n", ratio);
+        Check(ratio < 0.5, "holding still parts cuts the noise by more than half");
+    }
+
     // Luma: BT.601 from packed RGBA (R in the low byte).
     const uint32_t px[2] = { 0xFF0000FFu, 0xFF00FF00u };
     const fusion::Image l = fusion::LumaFromRgba(px, 2, 1);

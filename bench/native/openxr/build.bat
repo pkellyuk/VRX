@@ -1,17 +1,23 @@
 @echo off
 setlocal enabledelayedexpansion
 
+rem A compiler already set up (a developer command prompt) is used as it is.
+where cl >nul 2>&1
+if not errorlevel 1 (echo === Visual Studio: the compiler already on PATH& goto :vsready)
+
 rem The newest Visual Studio with the C++ tools (vswhere), else the developer PC's VS 18.
 set "VCVARS="
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if exist "%VSWHERE%" for /f "usebackq delims=" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VCVARS=%%I\VC\Auxiliary\Build\vcvars64.bat"
 if not defined VCVARS set "VCVARS=C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
 echo === Visual Studio: %VCVARS%
-if not exist "%VCVARS%" (
-  echo ERROR: vcvars64.bat not found at %VCVARS%
+rem !VCVARS!, not %VCVARS%, inside the block: the ")" of "(x86)" would close it.
+if not exist "!VCVARS!" (
+  echo ERROR: vcvars64.bat not found at !VCVARS!
   exit /b 1
 )
-call "%VCVARS%" >nul
+call "!VCVARS!" >nul
+:vsready
 
 set INC=%~dp0include
 set OUT=%~dp0out
@@ -87,6 +93,7 @@ if errorlevel 1 (
 copy /y "%ORTLIB%\onnxruntime.dll" "%OUT%\" >nul
 for /d %%D in ("%USERPROFILE%\.nuget\packages\microsoft.ai.directml\*") do set DMLPKG2=%%D
 if defined DMLPKG2 if exist "!DMLPKG2!\runtimes\win-x64\native\DirectML.dll" copy /y "!DMLPKG2!\runtimes\win-x64\native\DirectML.dll" "%OUT%\" >nul
+if defined DMLPKG2 if exist "!DMLPKG2!\bin\x64-win\DirectML.dll" copy /y "!DMLPKG2!\bin\x64-win\DirectML.dll" "%OUT%\" >nul
 rem The Windows SDK's redistributable shader compiler, next to the exe so that the
 rem engine loads it instead of System32's (which changes with Windows updates): the
 rem shipped shader cache is keyed by the compiler's version (xrapp5.cpp, CompileCs).

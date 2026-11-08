@@ -27,6 +27,17 @@ static const float FIT_EPS = 2e-3f;        // guided-filter regulariser
 static const int FIT_SCALE = 4;            // the fit runs at 1/4 resolution
 static const float FUSE_SIGMA = 16.0f;     // px on the depth grid, per-region fit window
 static const float STEADY_ALPHA = 0.5f;    // weight of the moved previous output at full trust
+// Holding still parts (Stillness / Steady with a stillness map). A fresh estimate of an
+// unchanged picture is never exactly the same, and the model looks at the whole picture,
+// so a change anywhere (a video, typing, scrolling) moved the depth of everything. Where
+// the picture itself has not changed since the previous pass, the previous output is
+// kept with this weight instead: noise left 0.23 of the raw estimate's (0.58 with
+// STEADY_ALPHA alone), settling to a real change in ~10 depth passes.
+static const float STILL_HOLD = 0.9f;
+static const float STILL_LO = 3.0f / 255.0f;   // largest nearby luma change still counted as unchanged
+static const float STILL_HI = 8.0f / 255.0f;   // nearby luma change counted as changed
+static const int STILL_REACH = 2;              // px on the depth grid: a change unsettles its neighbours
+static const float STILL_SIGMA = 2.0f;         // px, softens the edge between held and fresh depth
 
 struct Image
 {
@@ -403,6 +414,67 @@ inline Image Steady(const Image& cur, const Image& previousMoved, const Image& t
     {
         const float w = alpha * trust.v[i];
         out.v[i] = cur.v[i] + w * (previousMoved.v[i] - cur.v[i]);
+    });
+    return out;
+}
+
+// 0..1 per pixel: 1 where the picture (luma in 0..255) has not changed between the two
+// frames, judged by the largest change within STILL_REACH px. A changed pixel is never
+// diluted by its unchanged neighbours (a moving mouse pointer or a blinking cursor
+// counts), unlike MotionTrust's blur. Compared in place, with no motion.
+inline Image Stillness(const Image& lumaCur, const Image& lumaPrev)
+{
+    if (!lumaCur.valid() || !lumaPrev.valid() || lumaCur.w != lumaPrev.w || lumaCur.h != lumaPrev.h) return {};
+    const int w = lumaCur.w, h = lumaCur.h;
+    Image diff(w, h), rowMax(w, h), still(w, h);
+    ForPixels(w, h, [&](size_t i) { diff.v[i] = std::fabs(lumaCur.v[i] - lumaPrev.v[i]) / 255.0f; });
+    ForRows(h, [&](int y)
+    {
+        const float* d = diff.v.data() + (size_t)y * w;
+        float* o = rowMax.v.data() + (size_t)y * w;
+        for (int x = 0; x < w; x++)
+        {
+            float m = 0;
+            for (int k = std::max(0, x - STILL_REACH); k <= std::min(w - 1, x + STILL_REACH); k++) m = std::max(m, d[k]);
+            o[x] = m;
+        }
+    });
+    ForRows(h, [&](int y)
+    {
+        float* o = still.v.data() + (size_t)y * w;
+        for (int x = 0; x < w; x++)
+        {
+            float m = 0;
+            for (int k = std::max(0, y - STILL_REACH); k <= std::min(h - 1, y + STILL_REACH); k++) m = std::max(m, rowMax.v[(size_t)k * w + x]);
+            o[x] = std::clamp((STILL_HI - m) / (STILL_HI - STILL_LO), 0.0f, 1.0f);
+        }
+    });
+    // Soften only the still side of the boundary: a changed pixel stays at 0.
+    const Image soft = Blur(still, STILL_SIGMA);
+    ForPixels(w, h, [&](size_t i) { still.v[i] = std::min(still.v[i], soft.v[i]); });
+    return still;
+}
+
+// Steadying with still parts held: where the picture is unchanged (still = 1) the
+// previous output, in place, is kept with weight `hold`; elsewhere the moved previous
+// output is blended with STEADY_ALPHA * trust as in Steady; partly still pixels mix the
+// two. An empty `moved` or `trust` counts as no trust (motion unavailable); an empty
+// `still` or `previous` reduces to Steady.
+inline Image Steady(const Image& cur, const Image& moved, const Image& trust, const Image& previous, const Image& still,
+    float alpha = STEADY_ALPHA, float hold = STILL_HOLD)
+{
+    if (!cur.valid()) return {};
+    const size_t n = cur.v.size();
+    const bool haveMoved = moved.valid() && trust.valid() && moved.v.size() == n && trust.v.size() == n;
+    const bool haveStill = previous.valid() && still.valid() && previous.v.size() == n && still.v.size() == n;
+    if (!haveStill) return haveMoved ? Steady(cur, moved, trust, alpha) : cur;
+    Image out(cur.w, cur.h);
+    ForPixels(cur.w, cur.h, [&](size_t i)
+    {
+        const float s = still.v[i];
+        float v = cur.v[i] + s * hold * (previous.v[i] - cur.v[i]);
+        if (haveMoved) v += (1.0f - s) * alpha * trust.v[i] * (moved.v[i] - cur.v[i]);
+        out.v[i] = v;
     });
     return out;
 }
