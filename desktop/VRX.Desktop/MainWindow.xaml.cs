@@ -249,6 +249,7 @@ public partial class MainWindow : Window
         EdgeStepMinSlider.Value = p.EdgeStepMin;
         WidenSlider.Value = p.WidenNear;
         ThinPartsCheck.IsChecked = p.ThinParts;
+        SharpenEdgesCheck.IsChecked = p.SharpenEdges;
         CurveSlider.Value = p.ScreenCurve;
         AmbilightCheck.IsChecked = p.Ambilight;
         AmbiStrengthSlider.Value = p.AmbilightStrength;
@@ -282,6 +283,7 @@ public partial class MainWindow : Window
             EdgeStepMin = (int)Math.Round(EdgeStepMinSlider.Value),
             WidenNear = (int)Math.Round(WidenSlider.Value),
             ThinParts = ThinPartsCheck.IsChecked == true,
+            SharpenEdges = SharpenEdgesCheck.IsChecked == true,
             ScreenCurve = (int)Math.Round(CurveSlider.Value),
             Ambilight = AmbilightCheck.IsChecked == true,
             AmbilightStrength = (int)Math.Round(AmbiStrengthSlider.Value),
@@ -1315,6 +1317,7 @@ public partial class MainWindow : Window
         legacy.Remove("EdgeStepMin");
         legacy.Remove("WidenNear");
         legacy.Remove("ThinParts");
+        legacy.Remove("SharpenEdges");
         legacy.Remove("ScreenCurve");
         legacy.Remove("Ambilight");
         legacy.Remove("AmbilightStrength");
@@ -1355,28 +1358,30 @@ public partial class MainWindow : Window
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
         var roomy = new Profile { Room = 45 };
         var glassy = new Profile { Room = 45, RoomGlass = 60, RoomReflections = 25, RoomLight = 40, RoomLightColor = "#FFD1A3" };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 14 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 4 0 12 100 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 4 0 12 100 0") ||
-            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 4 0 12 100 0") ||
-            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 4 0 12 100 0"))
-            throw new Exception("Control snapshot must be v14 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, the edge flattening, the edge steps flag and least change, the widening, and the thin parts flag (see desktop_control.h)");
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 15 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0 0") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0 0") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0 0") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 4 0 12 100 0 0") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 4 0 12 100 0 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 4 0 12 100 0 0") ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 4 0 12 100 0 0") ||
+            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 4 0 12 100 0 0"))
+            throw new Exception("Control snapshot must be v15 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, the edge flattening, the edge steps flag and least change, the widening, the thin parts flag, and the sharpened edges flag (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
             throw new Exception("Profiles saved before the sub-pixel warp existed must load with it on");
-        if (store.Load(one.ExecutablePath).EdgeFlatten != 4 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9 0 12 100 0") ||
+        if (store.Load(one.ExecutablePath).EdgeFlatten != 4 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9 0 12 100 0 0") ||
             new Profile { EdgeFlatten = 16 }.Valid() || new Profile { EdgeFlatten = -1 }.Valid())
             throw new Exception("Profiles saved before the edge flattening existed must load at 4 %; it is in the snapshot and 0 to 15");
         var legacyEdges = store.Load(one.ExecutablePath);
         if (legacyEdges.EdgeSteps || legacyEdges.EdgeStepMin != 12 || legacyEdges.WidenNear != 100 ||
-            !new Profile { EdgeSteps = true, EdgeStepMin = 30, WidenNear = 200 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 4 1 30 200 0") ||
+            !new Profile { EdgeSteps = true, EdgeStepMin = 30, WidenNear = 200 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 4 1 30 200 0 0") ||
             new Profile { EdgeStepMin = 4 }.Valid() || new Profile { EdgeStepMin = 61 }.Valid() || new Profile { WidenNear = -1 }.Valid() || new Profile { WidenNear = 301 }.Valid())
             throw new Exception("Profiles saved before the edge steps existed must load with them off, at 12 % and 100 % widening; they follow the edge flattening in the snapshot");
-        if (store.Load(one.ExecutablePath).ThinParts || !new Profile { ThinParts = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 4 0 12 100 1"))
-            throw new Exception("Profiles saved before the thin parts setting existed must load with it off; it is the snapshot's last value");
+        if (store.Load(one.ExecutablePath).ThinParts || !new Profile { ThinParts = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 4 0 12 100 1 0"))
+            throw new Exception("Profiles saved before the thin parts setting existed must load with it off; it follows the widening in the snapshot");
+        if (store.Load(one.ExecutablePath).SharpenEdges || !new Profile { SharpenEdges = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 4 0 12 100 0 1"))
+            throw new Exception("Profiles saved before the sharpened depth edges existed must load with them off; it is the snapshot's last value");
         if (store.Load(one.ExecutablePath).ScreenCurve != 0 || store.Load(one.ExecutablePath).Ambilight)
             throw new Exception("Profiles saved before the curve and ambilight existed must load flat, with no glow");
         if (store.Load(one.ExecutablePath).AmbilightStrength != 85 || store.Load(one.ExecutablePath).WorldColor != "#000000")
@@ -1539,6 +1544,10 @@ public partial class MainWindow : Window
         ThinPartsCheck.IsChecked = true;
         if (!ReadProfile().ThinParts) throw new Exception("The thin parts checkbox is not mapped to settings");
         ThinPartsCheck.IsChecked = false;
+        if (SharpenEdgesCheck.IsChecked == true) throw new Exception("Sharpened depth edges should default off");
+        SharpenEdgesCheck.IsChecked = true;
+        if (!ReadProfile().SharpenEdges) throw new Exception("The sharpened depth edges checkbox is not mapped to settings");
+        SharpenEdgesCheck.IsChecked = false;
         SubpixelCheck.IsChecked = false;
         if (ReadProfile().SubpixelWarp) throw new Exception("Sub-pixel warp checkbox is not mapped to settings");
         SubpixelCheck.IsChecked = true;

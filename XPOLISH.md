@@ -222,3 +222,70 @@ flag `--thin-parts`).
   and upright, and nothing holds a part over from the pass before.
 - With another GPU as the depth GPU it was not tried.
 - Parts that are thin across the picture rather than upright are not looked for.
+
+## Depth edges on the picture's edges
+
+An experimental setting, off by default: **Sharpen depth edges with the picture
+(experimental)** in the Depth section (`SharpenEdges`, per game, live; the last value
+of the v15 control snapshot; renderer flag `--refine`). Checked by tests, `--selftest`
+and `--dump` on one captured scene; not yet seen in the headset.
+
+**Cause.** The slants, halos and dragged background around objects all come from one
+thing: depth is a 686x392 map whose edges are soft (far to near over about 3 depth
+pixels), scaled up to the picture by plain blending. An object's edge in the depth is
+a ramp about 8 picture pixels wide that seldom sits on the object's edge in the
+picture, and everything on the ramp is moved by an in-between amount. `DilateNear`,
+the clean cut and the thin-part fix each patch one symptom of it.
+
+**Fix** (`depth_refine.h`: `RefineAt`, `MarkFlat`, `WidenFine`; `kRefineHlsl`). Each
+picture pixel takes its depth from the 7 x 7 depth samples around it, weighted by
+
+- how close the sample is (falling off over 1.5 depth pixels);
+- how alike the picture is: the pixel's colour against the picture averaged over the
+  sample's own patch (the grid image). A patch that straddles an edge is a mix of both
+  sides and is like neither;
+- how flat the depth is around the sample (its 3 x 3 range against 0.04): a sample on
+  a ramp is the model's in-between value, and a pixel is better served by a sample of
+  its own colour a little further off, where the depth has settled.
+
+A pixel with nothing alike around it (busy texture) keeps the plain blend. The near
+side is then widened by 2 picture pixels: the picture's own outlines are 2 or 3 pixels
+of in-between colour that would otherwise fall to either side one by one, a dotted
+fringe beside every edge (seen in the first dumps).
+
+**Live.**
+
+- The worker publishes the depth as estimated (no `DilateNear`, no clean cut; the
+  thin-part fix still runs) together with that frame's own picture on the depth grid
+  and the flatness (`DepthSlot::guideUp`). It asks for the grid image even with steady
+  depth and fusion off.
+- The render thread sharpens every frame against the picture it is about to show
+  (`RecordRefine`), into a depth buffer at the picture's size that the warp reads with
+  `DW x DH = CW x CH`; the warp shader is unchanged. Because the guide is the depth
+  frame's picture and the pixel is the shown frame's, depth that is a frame or two
+  late still lands on where the object is now, within the 3 depth pixels it looks.
+- Cost: 0.49 ms a frame for a 1920x1080 picture on the RTX 5060 Ti with nothing else
+  running (`--selftest` reports it). Not measured with a game sharing the GPU.
+
+**Checked.**
+
+- `TestDepthRefine` (`playback_test`): a soft depth edge 8 picture pixels off a
+  picture edge steps at the picture's edge; busy texture on smooth depth keeps the
+  plain blend to 0.01; a 6 px bar the model half-sees gets one depth across it and
+  what is beside it is not dragged along.
+- `--selftest`: the GPU pass against the CPU reference, worst difference 0.00000.
+- `--dump` on the castle capture (`xrapp5_eye*_refine.ppm` beside `_mirror` as now and
+  `_plain` with neither; `xrapp5_near_refined.ppm`): in the depth, roofs come to a
+  point and edges sit on the picture's. In the eyes the outlines are clean without
+  the 8-pixel widening; against what is shown now the difference on a still picture
+  is small, against the plain blend it is large. A few specks remain beside a chimney
+  and one roof.
+
+**Not done.**
+
+- Not seen in the headset; no game frame; no moving picture. Edges may flicker with
+  picture noise or compression blocks, and the gain for late depth is untested.
+- The spires are unchanged: the model did not see them, so there is no depth of theirs
+  to place. The thin-part fix is still the answer there.
+- Only the main picture; the curved screen and room read the same warped eyes, so
+  they follow, but that was not looked at.

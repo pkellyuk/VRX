@@ -64,6 +64,12 @@ public sealed class Profile
     // so they stay with the background while their foot is dragged along, and they bend
     // opposite ways in the two eyes. Off by default: tried on one scene so far.
     public bool ThinParts { get; set; }
+    // Depth edges sharpened by the picture (v15 snapshot, live; depth_refine.h). The depth
+    // map is much coarser than the picture and its edges are soft; each pixel of the
+    // picture takes its depth from the samples around it that look like it, so an
+    // object's depth ends where the object does. It replaces the widening of near objects
+    // and the clean cut while on. Off by default: not yet judged in the headset.
+    public bool SharpenEdges { get; set; }
 
     // Curved screen: 0 flat (default) .. 100 fully wrapped. The wrap this stands for
     // lives in bench/native/openxr/screen_curve.h (kCurveMaxWrap).
@@ -132,7 +138,7 @@ public sealed class Profile
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 14 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear} {(ThinParts ? 1 : 0)}\n");
+        $"VRX 15 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear} {(ThinParts ? 1 : 0)} {(SharpenEdges ? 1 : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)

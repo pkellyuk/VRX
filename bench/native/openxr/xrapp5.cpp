@@ -153,6 +153,7 @@ using Microsoft::WRL::ComPtr;
 #include "depth_fusion.h"
 #include "depth_edges.h"
 #include "thin_parts.h"
+#include "depth_refine.h"
 #include "motion_estimator.h"
 #include "frame_timing.h"
 #include "ambilight.h"
@@ -294,6 +295,7 @@ struct Options
     bool delayed = false;               // --delayed: game frame timing "delayed to depth" (paired wins if both)
     bool subpixel = true;               // sub-pixel warp (no depth banding); --whole-pixel restores the old warp
     bool thinParts = false;             // --thin-parts: thin upright parts take the depth of what they stand on (thin_parts.h)
+    bool refine = false;                // --refine: depth sharpened by the picture, per frame (depth_refine.h)
     bool edgeSnap = false;              // --edge-snap: horizontal depth edges made into steps (depth_edges.h) instead of slanted ramps
     float edgeFade = EDGE_FADE;         // share of the picture's width, each side, over which the edges flatten to the screen plane (0 = off)
     float curve = 0.0f;                 // curved screen: 0 flat .. 1 fully wrapped (screen_curve.h)
@@ -330,6 +332,9 @@ struct DepthSlot
 {
     ComPtr<ID3D12Resource> nearUp;      // UPLOAD heap, float[W*H], 0 = far .. 1 = near
     float* nearMapped = nullptr;
+    ComPtr<ID3D12Resource> guideUp;     // UPLOAD heap, uint32[W*H]: this depth's own picture on the depth grid, with flatness (depth_refine.h)
+    uint32_t* guideMapped = nullptr;
+    bool hasGuide = false;              // guideUp is filled, and the depth is as estimated (not widened): to be sharpened per frame
     SourceRef source;                  // retains the exact colour frame paired with this depth
     double sceneTime = 0;
     double completeTime = 0;
@@ -351,6 +356,15 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     uint32_t subpixel;
     float edgeFade;                     // px: the shift fades to zero this near the left/right edges (EdgeWeight); 0 = none
     float rowSnap;                      // nearness: depth rows further apart than this are not blended between (edges::ROW_SNAP); 0 = always blend
+};
+
+struct RefineConstants                  // must match cbuffer C in kRefineHlsl
+{
+    uint32_t cw, ch, dw, dh;
+    uint32_t exactLoad;
+    uint32_t pass;                      // 0: sharpen into the scratch buffer, 1: widen the near side into nearFine
+    int32_t reach, widen;
+    float kSpread, kAlike, plain;
 };
 
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
@@ -529,6 +543,9 @@ struct App
     ComPtr<ID3D12DescriptorHeap> descHeap;
     UINT descInc = 0;
     ComPtr<ID3D12Resource> nearBuf;                      // structured float[W*H]
+    ComPtr<ID3D12Resource> nearFine, nearFineUp;         // structured float[cw*ch] for the main target: depth at the picture's size (depth_refine.h), and its upload buffer
+    float* nearFineMapped = nullptr;
+    int nearFineW = 0, nearFineH = 0;
     WarpTarget mainTarget, testTarget;
     ComPtr<ID3D12Resource> testSrc;                      // WxH RGBA source for the self-test
 
@@ -620,6 +637,17 @@ struct App
     // thin parts traced (TraceThin), and the ones that lean toward something nearer that
     // they are attached to are given its depth each time depth is published (PublishDepth).
     std::atomic<bool> thinOn{ false };
+    // Depth sharpened by the picture (depth_refine.h). The worker pairs each depth map with
+    // its own picture on the depth grid; the render thread sharpens per frame (RecordRefine).
+    std::atomic<bool> refineOn{ false };
+    ComPtr<ID3D12RootSignature> refineRootSig;
+    ComPtr<ID3D12PipelineState> refinePso;
+    ComPtr<ID3D12Resource> guideBuf;                     // structured uint32[W*H]: the slot's guide on the GPU
+    ComPtr<ID3D12Resource> fineTmp;                      // structured float[cw*ch]: sharpened, before widening
+    std::vector<uint32_t> guideNow, guideScratch;        // worker: the last estimate's picture on the depth grid
+    bool guideHave = false;
+    uint64_t guideLayout = 0;
+    uint64_t refinePublishes = 0;
     ComPtr<ID3D12Resource> fineBuf, fineReadback;
     uint32_t* fineMapped = nullptr;
     ComPtr<ID3D12CommandAllocator> fineAlloc;
@@ -692,7 +720,9 @@ static const UINT DESC_CURVE_MAIN = SRC_RING + 12;       // 5: warped pictures, 
 static const UINT DESC_CURVE_TEST = SRC_RING + 17;       // 5: the same for the self-test
 static const UINT DESC_ROOM = SRC_RING + 22;             // 5: decode table, glow, emitters (UAV), lightmap (UAV), mirror picture (UAV)
 static const UINT DESC_CURVE_BENCH = SRC_RING + 27;      // 5: the same as DESC_CURVE_MAIN for the room benchmark (--bench-room)
-static const UINT DESC_COUNT = SRC_RING + 32;
+static const UINT DESC_FINE_TABLE = SRC_RING + 32;      // 4: the main target's table with depth at the picture's size (EnsureNearFine)
+static const UINT DESC_REFINE_TABLE = SRC_RING + 36;    // 4: depth SRV, guide, scratch and fine depth UAVs (RecordRefine)
+static const UINT DESC_COUNT = SRC_RING + 40;
 static const int WORLD_W = 8;                            // the world colour layer: one colour needs few pixels
 static const int TEST_EYE_W = 256, TEST_EYE_H = 192;     // self-test eye buffers
 
@@ -957,6 +987,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--whole-pixel")) { opt->subpixel = false; continue; }
         if (!strcmp(a, "--edge-snap")) { opt->edgeSnap = true; continue; }
         if (!strcmp(a, "--thin-parts")) { opt->thinParts = true; continue; }
+        if (!strcmp(a, "--refine")) { opt->refine = true; continue; }
         if (!strcmp(a, "--no-edge-snap")) { opt->edgeSnap = false; continue; }
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
@@ -2203,6 +2234,82 @@ void main(uint3 id : SV_DispatchThreadID)
     }
     uint3 c = (uint3)round(saturate(v) * 255.0);
     grid[id.y * DW + id.x] = c.r | (c.g << 8) | (c.b << 16) | (255u << 24);
+}
+)HLSL";
+
+// Depth sharpened by the picture: the same sums as refine::RefineAt and WidenFine
+// (depth_refine.h), which --selftest compares it with. Pass 0 writes the sharpened depth
+// of every picture pixel to `tmp`; pass 1 widens the near side of that into `fine`,
+// which the warp then reads with DW x DH = CW x CH.
+static const char* kRefineHlsl = R"HLSL(
+cbuffer C : register(b0)
+{
+    uint CW; uint CH; uint DW; uint DH;
+    uint exactLoad;
+    uint stage;
+    int  reach; int widen;
+    float kSpread; float kAlike; float plainW;
+};
+
+Texture2D<float4>         scene   : register(t0);
+StructuredBuffer<float>   nearBuf : register(t1);   // DW x DH, 0 = far .. 1 = near
+RWStructuredBuffer<uint>  guide   : register(u0);   // DW x DH: R, G, B, flatness
+RWStructuredBuffer<float> tmp     : register(u1);   // CW x CH
+RWStructuredBuffer<float> fine    : register(u2);   // CW x CH
+SamplerState              samp    : register(s0);
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= CW || id.y >= CH) return;
+    int x = (int)id.x, y = (int)id.y;
+    int iw = (int)CW, ih = (int)CH, dw = (int)DW, dh = (int)DH;
+
+    if (stage == 1)
+    {
+        float m = tmp[y * iw + x];
+        [loop] for (int j = max(0, y - widen); j <= min(ih - 1, y + widen); j++)
+            [loop] for (int i = max(0, x - widen); i <= min(iw - 1, x + widen); i++)
+                m = max(m, tmp[j * iw + i]);
+        fine[y * iw + x] = m;
+        return;
+    }
+
+    float3 c = (exactLoad != 0) ? scene.Load(int3(x, y, 0)).rgb
+                                : scene.SampleLevel(samp, float2(((float)x + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0).rgb;
+    c = saturate(c) * 255.0;
+
+    float fx = ((float)x + 0.5) * (float)DW / (float)CW - 0.5;
+    float fy = ((float)y + 0.5) * (float)DH / (float)CH - 0.5;
+    int cx = (int)floor(fx + 0.5), cy = (int)floor(fy + 0.5);
+    float sum = 0.0, weights = 0.0;
+    [loop] for (int oy = -reach; oy <= reach; oy++)
+    {
+        int sy = clamp(cy + oy, 0, dh - 1);
+        float dy = (float)(cy + oy) - fy;
+        [loop] for (int ox = -reach; ox <= reach; ox++)
+        {
+            int sx = clamp(cx + ox, 0, dw - 1);
+            float dx = (float)(cx + ox) - fx;
+            uint gv = guide[sy * dw + sx];
+            float3 d = c - float3((float)(gv & 255), (float)((gv >> 8) & 255), (float)((gv >> 16) & 255));
+            float w = exp(-(dx * dx + dy * dy) * kSpread - dot(d, d) * kAlike) * ((float)(gv >> 24) * (1.0 / 255.0));
+            sum += w * nearBuf[sy * dw + sx];
+            weights += w;
+        }
+    }
+
+    // the plain blend (NearAt in kWarpHlsl, without the row snap)
+    float x0f = floor(fx), y0f = floor(fy);
+    float tx = fx - x0f, ty = fy - y0f;
+    int x0 = clamp((int)x0f, 0, dw - 1), x1 = clamp((int)x0f + 1, 0, dw - 1);
+    int y0 = clamp((int)y0f, 0, dh - 1), y1 = clamp((int)y0f + 1, 0, dh - 1);
+    float a = nearBuf[y0 * dw + x0], b = nearBuf[y0 * dw + x1];
+    float e = nearBuf[y1 * dw + x0], f = nearBuf[y1 * dw + x1];
+    float top = a + tx * (b - a), bot = e + tx * (f - e);
+    float plain = top + ty * (bot - top);
+
+    tmp[y * iw + x] = (sum + plainW * plain) / (weights + plainW);
 }
 )HLSL";
 
@@ -4069,6 +4176,7 @@ static bool EngineShaderJobs(std::vector<ShaderJob>& out)
     out.push_back({ "warp.hlsl", kWarpHlsl });
     out.push_back({ "prep.hlsl", kPrepHlsl });
     out.push_back({ "grid.hlsl", kGridHlsl });
+    out.push_back({ "refine.hlsl", kRefineHlsl });
     out.push_back({ "ambilight.hlsl", kAmbiHlsl });
     out.push_back({ "ambilight-ring.hlsl", AmbiRingShaderText() });
     out.push_back({ "curve.hlsl", kCurveHlsl });
@@ -4104,6 +4212,15 @@ static bool InitShaders(App& app)
     if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.prepPso)))) { Log("InitShaders: FAIL prep PSO"); return false; }
     pd.CS = { gridCs->GetBufferPointer(), gridCs->GetBufferSize() };
     if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.gridPso)))) { Log("InitShaders: FAIL grid PSO"); return false; }
+    // Depth sharpened by the picture: built even when off, so it can be switched live.
+    ComPtr<ID3DBlob> refineCs;
+    if (!CompileCs("refine.hlsl", kRefineHlsl, refineCs)) return false;
+    if (!MakeRootSig(app, sizeof(RefineConstants) / 4, true, app.refineRootSig)) return false;
+    pd.pRootSignature = app.refineRootSig.Get();
+    pd.CS = { refineCs->GetBufferPointer(), refineCs->GetBufferSize() };
+    if (FAILED(app.device->CreateComputePipelineState(&pd, IID_PPV_ARGS(&app.refinePso)))) { Log("InitShaders: FAIL refine PSO"); return false; }
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, (UINT64)W * H * sizeof(uint32_t), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.guideBuf, nullptr)) return false;
 
     // Grid image for steadying/fusion: 1 MB each, made up front so options can be
     // switched on live.
@@ -4377,8 +4494,119 @@ static void RecordUploadNear(App& app, ID3D12Resource* upload)
     Transition(cl, app.nearBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 }
 
-// dispatch the warp for both eyes; leaves colorOut/depthOut in COPY_SOURCE
-static void RecordWarp(App& app, WarpTarget& t, UINT srcDescIndex, const WarpConstants& c)
+// Depth at the main target's own size (depth_refine.h): its buffer, the upload buffer
+// that fills it from the CPU, and a second descriptor table for the warp that differs
+// from the target's own only in the depth it reads. Made on first use.
+static bool EnsureNearFine(App& app)
+{
+    WarpTarget& t = app.mainTarget;
+    if (app.nearFine && app.nearFineW == t.cw && app.nearFineH == t.ch) return true;
+    if (t.cw <= 0 || t.ch <= 0 || !t.colorOut) return false;
+    ID3D12Device* dev = app.device.Get();
+    app.nearFine.Reset(); app.nearFineUp.Reset(); app.nearFineMapped = nullptr; app.fineTmp.Reset();
+    const UINT64 bytes = (UINT64)t.cw * t.ch * sizeof(float);
+    if (!MakeBuffer(dev, D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, app.nearFine, nullptr) ||
+        !MakeBuffer(dev, D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.fineTmp, nullptr) ||
+        !MakeBuffer(dev, D3D12_HEAP_TYPE_UPLOAD, bytes, D3D12_RESOURCE_FLAG_NONE,
+                    D3D12_RESOURCE_STATE_GENERIC_READ, app.nearFineUp, (void**)&app.nearFineMapped) || !app.nearFineMapped)
+    {
+        Log("EnsureNearFine: FAIL buffers for depth at %dx%d", t.cw, t.ch);
+        app.nearFine.Reset(); app.nearFineUp.Reset(); app.nearFineMapped = nullptr; app.fineTmp.Reset();
+        return false;
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC bv{};
+    bv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    bv.Format = DXGI_FORMAT_UNKNOWN;
+    bv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    bv.Buffer.NumElements = (UINT)t.cw * (UINT)t.ch;
+    bv.Buffer.StructureByteStride = sizeof(float);
+    dev->CreateShaderResourceView(app.nearFine.Get(), &bv, CpuDesc(app, DESC_FINE_TABLE + 0));
+    // The other three as MakeWarpTarget makes them.
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
+    uv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    uv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+    uv.Texture2DArray.ArraySize = VIEWS;
+    dev->CreateUnorderedAccessView(t.colorOut.Get(), nullptr, &uv, CpuDesc(app, DESC_FINE_TABLE + 1));
+    uv.Format = DXGI_FORMAT_R32_FLOAT;
+    dev->CreateUnorderedAccessView(t.depthOut.Get(), nullptr, &uv, CpuDesc(app, DESC_FINE_TABLE + 2));
+    D3D12_UNORDERED_ACCESS_VIEW_DESC sv{};
+    sv.Format = DXGI_FORMAT_UNKNOWN;
+    sv.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    sv.Buffer.NumElements = (UINT)t.cw * (UINT)t.ch * VIEWS * 3;
+    sv.Buffer.StructureByteStride = 4;
+    dev->CreateUnorderedAccessView(t.scratch.Get(), nullptr, &sv, CpuDesc(app, DESC_FINE_TABLE + 3));
+    // The sharpening pass's table (RecordRefine): the depth grid, its guide, scratch, fine.
+    bv.Buffer.NumElements = (UINT)(W * H);
+    dev->CreateShaderResourceView(app.nearBuf.Get(), &bv, CpuDesc(app, DESC_REFINE_TABLE + 0));
+    sv.Buffer.NumElements = (UINT)(W * H);
+    dev->CreateUnorderedAccessView(app.guideBuf.Get(), nullptr, &sv, CpuDesc(app, DESC_REFINE_TABLE + 1));
+    sv.Buffer.NumElements = (UINT)t.cw * (UINT)t.ch;
+    dev->CreateUnorderedAccessView(app.fineTmp.Get(), nullptr, &sv, CpuDesc(app, DESC_REFINE_TABLE + 2));
+    dev->CreateUnorderedAccessView(app.nearFine.Get(), nullptr, &sv, CpuDesc(app, DESC_REFINE_TABLE + 3));
+    app.nearFineW = t.cw; app.nearFineH = t.ch;
+    Log("EnsureNearFine: depth at the picture's size, %dx%d", t.cw, t.ch);
+    return true;
+}
+
+// nearFineUp (float[cw*ch], filled by the caller) -> nearFine
+static void RecordUploadNearFine(App& app)
+{
+    if (!app.nearFine || !app.nearFineUp) return;
+    ID3D12GraphicsCommandList* cl = app.cmdList.Get();
+    Transition(cl, app.nearFine.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    cl->CopyBufferRegion(app.nearFine.Get(), 0, app.nearFineUp.Get(), 0, (UINT64)app.nearFineW * app.nearFineH * sizeof(float));
+    Transition(cl, app.nearFine.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+}
+
+// upload buffer (uint32[W*H]) -> guideBuf
+static void RecordUploadGuide(App& app, ID3D12Resource* upload)
+{
+    if (!upload || !app.guideBuf) return;
+    ID3D12GraphicsCommandList* cl = app.cmdList.Get();
+    Transition(cl, app.guideBuf.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+    cl->CopyBufferRegion(app.guideBuf.Get(), 0, upload, 0, (UINT64)W * H * sizeof(uint32_t));
+    Transition(cl, app.guideBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+}
+
+// Depth sharpened by the picture (kRefineHlsl): nearBuf and guideBuf (dw x dh in their
+// first elements) and the picture at srcDescIndex -> nearFine, cw x ch in its first
+// elements. Needs EnsureNearFine. The warp then reads nearFine (RecordWarp, fine).
+static void RecordRefine(App& app, UINT srcDescIndex, int cw, int ch, int dw, int dh, bool exactLoad)
+{
+    ID3D12GraphicsCommandList* cl = app.cmdList.Get();
+    RefineConstants c{};
+    c.cw = (uint32_t)cw; c.ch = (uint32_t)ch; c.dw = (uint32_t)dw; c.dh = (uint32_t)dh;
+    c.exactLoad = exactLoad ? 1u : 0u;
+    c.reach = refine::REACH; c.widen = refine::WIDEN;
+    c.kSpread = 0.5f / (refine::SPREAD * refine::SPREAD);
+    c.kAlike = 0.5f / (refine::ALIKE * refine::ALIKE);
+    c.plain = refine::PLAIN;
+
+    ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
+    cl->SetDescriptorHeaps(1, heaps);
+    cl->SetComputeRootSignature(app.refineRootSig.Get());
+    cl->SetPipelineState(app.refinePso.Get());
+    cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDescIndex));
+    cl->SetComputeRootDescriptorTable(2, GpuDesc(app, DESC_REFINE_TABLE));
+    Transition(cl, app.nearFine.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    c.pass = 0;
+    cl->SetComputeRoot32BitConstants(0, sizeof(RefineConstants) / 4, &c, 0);
+    cl->Dispatch(((UINT)cw + 7) / 8, ((UINT)ch + 7) / 8, 1);
+    D3D12_RESOURCE_BARRIER sharpened{};
+    sharpened.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    sharpened.UAV.pResource = app.fineTmp.Get();
+    cl->ResourceBarrier(1, &sharpened);
+    c.pass = 1;
+    cl->SetComputeRoot32BitConstants(0, sizeof(RefineConstants) / 4, &c, 0);
+    cl->Dispatch(((UINT)cw + 7) / 8, ((UINT)ch + 7) / 8, 1);
+    Transition(cl, app.nearFine.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+}
+
+// dispatch the warp for both eyes; leaves colorOut/depthOut in COPY_SOURCE.
+// fine: the main target with depth at the picture's size (c.dw x c.dh must be the target's).
+static void RecordWarp(App& app, WarpTarget& t, UINT srcDescIndex, const WarpConstants& c, bool fine = false)
 {
     ID3D12GraphicsCommandList* cl = app.cmdList.Get();
     ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
@@ -4387,7 +4615,7 @@ static void RecordWarp(App& app, WarpTarget& t, UINT srcDescIndex, const WarpCon
     cl->SetPipelineState(app.warpPso.Get());
     cl->SetComputeRoot32BitConstants(0, sizeof(WarpConstants) / 4, &c, 0);
     cl->SetComputeRootDescriptorTable(1, GpuDesc(app, srcDescIndex));
-    cl->SetComputeRootDescriptorTable(2, GpuDesc(app, t.tableIndex));
+    cl->SetComputeRootDescriptorTable(2, GpuDesc(app, fine ? DESC_FINE_TABLE : t.tableIndex));
     cl->Dispatch(1, ((UINT)t.ch + 7) / 8, VIEWS);
     Transition(cl, t.colorOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     Transition(cl, t.depthOut.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -5123,6 +5351,8 @@ static bool InitSlots(App& app)
         DepthSlot& s = app.slots[i];
         if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * sizeof(float), D3D12_RESOURCE_FLAG_NONE,
                         D3D12_RESOURCE_STATE_GENERIC_READ, s.nearUp, (void**)&s.nearMapped)) return false;
+        if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * sizeof(uint32_t), D3D12_RESOURCE_FLAG_NONE,
+                        D3D12_RESOURCE_STATE_GENERIC_READ, s.guideUp, (void**)&s.guideMapped)) return false;
     }
     Log("InitSlots: exit ok, %d slots", SLOTS);
     return true;
@@ -5142,7 +5372,12 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
     // Worker thread: opt.model is the model that produced this depth.
     const int dilateH = app.opt.dilate >= 0 ? app.opt.dilate : app.opt.model->dilateH;
     const int dilateV = std::min(16, (int)lroundf((app.opt.dilateV >= 0 ? app.opt.dilateV : app.opt.model->dilateV) * app.widenPct.load() * 0.01f));
-    if (app.edgeSnapOn.load() && !app.opt.useTruth && app.opt.source != SourceKind::Synthetic)
+    // Sharpened by the picture per frame (depth_refine.h): published as estimated, with
+    // its own picture on the depth grid. The widening below is what that replaces.
+    const bool refineNow = app.refineOn.load() && app.guideHave && app.guideLayout == src->layout && s.guideMapped &&
+        app.guideNow.size() == (size_t)W * H && !app.opt.useTruth && app.opt.source != SourceKind::Synthetic;
+    if (refineNow) {}
+    else if (app.edgeSnapOn.load() && !app.opt.useTruth && app.opt.source != SourceKind::Synthetic)
     {
         // Horizontal edges become steps on the picture's own edges, and the near side
         // is then widened sideways as before but not up or down across a step.
@@ -5164,6 +5399,14 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
         app.thinCarried += thin::CarryDepthAlongParts(preparedDepth, W, H, app.thinParts, app.thinW, app.thinH);
         app.thinPublishes++;
     }
+    if (refineNow)
+    {
+        app.guideScratch = app.guideNow;
+        refine::MarkFlat(app.guideScratch, preparedDepth.data(), W, H);
+        memcpy(s.guideMapped, app.guideScratch.data(), app.guideScratch.size() * sizeof(uint32_t));
+        app.refinePublishes++;
+    }
+    s.hasGuide = refineNow;
     memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
     s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
     s.lo = lo; s.hi = hi; s.completeTime = NowSeconds(); s.reused = reused;
@@ -5648,7 +5891,8 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     // Steady/fuse need this frame on the depth grid; queued now so the GPU makes it
     // while the model runs.
     const bool post = app.steadyEnabled.load() || FuseActive(app);
-    const UINT64 gridDone = post ? SubmitGrid(app, src) : 0;
+    const bool wantGuide = app.refineOn.load();     // depth sharpened by the picture needs it too
+    const UINT64 gridDone = (post || wantGuide) ? SubmitGrid(app, src) : 0;
     const UINT64 fineDone = app.thinOn.load() ? SubmitFine(app, src) : 0;      // likewise, for thin parts
     if (app.fuseEnabled.load() && app.opt.model != &kZipDepth && !app.fuseModelLogged)
     {
@@ -5665,6 +5909,13 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     nearScratch.resize(app.rawDepth.size());
     for (size_t i = 0; i < nearScratch.size(); i++)
         nearScratch[i] = std::min(1.0f, std::max(0.0f, (app.rawDepth[i] - lo) * inv));
+    app.guideHave = false;
+    if (wantGuide && gridDone && app.gridMapped)
+    {
+        WaitMlFence(app, gridDone);
+        app.guideNow.assign(app.gridMapped, app.gridMapped + (size_t)W * H);
+        app.guideLayout = src->layout; app.guideHave = true;
+    }
     PostProcessDepth(app, src, gridDone, nearScratch);
     TraceThin(app, src, fineDone);
 
@@ -5816,6 +6067,11 @@ static void WorkerMain(App* app)
                 Log("Worker: horizontal depth edges - %.0f column steps per depth map (%s)", (double)app->edgeSteps / app->edgePublishes,
                     app->edgeLuma.valid() ? "placed on the picture's edges" : "placed at the ramps' middles: no picture on the depth grid without steady depth or fusion");
                 app->edgeSteps = app->edgePublishes = 0;
+            }
+            if (app->refinePublishes > 0)
+            {
+                Log("Worker: depth sharpened by the picture - %llu depth maps published with their picture", (unsigned long long)app->refinePublishes);
+                app->refinePublishes = 0;
             }
             if (app->thinTraces > 0)
             {
@@ -6172,6 +6428,72 @@ static bool SelfTestPipeline(App& app)
         ok ? "PASS" : "FAIL", passes, bad, postMs.empty() ? 0.0 : postMs[postMs.size() / 2],
         postMs.empty() ? 0.0 : postMs[std::min(postMs.size() - 1, postMs.size() * 95 / 100)], steadied, fused, anchors,
         app.motion.ok() ? "" : " (no motion estimator)");
+    return ok;
+}
+
+// GPU depth sharpening (kRefineHlsl) vs the CPU reference (depth_refine.h): the test
+// picture at W x H with a depth map of half that size each way.
+static bool SelfTestRefine(App& app, const std::vector<unsigned char>& scene, const std::vector<float>& near01)
+{
+    const int dw = W / 2, dh = H / 2;
+    if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) { Log("SelfTestRefine: bad input sizes"); return false; }
+    Log("SelfTestRefine: enter (%dx%d depth for a %dx%d picture)", dw, dh, W, H);
+    if (!EnsureNearFine(app) || (size_t)app.nearFineW * app.nearFineH < (size_t)W * H) { Log("SelfTestRefine: FAIL no buffers"); return false; }
+    if (!UploadTestSource(app, scene)) return false;
+    ID3D12Device* dev = app.device.Get();
+
+    std::vector<unsigned char> rgba((size_t)W * H * 4, 255);
+    for (size_t i = 0; i < (size_t)W * H; i++) { rgba[i * 4] = scene[i * 3]; rgba[i * 4 + 1] = scene[i * 3 + 1]; rgba[i * 4 + 2] = scene[i * 3 + 2]; }
+    std::vector<float> low((size_t)dw * dh);
+    for (int y = 0; y < dh; y++) for (int x = 0; x < dw; x++) low[(size_t)y * dw + x] = near01[(size_t)(y * 2) * W + x * 2];
+    std::vector<uint32_t> guide = refine::BoxGuide(rgba.data(), W, H, dw, dh);
+    refine::MarkFlat(guide, low.data(), dw, dh);
+    std::vector<float> ref = refine::RefineDepth(low.data(), guide.data(), dw, dh, rgba.data(), W, H);
+    refine::WidenFine(ref, W, H, refine::WIDEN);
+
+    ComPtr<ID3D12Resource> nearUp, guideUp, rb;
+    float* nearMapped = nullptr; uint32_t* guideMapped = nullptr;
+    if (!MakeBuffer(dev, D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * sizeof(float), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, nearUp, (void**)&nearMapped) ||
+        !MakeBuffer(dev, D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * sizeof(uint32_t), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, guideUp, (void**)&guideMapped) ||
+        !MakeBuffer(dev, D3D12_HEAP_TYPE_READBACK, (UINT64)W * H * sizeof(float), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, rb, nullptr)) return false;
+    memset(nearMapped, 0, (size_t)W * H * sizeof(float)); memset(guideMapped, 0, (size_t)W * H * sizeof(uint32_t));
+    memcpy(nearMapped, low.data(), low.size() * sizeof(float));
+    memcpy(guideMapped, guide.data(), guide.size() * sizeof(uint32_t));
+
+    app.cmdAlloc[0]->Reset();
+    app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+    RecordUploadNear(app, nearUp.Get());
+    RecordUploadGuide(app, guideUp.Get());
+    RecordRefine(app, DESC_TEST_SRC, W, H, dw, dh, true);
+    Transition(app.cmdList.Get(), app.nearFine.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    app.cmdList->CopyBufferRegion(rb.Get(), 0, app.nearFine.Get(), 0, (UINT64)W * H * sizeof(float));
+    Transition(app.cmdList.Get(), app.nearFine.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    app.cmdList->Close();
+    WaitFence(app, SubmitAndSignal(app));
+
+    float* got = nullptr;
+    if (FAILED(rb->Map(0, nullptr, (void**)&got)) || !got) { Log("SelfTestRefine: FAIL map readback"); return false; }
+    float worst = 0, changed = 0;
+    for (size_t i = 0; i < ref.size(); i++)
+    {
+        worst = std::max(worst, std::fabs(got[i] - ref[i]));
+        changed = std::max(changed, std::fabs(ref[i] - thin::NearAt(low.data(), dw, dh, (float)(i % W), (float)(i / W), W, H)));
+    }
+    rb->Unmap(0, nullptr);
+    // Its cost at the main target's size on an otherwise idle GPU: 20 in one list.
+    const int cw = app.mainTarget.cw, ch = app.mainTarget.ch, runs = 20;
+    app.cmdAlloc[0]->Reset();
+    app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
+    for (int i = 0; i < runs; i++) RecordRefine(app, DESC_TEST_SRC, cw, ch, W, H, false);
+    app.cmdList->Close();
+    const auto t0 = std::chrono::steady_clock::now();
+    WaitFence(app, SubmitAndSignal(app));
+    Log("SelfTestRefine: sharpening the depth of a %dx%d picture takes about %.2f ms on this GPU when it is otherwise idle", cw, ch,
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / runs);
+
+    const bool ok = worst <= 2e-3f && changed > 0.05f;
+    Log("SelfTestRefine: %s - worst difference from the CPU reference %.5f of the depth range (the sharpening itself moves depth by up to %.2f)",
+        ok ? "PASS" : "FAIL", worst, changed);
     return ok;
 }
 
@@ -7320,6 +7642,7 @@ static bool SelfTest(App& app)
         ok = SelfTestWarp(app, name, synth, ramp, big) && ok;
     }
     ok = SelfTestAmbilight(app, synth) && ok;
+    ok = SelfTestRefine(app, synth, truth) && ok;
 
     WarpConstants off = c;
     off.doWarp = 0;
@@ -8179,6 +8502,7 @@ static void RunFrameLoop(App& app)
     const DepthSlot* cur = nullptr;
     const bool useDepthSc = app.opt.submitDepth;
     WarpTarget& target = app.mainTarget;
+    uint64_t refinedFrames = 0;
     // Curved screen (screen_curve.h): rebuilt only when the screen itself changes.
     Cylinder cylinder;
     float curveWidth = -1, curveHeight = -1, curveDistance = -1, curveFraction = -1;
@@ -8280,6 +8604,8 @@ static void RunFrameLoop(App& app)
                 }
                 if (next.version >= 14 && app.thinOn.exchange(next.thin != 0) != (next.thin != 0))
                     Log("Thin parts: %s", next.thin ? "given the depth of what they stand on" : "left as the depth model has them");
+                if (next.version >= 15 && app.refineOn.exchange(next.refine != 0) != (next.refine != 0))
+                    Log("Depth edges: %s", next.refine ? "sharpened by the picture" : "as the depth model has them");
                 if (next.version >= 6 && app.opt.delayed != (next.delayed != 0))
                 {
                     app.opt.delayed = next.delayed != 0;
@@ -8711,6 +9037,7 @@ static void RunFrameLoop(App& app)
                     app.readSlot = app.readySlot.exchange(app.readSlot) & (SLOT_FRESH - 1);
                     cur = &app.slots[app.readSlot];
                     RecordUploadNear(app, cur->nearUp.Get());
+                    if (cur->hasGuide) RecordUploadGuide(app, cur->guideUp.Get());
                     tookSlot = true;
                     depthUpdates++; repDepth++;
                     if (!cur->reused) depthDelay.Update(cur->completeTime - cur->sceneTime);   // carried-forward depth took no model time
@@ -8782,7 +9109,16 @@ static void RunFrameLoop(App& app)
                     c.exactLoad = (app.srcW == target.cw && app.srcH == target.ch) ? 1u : 0u;
                     c.fillMode = (uint32_t)app.opt.fillMode;
                     c.mirrorTol = MIRROR_TOL;
-                    RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c);
+                    // Depth sharpened by this frame's picture (depth_refine.h), when the
+                    // depth in use was published for it.
+                    const bool fine = stereo && cur->hasGuide && app.refineOn.load() && &target == &app.mainTarget && EnsureNearFine(app);
+                    if (fine)
+                    {
+                        RecordRefine(app, DESC_SRC0 + (UINT)source->index, target.cw, target.ch, W, H, c.exactLoad != 0);
+                        c.dw = (uint32_t)target.cw; c.dh = (uint32_t)target.ch; c.rowSnap = 0.0f;
+                        refinedFrames++;
+                    }
+                    RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c, fine);
                     if (!curvedScreen)
                         RecordCopyToSwapchain(app, target, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
                     drewSource = true;
@@ -9130,7 +9466,10 @@ static bool WritePpmRgba(const char* path, const unsigned char* rgba, int w, int
 // frame loop is running yet: 86.9 deg horizontal, IPD 71 mm.
 // With `picture`, nothing is written: the picture itself (no warp) at the presented
 // resolution is returned in it as tight RGBA rows, for DumpThinParts.
-static bool DumpEyes(App& app, int fillMode, const char* tag, std::vector<unsigned char>* picture = nullptr)
+// With `fineNear` (one nearness per pixel of the picture), that depth is used in place of
+// the published map, for DumpRefine.
+static bool DumpEyes(App& app, int fillMode, const char* tag, std::vector<unsigned char>* picture = nullptr,
+    const std::vector<float>* fineNear = nullptr)
 {
     if (!tag) return false;
     Log("DumpEyes: enter (fill %s)", tag);
@@ -9171,11 +9510,18 @@ static bool DumpEyes(App& app, int fillMode, const char* tag, std::vector<unsign
     c.fillMode = (uint32_t)fillMode;
     c.mirrorTol = MIRROR_TOL;
 
+    if (fineNear)
+    {
+        if (fineNear->size() != (size_t)t.cw * t.ch || !EnsureNearFine(app)) { Log("DumpEyes: FAIL no depth at the picture's size"); return false; }
+        c.dw = (uint32_t)t.cw; c.dh = (uint32_t)t.ch; c.rowSnap = 0.0f;
+        memcpy(app.nearFineMapped, fineNear->data(), fineNear->size() * sizeof(float));
+    }
+
     WaitFence(app, app.fenceVal);
     app.cmdAlloc[0]->Reset();
     app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
-    RecordUploadNear(app, slot.nearUp.Get());
-    RecordWarp(app, t, DESC_SRC0 + (UINT)source->index, c);
+    if (fineNear) RecordUploadNearFine(app); else RecordUploadNear(app, slot.nearUp.Get());
+    RecordWarp(app, t, DESC_SRC0 + (UINT)source->index, c, fineNear != nullptr);
     for (UINT e = 0; e < VIEWS; e++)
     {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
@@ -9273,6 +9619,49 @@ static bool DumpThinParts(App& app)
     return ok;
 }
 
+// --dump: depth sharpened by the picture (depth_refine.h). Writes both eyes drawn by the
+// real warp from the latest estimate three ways, to compare:
+//   xrapp5_eye*_mirror.ppm  as published: near objects widened (DilateNear), plain blend
+//   xrapp5_eye*_plain.ppm   the estimate as it is, plain blend
+//   xrapp5_eye*_refine.ppm  the estimate sharpened by the picture
+// and xrapp5_near_refined.ppm, the sharpened depth itself. The CPU reference; no depth
+// in use is changed.
+static bool DumpRefine(App& app)
+{
+    Log("DumpRefine: enter");
+    std::vector<unsigned char> picture;
+    if (!DumpEyes(app, FILL_MIRROR, "picture", &picture)) return false;
+    const WarpTarget& t = app.mainTarget;
+    const int w = t.cw, h = t.ch;
+    DepthSlot& slot = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
+    if (!slot.nearMapped || app.lastNear.size() != (size_t)W * H || picture.size() != (size_t)w * h * 4) { Log("DumpRefine: FAIL no picture or depth"); return false; }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<uint32_t> guide = refine::BoxGuide(picture.data(), w, h, W, H);
+    refine::MarkFlat(guide, app.lastNear.data(), W, H);
+    std::vector<float> fine = refine::RefineDepth(app.lastNear.data(), guide.data(), W, H, picture.data(), w, h);
+    refine::WidenFine(fine, w, h, refine::WIDEN);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (fine.size() != (size_t)w * h) { Log("DumpRefine: FAIL refine"); return false; }
+
+    std::vector<unsigned char> grey((size_t)w * h * 4, 255);
+    size_t onRamp = 0;
+    for (uint32_t g : guide) onRamp += (g >> 24) < 128 ? 1 : 0;
+    for (size_t i = 0; i < fine.size(); i++)
+        grey[i * 4] = grey[i * 4 + 1] = grey[i * 4 + 2] = (unsigned char)(std::clamp(fine[i], 0.0f, 1.0f) * 255.0f + 0.5f);
+    bool ok = WritePpmRgba("xrapp5_near_refined.ppm", grey.data(), w, h, (UINT)w * 4);
+
+    std::vector<float> published((size_t)W * H);
+    memcpy(published.data(), slot.nearMapped, published.size() * sizeof(float));
+    memcpy(slot.nearMapped, app.lastNear.data(), published.size() * sizeof(float));
+    ok = DumpEyes(app, FILL_MIRROR, "plain") && ok;
+    memcpy(slot.nearMapped, published.data(), published.size() * sizeof(float));
+    ok = DumpEyes(app, FILL_MIRROR, "refine", nullptr, &fine) && ok;
+    Log("DumpRefine: exit %s - depth for a %dx%d picture in %.0f ms on the CPU; %.1f%% of the depth samples are on a ramp", ok ? "ok" : "FAIL",
+        w, h, ms, 100.0 * (double)onRamp / (double)guide.size());
+    return ok;
+}
+
 // ------------------------------------------------------------------- main
 // Puts the first source frame in place and publishes it (synchronously).
 static bool FirstSourceFrame(App& app)
@@ -9365,6 +9754,7 @@ int wmain(int argc, wchar_t** wideArgv)
     app.steadyEnabled = app.opt.steady;
     app.edgeSnapOn = app.opt.edgeSnap;
     app.thinOn = app.opt.thinParts;
+    app.refineOn = app.opt.refine;
     app.fuseEnabled = app.opt.fuse;
 
     int rc = 1;
@@ -9403,6 +9793,8 @@ int wmain(int argc, wchar_t** wideArgv)
         {
             app.thinOn = initial.thin != 0;
             Log("Desktop control: thin parts %s", initial.thin ? "given the depth of what they stand on" : "left as the depth model has them");
+            app.refineOn = initial.refine != 0;
+            Log("Desktop control: depth edges %s", initial.refine ? "sharpened by the picture" : "as the depth model has them");
         }
         if (initial.version >= 13)
         {
@@ -9495,6 +9887,7 @@ int wmain(int argc, wchar_t** wideArgv)
             if (!DumpEyes(app, FILL_STRETCH, "stretch")) break;
             if (!DumpEyes(app, FILL_MIRROR, "mirror")) break;
             DumpThinParts(app);     // a diagnostic: its failure does not stop playback
+            DumpRefine(app);        // the same
         }
 
         app.worker = std::thread(WorkerMain, &app);

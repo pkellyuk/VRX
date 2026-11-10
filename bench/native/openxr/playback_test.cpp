@@ -10,6 +10,7 @@
 #include "depth_fusion.h"
 #include "depth_edges.h"
 #include "thin_parts.h"
+#include "depth_refine.h"
 #include "frame_timing.h"
 #include "screen_curve.h"
 #include "ambilight.h"
@@ -158,6 +159,61 @@ static void TestDepthEdges()
     Check(one[(size_t)5 * w + 2] == 1 && one[(size_t)5 * w + 6] == 1 && one[(size_t)5 * w + 1] == 0 && one[(size_t)5 * w + 7] == 0 && one[(size_t)4 * w + 4] == 0,
         "a step's mark spreads as far as the near side is widened");
     std::printf("PASS: depth edges\n");
+}
+
+// Depth sharpened by the picture (depth_refine.h).
+static void TestDepthRefine()
+{
+    const int dw = 60, dh = 40, cw = 240, ch = 160;
+    std::vector<unsigned char> picture((size_t)cw * ch * 4, 255);
+    std::vector<float> nearMap((size_t)dw * dh);
+    auto paint = [&](auto colourAt, auto nearAt)
+    {
+        for (int y = 0; y < ch; y++)
+            for (int x = 0; x < cw; x++)
+            {
+                const int v = colourAt(x, y);
+                unsigned char* p = picture.data() + ((size_t)y * cw + x) * 4;
+                p[0] = (unsigned char)v; p[1] = (unsigned char)(v * 9 / 10); p[2] = (unsigned char)(v * 8 / 10);
+            }
+        for (int y = 0; y < dh; y++) for (int x = 0; x < dw; x++) nearMap[(size_t)y * dw + x] = nearAt(x, y);
+    };
+    auto refined = [&]()
+    {
+        std::vector<uint32_t> guide = refine::BoxGuide(picture.data(), cw, ch, dw, dh);
+        refine::MarkFlat(guide, nearMap.data(), dw, dh);
+        return refine::RefineDepth(nearMap.data(), guide.data(), dw, dh, picture.data(), cw, ch);
+    };
+    auto plain = [&](int x, int y) { return thin::NearAt(nearMap.data(), dw, dh, (float)x, (float)y, cw, ch); };
+    const int row = 80;
+
+    // 1: an object's edge at picture x 118. The model's edge is soft (4 depth pixels) and
+    // sits 2 depth pixels (8 of the picture's) to the right of it.
+    paint([](int x, int) { return x < 118 ? 60 : 200; },
+          [](int x, int) { const float t = std::clamp(((float)x - 29.0f) / 4.0f, 0.0f, 1.0f); return 0.2f + 0.6f * t * t * (3.0f - 2.0f * t); });
+    std::vector<float> r = refined();
+    Check(r.size() == (size_t)cw * ch, "one depth for every pixel of the picture");
+    const float* rr = r.data() + (size_t)row * cw;
+    Check(rr[100] < 0.21f && rr[117] < 0.21f, "what is left of the picture's edge keeps the far depth right up to it");
+    Check(rr[118] - rr[117] > 0.15f && plain(118, row) - plain(117, row) < 0.02f, "the depth steps at the picture's edge, where the plain blend has no edge at all");
+    Check(rr[126] > 0.65f && plain(126, row) < 0.55f && std::fabs(rr[140] - 0.8f) < 0.01f, "and the object reaches its own depth sooner than the model's ramp does");
+
+    // 2: busy texture on a smoothly receding surface: nothing to sharpen.
+    paint([](int x, int y) { return 128 + (int)(((unsigned)(x * 7919 + y * 104729) * 2654435761u) >> 25) - 64; },
+          [&](int x, int) { return 0.2f + 0.6f * (float)x / (float)(dw - 1); });
+    r = refined();
+    float worst = 0;
+    for (int y = 16; y < ch - 16; y++) for (int x = 16; x < cw - 16; x++) worst = std::max(worst, std::fabs(r[(size_t)y * cw + x] - plain(x, y)));
+    Check(worst < 0.01f, "a busy surface with smooth depth keeps the plain blend");
+
+    // 3: a bar 6 px wide (1.5 depth pixels) that the model half-sees: a low, wide bump.
+    paint([](int x, int) { return (x >= 60 && x < 66) ? 210 : 50; },
+          [](int x, int) { const int d = std::abs(x - 15); return d == 0 ? 0.6f : d == 1 ? 0.45f : d == 2 ? 0.28f : 0.2f; });
+    r = refined();
+    rr = r.data() + (size_t)row * cw;
+    Check(*std::max_element(rr + 60, rr + 66) - *std::min_element(rr + 60, rr + 66) < 0.03f && rr[63] > 0.57f, "a thin bar has one depth across it, the model's peak");
+    Check(rr[59] < 0.3f && plain(59, row) > 0.45f && rr[54] < 0.23f, "and what is beside it is not dragged along");
+    std::printf("PASS: depth refine\n");
 }
 
 // Thin parts that lean (thin_parts.h): found in the picture, measured in the depth.
@@ -681,7 +737,13 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100", settings), "v14 missing thin parts flag rejected");
     Check(!ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 2", settings), "v14 invalid thin parts flag rejected");
     Check(!ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 7", settings), "v14 trailing value rejected");
-    Check(!ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1", settings), "a newer snapshot version is rejected");
+    Check(ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1", settings) && settings.version == 15 && settings.refine == 1 && settings.thin == 1, "v15 sharpened depth edges on");
+    Check(ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 0", settings) && settings.refine == 0, "v15 sharpened depth edges off");
+    Check(ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1", settings) && settings.version == 14 && settings.refine == 0, "a v14 snapshot has them off");
+    Check(!ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1", settings), "v15 missing sharpened edges flag rejected");
+    Check(!ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 2", settings), "v15 invalid sharpened edges flag rejected");
+    Check(!ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 7", settings), "v15 trailing value rejected");
+    Check(!ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -2979,6 +3041,7 @@ int main(int argc, char** argv)
     TestDepthFusion();
     TestDepthEdges();
     TestThinParts();
+    TestDepthRefine();
     TestFrameTiming();
     if (argc > 1)
     {
