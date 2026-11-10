@@ -609,6 +609,10 @@ struct App
     // render thread from the desktop settings; everything below them is owned by the
     // depth worker (and by main before the worker starts), except the anchor mailboxes.
     std::atomic<bool> steadyEnabled{ false }, fuseEnabled{ false };
+    // Depth edges across the picture (PublishDepth, depth_edges.h), set by the desktop app:
+    std::atomic<bool> edgeSnapOn{ true };       // drawn as steps; off = slanted, as before
+    std::atomic<int> edgeStepPct{ 12 };         // the least depth change made a step, percent of the range
+    std::atomic<int> widenPct{ 100 };           // near objects widened up and down, percent of the model's own rows
     // Grid image: each depth frame box-filtered to the W x H depth grid as RGBA8 and
     // read back - luma for the motion estimator, colour for the anchor model.
     ComPtr<ID3D12PipelineState> gridPso;                 // root signature: prepRootSig
@@ -1909,6 +1913,8 @@ RWTexture2DArray<float>  outDepth : register(u1);   // D3D projective depth for 
 RWStructuredBuffer<uint> scratch  : register(u2);
 SamplerState             samp     : register(s0);
 
+static const int STRETCH_GAP = 2;   // xr_common.h STRETCH_GAP
+
 float NearAt(int x, int y)
 {
     float fx = ((float)x + 0.5) * (float)DW / (float)CW - 0.5;
@@ -1992,7 +1998,23 @@ void main(uint3 id : SV_DispatchThreadID)
         if (r < iw) { rightValid = (int)scratch[base + r]; rightNear = asfloat(scratch[N + base + r]); }
 
         int h;
-        if (lastValid < 0 && rightValid < 0)
+        if (subpixel != 0 && lastValid >= 0 && rightValid > lastValid && rightValid - lastValid <= STRETCH_GAP && r - x <= STRETCH_GAP)
+        {
+            // A stretch, not an opening: the pixels either side of this gap are neighbours
+            // in the picture, pulled apart by a pixel or two where the shift changes. The
+            // gap shows the picture between them, at the place that lands here (see
+            // WarpEyeFill, xr_common.h) - not a copied pixel, which drew a thin line.
+            float dL = asfloat(scratch[2 * N + base + x - 1]);
+            float dR = asfloat(scratch[2 * N + base + r]);
+            [loop] for (h = x; h < r; h++)
+            {
+                float p = (float)lastValid + ((float)h - dL) / (dR - dL) * (float)(rightValid - lastValid);
+                scratch[base + h] = (uint)lastValid;
+                scratch[N + base + h] = asuint(lastNear);
+                scratch[2 * N + base + h] = asuint((float)h - (p - (float)lastValid));
+            }
+        }
+        else if (lastValid < 0 && rightValid < 0)
         {
             float xn = NearAt(x, (int)y);
             [loop] for (h = x; h < r; h++) { scratch[base + h] = (uint)x; scratch[N + base + h] = asuint(xn); scratch[2 * N + base + h] = asuint((float)h); }
@@ -5095,13 +5117,13 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
     if (app.opt.useTruth) MakeTruth(preparedDepth, src->time);
     // Worker thread: opt.model is the model that produced this depth.
     const int dilateH = app.opt.dilate >= 0 ? app.opt.dilate : app.opt.model->dilateH;
-    const int dilateV = app.opt.dilateV >= 0 ? app.opt.dilateV : app.opt.model->dilateV;
-    if (app.opt.edgeSnap && !app.opt.useTruth && app.opt.source != SourceKind::Synthetic)
+    const int dilateV = std::min(16, (int)lroundf((app.opt.dilateV >= 0 ? app.opt.dilateV : app.opt.model->dilateV) * app.widenPct.load() * 0.01f));
+    if (app.edgeSnapOn.load() && !app.opt.useTruth && app.opt.source != SourceKind::Synthetic)
     {
         // Horizontal edges become steps on the picture's own edges, and the near side
         // is then widened sideways as before but not up or down across a step.
         const bool haveLuma = app.edgeLuma.valid() && app.edgeLuma.w == W && app.edgeLuma.h == H && app.edgeLumaLayout == src->layout;
-        app.edgeSteps += edges::SnapRowEdges(preparedDepth, haveLuma ? app.edgeLuma.v.data() : nullptr, W, H, app.edgeBarrier);
+        app.edgeSteps += edges::SnapRowEdges(preparedDepth, haveLuma ? app.edgeLuma.v.data() : nullptr, W, H, app.edgeBarrier, app.edgeStepPct.load() * 0.01f);
         app.edgePublishes++;
         DilateNear(preparedDepth, W, H, dilateH, 0);
         edges::SpreadBarrier(app.edgeBarrier, W, H, dilateH);
@@ -5336,7 +5358,7 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
     WaitMlFence(app, gridDone);
     std::vector<uint32_t> rgba(app.gridMapped, app.gridMapped + (size_t)W * H);
     fusion::Image luma = fusion::LumaFromRgba(rgba.data(), W, H);
-    if (app.opt.edgeSnap) { app.edgeLuma = luma; app.edgeLumaLayout = src->layout; }    // for PublishDepth
+    if (app.edgeSnapOn.load()) { app.edgeLuma = luma; app.edgeLumaLayout = src->layout; }    // for PublishDepth
     if (!EnsureMotion(app)) return;
     if (app.postLayout != src->layout)
     {
@@ -8119,6 +8141,15 @@ static void RunFrameLoop(App& app)
                     if (next.edge) Log("Edges: flattened to the screen plane over %d%% of the picture's width, each side", next.edge);
                     else Log("Edges: not flattened");
                 }
+                if (next.version >= 13)
+                {
+                    if (app.edgeSnapOn.exchange(next.edgeSteps != 0) != (next.edgeSteps != 0))
+                        Log("Depth edges across the picture: %s", next.edgeSteps ? "steps" : "slanted (as before)");
+                    if (app.edgeStepPct.exchange(next.edgeStepMin) != next.edgeStepMin)
+                        Log("Depth edges across the picture: a step from %d%% of the depth range", next.edgeStepMin);
+                    if (app.widenPct.exchange(next.widen) != next.widen)
+                        Log("Near objects widened up and down: %d%% of the model's own amount", next.widen);
+                }
                 if (next.version >= 6 && app.opt.delayed != (next.delayed != 0))
                 {
                     app.opt.delayed = next.delayed != 0;
@@ -8614,7 +8645,7 @@ static void RunFrameLoop(App& app)
                     c.eye0 = -0.5f * ipd; c.eye1 = 0.5f * ipd;
                     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
                     c.subpixel = app.opt.subpixel ? 1u : 0u;
-                    c.rowSnap = app.opt.edgeSnap ? edges::ROW_SNAP : 0.0f;
+                    c.rowSnap = app.edgeSnapOn.load() ? edges::ROW_SNAP : 0.0f;
                     c.indicator = (app.opt.abSeconds > 0.0) ? (depthOn ? 1u : 2u) : 0u;
                     c.depthLie = app.opt.depthLie ? 1u : 0u;
                     c.writeDepth = useDepthSc && stereo ? 1u : 0u;
@@ -9004,7 +9035,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
     c.exactLoad = (app.srcW == t.cw && app.srcH == t.ch) ? 1u : 0u;
     c.subpixel = app.opt.subpixel ? 1u : 0u;
-    c.rowSnap = app.opt.edgeSnap ? edges::ROW_SNAP : 0.0f;
+    c.rowSnap = app.edgeSnapOn.load() ? edges::ROW_SNAP : 0.0f;
     c.fillMode = (uint32_t)fillMode;
     c.mirrorTol = MIRROR_TOL;
 
@@ -9135,6 +9166,7 @@ int wmain(int argc, wchar_t** wideArgv)
     app.testDepthFailuresLeft = app.opt.testDepthFailures;
     app.foregroundEnabled = app.opt.foreground && app.opt.doWarp;
     app.steadyEnabled = app.opt.steady;
+    app.edgeSnapOn = app.opt.edgeSnap;
     app.fuseEnabled = app.opt.fuse;
 
     int rc = 1;
@@ -9169,6 +9201,14 @@ int wmain(int argc, wchar_t** wideArgv)
         if (initial.version >= 6) app.opt.delayed = initial.delayed != 0;
         if (initial.version >= 7) app.opt.subpixel = initial.subpixel != 0;
         if (initial.version >= 12) app.opt.edgeFade = initial.edge * 0.01f;
+        if (initial.version >= 13)
+        {
+            app.edgeSnapOn = initial.edgeSteps != 0;
+            app.edgeStepPct = initial.edgeStepMin;
+            app.widenPct = initial.widen;
+            Log("Desktop control: depth edges across the picture %s (from %d%% of the range), near objects widened up and down %d%%",
+                initial.edgeSteps ? "as steps" : "slanted", initial.edgeStepMin, initial.widen);
+        }
         if (initial.version >= 8)
         {
             app.opt.curve = initial.curve * 0.01f;

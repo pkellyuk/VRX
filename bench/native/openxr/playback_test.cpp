@@ -127,6 +127,11 @@ static void TestDepthEdges()
     Check(edges::SnapRowEdges(m, nullptr, w, h, barrier) == 0 && m == column(slope), "a long ramp is a slope and is left alone");
     m = column(slight);
     Check(edges::SnapRowEdges(m, nullptr, w, h, barrier) == 0 && m == column(slight), "a small change is left alone");
+    // The least change is a setting: the 0.61 edge is a step at 0.60 and left alone at 0.70.
+    m = column(soft);
+    Check(edges::SnapRowEdges(m, nullptr, w, h, barrier, 0.60f) == (size_t)w, "an edge above the least change is made a step");
+    m = column(soft);
+    Check(edges::SnapRowEdges(m, nullptr, w, h, barrier, 0.70f) == 0 && m == column(soft), "an edge below the least change keeps its ramp");
     m = column(std::vector<float>(h, 0.3f));
     Check(edges::SnapRowEdges(m, nullptr, w, h, barrier) == 0, "a flat map has no steps");
     std::vector<float> wrong(5);
@@ -580,7 +585,20 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 16", settings), "v12 edge flattening over 15 rejected");
     Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 -1", settings), "v12 negative edge flattening rejected");
     Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 7", settings), "v12 trailing value rejected");
-    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4", settings), "a newer snapshot version is rejected");
+    Check(ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4", settings) && settings.edgeSteps == 1 && settings.edgeStepMin == 12 && settings.widen == 100,
+        "v12 keeps edge steps on at 12 % and the model's own widening");
+    Check(ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 0 30 200", settings) && settings.version == 13 && settings.edgeSteps == 0 &&
+        settings.edgeStepMin == 30 && settings.widen == 200, "v13 edge steps, their least change and the widening");
+    Check(ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 5 0", settings) && settings.edgeStepMin == 5 && settings.widen == 0, "v13 at least");
+    Check(ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 60 300", settings) && settings.edgeStepMin == 60 && settings.widen == 300, "v13 at most");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12", settings), "v13 missing widening rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 2 12 100", settings), "v13 invalid edge steps flag rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 4 100", settings), "v13 least change under 5 rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 61 100", settings), "v13 least change over 60 rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 301", settings), "v13 widening over 300 rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 -1", settings), "v13 negative widening rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 7", settings), "v13 trailing value rejected");
+    Check(!ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");

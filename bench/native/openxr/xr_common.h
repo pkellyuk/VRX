@@ -302,6 +302,15 @@ inline float EdgeWeight(int x, int w, float fade)
     return t * t * (3.0f - 2.0f * t);
 }
 
+// With the sub-pixel warp, a gap of up to STRETCH_GAP pixels between two pixels that
+// are at most STRETCH_GAP apart in the picture is a stretch, not an opening behind
+// something nearer: the shift changes by a pixel there, as it does along every contour
+// of a smoothly receding surface, in the eye that surface is stretched for. Filled as a
+// hole, each such gap was a copied pixel, and the gaps line up along the contour: a
+// thin, slightly diagonal line across text in one eye, like a hair. It is drawn instead
+// as the picture between its two neighbours.
+static const int STRETCH_GAP = 2;
+
 // subpixel: keep the fractional part of each shift. Whole-pixel shifts quantise a
 // smoothly receding surface into ~25 flat bands with a 1 px step between them, which
 // reads as ridges ("ploughed field") on uniform texture; sampling the colour at the
@@ -346,6 +355,20 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
             int r = x + 1;
             while (r < W && src[r] < 0) r++;
             int rightValid = r < W ? src[r] : -1;
+            if (subpixel && lastValid >= 0 && rightValid > lastValid && rightValid - lastValid <= STRETCH_GAP && r - x <= STRETCH_GAP)
+            {
+                // A stretch, not an opening (STRETCH_GAP): the gap shows the picture
+                // between its two neighbours, at the place that lands on each pixel.
+                const float dL = srcDest[x - 1], dR = srcDest[r];
+                for (int h = x; h < r; h++)
+                {
+                    const float p = (float)lastValid + ((float)h - dL) / (dR - dL) * (float)(rightValid - lastValid);
+                    src[h] = lastValid;
+                    srcDest[h] = (float)h - (p - (float)lastValid);
+                }
+                x = r - 1;
+                continue;
+            }
             FillHole(src, nrow, W, x, r, lastValid, rightValid, fillMode);
             x = r - 1;
         }

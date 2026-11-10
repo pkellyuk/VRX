@@ -25,7 +25,7 @@
 namespace edges
 {
 static const float ROW_STEP = 0.03f;    // nearness (0..1): a row-to-row change this large is part of an edge
-static const float ROW_EDGE = 0.12f;    // an edge's whole change must reach this to be made a step
+static const float ROW_EDGE = 0.12f;    // an edge's whole change must reach this to be made a step (the default; a setting)
 static const int ROW_EDGE_MAX = 6;      // rows: a longer ramp is a slope, not an edge
 static const int ROW_SEARCH = 2;        // rows either side of the ramp's middle searched for the picture's edge
 static const int ROW_LUMA_REACH = 3;    // columns either side averaged when scoring the picture's edge
@@ -37,8 +37,10 @@ static const float ROW_SNAP = 0.25f;
 
 // near01: w x h, 0 far .. 1 near, changed in place. luma: w x h in 0..255, or null (the
 // steps then sit at the ramps' middles). barrier: resized to w x h; barrier[y * w + x] = 1
-// marks a step between rows y and y + 1 of column x. Returns the number of steps made.
-inline size_t SnapRowEdges(std::vector<float>& near01, const float* luma, int w, int h, std::vector<uint8_t>& barrier)
+// marks a step between rows y and y + 1 of column x. minEdge: the least whole change of
+// an edge that is made a step; smaller edges keep their ramps. Returns the number of steps made.
+inline size_t SnapRowEdges(std::vector<float>& near01, const float* luma, int w, int h, std::vector<uint8_t>& barrier,
+    float minEdge = ROW_EDGE)
 {
     barrier.assign((size_t)std::max(w, 0) * std::max(h, 0), 0);
     if (w <= 0 || h <= 1 || near01.size() != (size_t)w * h) return 0;
@@ -73,7 +75,7 @@ inline size_t SnapRowEdges(std::vector<float>& near01, const float* luma, int w,
                 y1++;
             }
             const float top = v(y0), bottom = v(y1);
-            if (std::fabs(bottom - top) < ROW_EDGE || y1 - y0 > ROW_EDGE_MAX) { y = y1; continue; }
+            if (std::fabs(bottom - top) < minEdge || y1 - y0 > ROW_EDGE_MAX) { y = y1; continue; }
 
             // The step goes between rows e and e + 1: first where the ramp passes halfway...
             const float mid = 0.5f * (top + bottom);

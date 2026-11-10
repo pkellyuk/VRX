@@ -47,6 +47,16 @@ public sealed class Profile
     // depth at an edge, one eye sees a wider edge than the other, which the eyes cannot
     // fuse. 4 by default, including for older profiles (EDGE_FADE in xr_common.h).
     public int EdgeFlatten { get; set; } = 4;
+    // Depth edges that run across the picture (the top or bottom of anything nearer than
+    // what is behind it), v13 snapshot, live. The warp moves the picture sideways only, so
+    // such an edge either slants what is next to it (off) or is cut cleanly at the edge
+    // (on: depth_edges.h). EdgeStepMin: only edges whose depth changes by at least this
+    // percent of the range are cut, 5 .. 60. WidenNear: how far near objects are widened
+    // up and down, percent of the model's own amount, 0 .. 300; with steps on it applies
+    // only where no step was made. Defaults for older profiles too.
+    public bool EdgeSteps { get; set; } = true;
+    public int EdgeStepMin { get; set; } = 12;
+    public int WidenNear { get; set; } = 100;
 
     // Curved screen: 0 flat (default) .. 100 fully wrapped. The wrap this stands for
     // lives in bench/native/openxr/screen_curve.h (kCurveMaxWrap).
@@ -110,12 +120,12 @@ public sealed class Profile
 
     public bool Valid() => Version == 1 && Range(Width, 1, 10) && Range(Distance, 1, 8) &&
         Range(Height, -2, 2) && Range(Horizontal, -3, 3) && Range(Strength, 0, 2) &&
-        ScreenCurve is >= 0 and <= 100 && EdgeFlatten is >= 0 and <= 15 && AmbilightStrength is >= 0 and <= 100 && TryParseColor(WorldColor, out _) && Room is >= 0 and <= 100 &&
+        ScreenCurve is >= 0 and <= 100 && EdgeFlatten is >= 0 and <= 15 && EdgeStepMin is >= 5 and <= 60 && WidenNear is >= 0 and <= 300 && AmbilightStrength is >= 0 and <= 100 && TryParseColor(WorldColor, out _) && Room is >= 0 and <= 100 &&
         RoomGlass is >= 0 and <= 100 && RoomReflections is >= 0 and <= 100 && RoomLight is >= 0 and <= 100 && TryParseColor(RoomLightColor, out _) &&
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 12 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten}\n");
+        $"VRX 13 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear}\n");
 }
 
 public sealed class ProfileStore(string root)

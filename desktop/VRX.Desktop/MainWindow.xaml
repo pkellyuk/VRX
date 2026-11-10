@@ -191,6 +191,11 @@
       <CheckBox x:Name="FastModelCheck" Content="{l:Tr FastModel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FastModelTip}"/>
       <DockPanel><TextBlock x:Name="EdgeValue" DockPanel.Dock="Right" Style="{StaticResource Value}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr EdgeFlatten}"/></DockPanel>
       <Slider x:Name="EdgeSlider" Minimum="0" Maximum="15" Value="4" SmallChange="1" LargeChange="1" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" ToolTip="{l:Tr EdgeFlattenTip}"/>
+      <CheckBox x:Name="EdgeStepsCheck" Content="{l:Tr EdgeSteps}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr EdgeStepsTip}"/>
+      <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=EdgeStepMinSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr EdgeStepMin}"/></DockPanel>
+      <Slider x:Name="EdgeStepMinSlider" Minimum="5" Maximum="60" Value="12" SmallChange="1" LargeChange="5" TickFrequency="1" IsSnapToTickEnabled="True" IsEnabled="{Binding ElementName=EdgeStepsCheck, Path=IsChecked}" ValueChanged="SettingsChanged" ToolTip="{l:Tr EdgeStepMinTip}"/>
+      <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=WidenSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr WidenNear}"/></DockPanel>
+      <Slider x:Name="WidenSlider" Minimum="0" Maximum="300" Value="100" SmallChange="10" LargeChange="50" TickFrequency="10" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" ToolTip="{l:Tr WidenNearTip}"/>
       <CheckBox x:Name="SubpixelCheck" Content="{l:Tr Subpixel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SubpixelTip}"/>
       <CheckBox x:Name="SteadyCheck" Content="{l:Tr Steady}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SteadyTip}"/>
       <CheckBox x:Name="FuseCheck" Content="{l:Tr Fuse}" IsEnabled="{Binding ElementName=FastModelCheck, Path=IsChecked}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FuseTip}"/>

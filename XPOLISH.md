@@ -102,9 +102,41 @@ such edges. The picture's own edges need the picture on the depth grid, which ex
 while steady depth or fusion is on; without them the steps sit at the ramps' middles.
 The worker's 2-second summary reports the number of column steps per depth map.
 
-Not measured: games (a character's outline against a far background is the same
-case, and a short steep surface would now be drawn as a step), and whether a step's
-row changes from pass to pass on moving pictures.
+**In games** the steps can leave fragments: where a step lands slightly off the real
+edge, a piece of the background moves with the object, like a blob hovering over a
+character's helmet. So both ways are kept, as three settings in the Depth section (per
+game, live, the last three values of the v13 control snapshot):
+
+- **Cut cleanly at depth edges across the picture (off: slant)** (`EdgeSteps`, on by
+  default): the steps above, or the ramps as before.
+- **Cut only edges at least this deep** (`EdgeStepMin`, 5 to 60% of the depth range,
+  12% by default): the least change of depth that is made a step; shallower edges keep
+  their ramps. A window over the desktop is about 60%.
+- **Widen near objects up and down** (`WidenNear`, 0 to 300% of the model's own rows,
+  100% by default): how far `DilateNear` carries a near object's depth above and below
+  it, which is where a ramp's slant lands. Nothing is carried across a step.
+
+Not measured: whether a step's row changes from pass to pass on moving pictures, and
+which defaults suit games best.
+
+## A hair across text in one eye
+
+**Cause.** Very slight diagonal lines in one eye, like a hair fallen on text. Along
+each contour of a smoothly changing depth the shift changes by one pixel. In the eye
+that stretches the surface there, two pixels that are neighbours in the picture land
+two apart, leaving a one-pixel gap. The warp filled every gap as a hole behind
+something nearer: a copied, mirrored pixel. The gaps line up along the contour, so the
+copies made a thin line, broken letters where it crossed text ("n" split, "t" cut),
+and only in that eye (the other eye squeezes the same place and has no gap). The
+sub-pixel warp fixed the banding between contours but left these.
+
+**Fix** (`STRETCH_GAP` in `xr_common.h`, the same in `kWarpHlsl`). With the sub-pixel
+warp on, a gap of up to 2 pixels between two pixels at most 2 apart in the picture is
+a stretch, not an opening: it is drawn as the picture between its two neighbours, at
+the place that lands on it. Wider gaps are filled as before. On a dump of the desktop
+before and after, the changed pixels are dotted diagonal lines across the text, and
+the broken letters along them are whole. `--selftest` compares the GPU with the CPU
+reference as before. Whole-pixel warp (sub-pixel off) is unchanged.
 
 ## Thin parts leaning
 

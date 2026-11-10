@@ -245,6 +245,9 @@ public partial class MainWindow : Window
         FastModelCheck.IsChecked = p.FastDepthModel;
         SubpixelCheck.IsChecked = p.SubpixelWarp;
         EdgeSlider.Value = p.EdgeFlatten;
+        EdgeStepsCheck.IsChecked = p.EdgeSteps;
+        EdgeStepMinSlider.Value = p.EdgeStepMin;
+        WidenSlider.Value = p.WidenNear;
         CurveSlider.Value = p.ScreenCurve;
         AmbilightCheck.IsChecked = p.Ambilight;
         AmbiStrengthSlider.Value = p.AmbilightStrength;
@@ -274,6 +277,9 @@ public partial class MainWindow : Window
             FastDepthModel = FastModelCheck.IsChecked == true,
             SubpixelWarp = SubpixelCheck.IsChecked == true,
             EdgeFlatten = (int)Math.Round(EdgeSlider.Value),
+            EdgeSteps = EdgeStepsCheck.IsChecked == true,
+            EdgeStepMin = (int)Math.Round(EdgeStepMinSlider.Value),
+            WidenNear = (int)Math.Round(WidenSlider.Value),
             ScreenCurve = (int)Math.Round(CurveSlider.Value),
             Ambilight = AmbilightCheck.IsChecked == true,
             AmbilightStrength = (int)Math.Round(AmbiStrengthSlider.Value),
@@ -1303,6 +1309,9 @@ public partial class MainWindow : Window
         legacy.Remove("SteadyDepth");
         legacy.Remove("SubpixelWarp");
         legacy.Remove("EdgeFlatten");
+        legacy.Remove("EdgeSteps");
+        legacy.Remove("EdgeStepMin");
+        legacy.Remove("WidenNear");
         legacy.Remove("ScreenCurve");
         legacy.Remove("Ambilight");
         legacy.Remove("AmbilightStrength");
@@ -1343,21 +1352,26 @@ public partial class MainWindow : Window
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
         var roomy = new Profile { Room = 45 };
         var glassy = new Profile { Room = 45, RoomGlass = 60, RoomReflections = 25, RoomLight = 40, RoomLightColor = "#FFD1A3" };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 12 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 4") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 4") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 4") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 4") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 4") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 4") ||
-            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 4") ||
-            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 4"))
-            throw new Exception("Control snapshot must be v12 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, and the edge flattening (see desktop_control.h)");
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 13 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4 1 12 100") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4 1 12 100") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 4 1 12 100") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 4 1 12 100") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 4 1 12 100") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4 1 12 100") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 4 1 12 100") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 4 1 12 100") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 4 1 12 100") ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 4 1 12 100") ||
+            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 4 1 12 100"))
+            throw new Exception("Control snapshot must be v13 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, the edge flattening, the edge steps flag and least change, and the widening (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
             throw new Exception("Profiles saved before the sub-pixel warp existed must load with it on");
-        if (store.Load(one.ExecutablePath).EdgeFlatten != 4 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9") ||
+        if (store.Load(one.ExecutablePath).EdgeFlatten != 4 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9 1 12 100") ||
             new Profile { EdgeFlatten = 16 }.Valid() || new Profile { EdgeFlatten = -1 }.Valid())
-            throw new Exception("Profiles saved before the edge flattening existed must load at 4 %; it is the snapshot's last value and 0 to 15");
+            throw new Exception("Profiles saved before the edge flattening existed must load at 4 %; it is in the snapshot and 0 to 15");
+        var legacyEdges = store.Load(one.ExecutablePath);
+        if (!legacyEdges.EdgeSteps || legacyEdges.EdgeStepMin != 12 || legacyEdges.WidenNear != 100 ||
+            !new Profile { EdgeSteps = false, EdgeStepMin = 30, WidenNear = 200 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 4 0 30 200") ||
+            new Profile { EdgeStepMin = 4 }.Valid() || new Profile { EdgeStepMin = 61 }.Valid() || new Profile { WidenNear = -1 }.Valid() || new Profile { WidenNear = 301 }.Valid())
+            throw new Exception("Profiles saved before the edge steps existed must load with them on at 12 % and 100 % widening; they are the snapshot's last three values");
         if (store.Load(one.ExecutablePath).ScreenCurve != 0 || store.Load(one.ExecutablePath).Ambilight)
             throw new Exception("Profiles saved before the curve and ambilight existed must load flat, with no glow");
         if (store.Load(one.ExecutablePath).AmbilightStrength != 85 || store.Load(one.ExecutablePath).WorldColor != "#000000")
@@ -1509,6 +1523,13 @@ public partial class MainWindow : Window
         EdgeSlider.Value = 9;
         if (ReadProfile().EdgeFlatten != 9 || EdgeValue.Text != Loc.Format("ValuePercent", 9)) throw new Exception("The edge flattening slider is not mapped to settings");
         EdgeSlider.Value = 4;
+        if (EdgeStepsCheck.IsChecked != true || EdgeStepMinSlider.Value != 12 || WidenSlider.Value != 100 || !EdgeStepMinSlider.IsEnabled)
+            throw new Exception("Edge steps should default on at 12 %, with 100 % widening");
+        EdgeStepsCheck.IsChecked = false; EdgeStepMinSlider.Value = 30; WidenSlider.Value = 200;
+        var edged = ReadProfile();
+        if (edged.EdgeSteps || edged.EdgeStepMin != 30 || edged.WidenNear != 200 || EdgeStepMinSlider.IsEnabled)
+            throw new Exception("The edge steps checkbox and its two sliders are not mapped to settings, or the least-change slider does not rest with the steps off");
+        EdgeStepsCheck.IsChecked = true; EdgeStepMinSlider.Value = 12; WidenSlider.Value = 100;
         SubpixelCheck.IsChecked = false;
         if (ReadProfile().SubpixelWarp) throw new Exception("Sub-pixel warp checkbox is not mapped to settings");
         SubpixelCheck.IsChecked = true;
