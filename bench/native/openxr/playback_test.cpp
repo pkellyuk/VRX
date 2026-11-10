@@ -11,6 +11,7 @@
 #include "depth_edges.h"
 #include "thin_parts.h"
 #include "depth_refine.h"
+#include "back_layer.h"
 #include "frame_timing.h"
 #include "screen_curve.h"
 #include "ambilight.h"
@@ -214,6 +215,40 @@ static void TestDepthRefine()
     Check(*std::max_element(rr + 60, rr + 66) - *std::min_element(rr + 60, rr + 66) < 0.03f && rr[63] > 0.57f, "a thin bar has one depth across it, the model's peak");
     Check(rr[59] < 0.3f && plain(59, row) > 0.45f && rr[54] < 0.23f, "and what is beside it is not dragged along");
     std::printf("PASS: depth refine\n");
+}
+
+// The background layer behind near objects (back_layer.h).
+static void TestBackLayer()
+{
+    const int dw = 64, dh = 32;
+    auto rgb = [](int r, int g, int b) { return (uint32_t)r | ((uint32_t)g << 8) | ((uint32_t)b << 16) | 0xFF000000u; };
+    std::vector<uint32_t> picture((size_t)dw * dh);
+    std::vector<float> nearMap((size_t)dw * dh, 0.1f);
+    // Two backgrounds side by side, and a red near object in front of where they meet.
+    for (int y = 0; y < dh; y++)
+        for (int x = 0; x < dw; x++)
+        {
+            const bool object = x >= 24 && x < 40 && y >= 8 && y < 24;
+            picture[(size_t)y * dw + x] = object ? rgb(255, 0, 0) : x < 32 ? rgb(50, 60, 70) : rgb(200, 180, 160);
+            if (object) nearMap[(size_t)y * dw + x] = 0.9f;
+        }
+    const std::vector<uint32_t> layer = back::BuildBackLayer(nearMap.data(), picture.data(), dw, dh);
+    Check(layer.size() == picture.size(), "one layer sample for every depth sample");
+    auto at = [&](int x, int y) { return layer[(size_t)y * dw + x]; };
+    auto green = [&](int x, int y) { return (int)((at(x, y) >> 8) & 255); };
+    Check(at(5, 16) == rgb(50, 60, 70) && at(60, 4) == rgb(200, 180, 160), "away from near objects the layer is the picture, marked as its own");
+    bool noObject = true;
+    for (int y = 8; y < 24; y++) for (int x = 24; x < 40; x++) noObject = noObject && (at(x, y) >> 24) == 0 && green(x, y) >= 55 && green(x, y) <= 185;
+    Check(noObject, "behind the object it is filled in from the backgrounds, with none of the object's colour");
+    Check(green(25, 16) < 100 && green(38, 16) > 140 && green(25, 16) <= green(31, 16) && green(31, 16) <= green(38, 16), "each side takes after the background on its side, running smoothly between");
+    Check((at(23, 16) >> 24) == 0 && (at(21, 16) >> 24) == 255, "the samples next to the object are a mix and are filled in too");
+    // A floor that comes nearer down the picture is no near object: the farthest thing is looked for along the row.
+    for (int y = 0; y < dh; y++) for (int x = 0; x < dw; x++) nearMap[(size_t)y * dw + x] = 0.03f * (float)y;
+    bool allOwn = true;
+    for (uint32_t v : back::BuildBackLayer(nearMap.data(), picture.data(), dw, dh)) allOwn = allOwn && (v >> 24) == 255;
+    Check(allOwn, "a surface that comes nearer down the picture is all background");
+    Check(back::BuildBackLayer(nullptr, picture.data(), dw, dh).empty() && back::BuildBackLayer(nearMap.data(), nullptr, dw, dh).empty(), "no depth or no picture, no layer");
+    std::printf("PASS: back layer\n");
 }
 
 // Thin parts that lean (thin_parts.h): found in the picture, measured in the depth.
@@ -750,7 +785,13 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 2", settings), "v16 invalid depth map flag rejected");
     Check(!ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 -1", settings), "v16 negative depth map flag rejected");
     Check(!ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 0", settings), "v16 trailing value rejected");
-    Check(!ParseDesktopSettings("VRX 17 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1", settings), "a newer snapshot version is rejected");
+    Check(ParseDesktopSettings("VRX 17 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1", settings) && settings.version == 17 && settings.layer == 1 && settings.showDepthMap == 1, "v17 background layer on");
+    Check(ParseDesktopSettings("VRX 17 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 0", settings) && settings.layer == 0, "v17 background layer off");
+    Check(ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1", settings) && settings.version == 16 && settings.layer == 0, "a v16 snapshot has it off");
+    Check(!ParseDesktopSettings("VRX 17 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1", settings), "v17 missing background layer flag rejected");
+    Check(!ParseDesktopSettings("VRX 17 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 2", settings), "v17 invalid background layer flag rejected");
+    Check(!ParseDesktopSettings("VRX 17 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 0", settings), "v17 trailing value rejected");
+    Check(!ParseDesktopSettings("VRX 18 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -3049,13 +3090,14 @@ int main(int argc, char** argv)
     TestDepthEdges();
     TestThinParts();
     TestDepthRefine();
+    TestBackLayer();
     TestFrameTiming();
     if (argc > 1)
     {
         const std::string path(argv[1]); DesktopSettings settings;
         Check(ReadDesktopSettings(std::wstring(path.begin(), path.end()), settings), "read C# emitted snapshot");
         Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7 && settings.menuKey == 120 && settings.foreground == 1 && settings.paired == 1 &&
-            settings.version == 16 && settings.showDepthMap == 0 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
+            settings.version == 17 && settings.layer == 0 && settings.showDepthMap == 0 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
             "C# to native control contract");
     }
     TestCaptureSelection();

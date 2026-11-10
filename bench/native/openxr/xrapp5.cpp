@@ -154,6 +154,7 @@ using Microsoft::WRL::ComPtr;
 #include "depth_edges.h"
 #include "thin_parts.h"
 #include "depth_refine.h"
+#include "back_layer.h"
 #include "motion_estimator.h"
 #include "frame_timing.h"
 #include "ambilight.h"
@@ -297,6 +298,7 @@ struct Options
     bool subpixel = true;               // sub-pixel warp (no depth banding); --whole-pixel restores the old warp
     bool thinParts = false;             // --thin-parts: thin upright parts take the depth of what they stand on (thin_parts.h)
     bool refine = false;                // --refine: depth sharpened by the picture, per frame (depth_refine.h)
+    bool layerFill = false;             // --fill=layer: what near objects uncover shows the background layer (back_layer.h)
     bool edgeSnap = false;              // --edge-snap: horizontal depth edges made into steps (depth_edges.h) instead of slanted ramps
     float edgeFade = EDGE_FADE;         // share of the picture's width, each side, over which the edges flatten to the screen plane (0 = off)
     float curve = 0.0f;                 // curved screen: 0 flat .. 1 fully wrapped (screen_curve.h)
@@ -336,6 +338,9 @@ struct DepthSlot
     ComPtr<ID3D12Resource> guideUp;     // UPLOAD heap, uint32[W*H]: this depth's own picture on the depth grid, with flatness (depth_refine.h)
     uint32_t* guideMapped = nullptr;
     bool hasGuide = false;              // guideUp is filled, and the depth is as estimated (not widened): to be sharpened per frame
+    ComPtr<ID3D12Resource> backUp;      // UPLOAD heap, uint32[W*H]: the background layer made from this depth and its picture (back_layer.h)
+    uint32_t* backMapped = nullptr;
+    bool hasBack = false;
     SourceRef source;                  // retains the exact colour frame paired with this depth
     double sceneTime = 0;
     double completeTime = 0;
@@ -358,6 +363,7 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     float edgeFade;                     // px: the shift fades to zero this near the left/right edges (EdgeWeight); 0 = none
     float rowSnap;                      // nearness: depth rows further apart than this are not blended between (edges::ROW_SNAP); 0 = always blend
     uint32_t showDepthMap;              // 0 the picture, 1 the depth, 2 no depth to show (black)
+    uint32_t bw, bh;                    // the background layer's size (backBuf, for fillMode 2); 0 = there is none
 };
 
 struct RefineConstants                  // must match cbuffer C in kRefineHlsl
@@ -383,7 +389,7 @@ struct WarpTarget
     ComPtr<ID3D12Resource> colorOut;    // R8G8B8A8_TYPELESS[2], UNORDERED_ACCESS at rest
     ComPtr<ID3D12Resource> depthOut;    // R32_TYPELESS[2],      UNORDERED_ACCESS at rest
     ComPtr<ID3D12Resource> scratch;     // uint[cw*ch*2*2]: per-row scatter state
-    UINT tableIndex = 0;                // first of 4 descriptors: near SRV, colour UAV, depth UAV, scratch UAV
+    UINT tableIndex = 0;                // first of 5 descriptors: near SRV, background layer SRV, colour UAV, depth UAV, scratch UAV
 };
 
 struct RangeSmoother
@@ -545,6 +551,8 @@ struct App
     ComPtr<ID3D12DescriptorHeap> descHeap;
     UINT descInc = 0;
     ComPtr<ID3D12Resource> nearBuf;                      // structured float[W*H]
+    ComPtr<ID3D12Resource> backBuf, backUp;              // structured uint32[W*H]: the background layer (back_layer.h), and an upload buffer for --dump and the self-test
+    uint32_t* backMapped = nullptr;
     ComPtr<ID3D12Resource> nearFine, nearFineUp;         // structured float[cw*ch] for the main target: depth at the picture's size (depth_refine.h), and its upload buffer
     float* nearFineMapped = nullptr;
     int nearFineW = 0, nearFineH = 0;
@@ -650,6 +658,13 @@ struct App
     bool guideHave = false;
     uint64_t guideLayout = 0;
     uint64_t refinePublishes = 0;
+    // The background layer in what near objects uncover (back_layer.h): made by the worker
+    // with each new estimate, shown by the warp (FILL_LAYER).
+    std::atomic<bool> layerOn{ false };
+    std::vector<uint32_t> backNow;                       // worker: the last estimate's layer
+    bool backHave = false;
+    double backMsSum = 0;
+    uint64_t backBuilds = 0;
     ComPtr<ID3D12Resource> fineBuf, fineReadback;
     uint32_t* fineMapped = nullptr;
     ComPtr<ID3D12CommandAllocator> fineAlloc;
@@ -712,9 +727,9 @@ struct App
 
 // descriptor heap layout
 static const UINT DESC_SRC0 = 0;                         // SRC_RING source SRVs
-static const UINT DESC_MAIN_TABLE = SRC_RING;            // 4
+static const UINT DESC_MAIN_TABLE = SRC_RING + 40;       // 5: depth SRV, background layer SRV, colour, depth and scratch UAVs (was 4 at SRC_RING)
 static const UINT DESC_TEST_SRC = SRC_RING + 4;          // 1
-static const UINT DESC_TEST_TABLE = SRC_RING + 5;        // 4
+static const UINT DESC_TEST_TABLE = SRC_RING + 45;       // 5: the same for the self-test (was 4 at SRC_RING + 5)
 static const UINT DESC_AMBI_UAV = SRC_RING + 9;          // 3: the ambilight glow texture, its border ring, its history
 // The curve and room tables are 5 wide: their fifth entry (+4) is v11's mirror picture
 // (an SRV for the eye pass, a UAV for the room's passes).
@@ -722,9 +737,9 @@ static const UINT DESC_CURVE_MAIN = SRC_RING + 12;       // 5: warped pictures, 
 static const UINT DESC_CURVE_TEST = SRC_RING + 17;       // 5: the same for the self-test
 static const UINT DESC_ROOM = SRC_RING + 22;             // 5: decode table, glow, emitters (UAV), lightmap (UAV), mirror picture (UAV)
 static const UINT DESC_CURVE_BENCH = SRC_RING + 27;      // 5: the same as DESC_CURVE_MAIN for the room benchmark (--bench-room)
-static const UINT DESC_FINE_TABLE = SRC_RING + 32;      // 4: the main target's table with depth at the picture's size (EnsureNearFine)
+static const UINT DESC_FINE_TABLE = SRC_RING + 50;      // 5: the main target's table with depth at the picture's size (EnsureNearFine)
 static const UINT DESC_REFINE_TABLE = SRC_RING + 36;    // 4: depth SRV, guide, scratch and fine depth UAVs (RecordRefine)
-static const UINT DESC_COUNT = SRC_RING + 40;
+static const UINT DESC_COUNT = SRC_RING + 55;
 static const int WORLD_W = 8;                            // the world colour layer: one colour needs few pixels
 static const int TEST_EYE_W = 256, TEST_EYE_H = 192;     // self-test eye buffers
 
@@ -1019,6 +1034,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--no-smooth")) { opt->smooth = false; continue; }
         if (!strcmp(a, "--fill=mirror")) { opt->fillMode = FILL_MIRROR; continue; }
         if (!strcmp(a, "--fill=stretch")) { opt->fillMode = FILL_STRETCH; continue; }
+        if (!strcmp(a, "--fill=layer")) { opt->layerFill = true; continue; }
         if (!strncmp(a, "--dilate=", 9)) { opt->dilate = atoi(a + 9); continue; }
         if (!strncmp(a, "--dilate-v=", 11)) { opt->dilateV = atoi(a + 11); continue; }
         if (!strncmp(a, "--tau=", 6)) { opt->smoothTau = atof(a + 6); continue; }
@@ -1955,16 +1971,18 @@ cbuffer C : register(b0)
     uint  depthLie;
     uint  writeDepth;
     uint  exactLoad;    // source is exactly CW x CH: Load() instead of filtering
-    uint  fillMode;     // 0 stretch, 1 mirror (see FillHole in xr_common.h)
+    uint  fillMode;     // 0 stretch, 1 mirror, 2 the background layer (see FillHole and FILL_LAYER in xr_common.h)
     float mirrorTol;
     uint  subpixel;     // 1: sample at the fractional source position (no depth banding)
     float edgeFade;     // px: the shift fades to zero this near the left/right edges (EdgeWeight in xr_common.h); 0 = none
     float rowSnap;      // nearness: depth rows further apart than this are not blended between (depth_edges.h); 0 = always blend
     uint  showDepthMap; // 0 the picture, 1 the depth, 2 no depth to show (black)
+    uint  BW; uint BH;  // the background layer's size; 0 = there is none
 };
 
 Texture2D<float4>        scene    : register(t0);
 StructuredBuffer<float>  nearBuf  : register(t1);   // DW x DH, 0 = far .. 1 = near
+StructuredBuffer<uint>   backBuf  : register(t2);   // BW x BH: the background layer (back_layer.h): R, G, B, the picture's-own share
 RWTexture2DArray<float4> outColor : register(u0);
 RWTexture2DArray<float>  outDepth : register(u1);   // D3D projective depth for nearZ/farZ
 // [0,N): source x per dest, [N,2N): its nearness, [2N,3N): where that source pixel
@@ -1973,6 +1991,27 @@ RWStructuredBuffer<uint> scratch  : register(u2);
 SamplerState             samp     : register(s0);
 
 static const int STRETCH_GAP = 2;   // xr_common.h STRETCH_GAP
+static const uint LAYER = 0x80000000;   // in scratch's source: this destination shows the background layer, at the position in [2N,3N)
+
+// BackLayerAt (xr_common.h)
+float4 BackOne(int gx, int gy)
+{
+    uint v = backBuf[gy * (int)BW + gx];
+    return float4((float)(v & 255), (float)((v >> 8) & 255), (float)((v >> 16) & 255), (float)(v >> 24)) * (1.0 / 255.0);
+}
+
+float4 BackAt(float p, int y)
+{
+    float fx = (p + 0.5) * (float)BW / (float)CW - 0.5;
+    float fy = ((float)y + 0.5) * (float)BH / (float)CH - 0.5;
+    float x0f = floor(fx), y0f = floor(fy);
+    float tx = fx - x0f, ty = fy - y0f;
+    int x0 = clamp((int)x0f, 0, (int)BW - 1), x1 = clamp((int)x0f + 1, 0, (int)BW - 1);
+    int y0 = clamp((int)y0f, 0, (int)BH - 1), y1 = clamp((int)y0f + 1, 0, (int)BH - 1);
+    float4 a = BackOne(x0, y0), b = BackOne(x1, y0), c = BackOne(x0, y1), d = BackOne(x1, y1);
+    float4 top = a + tx * (b - a), bot = c + tx * (d - c);
+    return top + ty * (bot - top);
+}
 
 float NearAt(int x, int y)
 {
@@ -2053,6 +2092,20 @@ void main(uint3 id : SV_DispatchThreadID)
         }
     }
 
+    int h;
+    if (fillMode == 2 && BW != 0)
+    {
+        // One or two pixels alone inside what is uncovered are uncovered too (LAYER_ISLAND).
+        int runStart = -1;
+        [loop] for (x = 0; x <= iw; x++)
+        {
+            if (x < iw && scratch[base + x] != NONE) { if (runStart < 0) runStart = x; continue; }
+            if (runStart > 0 && x < iw && x - runStart <= 2 && scratch[base + runStart - 1] == NONE)
+                [loop] for (h = runStart; h < x; h++) scratch[base + h] = NONE;
+            runStart = -1;
+        }
+    }
+
     // hole fill from the FARTHER neighbour (background side) - same as FillHole (CPU)
     int lastValid = -1;
     float lastNear = 0;
@@ -2068,7 +2121,6 @@ void main(uint3 id : SV_DispatchThreadID)
         float rightNear = 0;
         if (r < iw) { rightValid = (int)scratch[base + r]; rightNear = asfloat(scratch[N + base + r]); }
 
-        int h;
         if (subpixel != 0 && lastValid >= 0 && rightValid > lastValid && rightValid - lastValid <= STRETCH_GAP && r - x <= STRETCH_GAP)
         {
             // A stretch, not an opening: the pixels either side of this gap are neighbours
@@ -2096,7 +2148,28 @@ void main(uint3 id : SV_DispatchThreadID)
             int anchor = useLeft ? lastValid : rightValid;
             float anchorNear = useLeft ? lastNear : rightNear;
 
-            if (fillMode == 0)
+            if (fillMode == 2 && BW != 0)
+            {
+                // The background layer, at the place the background that lands here
+                // comes from: this position moved back by the farther side's shift.
+                float invZa = invZFar + anchorNear * (invZNear - invZFar);
+                float sa = scaleFocal * eye * invZa;
+                [loop] for (h = x; h < r; h++)
+                {
+                    float sh = sa;
+                    if (edgeFade > 0.0)
+                    {
+                        float inside = min((float)h + 0.5, (float)iw - ((float)h + 0.5));
+                        float t = clamp(inside / edgeFade, 0.0, 1.0);
+                        sh *= t * t * (3.0 - 2.0 * t);
+                    }
+                    float p = clamp((float)h + sh, 0.0, (float)(iw - 1));
+                    scratch[base + h] = LAYER | (uint)anchor;
+                    scratch[N + base + h] = asuint(anchorNear);
+                    scratch[2 * N + base + h] = asuint(p);
+                }
+            }
+            else if (fillMode == 0)
             {
                 [loop] for (h = x; h < r; h++) { scratch[base + h] = (uint)anchor; scratch[N + base + h] = asuint(anchorNear); scratch[2 * N + base + h] = asuint((float)h); }
             }
@@ -2124,9 +2197,29 @@ void main(uint3 id : SV_DispatchThreadID)
 
     [loop] for (x = 0; x < iw; x++)
     {
-        int s = (int)scratch[base + x];
+        uint sv = scratch[base + x];
+        int s = (int)(sv & ~LAYER);
         float4 col;
-        if (subpixel != 0)
+        if ((sv & LAYER) != 0)
+        {
+            float p = asfloat(scratch[2 * N + base + x]);
+            int j0 = (int)p;
+            int j1 = min(j0 + 1, iw - 1);
+            float f = p - (float)j0;
+            float4 c0, c1;
+            if (exactLoad != 0) { c0 = scene.Load(int3(j0, y, 0)); c1 = scene.Load(int3(j1, y, 0)); }
+            else
+            {
+                c0 = scene.SampleLevel(samp, float2(((float)j0 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
+                c1 = scene.SampleLevel(samp, float2(((float)j1 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
+            }
+            float4 own = c0 + f * (c1 - c0);
+            float4 layer = BackAt(p, (int)y);
+            // the sharp picture where what is at p is background, the layer where it is a near object's
+            float share = saturate(2.0 - (NearAt((int)(p + 0.5), (int)y) - asfloat(scratch[N + base + x])) / (0.5 * mirrorTol));
+            col = float4(layer.rgb + share * (own.rgb - layer.rgb), 1.0);
+        }
+        else if (subpixel != 0)
         {
             // The source pixel `s` lands at scratch[2N+...]; the content that lands
             // exactly here is at s + (x - that). Blended in float rather than by the
@@ -3905,7 +3998,7 @@ static bool CompileCs(const char* name, const char* src, ComPtr<ID3DBlob>& out)
     return true;
 }
 
-static bool MakeRootSig(App& app, UINT numConstants, bool uavTable, ComPtr<ID3D12RootSignature>& out)
+static bool MakeRootSig(App& app, UINT numConstants, bool uavTable, ComPtr<ID3D12RootSignature>& out, UINT tableSrvs = 1)
 {
     D3D12_DESCRIPTOR_RANGE srcRange{};
     srcRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -3913,9 +4006,9 @@ static bool MakeRootSig(App& app, UINT numConstants, bool uavTable, ComPtr<ID3D1
 
     D3D12_DESCRIPTOR_RANGE tbl[2]{};
     tbl[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    tbl[0].NumDescriptors = 1; tbl[0].BaseShaderRegister = 1; tbl[0].OffsetInDescriptorsFromTableStart = 0;
+    tbl[0].NumDescriptors = tableSrvs; tbl[0].BaseShaderRegister = 1; tbl[0].OffsetInDescriptorsFromTableStart = 0;
     tbl[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-    tbl[1].NumDescriptors = 3; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = 1;
+    tbl[1].NumDescriptors = 3; tbl[1].BaseShaderRegister = 0; tbl[1].OffsetInDescriptorsFromTableStart = tableSrvs;
 
     D3D12_ROOT_PARAMETER params[3]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -4117,21 +4210,23 @@ static bool MakeWarpTarget(App& app, int cw, int ch, UINT tableIndex, WarpTarget
     bv.Buffer.NumElements = (UINT)(W * H);
     bv.Buffer.StructureByteStride = sizeof(float);
     dev->CreateShaderResourceView(app.nearBuf.Get(), &bv, CpuDesc(app, tableIndex + 0));
+    bv.Buffer.StructureByteStride = sizeof(uint32_t);
+    dev->CreateShaderResourceView(app.backBuf.Get(), &bv, CpuDesc(app, tableIndex + 1));
 
     D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
     uv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     uv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
     uv.Texture2DArray.ArraySize = VIEWS;
-    dev->CreateUnorderedAccessView(t.colorOut.Get(), nullptr, &uv, CpuDesc(app, tableIndex + 1));
+    dev->CreateUnorderedAccessView(t.colorOut.Get(), nullptr, &uv, CpuDesc(app, tableIndex + 2));
     uv.Format = DXGI_FORMAT_R32_FLOAT;
-    dev->CreateUnorderedAccessView(t.depthOut.Get(), nullptr, &uv, CpuDesc(app, tableIndex + 2));
+    dev->CreateUnorderedAccessView(t.depthOut.Get(), nullptr, &uv, CpuDesc(app, tableIndex + 3));
 
     D3D12_UNORDERED_ACCESS_VIEW_DESC sv{};
     sv.Format = DXGI_FORMAT_UNKNOWN;
     sv.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
     sv.Buffer.NumElements = scratchElems;
     sv.Buffer.StructureByteStride = 4;
-    dev->CreateUnorderedAccessView(t.scratch.Get(), nullptr, &sv, CpuDesc(app, tableIndex + 3));
+    dev->CreateUnorderedAccessView(t.scratch.Get(), nullptr, &sv, CpuDesc(app, tableIndex + 4));
 
     Log("MakeWarpTarget: exit ok");
     return true;
@@ -4216,7 +4311,7 @@ static bool InitShaders(App& app)
     if (!CompileCs("warp.hlsl", kWarpHlsl, warpCs)) return false;
     if (!CompileCs("prep.hlsl", kPrepHlsl, prepCs)) return false;
     if (!CompileCs("grid.hlsl", kGridHlsl, gridCs)) return false;
-    if (!MakeRootSig(app, sizeof(WarpConstants) / 4, true, app.warpRootSig)) return false;
+    if (!MakeRootSig(app, sizeof(WarpConstants) / 4, true, app.warpRootSig, 2)) return false;      // depth, background layer
     if (!MakeRootSig(app, sizeof(PrepConstants) / 4, false, app.prepRootSig)) return false;
 
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
@@ -4253,6 +4348,10 @@ static bool InitShaders(App& app)
 
     if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, (UINT64)W * H * sizeof(float), D3D12_RESOURCE_FLAG_NONE,
                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, app.nearBuf, nullptr)) return false;
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, (UINT64)W * H * sizeof(uint32_t), D3D12_RESOURCE_FLAG_NONE,
+                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, app.backBuf, nullptr)) return false;
+    if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * sizeof(uint32_t), D3D12_RESOURCE_FLAG_NONE,
+                    D3D12_RESOURCE_STATE_GENERIC_READ, app.backUp, (void**)&app.backMapped)) return false;
     if (!MakeWarpTarget(app, app.colorW, app.colorH, DESC_MAIN_TABLE, app.mainTarget)) return false;
     if (!MakeWarpTarget(app, W, H, DESC_TEST_TABLE, app.testTarget)) return false;
     if (!MakeSourceTexture(app, W, H, DXGI_FORMAT_R8G8B8A8_UNORM, false, app.testSrc)) return false;
@@ -4539,20 +4638,22 @@ static bool EnsureNearFine(App& app)
     bv.Buffer.NumElements = (UINT)t.cw * (UINT)t.ch;
     bv.Buffer.StructureByteStride = sizeof(float);
     dev->CreateShaderResourceView(app.nearFine.Get(), &bv, CpuDesc(app, DESC_FINE_TABLE + 0));
+    bv.Buffer.NumElements = (UINT)(W * H);
+    dev->CreateShaderResourceView(app.backBuf.Get(), &bv, CpuDesc(app, DESC_FINE_TABLE + 1));
     // The other three as MakeWarpTarget makes them.
     D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
     uv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     uv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
     uv.Texture2DArray.ArraySize = VIEWS;
-    dev->CreateUnorderedAccessView(t.colorOut.Get(), nullptr, &uv, CpuDesc(app, DESC_FINE_TABLE + 1));
+    dev->CreateUnorderedAccessView(t.colorOut.Get(), nullptr, &uv, CpuDesc(app, DESC_FINE_TABLE + 2));
     uv.Format = DXGI_FORMAT_R32_FLOAT;
-    dev->CreateUnorderedAccessView(t.depthOut.Get(), nullptr, &uv, CpuDesc(app, DESC_FINE_TABLE + 2));
+    dev->CreateUnorderedAccessView(t.depthOut.Get(), nullptr, &uv, CpuDesc(app, DESC_FINE_TABLE + 3));
     D3D12_UNORDERED_ACCESS_VIEW_DESC sv{};
     sv.Format = DXGI_FORMAT_UNKNOWN;
     sv.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
     sv.Buffer.NumElements = (UINT)t.cw * (UINT)t.ch * VIEWS * 3;
     sv.Buffer.StructureByteStride = 4;
-    dev->CreateUnorderedAccessView(t.scratch.Get(), nullptr, &sv, CpuDesc(app, DESC_FINE_TABLE + 3));
+    dev->CreateUnorderedAccessView(t.scratch.Get(), nullptr, &sv, CpuDesc(app, DESC_FINE_TABLE + 4));
     // The sharpening pass's table (RecordRefine): the depth grid, its guide, scratch, fine.
     bv.Buffer.NumElements = (UINT)(W * H);
     dev->CreateShaderResourceView(app.nearBuf.Get(), &bv, CpuDesc(app, DESC_REFINE_TABLE + 0));
@@ -4574,6 +4675,16 @@ static void RecordUploadNearFine(App& app)
     Transition(cl, app.nearFine.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     cl->CopyBufferRegion(app.nearFine.Get(), 0, app.nearFineUp.Get(), 0, (UINT64)app.nearFineW * app.nearFineH * sizeof(float));
     Transition(cl, app.nearFine.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+}
+
+// upload buffer (uint32[W*H]) -> backBuf
+static void RecordUploadBack(App& app, ID3D12Resource* upload)
+{
+    if (!upload || !app.backBuf) return;
+    ID3D12GraphicsCommandList* cl = app.cmdList.Get();
+    Transition(cl, app.backBuf.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    cl->CopyBufferRegion(app.backBuf.Get(), 0, upload, 0, (UINT64)W * H * sizeof(uint32_t));
+    Transition(cl, app.backBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 }
 
 // upload buffer (uint32[W*H]) -> guideBuf
@@ -5369,6 +5480,8 @@ static bool InitSlots(App& app)
                         D3D12_RESOURCE_STATE_GENERIC_READ, s.nearUp, (void**)&s.nearMapped)) return false;
         if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * sizeof(uint32_t), D3D12_RESOURCE_FLAG_NONE,
                         D3D12_RESOURCE_STATE_GENERIC_READ, s.guideUp, (void**)&s.guideMapped)) return false;
+        if (!MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_UPLOAD, (UINT64)W * H * sizeof(uint32_t), D3D12_RESOURCE_FLAG_NONE,
+                        D3D12_RESOURCE_STATE_GENERIC_READ, s.backUp, (void**)&s.backMapped)) return false;
     }
     Log("InitSlots: exit ok, %d slots", SLOTS);
     return true;
@@ -5423,6 +5536,21 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
         app.refinePublishes++;
     }
     s.hasGuide = refineNow;
+    // The background layer: made again only for a new estimate (a barely changed frame
+    // that keeps the last depth keeps its layer too).
+    const bool layerNow = app.layerOn.load() && app.guideHave && app.guideLayout == src->layout && s.backMapped &&
+        app.guideNow.size() == (size_t)W * H && !app.opt.useTruth && app.opt.source != SourceKind::Synthetic;
+    if (layerNow && (!reused || !app.backHave))
+    {
+        const auto b0 = std::chrono::steady_clock::now();
+        app.backNow = back::BuildBackLayer(preparedDepth.data(), app.guideNow.data(), W, H);
+        app.backHave = app.backNow.size() == (size_t)W * H;
+        app.backMsSum += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count();
+        app.backBuilds++;
+    }
+    if (!layerNow) app.backHave = false;
+    s.hasBack = layerNow && app.backHave;
+    if (s.hasBack) memcpy(s.backMapped, app.backNow.data(), app.backNow.size() * sizeof(uint32_t));
     memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
     s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
     s.lo = lo; s.hi = hi; s.completeTime = NowSeconds(); s.reused = reused;
@@ -5907,7 +6035,7 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     // Steady/fuse need this frame on the depth grid; queued now so the GPU makes it
     // while the model runs.
     const bool post = app.steadyEnabled.load() || FuseActive(app);
-    const bool wantGuide = app.refineOn.load();     // depth sharpened by the picture needs it too
+    const bool wantGuide = app.refineOn.load() || app.layerOn.load();     // depth sharpened by the picture and the background layer need it too
     const UINT64 gridDone = (post || wantGuide) ? SubmitGrid(app, src) : 0;
     const UINT64 fineDone = app.thinOn.load() ? SubmitFine(app, src) : 0;      // likewise, for thin parts
     if (app.fuseEnabled.load() && app.opt.model != &kZipDepth && !app.fuseModelLogged)
@@ -6083,6 +6211,11 @@ static void WorkerMain(App* app)
                 Log("Worker: horizontal depth edges - %.0f column steps per depth map (%s)", (double)app->edgeSteps / app->edgePublishes,
                     app->edgeLuma.valid() ? "placed on the picture's edges" : "placed at the ramps' middles: no picture on the depth grid without steady depth or fusion");
                 app->edgeSteps = app->edgePublishes = 0;
+            }
+            if (app->backBuilds > 0)
+            {
+                Log("Worker: background layer - made %llu times, %.1f ms each", (unsigned long long)app->backBuilds, app->backMsSum / app->backBuilds);
+                app->backMsSum = 0; app->backBuilds = 0;
             }
             if (app->refinePublishes > 0)
             {
@@ -6515,7 +6648,7 @@ static bool SelfTestRefine(App& app, const std::vector<unsigned char>& scene, co
 
 // GPU warp vs the CPU reference at WxH, pixel for pixel.
 static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned char>& scene,
-                         const std::vector<float>& near01, const WarpConstants& c)
+                         const std::vector<float>& near01, const WarpConstants& c, const std::vector<uint32_t>* back = nullptr)
 {
     if (!name) return false;
     if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) { Log("SelfTestWarp[%s]: bad input sizes", name); return false; }
@@ -6543,6 +6676,11 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     app.cmdAlloc[0]->Reset();
     app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
     RecordUploadNear(app, nearUp.Get());
+    if (back && back->size() == (size_t)W * H)
+    {
+        memcpy(app.backMapped, back->data(), back->size() * sizeof(uint32_t));
+        RecordUploadBack(app, app.backUp.Get());
+    }
     RecordWarp(app, t, DESC_TEST_SRC, c);
     for (UINT e = 0; e < VIEWS; e++)
     {
@@ -6570,7 +6708,7 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     for (UINT e = 0; e < VIEWS; e++)
     {
         WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode,
-                    refColor.data(), refDepth.data(), c.subpixel != 0, c.edgeFade);
+                    refColor.data(), refDepth.data(), c.subpixel != 0, c.edgeFade, back && c.bw ? back->data() : nullptr);
         if (c.showDepthMap)
             for (int y = 0; y < H; ++y)
                 for (int x = 0; x < W; ++x)
@@ -6592,7 +6730,7 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
                 // Sub-pixel blends two of them, and the GPU's UNORM store rounds ties
                 // to even where lroundf rounds away from zero: allow one last bit,
                 // and report the worst difference so a real error still shows.
-                if (c.subpixel == 0)
+                if (c.subpixel == 0 && c.fillMode != (uint32_t)FILL_LAYER)      // the layer is blended too
                 {
                     if (memcmp(grow + x * 4, rrow + x * 4, 4) != 0) badColor++;
                 }
@@ -7669,6 +7807,26 @@ static bool SelfTest(App& app)
     ok = SelfTestAmbilight(app, synth) && ok;
     ok = SelfTestRefine(app, synth, truth) && ok;
 
+    // The background layer in what near objects uncover (back_layer.h, FILL_LAYER): made
+    // from the test picture and each depth map, whole-pixel and sub-pixel, with the edge fade.
+    {
+        std::vector<uint32_t> testPicture((size_t)W * H);
+        for (size_t i = 0; i < testPicture.size(); i++)
+            testPicture[i] = (uint32_t)synth[i * 3] | ((uint32_t)synth[i * 3 + 1] << 8) | ((uint32_t)synth[i * 3 + 2] << 16);
+        WarpConstants layered = c;
+        layered.fillMode = (uint32_t)FILL_LAYER; layered.bw = W; layered.bh = H;
+        const std::vector<uint32_t> truthLayer = back::BuildBackLayer(truth.data(), testPicture.data(), W, H);
+        const std::vector<uint32_t> rampLayer = back::BuildBackLayer(ramp.data(), testPicture.data(), W, H);
+        ok = SelfTestWarp(app, "layer-fill", synth, truth, layered, &truthLayer) && ok;
+        ok = SelfTestWarp(app, "layer-fill-ramp", synth, ramp, layered, &rampLayer) && ok;
+        layered.subpixel = layered.subpixel ? 0u : 1u;
+        ok = SelfTestWarp(app, "layer-fill-other-sampling", synth, truth, layered, &truthLayer) && ok;
+        layered.edgeFade = EDGE_FADE * (float)W;
+        ok = SelfTestWarp(app, "layer-fill-edge-fade", synth, truth, layered, &truthLayer) && ok;
+        layered.bw = layered.bh = 0;
+        ok = SelfTestWarp(app, "layer-fill-no-layer", synth, truth, layered) && ok;
+    }
+
     WarpConstants depthPreview = c;
     depthPreview.showDepthMap = 1;
     ok = SelfTestWarp(app, "depth map preview", synth, ramp, depthPreview) && ok;
@@ -8637,6 +8795,8 @@ static void RunFrameLoop(App& app)
                     Log("Thin parts: %s", next.thin ? "given the depth of what they stand on" : "left as the depth model has them");
                 if (next.version >= 15 && app.refineOn.exchange(next.refine != 0) != (next.refine != 0))
                     Log("Depth edges: %s", next.refine ? "sharpened by the picture" : "as the depth model has them");
+                if (next.version >= 17 && app.layerOn.exchange(next.layer != 0) != (next.layer != 0))
+                    Log("Behind near objects: %s", next.layer ? "the background layer" : "mirrored picture");
                 if (next.version >= 16 && app.opt.showDepthMap != (next.showDepthMap != 0))
                 {
                     app.opt.showDepthMap = next.showDepthMap != 0;
@@ -9074,6 +9234,7 @@ static void RunFrameLoop(App& app)
                     cur = &app.slots[app.readSlot];
                     RecordUploadNear(app, cur->nearUp.Get());
                     if (cur->hasGuide) RecordUploadGuide(app, cur->guideUp.Get());
+                    if (cur->hasBack) RecordUploadBack(app, cur->backUp.Get());
                     tookSlot = true;
                     depthUpdates++; repDepth++;
                     if (!cur->reused) depthDelay.Update(cur->completeTime - cur->sceneTime);   // carried-forward depth took no model time
@@ -9146,6 +9307,7 @@ static void RunFrameLoop(App& app)
                     c.writeDepth = useDepthSc && stereo ? 1u : 0u;
                     c.exactLoad = (app.srcW == target.cw && app.srcH == target.ch) ? 1u : 0u;
                     c.fillMode = (uint32_t)app.opt.fillMode;
+                    if (cur && cur->hasBack && app.layerOn.load()) { c.fillMode = (uint32_t)FILL_LAYER; c.bw = W; c.bh = H; }
                     c.mirrorTol = MIRROR_TOL;
                     // Depth sharpened by this frame's picture (depth_refine.h), when the
                     // depth in use was published for it.
@@ -9506,8 +9668,9 @@ static bool WritePpmRgba(const char* path, const unsigned char* rgba, int w, int
 // resolution is returned in it as tight RGBA rows, for DumpThinParts.
 // With `fineNear` (one nearness per pixel of the picture), that depth is used in place of
 // the published map, for DumpRefine.
+// With `layer` (W x H, back_layer.h) and FILL_LAYER, what near objects uncover shows it.
 static bool DumpEyes(App& app, int fillMode, const char* tag, std::vector<unsigned char>* picture = nullptr,
-    const std::vector<float>* fineNear = nullptr)
+    const std::vector<float>* fineNear = nullptr, const std::vector<uint32_t>* layer = nullptr)
 {
     if (!tag) return false;
     Log("DumpEyes: enter (fill %s)", tag);
@@ -9548,6 +9711,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag, std::vector<unsign
     c.fillMode = (uint32_t)fillMode;
     c.mirrorTol = MIRROR_TOL;
 
+    if (layer && layer->size() == (size_t)W * H && fillMode == FILL_LAYER) { c.bw = W; c.bh = H; }
     if (fineNear)
     {
         if (fineNear->size() != (size_t)t.cw * t.ch || !EnsureNearFine(app)) { Log("DumpEyes: FAIL no depth at the picture's size"); return false; }
@@ -9559,6 +9723,11 @@ static bool DumpEyes(App& app, int fillMode, const char* tag, std::vector<unsign
     app.cmdAlloc[0]->Reset();
     app.cmdList->Reset(app.cmdAlloc[0].Get(), nullptr);
     if (fineNear) RecordUploadNearFine(app); else RecordUploadNear(app, slot.nearUp.Get());
+    if (layer && layer->size() == (size_t)W * H && fillMode == FILL_LAYER)
+    {
+        memcpy(app.backMapped, layer->data(), layer->size() * sizeof(uint32_t));
+        RecordUploadBack(app, app.backUp.Get());
+    }
     RecordWarp(app, t, DESC_SRC0 + (UINT)source->index, c, fineNear != nullptr);
     for (UINT e = 0; e < VIEWS; e++)
     {
@@ -9695,6 +9864,23 @@ static bool DumpRefine(App& app)
     ok = DumpEyes(app, FILL_MIRROR, "plain") && ok;
     memcpy(slot.nearMapped, published.data(), published.size() * sizeof(float));
     ok = DumpEyes(app, FILL_MIRROR, "refine", nullptr, &fine) && ok;
+
+    // The background layer (back_layer.h) in what near objects uncover, with the depth as
+    // published and with it sharpened: xrapp5_eye*_layer.ppm, xrapp5_eye*_refine_layer.ppm,
+    // and the two layers themselves on the depth grid (xrapp5_back*.ppm).
+    {
+        const auto l0 = std::chrono::steady_clock::now();
+        const std::vector<uint32_t> asPublished = back::BuildBackLayer(published.data(), guide.data(), W, H);
+        const double layerMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - l0).count();
+        const std::vector<uint32_t> asEstimated = back::BuildBackLayer(app.lastNear.data(), guide.data(), W, H);
+        size_t filledIn = 0;
+        for (uint32_t v : asEstimated) filledIn += (v >> 24) < 255 ? 1 : 0;
+        WritePpmRgba("xrapp5_back_published.ppm", (const unsigned char*)asPublished.data(), W, H, (UINT)W * 4);
+        WritePpmRgba("xrapp5_back.ppm", (const unsigned char*)asEstimated.data(), W, H, (UINT)W * 4);
+        ok = DumpEyes(app, FILL_LAYER, "layer", nullptr, nullptr, &asPublished) && ok;
+        ok = DumpEyes(app, FILL_LAYER, "refine_layer", nullptr, &fine, &asEstimated) && ok;
+        Log("DumpRefine: the background layer took %.1f ms on the CPU; %.1f%% of it is filled in behind near objects", layerMs, 100.0 * (double)filledIn / (double)asEstimated.size());
+    }
     Log("DumpRefine: exit %s - depth for a %dx%d picture in %.0f ms on the CPU; %.1f%% of the depth samples are on a ramp", ok ? "ok" : "FAIL",
         w, h, ms, 100.0 * (double)onRamp / (double)guide.size());
     return ok;
@@ -9793,6 +9979,7 @@ int wmain(int argc, wchar_t** wideArgv)
     app.edgeSnapOn = app.opt.edgeSnap;
     app.thinOn = app.opt.thinParts;
     app.refineOn = app.opt.refine;
+    app.layerOn = app.opt.layerFill;
     app.fuseEnabled = app.opt.fuse;
 
     int rc = 1;
@@ -9834,6 +10021,7 @@ int wmain(int argc, wchar_t** wideArgv)
             app.refineOn = initial.refine != 0;
             Log("Desktop control: depth edges %s", initial.refine ? "sharpened by the picture" : "as the depth model has them");
             if (initial.version >= 16) app.opt.showDepthMap = initial.showDepthMap != 0;
+            if (initial.version >= 17) app.layerOn = initial.layer != 0;
         }
         if (initial.version >= 13)
         {

@@ -241,8 +241,39 @@ static void WritePNM(const char* path, const char* magic, const unsigned char* d
 //                  real texture that continues across the seam. A guard stops the
 //                  reflection from pulling in anything nearer than the anchor
 //                  (another foreground object): it holds the last good pixel.
+//   FILL_LAYER   : show the background layer (back_layer.h) at the place the background
+//                  would really come from: the hole's own position moved back by the
+//                  background's shift. Where the depth there is the background's (within
+//                  MIRROR_TOL of the farther side's), the sharp picture there; where it
+//                  is a near object's, the layer. The same hidden surface for both eyes,
+//                  and the rows agree. Without a layer: mirror.
+//                  One or two pixels that land alone inside what is uncovered (LAYER_ISLAND:
+//                  bits of background the depth put in between) are uncovered too, or
+//                  they would be dots of picture on the layer.
 static const int FILL_STRETCH = 0;
 static const int FILL_MIRROR = 1;
+static const int FILL_LAYER = 2;
+static const int LAYER_ISLAND = 2;
+
+// The background layer (bw x bh, R G B and the picture's-own share in the top byte) at
+// picture position (p, y) of a cw x ch picture: r, g, b, own in 0..1, blended between
+// its samples. BackAt in kWarpHlsl does the same sums.
+inline void BackLayerAt(const uint32_t* back, int bw, int bh, float p, int y, int cw, int ch, float out[4])
+{
+    const float fx = (p + 0.5f) * (float)bw / (float)cw - 0.5f, fy = ((float)y + 0.5f) * (float)bh / (float)ch - 0.5f;
+    const float x0f = std::floor(fx), y0f = std::floor(fy);
+    const float tx = fx - x0f, ty = fy - y0f;
+    const int x0 = std::min(std::max((int)x0f, 0), bw - 1), x1 = std::min(std::max((int)x0f + 1, 0), bw - 1);
+    const int y0 = std::min(std::max((int)y0f, 0), bh - 1), y1 = std::min(std::max((int)y0f + 1, 0), bh - 1);
+    const uint32_t s[4] = { back[(size_t)y0 * bw + x0], back[(size_t)y0 * bw + x1], back[(size_t)y1 * bw + x0], back[(size_t)y1 * bw + x1] };
+    for (int k = 0; k < 4; k++)
+    {
+        const float a = (float)((s[0] >> (8 * k)) & 255) * (1.0f / 255.0f), b = (float)((s[1] >> (8 * k)) & 255) * (1.0f / 255.0f);
+        const float c = (float)((s[2] >> (8 * k)) & 255) * (1.0f / 255.0f), d = (float)((s[3] >> (8 * k)) & 255) * (1.0f / 255.0f);
+        const float top = a + tx * (b - a), bot = c + tx * (d - c);
+        out[k] = top + ty * (bot - top);
+    }
+}
 static const float MIRROR_TOL = 0.08f;      // nearness units (0 far .. 1 near)
 
 // Fills dest hole [x, r) of one row. src[] holds scatter results (>= 0) and is
@@ -318,17 +349,21 @@ static const int STRETCH_GAP = 2;
 static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vector<float>& near01,
                         float eyeOffset, float focalPx, float scale, float invZNear, float invZFar,
                         float nearZ, float farZ, bool doWarp, int fillMode,
-                        unsigned char* outRGBA, float* outDepth, bool subpixel = false, float edgeFade = 0.0f)
+                        unsigned char* outRGBA, float* outDepth, bool subpixel = false, float edgeFade = 0.0f,
+                        const uint32_t* back = nullptr)     // W x H background layer, for FILL_LAYER
 {
     if (!outRGBA || !outDepth) return;
     if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) return;
 
     std::vector<int> src(W);
     std::vector<float> srcDest(W);            // where the chosen source pixel really lands
+    std::vector<unsigned char> layered(W);    // FILL_LAYER: this destination shows the background layer ...
+    std::vector<float> layerPos(W);           // ... at this picture position
     for (int y = 0; y < H; y++)
     {
         const float* nrow = near01.data() + (size_t)y * W;
         std::fill(src.begin(), src.end(), -1);
+        std::fill(layered.begin(), layered.end(), (unsigned char)0);
 
         for (int x = 0; x < W; x++)
         {
@@ -345,6 +380,18 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
             }
             if (dx < 0 || dx >= W) continue;
             if (src[dx] < 0 || nrow[x] > nrow[src[dx]]) { src[dx] = x; srcDest[dx] = destF; }
+        }
+
+        if (fillMode == FILL_LAYER && back)
+        {
+            int runStart = -1;
+            for (int x = 0; x <= W; x++)
+            {
+                if (x < W && src[x] >= 0) { if (runStart < 0) runStart = x; continue; }
+                if (runStart > 0 && x < W && x - runStart <= LAYER_ISLAND && src[runStart - 1] < 0)
+                    for (int h = runStart; h < x; h++) src[h] = -1;
+                runStart = -1;
+            }
         }
 
         // holes: maximal runs of unwritten dest pixels
@@ -369,7 +416,24 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
                 x = r - 1;
                 continue;
             }
-            FillHole(src, nrow, W, x, r, lastValid, rightValid, fillMode);
+            if (fillMode == FILL_LAYER && back && (lastValid >= 0 || rightValid >= 0))
+            {
+                // What is uncovered is the background at the farther side's depth. The
+                // background that lands on h comes from h moved back by that shift.
+                const bool useLeft = lastValid >= 0 && !(rightValid >= 0 && nrow[rightValid] < nrow[lastValid]);
+                const int anchor = useLeft ? lastValid : rightValid;
+                const float invZ = invZFar + nrow[anchor] * (invZNear - invZFar);
+                const float sa = scale * focalPx * eyeOffset * invZ;
+                for (int h = x; h < r; h++)
+                {
+                    src[h] = -2 - anchor;
+                    layered[h] = 1;
+                    layerPos[h] = std::min(std::max((float)h + sa * EdgeWeight(h, W, edgeFade), 0.0f), (float)(W - 1));
+                }
+                x = r - 1;
+                continue;
+            }
+            FillHole(src, nrow, W, x, r, lastValid, rightValid, fillMode == FILL_LAYER ? FILL_MIRROR : fillMode);
             x = r - 1;
         }
 
@@ -379,6 +443,27 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
         {
             const bool filled = src[x] < 0;
             int s = filled ? -2 - src[x] : src[x];
+            if (layered[x])
+            {
+                const float p = layerPos[x];
+                const int j0 = (int)p, j1 = j0 + 1 < W ? j0 + 1 : W - 1;
+                const float f = p - (float)j0;
+                float layer[4];
+                BackLayerAt(back, W, H, p, y, W, H, layer);
+                // How much of what is at p is background: all of it up to half MIRROR_TOL
+                // nearer than the farther side, none from the whole of it.
+                const float share = std::min(std::max(2.0f - (nrow[(int)(p + 0.5f)] - nrow[s]) / (0.5f * MIRROR_TOL), 0.0f), 1.0f);
+                for (int ch = 0; ch < 3; ch++)
+                {
+                    const float c0 = scene[((size_t)y * W + j0) * 3 + ch] / 255.0f, c1 = scene[((size_t)y * W + j1) * 3 + ch] / 255.0f;
+                    const float own = c0 + f * (c1 - c0);
+                    crow[x * 4 + ch] = (unsigned char)lroundf((layer[ch] + share * (own - layer[ch])) * 255.0f);
+                }
+                crow[x * 4 + 3] = 255;
+                float invZ = invZFar + nrow[s] * (invZNear - invZFar);
+                drow[x] = (farZ / (farZ - nearZ)) * (1.0f - nearZ * invZ);
+                continue;
+            }
             // Filled pixels have no continuous mapping, so they stay whole-pixel.
             // srcDest is indexed by DESTINATION: where the pixel written here landed.
             const float pos = (subpixel && !filled) ?

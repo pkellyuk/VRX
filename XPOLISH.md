@@ -289,3 +289,69 @@ fringe beside every edge (seen in the first dumps).
   to place. The thin-part fix is still the answer there.
 - Only the main picture; the curved screen and room read the same warped eyes, so
   they follow, but that was not looked at.
+
+## Behind near objects: a background layer
+
+An experimental setting, off by default: **Fill behind objects from a background layer
+(experimental)** in the Depth section (`BackLayer`, per game, live; the last value of
+the v17 control snapshot; renderer flag `--fill=layer`). Checked by tests, `--selftest`
+and `--dump` on one captured scene; not yet seen in the headset.
+
+**Cause.** When a near object is moved sideways for an eye, a strip of what was behind
+it comes into view beside it, in that eye only. The picture has nothing there, so the
+warp fills it row by row with the background next to it, mirrored (`FillHole`). Each
+row is filled on its own, and the strip is sharp picture that one eye sees and the
+other does not.
+
+**Fix** (`back_layer.h`: `BuildBackLayer`; `FILL_LAYER` in `xr_common.h`, the same in
+`kWarpHlsl`).
+
+- The worker makes one background layer per depth map, on the depth grid, for both
+  eyes. A sample is a near object's when it is more than 0.08 nearer than the farthest
+  thing within 14 depth pixels along its row (along the row, so a floor that comes
+  nearer down the picture is not one). Those samples, and the mixed ones next to them,
+  are replaced by the background beside them: the samples within that reach on their
+  own and the 2 rows above and below that are no nearer than the farthest thing there,
+  the closer ones counting more.
+- In the warp, each pixel of an uncovered strip shows the place the background that
+  lands there comes from: its own position moved back by the farther side's shift.
+  Where the depth at that place is the background's, it shows the sharp picture
+  there; where it is a near object's, the layer.
+- One or two pixels that land alone inside a strip (bits of background that the depth
+  put in between) are treated as uncovered too. Without that they were dots of sharp
+  picture on the soft layer.
+
+`--selftest` compares the GPU with the CPU reference for the new fill (whole-pixel,
+sub-pixel, with the edge fade, and without a layer, which is the mirror fill).
+`TestBackLayer` covers the layer: an object in front of two backgrounds is replaced by
+them, each side taking after its own, with none of the object's colour.
+
+**On the castle capture** (`--dump`: `xrapp5_eye*_refine_layer.ppm` beside
+`xrapp5_eye*_refine.ppm`, `xrapp5_eye*_layer.ppm` beside `_mirror`, and the layers
+themselves, `xrapp5_back*.ppm`):
+
+- The strips are one smooth patch each, the same from row to row, in the colours of
+  the mountain beside each roof. The speckle that the mirror fill left there is gone.
+- They are visibly softer than the textured mountain around them, with a clear
+  outline. In a still of one eye the mirrored fill looks more natural; what the layer
+  is for (a soft patch in one eye giving way to the other eye's sharp picture, and
+  both eyes agreeing on what is hidden) only the headset can show.
+- Two faults found on the way and fixed: the first fill (colours spread inward from
+  all sides) pulled in the inside of wide roofs, which count as "background" only
+  because nothing farther is within reach, and the strips came out dark; and using the
+  layer's own low-resolution mask to choose between picture and layer left dotted
+  patches, now decided by the depth the warp is using.
+
+**Live.** With the setting on, the worker asks for the picture on the depth grid (as
+sharpened edges does), makes the layer with each new estimate and publishes it with
+the depth (`DepthSlot::backUp`); a barely changed frame keeps the last one. Measured
+on the castle image: 8 ms a depth pass on the worker's CPU threads. The warp's own
+cost was not measured separately.
+
+**Not done.**
+
+- Not seen in the headset; no game frame; no moving picture. The layer is as old as
+  the depth, so behind a fast-moving object it trails by a frame or two.
+- The layer is at the depth map's resolution (2.8 times coarser than the picture).
+- Nothing is remembered from earlier frames: what was really behind an object a
+  moment ago is not used (stage 3).
