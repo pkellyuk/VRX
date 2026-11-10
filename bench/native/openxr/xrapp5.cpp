@@ -152,6 +152,7 @@ using Microsoft::WRL::ComPtr;
 #include "foreground_refinement.h"
 #include "depth_fusion.h"
 #include "depth_edges.h"
+#include "thin_parts.h"
 #include "motion_estimator.h"
 #include "frame_timing.h"
 #include "ambilight.h"
@@ -292,7 +293,8 @@ struct Options
     bool fuse = false;                  // --fuse (likewise)
     bool delayed = false;               // --delayed: game frame timing "delayed to depth" (paired wins if both)
     bool subpixel = true;               // sub-pixel warp (no depth banding); --whole-pixel restores the old warp
-    bool edgeSnap = true;               // horizontal depth edges made into steps (depth_edges.h); --no-edge-snap restores the ramps
+    bool thinParts = false;             // --thin-parts: thin upright parts take the depth of what they stand on (thin_parts.h)
+    bool edgeSnap = false;              // --edge-snap: horizontal depth edges made into steps (depth_edges.h) instead of slanted ramps
     float edgeFade = EDGE_FADE;         // share of the picture's width, each side, over which the edges flatten to the screen plane (0 = off)
     float curve = 0.0f;                 // curved screen: 0 flat .. 1 fully wrapped (screen_curve.h)
     bool ambilight = false;             // spill the picture's edge colours around the screen
@@ -610,9 +612,29 @@ struct App
     // depth worker (and by main before the worker starts), except the anchor mailboxes.
     std::atomic<bool> steadyEnabled{ false }, fuseEnabled{ false };
     // Depth edges across the picture (PublishDepth, depth_edges.h), set by the desktop app:
-    std::atomic<bool> edgeSnapOn{ true };       // drawn as steps; off = slanted, as before
+    std::atomic<bool> edgeSnapOn{ false };      // drawn as steps; off (the default) = slanted, as before
     std::atomic<int> edgeStepPct{ 12 };         // the least depth change made a step, percent of the range
     std::atomic<int> widenPct{ 100 };           // near objects widened up and down, percent of the model's own rows
+    // Thin parts kept upright (thin_parts.h), set by the desktop app. Worker thread: the
+    // picture at its presented size is read back with each depth pass (SubmitFine), its
+    // thin parts traced (TraceThin), and the ones that lean toward something nearer that
+    // they are attached to are given its depth each time depth is published (PublishDepth).
+    std::atomic<bool> thinOn{ false };
+    ComPtr<ID3D12Resource> fineBuf, fineReadback;
+    uint32_t* fineMapped = nullptr;
+    ComPtr<ID3D12CommandAllocator> fineAlloc;
+    ComPtr<ID3D12GraphicsCommandList> fineList;
+    UINT64 fineLast = 0;                // ml fence value of the last full-picture pass
+    int fineW = 0, fineH = 0;
+    bool fineFailed = false;
+    std::vector<float> thinLuma;
+    std::vector<thin::Part> thinParts;  // of the latest estimate's picture (thinW x thinH)
+    int thinW = 0, thinH = 0;
+    uint64_t thinLayout = 0;
+    bool thinHave = false;
+    double thinMsSum = 0;               // since the worker's last summary
+    uint64_t thinTraces = 0, thinPublishes = 0, thinCarried = 0;
+    size_t thinFound = 0;
     // Grid image: each depth frame box-filtered to the W x H depth grid as RGBA8 and
     // read back - luma for the motion estimator, colour for the anchor model.
     ComPtr<ID3D12PipelineState> gridPso;                 // root signature: prepRootSig
@@ -933,6 +955,8 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--fuse")) { opt->fuse = true; continue; }
         if (!strcmp(a, "--delayed")) { opt->delayed = true; continue; }
         if (!strcmp(a, "--whole-pixel")) { opt->subpixel = false; continue; }
+        if (!strcmp(a, "--edge-snap")) { opt->edgeSnap = true; continue; }
+        if (!strcmp(a, "--thin-parts")) { opt->thinParts = true; continue; }
         if (!strcmp(a, "--no-edge-snap")) { opt->edgeSnap = false; continue; }
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
@@ -5130,6 +5154,16 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
         edges::DilateNearRows(preparedDepth, W, H, dilateV, app.edgeBarrier);
     }
     else DilateNear(preparedDepth, W, H, dilateH, dilateV);
+    if (app.thinOn.load() && app.thinHave && app.thinLayout == src->layout && !app.opt.useTruth && app.opt.source != SourceKind::Synthetic)
+    {
+        // Thin parts that lean toward something nearer they are attached to take its
+        // depth. The lean is judged in pixels at a nominal view (as DumpEyes: 86.9 deg,
+        // 71 mm), scaled by the 3D strength; the render thread's real figures are close.
+        const float pxPerNear = app.opt.warpScale * (float)(app.thinW * 0.5) / tanf(86.9f * 0.5f * 3.14159265f / 180.0f) * 0.0355f * (1.0f / 1.2f - 1.0f / 12.0f);
+        thin::MeasureThinParts(app.thinParts, app.thinW, app.thinH, preparedDepth.data(), W, H, pxPerNear);
+        app.thinCarried += thin::CarryDepthAlongParts(preparedDepth, W, H, app.thinParts, app.thinW, app.thinH);
+        app.thinPublishes++;
+    }
     memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
     s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
     s.lo = lo; s.hi = hi; s.completeTime = NowSeconds(); s.reused = reused;
@@ -5192,6 +5226,92 @@ static UINT64 SubmitGrid(App& app, const SourceRef& src)
     const UINT64 done = SubmitGridDesc(app, DESC_SRC0 + (UINT)src->index, app.srcW, app.srcH, SourceFence(app), src->value);
     if (done) app.sources.MarkRead(src, SourceFrames::Reader::Model, done);
     return done;
+}
+
+// The picture at its presented size (at most 1920 wide) on the ml queue, copied to its
+// own readback buffer: what the thin-part detector reads (the depth grid is too coarse
+// for it: at half the presented size the thinnest spires are already lost). The same
+// shader as the grid image. Its buffers (8 MB each at 1920x1080) are made on first use.
+// Returns the ml fence value that marks it complete (0 = not submitted).
+static UINT64 SubmitFine(App& app, const SourceRef& src)
+{
+    if (!src || !app.gridPso || app.fineFailed || app.srcW <= 0 || app.srcH <= 0) return 0;
+    const int fw = std::min(app.srcW, 1920), fh = std::max(1, (int)lround((double)app.srcH * fw / app.srcW));
+    WaitMlFence(app, app.fineLast);                 // the allocator and readback must be idle
+    if (!app.fineBuf || fw != app.fineW || fh != app.fineH)
+    {
+        app.fineBuf.Reset(); app.fineReadback.Reset(); app.fineMapped = nullptr;
+        const UINT64 bytes = (UINT64)fw * fh * sizeof(uint32_t);
+        bool ok = MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, app.fineBuf, nullptr) &&
+                  MakeBuffer(app.device.Get(), D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_FLAG_NONE,
+                             D3D12_RESOURCE_STATE_COPY_DEST, app.fineReadback, nullptr) &&
+                  SUCCEEDED(app.fineReadback->Map(0, nullptr, (void**)&app.fineMapped)) && app.fineMapped;
+        if (ok && !app.fineList)
+        {
+            ok = SUCCEEDED(app.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&app.fineAlloc))) &&
+                 SUCCEEDED(app.device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, app.fineAlloc.Get(), nullptr, IID_PPV_ARGS(&app.fineList)));
+            if (ok) app.fineList->Close();
+        }
+        if (!ok) { app.fineFailed = true; app.fineBuf.Reset(); Log("SubmitFine: FAIL buffers for the %dx%d picture; thin parts are left as they are", fw, fh); return 0; }
+        app.fineW = fw; app.fineH = fh;
+        Log("SubmitFine: reading the picture back at %dx%d for thin parts", fw, fh);
+    }
+    PrepConstants pc{};
+    pc.dw = (uint32_t)fw; pc.dh = (uint32_t)fh;
+    pc.exactLoad = (app.srcW == fw && app.srcH == fh) ? 1u : 0u;
+    pc.taps = (uint32_t)std::clamp(int(std::ceil((double)app.srcW / fw)), 1, 4);
+
+    app.fineAlloc->Reset();
+    app.fineList->Reset(app.fineAlloc.Get(), nullptr);
+    ID3D12GraphicsCommandList* cl = app.fineList.Get();
+    ID3D12DescriptorHeap* heaps[] = { app.descHeap.Get() };
+    cl->SetDescriptorHeaps(1, heaps);
+    cl->SetComputeRootSignature(app.prepRootSig.Get());
+    cl->SetPipelineState(app.gridPso.Get());
+    cl->SetComputeRoot32BitConstants(0, sizeof(PrepConstants) / 4, &pc, 0);
+    cl->SetComputeRootDescriptorTable(1, GpuDesc(app, DESC_SRC0 + (UINT)src->index));
+    cl->SetComputeRootUnorderedAccessView(2, app.fineBuf->GetGPUVirtualAddress());
+    cl->Dispatch((fw + 7) / 8, (fh + 7) / 8, 1);
+    Transition(cl, app.fineBuf.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cl->CopyBufferRegion(app.fineReadback.Get(), 0, app.fineBuf.Get(), 0, (UINT64)fw * fh * sizeof(uint32_t));
+    Transition(cl, app.fineBuf.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    cl->Close();
+
+    if (SourceFence(app)) app.mlQueue->Wait(SourceFence(app), src->value);
+    ID3D12CommandList* lists[] = { cl };
+    app.mlQueue->ExecuteCommandLists(1, lists);
+    app.mlQueue->Signal(app.mlFence.Get(), ++app.mlFenceVal);
+    app.fineLast = app.mlFenceVal;
+    app.sources.MarkRead(src, SourceFrames::Reader::Model, app.fineLast);
+    return app.fineLast;
+}
+
+// The thin parts of this pass's picture (thin_parts.h), for PublishDepth. Never fails the
+// pass: without the picture there are no parts and the depth is published as it is.
+static void TraceThin(App& app, const SourceRef& src, UINT64 fineDone)
+{
+    app.thinHave = false;
+    if (!src || fineDone == 0 || !app.fineMapped) return;
+    const auto t0 = std::chrono::steady_clock::now();
+    WaitMlFence(app, fineDone);
+    const int w = app.fineW, h = app.fineH;
+    app.thinLuma.resize((size_t)w * h);
+    fusion::ForRows(h, [&](int y)
+    {
+        const uint32_t* in = app.fineMapped + (size_t)y * w;
+        float* out = app.thinLuma.data() + (size_t)y * w;
+        for (int x = 0; x < w; x++)
+        {
+            const uint32_t p = in[x];       // R in the low byte (kGridHlsl)
+            out[x] = 0.299f * (float)(p & 255) + 0.587f * (float)((p >> 8) & 255) + 0.114f * (float)((p >> 16) & 255);
+        }
+    });
+    app.thinParts = thin::TraceThinParts(app.thinLuma.data(), w, h);
+    app.thinW = w; app.thinH = h; app.thinLayout = src->layout; app.thinHave = true;
+    app.thinFound = app.thinParts.size();
+    app.thinMsSum += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    app.thinTraces++;
 }
 
 // The hardware motion estimator, created on first use on the headset GPU (where the
@@ -5529,6 +5649,7 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     // while the model runs.
     const bool post = app.steadyEnabled.load() || FuseActive(app);
     const UINT64 gridDone = post ? SubmitGrid(app, src) : 0;
+    const UINT64 fineDone = app.thinOn.load() ? SubmitFine(app, src) : 0;      // likewise, for thin parts
     if (app.fuseEnabled.load() && app.opt.model != &kZipDepth && !app.fuseModelLogged)
     {
         Log("ComputeAndPublish: model fusion needs ZipDepth as the main model; off while %s is selected", app.opt.model->name);
@@ -5545,6 +5666,7 @@ static bool ComputeAndPublish(App& app, const SourceRef& src, std::vector<float>
     for (size_t i = 0; i < nearScratch.size(); i++)
         nearScratch[i] = std::min(1.0f, std::max(0.0f, (app.rawDepth[i] - lo) * inv));
     PostProcessDepth(app, src, gridDone, nearScratch);
+    TraceThin(app, src, fineDone);
 
     // Make global depth available immediately; an optional crop must never hold
     // back this result or mutate a slot the render thread may be reading.
@@ -5694,6 +5816,12 @@ static void WorkerMain(App* app)
                 Log("Worker: horizontal depth edges - %.0f column steps per depth map (%s)", (double)app->edgeSteps / app->edgePublishes,
                     app->edgeLuma.valid() ? "placed on the picture's edges" : "placed at the ramps' middles: no picture on the depth grid without steady depth or fusion");
                 app->edgeSteps = app->edgePublishes = 0;
+            }
+            if (app->thinTraces > 0)
+            {
+                Log("Worker: thin parts - %zu in the picture (%dx%d), %.1f given new depth per depth map; finding them took %.1f ms a pass",
+                    app->thinFound, app->thinW, app->thinH, app->thinPublishes ? (double)app->thinCarried / app->thinPublishes : 0.0, app->thinMsSum / app->thinTraces);
+                app->thinMsSum = 0; app->thinTraces = app->thinPublishes = app->thinCarried = 0;
             }
             if (app->postPasses > 0 && !app->postMs.empty())
             {
@@ -8150,6 +8278,8 @@ static void RunFrameLoop(App& app)
                     if (app.widenPct.exchange(next.widen) != next.widen)
                         Log("Near objects widened up and down: %d%% of the model's own amount", next.widen);
                 }
+                if (next.version >= 14 && app.thinOn.exchange(next.thin != 0) != (next.thin != 0))
+                    Log("Thin parts: %s", next.thin ? "given the depth of what they stand on" : "left as the depth model has them");
                 if (next.version >= 6 && app.opt.delayed != (next.delayed != 0))
                 {
                     app.opt.delayed = next.delayed != 0;
@@ -8998,7 +9128,9 @@ static bool WritePpmRgba(const char* path, const unsigned char* rgba, int w, int
 // (presented resolution, bilinear depth, given fill mode) and writes both eyes.
 // View parameters are the PS VR2 shared-FOV figures from the M3/M4 logs, since no
 // frame loop is running yet: 86.9 deg horizontal, IPD 71 mm.
-static bool DumpEyes(App& app, int fillMode, const char* tag)
+// With `picture`, nothing is written: the picture itself (no warp) at the presented
+// resolution is returned in it as tight RGBA rows, for DumpThinParts.
+static bool DumpEyes(App& app, int fillMode, const char* tag, std::vector<unsigned char>* picture = nullptr)
 {
     if (!tag) return false;
     Log("DumpEyes: enter (fill %s)", tag);
@@ -9019,7 +9151,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     const float tanHalfX = tanf(86.9f * 0.5f * 3.14159265f / 180.0f);
     WarpConstants c{};
     c.cw = (uint32_t)t.cw; c.ch = (uint32_t)t.ch; c.dw = W; c.dh = H;
-    c.doWarp = app.opt.doWarp ? 1u : 0u;
+    c.doWarp = (app.opt.doWarp && !picture) ? 1u : 0u;
     c.scaleFocal = app.opt.warpScale * (float)(t.cw * 0.5) / tanHalfX;
     c.invZNear = 1.0f / 1.2f; c.invZFar = 1.0f / 12.0f;
     if (!app.opt.headLocked)
@@ -9063,7 +9195,13 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     unsigned char* cp = nullptr;
     if (FAILED(crb->Map(0, nullptr, (void**)&cp)) || !cp) { Log("DumpEyes: FAIL map readback"); return false; }
     bool ok = true;
-    for (UINT e = 0; e < VIEWS; e++)
+    if (picture)
+    {
+        picture->resize((size_t)t.cw * t.ch * 4);
+        for (int y = 0; y < t.ch; y++)
+            memcpy(picture->data() + (size_t)y * t.cw * 4, cp + cfp[0].Offset + (size_t)y * cfp[0].Footprint.RowPitch, (size_t)t.cw * 4);
+    }
+    else for (UINT e = 0; e < VIEWS; e++)
     {
         char path[64];
         snprintf(path, sizeof(path), "xrapp5_eye%u_%s.ppm", e, tag);
@@ -9073,6 +9211,65 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     crb->Unmap(0, nullptr);
     Log("DumpEyes: exit %s (focal %.1f px, max disparity per eye %.1f px)", ok ? "ok" : "FAIL",
         c.scaleFocal, c.scaleFocal * 0.0355f * c.invZNear);
+    return ok;
+}
+
+// --dump: thin parts that lean (thin_parts.h). Finds thin upright parts in the picture,
+// reads the published depth along each, and writes xrapp5_thin.ppm: the picture in grey
+// with leaning parts in red and steady ones in green. The worst are listed in the log.
+// A diagnostic: no depth is changed. Same view figures as DumpEyes.
+static bool DumpThinParts(App& app)
+{
+    Log("DumpThinParts: enter");
+    std::vector<unsigned char> picture;
+    if (!DumpEyes(app, FILL_MIRROR, "picture", &picture)) return false;
+    const WarpTarget& t = app.mainTarget;
+    const int w = t.cw, h = t.ch;
+    const DepthSlot& slot = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
+    if (!slot.nearMapped || picture.size() != (size_t)w * h * 4) { Log("DumpThinParts: FAIL no picture or depth"); return false; }
+
+    std::vector<float> luma((size_t)w * h), nearMap((size_t)W * H);
+    for (size_t i = 0; i < luma.size(); i++)
+        luma[i] = 0.299f * picture[i * 4] + 0.587f * picture[i * 4 + 1] + 0.114f * picture[i * 4 + 2];
+    memcpy(nearMap.data(), slot.nearMapped, nearMap.size() * sizeof(float));      // as published: what the warp uses
+    // The detector's two inputs, so that it can be run again on this scene offline.
+    WritePpmRgba("xrapp5_picture.ppm", picture.data(), w, h, (UINT)w * 4);
+    {
+        std::vector<unsigned char> g(nearMap.size());
+        for (size_t i = 0; i < g.size(); i++) g[i] = (unsigned char)(std::clamp(nearMap[i], 0.0f, 1.0f) * 255.0f + 0.5f);
+        WritePNM("xrapp5_near_published.pgm", "P5", g.data(), g.size());
+    }
+
+    const float tanHalfX = tanf(86.9f * 0.5f * 3.14159265f / 180.0f);
+    const float pxPerNear = app.opt.warpScale * (float)(w * 0.5) / tanHalfX * 0.0355f * (1.0f / 1.2f - 1.0f / 12.0f);
+    std::vector<thin::Part> parts = thin::FindThinParts(luma.data(), w, h, nearMap.data(), W, H, pxPerNear);
+    std::vector<float> fixed = nearMap;
+    const size_t carried = thin::CarryDepthAlongParts(fixed, W, H, parts, w, h);
+    size_t leaning = 0;
+    for (const thin::Part& p : parts) leaning += p.leaning ? 1 : 0;
+    Log("DumpThinParts: %zu thin parts in the picture (%dx%d), %zu leaning by %.0f px or more per eye, %zu of those attached to something nearer (the whole depth range is %.1f px per eye)",
+        parts.size(), w, h, leaning, thin::LEAN_PX, carried, pxPerNear);
+    for (size_t i = 0; i < parts.size() && i < 16 && parts[i].leaning; i++)
+    {
+        const thin::Part& p = parts[i];
+        Log("DumpThinParts:   %s part at x %.0f, rows %d..%d (%d long, about %.0f wide): lean %.1f px per eye, its nearness above what is beside it %.2f..%.2f; %s",
+            p.bright ? "bright" : "dark", p.points.front().x, p.top(), p.bottom(), p.length(), p.points[p.points.size() / 2].width, p.lean, p.leanFrom, p.leanTo,
+            !p.carried ? "left alone" : p.attachedBelow ? "given the depth of what is below it" : "given the depth of what is above it");
+    }
+    // Marked: red, the parts that would be given new depth; green, every other part.
+    for (thin::Part& p : parts) p.leaning = p.carried;
+    const std::vector<unsigned char> marked = thin::MarkThinParts(luma.data(), w, h, parts);
+    bool ok = WritePpmRgba("xrapp5_thin.ppm", marked.data(), w, h, (UINT)w * 4);
+    // Both eyes again with that depth, by the real warp, to compare with xrapp5_eye*_mirror.
+    if (carried > 0)
+    {
+        DepthSlot& live = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
+        memcpy(live.nearMapped, fixed.data(), fixed.size() * sizeof(float));
+        ok = DumpEyes(app, FILL_MIRROR, "thinfix") && ok;
+        memcpy(live.nearMapped, nearMap.data(), nearMap.size() * sizeof(float));
+    }
+    Log("DumpThinParts: exit %s - wrote xrapp5_thin.ppm (red: given new depth, green: other thin parts)%s", ok ? "ok" : "FAIL",
+        carried > 0 ? " and xrapp5_eye*_thinfix.ppm" : "");
     return ok;
 }
 
@@ -9167,6 +9364,7 @@ int wmain(int argc, wchar_t** wideArgv)
     app.foregroundEnabled = app.opt.foreground && app.opt.doWarp;
     app.steadyEnabled = app.opt.steady;
     app.edgeSnapOn = app.opt.edgeSnap;
+    app.thinOn = app.opt.thinParts;
     app.fuseEnabled = app.opt.fuse;
 
     int rc = 1;
@@ -9201,6 +9399,11 @@ int wmain(int argc, wchar_t** wideArgv)
         if (initial.version >= 6) app.opt.delayed = initial.delayed != 0;
         if (initial.version >= 7) app.opt.subpixel = initial.subpixel != 0;
         if (initial.version >= 12) app.opt.edgeFade = initial.edge * 0.01f;
+        if (initial.version >= 14)
+        {
+            app.thinOn = initial.thin != 0;
+            Log("Desktop control: thin parts %s", initial.thin ? "given the depth of what they stand on" : "left as the depth model has them");
+        }
         if (initial.version >= 13)
         {
             app.edgeSnapOn = initial.edgeSteps != 0;
@@ -9291,6 +9494,7 @@ int wmain(int argc, wchar_t** wideArgv)
             WritePNM("xrapp5_near.pgm", "P5", g.data(), g.size());
             if (!DumpEyes(app, FILL_STRETCH, "stretch")) break;
             if (!DumpEyes(app, FILL_MIRROR, "mirror")) break;
+            DumpThinParts(app);     // a diagnostic: its failure does not stop playback
         }
 
         app.worker = std::thread(WorkerMain, &app);

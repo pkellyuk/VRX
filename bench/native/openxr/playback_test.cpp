@@ -9,6 +9,7 @@
 #include "gpu_choice.h"
 #include "depth_fusion.h"
 #include "depth_edges.h"
+#include "thin_parts.h"
 #include "frame_timing.h"
 #include "screen_curve.h"
 #include "ambilight.h"
@@ -157,6 +158,82 @@ static void TestDepthEdges()
     Check(one[(size_t)5 * w + 2] == 1 && one[(size_t)5 * w + 6] == 1 && one[(size_t)5 * w + 1] == 0 && one[(size_t)5 * w + 7] == 0 && one[(size_t)4 * w + 4] == 0,
         "a step's mark spreads as far as the near side is widened");
     std::printf("PASS: depth edges\n");
+}
+
+// Thin parts that lean (thin_parts.h): found in the picture, measured in the depth.
+static void TestThinParts()
+{
+    const int w = 240, h = 200, dw = 120, dh = 100;
+    std::vector<float> luma((size_t)w * h, 40.0f), nearMap((size_t)dw * dh, 0.2f);
+    auto bar = [&](int x0, int width, int y0, int y1, float value, float slope)
+    {
+        for (int y = y0; y <= y1; y++)
+            for (int x = 0; x < width; x++) luma[(size_t)y * w + x0 + (int)std::lround(slope * (y - y0)) + x] = value;
+    };
+    auto nearBox = [&](int x0, int x1, int y0, int y1, float top, float bottom)      // picture px; fades down the rows
+    {
+        for (int y = y0 / 2; y <= y1 / 2; y++)
+            for (int x = x0 / 2; x <= x1 / 2; x++)
+                nearMap[(size_t)y * dw + x] = top + (bottom - top) * (float)(y - y0 / 2) / (float)std::max(1, y1 / 2 - y0 / 2);
+    };
+    // 1: a bright spike on a bright roof. The roof is near; the spike has the roof's
+    // depth at its foot and fades to the background's at its tip.
+    bar(50, 3, 20, 160, 200.0f, 0.0f);      // 3 px: the widest that is thin in a picture this small
+    nearBox(44, 60, 20, 160, 0.2f, 0.8f);
+    for (int y = 161; y <= 190; y++) for (int x = 30; x < 74; x++) luma[(size_t)y * w + x] = 200.0f;
+    nearBox(30, 74, 162, 190, 0.8f, 0.8f);
+    // 2: a dark slanted pole on a pale wall that the depth tilts: the pole's depth changes
+    // along it, but with the wall's, so it does not lean.
+    for (int y = 20; y <= 160; y++) for (int x = 100; x < 140; x++) luma[(size_t)y * w + x] = 180.0f;
+    bar(110, 3, 30, 150, 30.0f, 0.1f);
+    nearBox(90, 150, 16, 164, 0.3f, 0.9f);
+    // 3: text-like strokes (parts too, but on one flat depth), strokes too short to be
+    // parts, and a plain edge between two areas (not a bar).
+    for (int k = 0; k < 6; k++) bar(170 + 6 * k, 2, 40, 52, 220.0f, 0.0f);
+    for (int k = 0; k < 6; k++) bar(170 + 6 * k, 2, 70, 74, 220.0f, 0.0f);
+    for (int y = 100; y <= 180; y++) for (int x = 200; x < w; x++) luma[(size_t)y * w + x] = 150.0f;
+
+    const float pxPerNear = 20.0f;
+    std::vector<thin::Part> parts = thin::FindThinParts(luma.data(), w, h, nearMap.data(), dw, dh, pxPerNear);
+    Check(parts.size() == 8, "a spike, a pole and six text strokes are parts; shorter strokes and a plain edge are not");
+    if (parts.size() == 8)
+    {
+        const thin::Part& spike = parts[0];     // sorted by lean, the most first
+        const thin::Part& pole = *std::find_if(parts.begin(), parts.end(), [](const thin::Part& p) { return !p.bright; });   // the only dark part
+        Check(spike.bright && spike.top() == 20 && spike.bottom() == 160 && std::fabs(spike.points[70].x - 52.0f) <= 1.0f, "the spike is followed from tip to base");
+        Check(spike.leaning && std::fabs(spike.lean - 0.6f * pxPerNear) < 1.5f, "its lean is the change of shift along it (about 12 px)");
+        Check(spike.leanFrom < 0.1f && spike.leanTo > 0.5f, "from the depth beside it at the tip to well above it at the base");
+        Check(!pole.bright && pole.length() >= 115 && std::fabs(pole.points.back().x - pole.points.front().x - 12.0f) <= 2.0f, "the slanted pole is followed along its slope");
+        Check(!pole.leaning && pole.lean < 0.5f && pole.spread > 8.0f, "a part whose depth changes with the surface it lies on does not lean");
+        const std::vector<unsigned char> marked = thin::MarkThinParts(luma.data(), w, h, parts);
+        const unsigned char* onSpike = marked.data() + ((size_t)90 * w + 52) * 4;
+        const unsigned char* onPole = marked.data() + ((size_t)90 * w + 117) * 4;
+        const unsigned char* elsewhere = marked.data() + ((size_t)90 * w + 20) * 4;
+        Check(marked.size() == (size_t)w * h * 4 && onSpike[0] == 255 && onSpike[2] == 0, "a leaning part is marked red");
+        Check(onPole[0] == 0 && onPole[1] == 200, "a steady part is marked green");
+        Check(elsewhere[0] == 20 && elsewhere[1] == 20 && elsewhere[2] == 20, "the rest is the picture in grey");
+        for (size_t i = 1; i < parts.size(); i++)
+            if (parts[i].bright) Check(!parts[i].leaning && parts[i].length() == 13, "text strokes are parts that do not lean");
+
+        // The fix: the spike takes its roof's depth all along it; nothing else changes.
+        std::vector<float> fixed = nearMap;
+        Check(thin::CarryDepthAlongParts(fixed, dw, dh, parts, w, h) == 1, "only the spike is given the depth of what it is attached to");
+        Check(parts[0].carried && parts[0].attachedBelow && std::fabs(parts[0].target - 0.8f) < 1e-6f, "from the roof below it");
+        for (size_t i = 1; i < parts.size(); i++) Check(!parts[i].carried, "the pole on its wall and the text are left alone");
+        Check(fixed[(size_t)15 * dw + 25] == 0.8f && fixed[(size_t)45 * dw + 26] == 0.8f && fixed[(size_t)78 * dw + 25] == 0.8f, "the spike has one depth from tip to foot");
+        Check(fixed[(size_t)45 * dw + 20] == nearMap[(size_t)45 * dw + 20] && fixed[(size_t)45 * dw + 31] == nearMap[(size_t)45 * dw + 31], "what is beside it keeps its depth");
+        size_t changed = 0, lowered = 0;
+        for (size_t i = 0; i < fixed.size(); i++) { changed += fixed[i] != nearMap[i]; lowered += fixed[i] < nearMap[i]; }
+        Check(changed > 0 && changed < 400 && lowered == 0, "depth is only brought nearer, and only along the spike");
+        // A part with nothing nearer at either end is not carried, however much it leans.
+        std::vector<float> noRoof = nearMap;
+        for (int y = 81; y < dh; y++) for (int x = 0; x < 60; x++) noRoof[(size_t)y * dw + x] = 0.2f;
+        std::vector<thin::Part> again = thin::FindThinParts(luma.data(), w, h, noRoof.data(), dw, dh, pxPerNear);
+        std::vector<float> untouched = noRoof;
+        Check(thin::CarryDepthAlongParts(untouched, dw, dh, again, w, h) == 0 && untouched == noRoof, "a part attached to nothing nearer is left alone");
+    }
+    Check(thin::FindThinParts(nullptr, w, h, nearMap.data(), dw, dh, pxPerNear).empty(), "no picture, no parts");
+    std::printf("PASS: thin parts\n");
 }
 
 static void TestDepthPolicy()
@@ -585,8 +662,8 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 16", settings), "v12 edge flattening over 15 rejected");
     Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 -1", settings), "v12 negative edge flattening rejected");
     Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 7", settings), "v12 trailing value rejected");
-    Check(ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4", settings) && settings.edgeSteps == 1 && settings.edgeStepMin == 12 && settings.widen == 100,
-        "v12 keeps edge steps on at 12 % and the model's own widening");
+    Check(ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4", settings) && settings.edgeSteps == 0 && settings.edgeStepMin == 12 && settings.widen == 100,
+        "v12 keeps depth edges slanted, with the model's own widening");
     Check(ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 0 30 200", settings) && settings.version == 13 && settings.edgeSteps == 0 &&
         settings.edgeStepMin == 30 && settings.widen == 200, "v13 edge steps, their least change and the widening");
     Check(ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 5 0", settings) && settings.edgeStepMin == 5 && settings.widen == 0, "v13 at least");
@@ -598,7 +675,13 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 301", settings), "v13 widening over 300 rejected");
     Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 -1", settings), "v13 negative widening rejected");
     Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 7", settings), "v13 trailing value rejected");
-    Check(!ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100", settings), "a newer snapshot version is rejected");
+    Check(ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100", settings) && settings.thin == 0, "v13 leaves thin parts as they are");
+    Check(ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1", settings) && settings.version == 14 && settings.thin == 1, "v14 thin parts on");
+    Check(ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 0", settings) && settings.thin == 0, "v14 thin parts off");
+    Check(!ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100", settings), "v14 missing thin parts flag rejected");
+    Check(!ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 2", settings), "v14 invalid thin parts flag rejected");
+    Check(!ParseDesktopSettings("VRX 14 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 7", settings), "v14 trailing value rejected");
+    Check(!ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -2895,6 +2978,7 @@ int main(int argc, char** argv)
     TestDesktopControl();
     TestDepthFusion();
     TestDepthEdges();
+    TestThinParts();
     TestFrameTiming();
     if (argc > 1)
     {

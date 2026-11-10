@@ -95,7 +95,7 @@ rows instead, which lean the other way (why it was added).
   each picture row takes the nearer depth row.
 
 The picture is then cut at the edge instead of sheared across it. On the same desktop,
-before and after (`--dump`, with `--no-edge-snap` for before): the icons stand upright
+before and after (`--dump`, with `--edge-snap` for after): the icons stand upright
 with at most their last 2 rows cut, and the wallpaper just under a window's bottom
 edge no longer bends. 0.3% of the picture's pixels changed, nearly all of them along
 such edges. The picture's own edges need the picture on the depth grid, which exists
@@ -107,8 +107,10 @@ edge, a piece of the background moves with the object, like a blob hovering over
 character's helmet. So both ways are kept, as three settings in the Depth section (per
 game, live, the last three values of the v13 control snapshot):
 
-- **Cut cleanly at depth edges across the picture (off: slant)** (`EdgeSteps`, on by
-  default): the steps above, or the ramps as before.
+- **Cut cleanly at depth edges across the picture (off: slant)** (`EdgeSteps`, off by
+  default): the steps above, or the ramps as before. Off by default because in the
+  headset the fragments around objects were not clearly better than the slant; it is
+  there for desktop use, where it keeps icons next to a window upright.
 - **Cut only edges at least this deep** (`EdgeStepMin`, 5 to 60% of the depth range,
   12% by default): the least change of depth that is made a step; shallower edges keep
   their ramps. A window over the desktop is about 60%.
@@ -140,10 +142,83 @@ reference as before. Whole-pixel warp (sub-pixel off) is unchanged.
 
 ## Thin parts leaning
 
-Not started; the steps above may already help where a thin part's edge runs across
-the picture. Likely cause: the warp scales the 686x392 depth up to the picture by
-plain bilinear interpolation (`NearAt` in `kWarpHlsl`), so a spike a few pixels wide
-gets a mix of its object's depth and the sky's, fading toward the tip; the tip moves
-less than the base and leans the opposite way in each eye. Candidate fix: colour-guided
-upsampling. A `--dump` of such a scene would show whether the model saw the spike at
-all.
+Detected and fixed, as an experimental setting that is off by default. Checked on one
+captured scene and in a short live run; not yet seen in the headset.
+
+**Cause**, from a capture of a castle's spires against mountains. Each spire curves
+away from its roof, left in the left eye and right in the right eye. The depth model
+does not see the spires at all: in the 686x392 depth map the roofs are rounded shapes
+and the spires have the mountain's depth. `DilateNear` widens each roof's depth a
+little past its tip, so the foot of a spire is dragged along with the roof and the
+rest stays with the mountain. That transition is the curve.
+
+**Detector** (`thin_parts.h`: `FindThinParts`). Both eyes are made from one picture
+and one depth map, so the lean of a thin part is known without comparing the eyes: it
+is how much its shift changes along it. The depth cannot say where the thin part is,
+so that comes from the picture, at its own resolution:
+
+- on each row, a **bar**: two neighbouring edges of opposite sign (12 of 255 levels
+  across 2 px) at most 0.7% of the width apart (13 px at 1920), with much the same
+  picture either side;
+- bars on successive rows that line up (within 2 px, gaps of up to 2 rows) are one
+  **part**, if it runs for 1.2% of the height or more (13 rows at 1080). That is short
+  because the spires are: 15 to 40 rows. Text strokes, scrollbars and window borders
+  are parts too (about 290 parts in the castle scene);
+- along each part, its depth is compared with the depth 6 depth pixels either side of
+  it. The **lean** is how much that difference changes along the part, in pixels of
+  shift per eye; 2 px or more is leaning. Comparing with what is beside it matters: a
+  scrollbar on a window that the depth tilts changes with the window and does not
+  lean.
+
+**Fix** (`CarryDepthAlongParts`). A part is given the depth of what it is attached
+to, along its whole length and the few rows to its foot, when all of these hold:
+
+- it leans (2 px or more per eye);
+- within 8 depth rows past one of its ends there is something at least 0.08 nearer
+  than what is beside the part (the roof under a spire, the ground under a post);
+- it is nowhere more than 0.05 farther than what is beside it (that is a gap between
+  two things, not a thing);
+- it stands out most at the attached end.
+
+Depth is only ever brought nearer. A text stroke or a scrollbar sits on one depth and
+is left alone.
+
+**On the castle capture** (`--dump` writes `xrapp5_thin.ppm`, the parts marked, and
+`xrapp5_eye*_thinfix.ppm`, both eyes by the real warp with the fix, next to
+`xrapp5_eye*_mirror.ppm` without): of about 290 parts, 15 lean and 3 are given new
+depth - the two spires and a pole in front of trees.
+
+- The single spire stands upright in both eyes, from a lean of 11.6 px per eye.
+- The pair of spires side by side is only half fixed: one of the two is found, so in
+  one eye they still splay.
+- Moving a spire leaves a gap in the mountain behind it, and the hole fill there is
+  visibly speckled for a few pixels beside the spire's top.
+- At half the picture's resolution (960x540) the thinner spire is no longer found, so
+  the detector needs the picture at its presented size.
+
+**Live** (`SubmitFine`, `TraceThin` and `PublishDepth` in `xrapp5.cpp`), behind the
+setting **Keep thin parts upright (experimental)** in the Depth section (`ThinParts`,
+off by default, per game, live; the last value of the v14 control snapshot; renderer
+flag `--thin-parts`).
+
+- With each depth pass the picture is also read back at its presented size (at most
+  1920 wide, 8 MB) by the same shader that makes the depth grid's picture, and its
+  parts are traced on the worker thread, the rows in parallel (`TraceThinParts`).
+- Each time depth is published, the depth along the parts is measured and the fix
+  applied, after `DilateNear` (`MeasureThinParts`, `CarryDepthAlongParts`). A barely
+  changed frame that keeps the last depth keeps the last parts too.
+- Measured in a 40 s run on a 4K desktop with the RTX 5060 Ti: finding the parts took
+  9.5 ms a pass (including the wait for the picture), about 200 parts in the picture,
+  the same 3 given new depth on every pass. That run made about 30 depth passes a
+  second; an earlier session without it made about 44, on different content, so the
+  drop is indicative only. The worker's 2-second summary reports the three figures.
+- The lean is judged in pixels at a nominal view (86.9 degrees, 71 mm) scaled by the
+  3D strength, because the worker does not have the headset's real figures.
+
+**Not done.**
+
+- Not seen in the headset. One scene, checked by `--dump`; no game, and no moving
+  picture: a part found on one pass and missed on the next would jump between leaning
+  and upright, and nothing holds a part over from the pass before.
+- With another GPU as the depth GPU it was not tried.
+- Parts that are thin across the picture rather than upright are not looked for.

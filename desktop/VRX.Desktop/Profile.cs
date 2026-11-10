@@ -53,10 +53,17 @@ public sealed class Profile
     // (on: depth_edges.h). EdgeStepMin: only edges whose depth changes by at least this
     // percent of the range are cut, 5 .. 60. WidenNear: how far near objects are widened
     // up and down, percent of the model's own amount, 0 .. 300; with steps on it applies
-    // only where no step was made. Defaults for older profiles too.
-    public bool EdgeSteps { get; set; } = true;
+    // only where no step was made. The cut is off by default: on a desktop it keeps icons
+    // next to a window upright, but in games a cut that misses the real edge leaves a
+    // fragment moving with the wrong side. Defaults for older profiles too.
+    public bool EdgeSteps { get; set; }
     public int EdgeStepMin { get; set; } = 12;
     public int WidenNear { get; set; } = 100;
+    // Thin upright parts (a spire, a mast, a post) take the depth of what they stand on
+    // (v14 snapshot, live; thin_parts.h). The depth model often does not see them at all,
+    // so they stay with the background while their foot is dragged along, and they bend
+    // opposite ways in the two eyes. Off by default: tried on one scene so far.
+    public bool ThinParts { get; set; }
 
     // Curved screen: 0 flat (default) .. 100 fully wrapped. The wrap this stands for
     // lives in bench/native/openxr/screen_curve.h (kCurveMaxWrap).
@@ -125,7 +132,7 @@ public sealed class Profile
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 13 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear}\n");
+        $"VRX 14 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear} {(ThinParts ? 1 : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)
