@@ -2152,10 +2152,16 @@ void main(uint3 id : SV_DispatchThreadID)
             {
                 // The background layer, at the place the background that lands here
                 // comes from: this position moved back by the farther side's shift.
+                // With it, the mirrored pixel (as fillMode 1 below): its fine detail.
                 float invZa = invZFar + anchorNear * (invZNear - invZFar);
                 float sa = scaleFocal * eye * invZa;
-                [loop] for (h = x; h < r; h++)
+                int seen = anchor;
+                int count = r - x;
+                [loop] for (int kk = 1; kk <= count; kk++)
                 {
+                    h = useLeft ? (x - 1 + kk) : (r - kk);
+                    int across = clamp(useLeft ? anchor - kk : anchor + kk, 0, iw - 1);
+                    if (NearAt(across, (int)y) <= anchorNear + mirrorTol) seen = across;
                     float sh = sa;
                     if (edgeFade > 0.0)
                     {
@@ -2164,7 +2170,7 @@ void main(uint3 id : SV_DispatchThreadID)
                         sh *= t * t * (3.0 - 2.0 * t);
                     }
                     float p = clamp((float)h + sh, 0.0, (float)(iw - 1));
-                    scratch[base + h] = LAYER | (uint)anchor;
+                    scratch[base + h] = LAYER | (uint)seen;
                     scratch[N + base + h] = asuint(anchorNear);
                     scratch[2 * N + base + h] = asuint(p);
                 }
@@ -2217,7 +2223,12 @@ void main(uint3 id : SV_DispatchThreadID)
             float4 layer = BackAt(p, (int)y);
             // the sharp picture where what is at p is background, the layer where it is a near object's
             float share = saturate(2.0 - (NearAt((int)(p + 0.5), (int)y) - asfloat(scratch[N + base + x])) / (0.5 * mirrorTol));
-            col = float4(layer.rgb + share * (own.rgb - layer.rgb), 1.0);
+            // the layer is soft: it carries the fine detail of the mirrored pixel (what that pixel has beyond the layer there)
+            float4 mirrored;
+            if (exactLoad != 0) mirrored = scene.Load(int3(s, y, 0));
+            else mirrored = scene.SampleLevel(samp, float2(((float)s + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
+            float3 soft = saturate(layer.rgb + (mirrored.rgb - BackAt((float)s, (int)y).rgb));
+            col = float4(soft + share * (own.rgb - soft), 1.0);
         }
         else if (subpixel != 0)
         {

@@ -247,6 +247,11 @@ static void WritePNM(const char* path, const char* magic, const unsigned char* d
 //                  MIRROR_TOL of the farther side's), the sharp picture there; where it
 //                  is a near object's, the layer. The same hidden surface for both eyes,
 //                  and the rows agree. Without a layer: mirror.
+//                  The layer is soft (it is on the depth grid, and behind an object it is
+//                  an average), and a soft strip beside every near object reads as frosted
+//                  glass. So it carries the fine detail of the background beside it: the
+//                  mirrored pixel FILL_MIRROR would have shown, less the layer at that
+//                  pixel (what the layer already holds of it), is added to it.
 //                  One or two pixels that land alone inside what is uncovered (LAYER_ISLAND:
 //                  bits of background the depth put in between) are uncovered too, or
 //                  they would be dots of picture on the layer.
@@ -359,6 +364,7 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
     std::vector<float> srcDest(W);            // where the chosen source pixel really lands
     std::vector<unsigned char> layered(W);    // FILL_LAYER: this destination shows the background layer ...
     std::vector<float> layerPos(W);           // ... at this picture position
+    std::vector<float> layerNear(W);          // ... behind the farther side, whose nearness this is
     for (int y = 0; y < H; y++)
     {
         const float* nrow = near01.data() + (size_t)y * W;
@@ -424,10 +430,11 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
                 const int anchor = useLeft ? lastValid : rightValid;
                 const float invZ = invZFar + nrow[anchor] * (invZNear - invZFar);
                 const float sa = scale * focalPx * eyeOffset * invZ;
+                FillHole(src, nrow, W, x, r, lastValid, rightValid, FILL_MIRROR);    // src[h] = -2 - the mirrored pixel: its detail
                 for (int h = x; h < r; h++)
                 {
-                    src[h] = -2 - anchor;
                     layered[h] = 1;
+                    layerNear[h] = nrow[anchor];
                     layerPos[h] = std::min(std::max((float)h + sa * EdgeWeight(h, W, edgeFade), 0.0f), (float)(W - 1));
                 }
                 x = r - 1;
@@ -448,19 +455,22 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
                 const float p = layerPos[x];
                 const int j0 = (int)p, j1 = j0 + 1 < W ? j0 + 1 : W - 1;
                 const float f = p - (float)j0;
-                float layer[4];
+                float layer[4], under[4];
                 BackLayerAt(back, W, H, p, y, W, H, layer);
+                BackLayerAt(back, W, H, (float)s, y, W, H, under);       // the layer at the mirrored pixel
                 // How much of what is at p is background: all of it up to half MIRROR_TOL
                 // nearer than the farther side, none from the whole of it.
-                const float share = std::min(std::max(2.0f - (nrow[(int)(p + 0.5f)] - nrow[s]) / (0.5f * MIRROR_TOL), 0.0f), 1.0f);
+                const float share = std::min(std::max(2.0f - (nrow[(int)(p + 0.5f)] - layerNear[x]) / (0.5f * MIRROR_TOL), 0.0f), 1.0f);
                 for (int ch = 0; ch < 3; ch++)
                 {
                     const float c0 = scene[((size_t)y * W + j0) * 3 + ch] / 255.0f, c1 = scene[((size_t)y * W + j1) * 3 + ch] / 255.0f;
                     const float own = c0 + f * (c1 - c0);
-                    crow[x * 4 + ch] = (unsigned char)lroundf((layer[ch] + share * (own - layer[ch])) * 255.0f);
+                    const float mirrored = scene[((size_t)y * W + s) * 3 + ch] / 255.0f;
+                    const float soft = std::min(std::max(layer[ch] + (mirrored - under[ch]), 0.0f), 1.0f);
+                    crow[x * 4 + ch] = (unsigned char)lroundf((soft + share * (own - soft)) * 255.0f);
                 }
                 crow[x * 4 + 3] = 255;
-                float invZ = invZFar + nrow[s] * (invZNear - invZFar);
+                float invZ = invZFar + layerNear[x] * (invZNear - invZFar);
                 drow[x] = (farZ / (farZ - nearZ)) * (1.0f - nearZ * invZ);
                 continue;
             }

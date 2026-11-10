@@ -320,6 +320,11 @@ other does not.
 - One or two pixels that land alone inside a strip (bits of background that the depth
   put in between) are treated as uncovered too. Without that they were dots of sharp
   picture on the soft layer.
+- The layer is soft (it is on the depth grid, and behind an object it is an average).
+  In the headset a soft strip beside every near object read as a frosted-glass border.
+  So the layer carries the fine detail of the background beside it: the mirrored pixel
+  the old fill would have shown, less the layer at that pixel, is added to it. The
+  strip keeps the layer's colours and the picture's texture.
 
 `--selftest` compares the GPU with the CPU reference for the new fill (whole-pixel,
 sub-pixel, with the edge fade, and without a layer, which is the mirror fill).
