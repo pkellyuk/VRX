@@ -284,6 +284,24 @@ static void FillHole(std::vector<int>& src, const float* nrow, int w, int x, int
     }
 }
 
+// The picture's left and right edges sit on the screen plane. Every pixel moves sideways
+// by its depth, in opposite directions for the two eyes, so wherever the depth at an
+// edge was not exactly the screen's, one eye got a strip of mirrored fill there and the
+// other lost the same strip: the two eyes saw edges of different widths (a browser's
+// scrollbar doubled in one eye and cut in the other), which the eyes cannot fuse. The
+// shift is therefore faded smoothly to zero over the outer EDGE_FADE of the width on
+// each side. EdgeWeight is that factor for source column x (0 at the edge, 1 inside);
+// `fade` is the band's width in pixels, 0 for no fade. The shader does the same sums.
+static const float EDGE_FADE = 0.04f;       // share of the picture's width, each side
+
+inline float EdgeWeight(int x, int w, float fade)
+{
+    if (!(fade > 0.0f)) return 1.0f;
+    const float inside = std::min((float)x + 0.5f, (float)w - ((float)x + 0.5f));
+    const float t = std::min(std::max(inside / fade, 0.0f), 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 // subpixel: keep the fractional part of each shift. Whole-pixel shifts quantise a
 // smoothly receding surface into ~25 flat bands with a 1 px step between them, which
 // reads as ridges ("ploughed field") on uniform texture; sampling the colour at the
@@ -291,7 +309,7 @@ static void FillHole(std::vector<int>& src, const float* nrow, int w, int x, int
 static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vector<float>& near01,
                         float eyeOffset, float focalPx, float scale, float invZNear, float invZFar,
                         float nearZ, float farZ, bool doWarp, int fillMode,
-                        unsigned char* outRGBA, float* outDepth, bool subpixel = false)
+                        unsigned char* outRGBA, float* outDepth, bool subpixel = false, float edgeFade = 0.0f)
 {
     if (!outRGBA || !outDepth) return;
     if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) return;
@@ -312,7 +330,7 @@ static void WarpEyeFill(const std::vector<unsigned char>& scene, const std::vect
                 // Content at distance Z sits at -focal*E/Z in the eye's image
                 // relative to the cyclopean image (left eye: shifted right).
                 float invZ = invZFar + nrow[x] * (invZNear - invZFar);
-                const float s = scale * focalPx * eyeOffset * invZ;
+                const float s = scale * focalPx * eyeOffset * invZ * EdgeWeight(x, W, edgeFade);
                 destF = (float)x - s;
                 dx = x - (int)lroundf(s);
             }

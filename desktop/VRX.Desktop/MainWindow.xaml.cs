@@ -244,6 +244,7 @@ public partial class MainWindow : Window
         TimingList.SelectedIndex = p.MatchFrameToDepth ? 2 : p.DelayToDepth ? 1 : 0;
         FastModelCheck.IsChecked = p.FastDepthModel;
         SubpixelCheck.IsChecked = p.SubpixelWarp;
+        EdgeSlider.Value = p.EdgeFlatten;
         CurveSlider.Value = p.ScreenCurve;
         AmbilightCheck.IsChecked = p.Ambilight;
         AmbiStrengthSlider.Value = p.AmbilightStrength;
@@ -272,6 +273,7 @@ public partial class MainWindow : Window
             DelayToDepth = TimingList.SelectedIndex == 1,
             FastDepthModel = FastModelCheck.IsChecked == true,
             SubpixelWarp = SubpixelCheck.IsChecked == true,
+            EdgeFlatten = (int)Math.Round(EdgeSlider.Value),
             ScreenCurve = (int)Math.Round(CurveSlider.Value),
             Ambilight = AmbilightCheck.IsChecked == true,
             AmbilightStrength = (int)Math.Round(AmbiStrengthSlider.Value),
@@ -309,6 +311,12 @@ public partial class MainWindow : Window
     // also needs the light. Resting controls keep their saved values.
     private void UpdateRoomControls()
     {
+        // The edge flattening's value: "Off" at 0 (it is updated here with the others).
+        if (EdgeSlider != null && EdgeValue != null)
+        {
+            int edge = (int)Math.Round(EdgeSlider.Value);
+            EdgeValue.Text = edge == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", edge);
+        }
         if (RoomSlider == null || RoomValue == null || FollowCheck == null) return;
         bool follows = FollowCheck.IsChecked == true;
         RoomSlider.IsEnabled = !follows;
@@ -1294,6 +1302,7 @@ public partial class MainWindow : Window
         legacy.Remove("FastDepthModel");
         legacy.Remove("SteadyDepth");
         legacy.Remove("SubpixelWarp");
+        legacy.Remove("EdgeFlatten");
         legacy.Remove("ScreenCurve");
         legacy.Remove("Ambilight");
         legacy.Remove("AmbilightStrength");
@@ -1334,18 +1343,21 @@ public partial class MainWindow : Window
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
         var roomy = new Profile { Room = 45 };
         var glassy = new Profile { Room = 45, RoomGlass = 60, RoomReflections = 25, RoomLight = 40, RoomLightColor = "#FFD1A3" };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 11 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867") ||
-            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867") ||
-            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347"))
-            throw new Exception("Control snapshot must be v11 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour (see desktop_control.h)");
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 12 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 4") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 4") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 4") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 4") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 4") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 4") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 4") ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 4") ||
+            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 4"))
+            throw new Exception("Control snapshot must be v12 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, and the edge flattening (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
             throw new Exception("Profiles saved before the sub-pixel warp existed must load with it on");
+        if (store.Load(one.ExecutablePath).EdgeFlatten != 4 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9") ||
+            new Profile { EdgeFlatten = 16 }.Valid() || new Profile { EdgeFlatten = -1 }.Valid())
+            throw new Exception("Profiles saved before the edge flattening existed must load at 4 %; it is the snapshot's last value and 0 to 15");
         if (store.Load(one.ExecutablePath).ScreenCurve != 0 || store.Load(one.ExecutablePath).Ambilight)
             throw new Exception("Profiles saved before the curve and ambilight existed must load flat, with no glow");
         if (store.Load(one.ExecutablePath).AmbilightStrength != 85 || store.Load(one.ExecutablePath).WorldColor != "#000000")
@@ -1491,6 +1503,12 @@ public partial class MainWindow : Window
         WorldHex.Text = "#000000";
         if (WorldList.SelectedItem as string != Loc.Get("WorldBlack")) throw new Exception("Typing a preset's colour must select the preset");
         if (SubpixelCheck.IsChecked != true) throw new Exception("The sub-pixel warp should default on");
+        if (EdgeSlider.Value != 4 || EdgeValue.Text != Loc.Format("ValuePercent", 4)) throw new Exception("The edge flattening should default to 4 %");
+        EdgeSlider.Value = 0;
+        if (ReadProfile().EdgeFlatten != 0 || EdgeValue.Text != Loc.Get("ValueOff")) throw new Exception("The edge flattening slider is not mapped to settings, or 0 is not shown as off");
+        EdgeSlider.Value = 9;
+        if (ReadProfile().EdgeFlatten != 9 || EdgeValue.Text != Loc.Format("ValuePercent", 9)) throw new Exception("The edge flattening slider is not mapped to settings");
+        EdgeSlider.Value = 4;
         SubpixelCheck.IsChecked = false;
         if (ReadProfile().SubpixelWarp) throw new Exception("Sub-pixel warp checkbox is not mapped to settings");
         SubpixelCheck.IsChecked = true;

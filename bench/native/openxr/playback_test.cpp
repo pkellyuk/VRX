@@ -78,6 +78,24 @@ static void TestDepthPolicy()
     Check(!UsableDepth(true, 1, 1, 0, 0), "missing depth falls back");
     Check(!UsableDepth(true, 2, std::numeric_limits<double>::quiet_NaN(), 1, 1), "invalid timestamp");
     Check(UsableDepth(true, 20, 3.0, 20, 3.0), "fresh depth restores stereo");
+
+    // After a quiet gap: depth that was up to date stays usable while the worker
+    // catches up with the new frame, for maxLag and no longer.
+    {
+        DepthGrace g;
+        Check(UsableDepthAfterQuiet(g, 10.0, true, 5, 10.0, 5, 10.0), "depth of the frame shown is usable");
+        Check(UsableDepthAfterQuiet(g, 11.00, true, 6, 11.0, 5, 10.0), "a new frame after a quiet gap keeps the previous depth");
+        Check(UsableDepthAfterQuiet(g, 11.02, true, 7, 11.02, 5, 10.0), "so does a second frame arriving before its depth");
+        Check(UsableDepthAfterQuiet(g, 11.20, true, 7, 11.02, 5, 10.0), "the grace lasts while the worker catches up");
+        Check(!UsableDepthAfterQuiet(g, 11.30, true, 8, 11.30, 5, 10.0), "a worker that never catches up falls back after maxLag");
+        Check(!UsableDepthAfterQuiet(g, 11.40, true, 9, 11.40, 5, 10.0), "and stays flat: new frames do not renew the grace");
+        Check(UsableDepthAfterQuiet(g, 11.50, true, 9, 11.40, 9, 11.40), "depth catching up restores stereo");
+        Check(UsableDepthAfterQuiet(g, 12.50, true, 10, 12.50, 9, 11.40), "and the next quiet gap has its grace again");
+        Check(!UsableDepthAfterQuiet(g, 12.51, false, 10, 12.50, 9, 11.40), "worker failure ends the grace at once");
+        Check(!UsableDepthAfterQuiet(g, 12.52, true, 10, 12.50, 9, 11.40), "and it does not come back without fresh depth");
+        DepthGrace none;
+        Check(!UsableDepthAfterQuiet(none, 1.0, true, 10, 2.5, 9, 2.0), "depth that was never up to date has no grace");
+    }
     Check(FitCapture(0, 0, 64, 48).width == 0, "minimized source has no valid rectangle");
 }
 
@@ -469,7 +487,15 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16777216", settings), "v11 light colour over 0xFFFFFF rejected");
     Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 -1", settings), "v11 negative light colour rejected");
     Check(!ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 7", settings), "v11 trailing value rejected");
-    Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347", settings), "a newer snapshot version is rejected");
+    Check(ParseDesktopSettings("VRX 11 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347", settings) && settings.edge == 4, "v11 keeps the edges flattened over 4 %");
+    Check(ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 9", settings) && settings.version == 12 && settings.edge == 9, "v12 edge flattening");
+    Check(ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 0", settings) && settings.edge == 0, "v12 edge flattening off");
+    Check(ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 15", settings) && settings.edge == 15, "v12 edge flattening at most");
+    Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347", settings), "v12 missing edge flattening rejected");
+    Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 16", settings), "v12 edge flattening over 15 rejected");
+    Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 -1", settings), "v12 negative edge flattening rejected");
+    Check(!ParseDesktopSettings("VRX 12 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 7", settings), "v12 trailing value rejected");
+    Check(!ParseDesktopSettings("VRX 13 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");

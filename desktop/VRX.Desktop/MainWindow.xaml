@@ -189,6 +189,8 @@
       <Slider x:Name="StrengthSlider" Minimum="0" Maximum="2" Value="1" ValueChanged="SettingsChanged"/>
       <CheckBox x:Name="StereoCheck" Content="{l:Tr EnableStereo}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
       <CheckBox x:Name="FastModelCheck" Content="{l:Tr FastModel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FastModelTip}"/>
+      <DockPanel><TextBlock x:Name="EdgeValue" DockPanel.Dock="Right" Style="{StaticResource Value}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr EdgeFlatten}"/></DockPanel>
+      <Slider x:Name="EdgeSlider" Minimum="0" Maximum="15" Value="4" SmallChange="1" LargeChange="1" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" ToolTip="{l:Tr EdgeFlattenTip}"/>
       <CheckBox x:Name="SubpixelCheck" Content="{l:Tr Subpixel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SubpixelTip}"/>
       <CheckBox x:Name="SteadyCheck" Content="{l:Tr Steady}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SteadyTip}"/>
       <CheckBox x:Name="FuseCheck" Content="{l:Tr Fuse}" IsEnabled="{Binding ElementName=FastModelCheck, Path=IsChecked}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FuseTip}"/>

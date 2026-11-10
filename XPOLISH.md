@@ -33,6 +33,43 @@ The worker's 2-second summary reports the share of the picture held as still
 
 It needs steady depth (on by default). Nothing changes with it off.
 
+## Twitch: a new frame after a quiet gap went flat
+
+**Cause.** This was most of the twitch on a still desktop. The stale-depth guard
+(`UsableDepth`) compares the times of the frame shown and of the frame its depth came
+from, and allows 0.25 s. On a still desktop frames come only now and then (a blinking
+text cursor: 2 to 7 a second), each more than 0.25 s after the last, so every one was
+shown flat for the one to three frames the worker needs to publish its depth, even
+when that depth is the previous one carried forward. One session's log had 315
+`flat viewing` / `stereo depth available` pairs, one about every half second. With
+more happening on screen the frames are closer together and it never showed.
+
+**Fix** (`playback_policy.h`: `UsableDepthAfterQuiet`). Depth that was up to date when
+a newer frame arrived stays usable for 0.25 s from then, while the worker catches up.
+A worker that never catches up still goes flat when that time ends, and a failed one
+at once. After a quiet gap a completely different picture is drawn with the old depth
+for those one to three frames instead of flat.
+
+## Edges: the same in both eyes
+
+**Cause.** The warp moves every pixel sideways by its depth, in opposite directions
+for the two eyes. Wherever the depth at the picture's left or right edge was not
+exactly the screen's, one eye got a strip of mirrored fill there and the other lost
+the same strip: the edges had different widths in the two eyes, which the eyes cannot
+fuse. A full-screen browser shows it most (its scrollbar is about as wide as the
+shift).
+
+**Fix** (`xr_common.h`: `EdgeWeight`, `EDGE_FADE`; the same sums in `kWarpHlsl`). The
+shift fades smoothly to zero over the outer 4% of the width on each side, so the
+picture's edges sit on the screen plane and are identical in both eyes. Anything in
+that band is drawn nearer the screen plane than its depth says. The width is the
+**Flatten the left and right edges** slider in the Depth section (0 off to 15% of the
+width each side, 4% by default, per game, applies live; `EdgeFlatten` in the profile,
+the last value of the v12 control snapshot). Not in head-locked
+mode, where zero shift is infinity and not the screen. `--selftest` compares the GPU
+with the CPU reference with the fade on, and checks that the outer columns are the
+picture's own in both eyes.
+
 ## Thin parts leaning
 
 Not started. Likely cause: the warp scales the 686x392 depth up to the picture by

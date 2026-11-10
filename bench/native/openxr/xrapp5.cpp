@@ -291,6 +291,7 @@ struct Options
     bool fuse = false;                  // --fuse (likewise)
     bool delayed = false;               // --delayed: game frame timing "delayed to depth" (paired wins if both)
     bool subpixel = true;               // sub-pixel warp (no depth banding); --whole-pixel restores the old warp
+    float edgeFade = EDGE_FADE;         // share of the picture's width, each side, over which the edges flatten to the screen plane (0 = off)
     float curve = 0.0f;                 // curved screen: 0 flat .. 1 fully wrapped (screen_curve.h)
     bool ambilight = false;             // spill the picture's edge colours around the screen
     int ambiStrength = kAmbiDefaultStrength;    // percent: the glow's brightness next to the screen
@@ -344,6 +345,7 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     uint32_t fillMode;
     float mirrorTol;
     uint32_t subpixel;
+    float edgeFade;                     // px: the shift fades to zero this near the left/right edges (EdgeWeight); 0 = none
 };
 
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
@@ -1885,6 +1887,7 @@ cbuffer C : register(b0)
     uint  fillMode;     // 0 stretch, 1 mirror (see FillHole in xr_common.h)
     float mirrorTol;
     uint  subpixel;     // 1: sample at the fractional source position (no depth banding)
+    float edgeFade;     // px: the shift fades to zero this near the left/right edges (EdgeWeight in xr_common.h); 0 = none
 };
 
 Texture2D<float4>        scene    : register(t0);
@@ -1937,6 +1940,13 @@ void main(uint3 id : SV_DispatchThreadID)
         {
             float invZ = invZFar + n * (invZNear - invZFar);
             float s = scaleFocal * eye * invZ;
+            if (edgeFade > 0.0)
+            {
+                // The picture's edges sit on the screen plane, the same in both eyes.
+                float inside = min((float)x + 0.5, (float)iw - ((float)x + 0.5));
+                float t = clamp(inside / edgeFade, 0.0, 1.0);
+                s *= t * t * (3.0 - 2.0 * t);
+            }
             int r = (s < 0.0) ? -(int)floor(-s + 0.5) : (int)floor(s + 0.5);   // lround
             dx = x - r;
             destF = (float)x - s;
@@ -6041,7 +6051,7 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     for (UINT e = 0; e < VIEWS; e++)
     {
         WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode,
-                    refColor.data(), refDepth.data(), c.subpixel != 0);
+                    refColor.data(), refDepth.data(), c.subpixel != 0, c.edgeFade);
         for (int y = 0; y < H; y++)
         {
             const unsigned char* grow = cp + cfp[e].Offset + (size_t)y * cfp[e].Footprint.RowPitch;
@@ -7033,6 +7043,37 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
     return ok;
 }
 
+// With the edges faded, both eyes show the picture's own first and last columns, and
+// the outermost columns are the same in the two eyes (CPU reference; SelfTestWarp has
+// already shown the GPU draws the same).
+static bool SelfTestEdges(const char* name, const std::vector<unsigned char>& scene, const std::vector<float>& near01, const WarpConstants& c)
+{
+    std::vector<unsigned char> eye[VIEWS];
+    std::vector<float> depth((size_t)(ROW_PITCH / 4) * H);
+    const float eyes[VIEWS] = { c.eye0, c.eye1 };
+    for (UINT e = 0; e < VIEWS; e++)
+    {
+        eye[e].resize((size_t)ROW_PITCH * H);
+        WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, true, (int)c.fillMode,
+                    eye[e].data(), depth.data(), false, c.edgeFade);
+    }
+    const int band = 3;                     // px from each edge: the shift there is far below half a pixel
+    size_t notSource = 0, eyesDiffer = 0;
+    for (int y = 0; y < H; y++)
+        for (int k = 0; k < 2 * band; k++)
+        {
+            const int x = k < band ? k : W - 1 - (k - band);
+            const unsigned char* l = eye[0].data() + (size_t)y * ROW_PITCH + x * 4;
+            const unsigned char* r = eye[1].data() + (size_t)y * ROW_PITCH + x * 4;
+            if (memcmp(l, r, 3) != 0) eyesDiffer++;
+            if (memcmp(l, scene.data() + ((size_t)y * W + x) * 3, 3) != 0) notSource++;
+        }
+    const bool ok = notSource == 0 && eyesDiffer == 0;
+    Log("SelfTestEdges[%s]: %s - of %d edge px, %zu differ between the eyes, %zu are not the picture's own", name, ok ? "PASS" : "FAIL",
+        H * 2 * band, eyesDiffer, notSource);
+    return ok;
+}
+
 static bool SelfTest(App& app)
 {
     Log("SelfTest: enter");
@@ -7082,6 +7123,12 @@ static bool SelfTest(App& app)
         anchored.writeDepth = 0;
         snprintf(name, sizeof(name), "%s anchored stereo", mn);
         ok = SelfTestWarp(app, name, synth, ramp, anchored) && ok;
+        // as the frame loop draws the fixed screen: the edges faded to the screen plane
+        anchored.edgeFade = EDGE_FADE * (float)W;
+        snprintf(name, sizeof(name), "%s anchored stereo, edges faded", mn);
+        ok = SelfTestWarp(app, name, synth, ramp, anchored) && ok;
+        ok = SelfTestWarp(app, name, synth, truth, anchored) && ok;
+        ok = SelfTestEdges(name, synth, ramp, anchored) && ok;
 
         // large disparity: wide holes, so the mirror walks far and meets its guard
         WarpConstants big = m;
@@ -7937,6 +7984,7 @@ static void RunFrameLoop(App& app)
     XrSessionState state = XR_SESSION_STATE_UNKNOWN;
     bool running = false, exitLoop = false, printedView = false;
     bool trackingWasValid = true, wasStereo = false;
+    DepthGrace depthGrace;              // a new frame after a quiet gap keeps the previous depth (playback_policy.h)
     uint64_t invalidTrackingFrames = 0;
     double loopStart = NowSeconds(), lastReport = loopStart;
     uint64_t frames = 0, drawn = 0, depthUpdates = 0;
@@ -8033,6 +8081,12 @@ static void RunFrameLoop(App& app)
                 {
                     app.opt.subpixel = next.subpixel != 0;
                     Log("Stereo warp: %s", app.opt.subpixel ? "sub-pixel (smooth depth)" : "whole pixels");
+                }
+                if (next.version >= 12 && app.opt.edgeFade != next.edge * 0.01f)
+                {
+                    app.opt.edgeFade = next.edge * 0.01f;
+                    if (next.edge) Log("Edges: flattened to the screen plane over %d%% of the picture's width, each side", next.edge);
+                    else Log("Edges: not flattened");
                 }
                 if (next.version >= 6 && app.opt.delayed != (next.delayed != 0))
                 {
@@ -8495,7 +8549,7 @@ static void RunFrameLoop(App& app)
                 }
                 stereo = app.opt.doWarp && source && cur && cur->source &&
                     source->layout == cur->source->layout &&
-                    UsableDepth(app.depthHealthy.load(), source->seq, source->time,
+                    UsableDepthAfterQuiet(depthGrace, t, app.depthHealthy.load(), source->seq, source->time,
                         cur->source->seq, cur->source->time);
                 if (stereo != wasStereo)
                     Log("RunFrameLoop: %s", stereo ? "stereo depth available" : "flat viewing (depth unavailable or stale)");
@@ -8522,6 +8576,9 @@ static void RunFrameLoop(App& app)
                         const float screenDistance = app.opt.controlPath.empty() ? ScreenAnchor::distance : desktop.distance;
                         c.invZNear -= 1.0f / screenDistance;
                         c.invZFar -= 1.0f / screenDistance;
+                        // Zero shift is the screen plane here, so the picture's edges
+                        // can be put on it (not head-locked, where zero is infinity).
+                        c.edgeFade = app.opt.edgeFade * (float)target.cw;
                     }
                     c.eye0 = -0.5f * ipd; c.eye1 = 0.5f * ipd;
                     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
@@ -8909,6 +8966,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
         const float screenDistance = 3.0f;
         c.invZNear -= 1.0f / screenDistance;
         c.invZFar -= 1.0f / screenDistance;
+        c.edgeFade = app.opt.edgeFade * (float)t.cw;
     }
     c.eye0 = -0.0355f; c.eye1 = 0.0355f;
     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
@@ -9077,6 +9135,7 @@ int wmain(int argc, wchar_t** wideArgv)
         }
         if (initial.version >= 6) app.opt.delayed = initial.delayed != 0;
         if (initial.version >= 7) app.opt.subpixel = initial.subpixel != 0;
+        if (initial.version >= 12) app.opt.edgeFade = initial.edge * 0.01f;
         if (initial.version >= 8)
         {
             app.opt.curve = initial.curve * 0.01f;

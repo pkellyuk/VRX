@@ -30,6 +30,8 @@ struct DesktopSettings
     int roomReflect = 0;    // v11: reflections, 0 off .. 100, live
     int roomLight = 0;      // v11: the ceiling panel light, 0 off .. 100, live
     int roomLightColor = 0xFFB46B; // v11: the room light colour 0xRRGGBB, live
+    int edge = 4;           // v12: the picture's left/right edges flattened to the screen plane over this percent of its width
+                            // (each side, 0 off .. 15), live; v1-v11 keep 4 (EDGE_FADE in xr_common.h)
 };
 
 inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& result)
@@ -49,10 +51,11 @@ inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& resul
     if (version >= 9 && !(input >> s.ambiStrength >> s.worldColor)) return false;
     if (version >= 10 && !(input >> s.room)) return false;
     if (version >= 11 && !(input >> s.roomGlass >> s.roomReflect >> s.roomLight >> s.roomLightColor)) return false;
+    if (version >= 12 && !(input >> s.edge)) return false;
     s.version = version;
     if (input >> tail) return false;
     auto between = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
-    if (magic != "VRX" || version < 1 || version > 11 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
+    if (magic != "VRX" || version < 1 || version > 12 || s.edge < 0 || s.edge > 15 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
         s.subpixel < 0 || s.subpixel > 1 || s.curve < 0 || s.curve > 100 || s.ambilight < 0 || s.ambilight > 1 ||
         s.ambiStrength < 0 || s.ambiStrength > 100 || s.worldColor < 0 || s.worldColor > 0xFFFFFF || s.room < 0 || s.room > 100 ||
         s.roomGlass < 0 || s.roomGlass > 100 || s.roomReflect < 0 || s.roomReflect > 100 || s.roomLight < 0 || s.roomLight > 100 ||
