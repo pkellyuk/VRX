@@ -743,7 +743,14 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1", settings), "v15 missing sharpened edges flag rejected");
     Check(!ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 2", settings), "v15 invalid sharpened edges flag rejected");
     Check(!ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 7", settings), "v15 trailing value rejected");
-    Check(!ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1", settings), "a newer snapshot version is rejected");
+    Check(ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1", settings) && settings.version == 16 && settings.showDepthMap == 1 && settings.refine == 1, "v16 depth map shown");
+    Check(ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 0", settings) && settings.showDepthMap == 0, "v16 depth map not shown");
+    Check(ParseDesktopSettings("VRX 15 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1", settings) && settings.version == 15 && settings.showDepthMap == 0, "a v15 snapshot shows the picture");
+    Check(!ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1", settings), "v16 missing depth map flag rejected");
+    Check(!ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 2", settings), "v16 invalid depth map flag rejected");
+    Check(!ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 -1", settings), "v16 negative depth map flag rejected");
+    Check(!ParseDesktopSettings("VRX 16 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 0", settings), "v16 trailing value rejected");
+    Check(!ParseDesktopSettings("VRX 17 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -3048,7 +3055,7 @@ int main(int argc, char** argv)
         const std::string path(argv[1]); DesktopSettings settings;
         Check(ReadDesktopSettings(std::wstring(path.begin(), path.end()), settings), "read C# emitted snapshot");
         Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7 && settings.menuKey == 120 && settings.foreground == 1 && settings.paired == 1 &&
-            settings.version == 11 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
+            settings.version == 16 && settings.showDepthMap == 0 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
             "C# to native control contract");
     }
     TestCaptureSelection();

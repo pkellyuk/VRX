@@ -260,6 +260,7 @@ struct Options
     bool desktopWhenAway = false;       // --desktop-when-away: show the game's display while the game is not in front
     std::wstring imagePath;
     bool doWarp = true;
+    bool showDepthMap = false;          // live diagnostic: the depth the warp uses, white = near, in place of the picture
     float warpScale = 1.0f;
     bool useTruth = false;
     bool doDump = false;
@@ -356,6 +357,7 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     uint32_t subpixel;
     float edgeFade;                     // px: the shift fades to zero this near the left/right edges (EdgeWeight); 0 = none
     float rowSnap;                      // nearness: depth rows further apart than this are not blended between (edges::ROW_SNAP); 0 = always blend
+    uint32_t showDepthMap;              // 0 the picture, 1 the depth, 2 no depth to show (black)
 };
 
 struct RefineConstants                  // must match cbuffer C in kRefineHlsl
@@ -904,6 +906,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strncmp(a, "--hwnd=", 7)) { opt->captureHwnd = (HWND)(uintptr_t)strtoull(a + 7, nullptr, 0); if (!opt->captureHwnd) return false; continue; }
         if (!strncmp(a, "--image=", 8)) { opt->source = SourceKind::Image; opt->imagePath = widen(a + 8); continue; }
         if (!strcmp(a, "--synthetic")) { opt->source = SourceKind::Synthetic; continue; }
+        if (!strcmp(a, "--show-depth-map")) { opt->showDepthMap = true; continue; }
         if (!strcmp(a, "--no-warp")) { opt->doWarp = false; continue; }
         if (!strncmp(a, "--scale=", 8)) { opt->warpScale = (float)atof(a + 8); continue; }
         if (!strncmp(a, "--curve=", 8))
@@ -1957,6 +1960,7 @@ cbuffer C : register(b0)
     uint  subpixel;     // 1: sample at the fractional source position (no depth banding)
     float edgeFade;     // px: the shift fades to zero this near the left/right edges (EdgeWeight in xr_common.h); 0 = none
     float rowSnap;      // nearness: depth rows further apart than this are not blended between (depth_edges.h); 0 = always blend
+    uint  showDepthMap; // 0 the picture, 1 the depth, 2 no depth to show (black)
 };
 
 Texture2D<float4>        scene    : register(t0);
@@ -1994,6 +1998,18 @@ void main(uint3 id : SV_DispatchThreadID)
     uint y = id.y;
     uint e = id.z;
     if (y >= CH) return;
+    if (showDepthMap != 0)
+    {
+        // The depth the warp would use (after every step, sharpening included), with no
+        // shift: both eyes see the same map on the screen plane.
+        [loop] for (uint px = 0; px < CW; ++px)
+        {
+            float shown = showDepthMap == 1 ? saturate(NearAt((int)px, (int)y)) : 0.0;
+            outColor[uint3(px, y, e)] = float4(shown, shown, shown, 1.0);
+            outDepth[uint3(px, y, e)] = 1.0;
+        }
+        return;
+    }
 
     float eye = (e == 0) ? eye0 : eye1;
     int iw = (int)CW;
@@ -6555,6 +6571,15 @@ static bool SelfTestWarp(App& app, const char* name, const std::vector<unsigned 
     {
         WarpEyeFill(scene, near01, eyes[e], c.scaleFocal, 1.0f, c.invZNear, c.invZFar, c.nearZ, c.farZ, c.doWarp != 0, (int)c.fillMode,
                     refColor.data(), refDepth.data(), c.subpixel != 0, c.edgeFade);
+        if (c.showDepthMap)
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x)
+                {
+                    const unsigned char n = c.showDepthMap == 1 ? (unsigned char)std::lround(std::clamp(near01[(size_t)y * W + x], 0.0f, 1.0f) * 255) : 0;
+                    const size_t pixel = (size_t)y * ROW_PITCH + x * 4;
+                    for (int channel = 0; channel < 3; ++channel) refColor[pixel + channel] = n;
+                    refColor[pixel + 3] = 255; refDepth[pixel / 4] = 1.0f;
+                }
         for (int y = 0; y < H; y++)
         {
             const unsigned char* grow = cp + cfp[e].Offset + (size_t)y * cfp[e].Footprint.RowPitch;
@@ -7644,6 +7669,12 @@ static bool SelfTest(App& app)
     ok = SelfTestAmbilight(app, synth) && ok;
     ok = SelfTestRefine(app, synth, truth) && ok;
 
+    WarpConstants depthPreview = c;
+    depthPreview.showDepthMap = 1;
+    ok = SelfTestWarp(app, "depth map preview", synth, ramp, depthPreview) && ok;
+    depthPreview.showDepthMap = 2;
+    ok = SelfTestWarp(app, "depth map unavailable", synth, truth, depthPreview) && ok;
+
     WarpConstants off = c;
     off.doWarp = 0;
     ok = SelfTestWarp(app, "no-warp", synth, truth, off) && ok;
@@ -8606,6 +8637,11 @@ static void RunFrameLoop(App& app)
                     Log("Thin parts: %s", next.thin ? "given the depth of what they stand on" : "left as the depth model has them");
                 if (next.version >= 15 && app.refineOn.exchange(next.refine != 0) != (next.refine != 0))
                     Log("Depth edges: %s", next.refine ? "sharpened by the picture" : "as the depth model has them");
+                if (next.version >= 16 && app.opt.showDepthMap != (next.showDepthMap != 0))
+                {
+                    app.opt.showDepthMap = next.showDepthMap != 0;
+                    Log("Depth map display: %s", app.opt.showDepthMap ? "on (white near, black far)" : "off");
+                }
                 if (next.version >= 6 && app.opt.delayed != (next.delayed != 0))
                 {
                     app.opt.delayed = next.delayed != 0;
@@ -9066,10 +9102,11 @@ static void RunFrameLoop(App& app)
                 {
                     history.clear();
                 }
-                stereo = app.opt.doWarp && source && cur && cur->source &&
+                const bool depthAvailable = source && cur && cur->source &&
                     source->layout == cur->source->layout &&
                     UsableDepthAfterQuiet(depthGrace, t, app.depthHealthy.load(), source->seq, source->time,
                         cur->source->seq, cur->source->time);
+                stereo = app.opt.doWarp && depthAvailable;
                 if (stereo != wasStereo)
                     Log("RunFrameLoop: %s", stereo ? "stereo depth available" : "flat viewing (depth unavailable or stale)");
                 wasStereo = stereo;
@@ -9085,6 +9122,7 @@ static void RunFrameLoop(App& app)
                     WarpConstants c{};
                     c.cw = (uint32_t)target.cw; c.ch = (uint32_t)target.ch; c.dw = W; c.dh = H;
                     c.doWarp = stereo ? 1u : 0u;
+                    c.showDepthMap = app.opt.showDepthMap ? (depthAvailable ? 1u : 2u) : 0u;
                     c.scaleFocal = app.opt.warpScale * focalPx;
                     c.invZNear = 1.0f / 1.2f;
                     c.invZFar = 1.0f / 12.0f;
@@ -9111,7 +9149,7 @@ static void RunFrameLoop(App& app)
                     c.mirrorTol = MIRROR_TOL;
                     // Depth sharpened by this frame's picture (depth_refine.h), when the
                     // depth in use was published for it.
-                    const bool fine = stereo && cur->hasGuide && app.refineOn.load() && &target == &app.mainTarget && EnsureNearFine(app);
+                    const bool fine = depthAvailable && (stereo || app.opt.showDepthMap) && cur->hasGuide && app.refineOn.load() && &target == &app.mainTarget && EnsureNearFine(app);
                     if (fine)
                     {
                         RecordRefine(app, DESC_SRC0 + (UINT)source->index, target.cw, target.ch, W, H, c.exactLoad != 0);
@@ -9243,7 +9281,7 @@ static void RunFrameLoop(App& app)
                     dinfo[e].maxDepth = 1.0f;
                     dinfo[e].nearZ = DEPTH_NEAR_Z;
                     dinfo[e].farZ = DEPTH_FAR_Z;
-                    pviews[e].next = depthOn && stereo ? &dinfo[e] : nullptr;
+                    pviews[e].next = depthOn && stereo && !app.opt.showDepthMap ? &dinfo[e] : nullptr;
                 }
                 proj.space = app.space;
                 proj.viewCount = VIEWS;
@@ -9795,6 +9833,7 @@ int wmain(int argc, wchar_t** wideArgv)
             Log("Desktop control: thin parts %s", initial.thin ? "given the depth of what they stand on" : "left as the depth model has them");
             app.refineOn = initial.refine != 0;
             Log("Desktop control: depth edges %s", initial.refine ? "sharpened by the picture" : "as the depth model has them");
+            if (initial.version >= 16) app.opt.showDepthMap = initial.showDepthMap != 0;
         }
         if (initial.version >= 13)
         {

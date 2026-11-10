@@ -37,6 +37,7 @@ struct DesktopSettings
     int widen = 100;        // v13: near objects widened up and down, percent of the model's own amount, 0 .. 300, live
     int thin = 0;           // v14: thin upright parts given the depth of what they stand on (thin_parts.h), live
     int refine = 0;         // v15: depth edges sharpened by the picture (depth_refine.h), live
+    int showDepthMap = 0;   // v16: the depth map shown in place of the picture (a live diagnostic)
 };
 
 inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& result)
@@ -60,10 +61,11 @@ inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& resul
     if (version >= 13 && !(input >> s.edgeSteps >> s.edgeStepMin >> s.widen)) return false;
     if (version >= 14 && !(input >> s.thin)) return false;
     if (version >= 15 && !(input >> s.refine)) return false;
+    if (version >= 16 && !(input >> s.showDepthMap)) return false;
     s.version = version;
     if (input >> tail) return false;
     auto between = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
-    if (magic != "VRX" || version < 1 || version > 15 || s.refine < 0 || s.refine > 1 || s.thin < 0 || s.thin > 1 || s.edge < 0 || s.edge > 15 || s.edgeSteps < 0 || s.edgeSteps > 1 || s.edgeStepMin < 5 || s.edgeStepMin > 60 || s.widen < 0 || s.widen > 300 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
+    if (magic != "VRX" || version < 1 || version > 16 || s.showDepthMap < 0 || s.showDepthMap > 1 || s.refine < 0 || s.refine > 1 || s.thin < 0 || s.thin > 1 || s.edge < 0 || s.edge > 15 || s.edgeSteps < 0 || s.edgeSteps > 1 || s.edgeStepMin < 5 || s.edgeStepMin > 60 || s.widen < 0 || s.widen > 300 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
         s.subpixel < 0 || s.subpixel > 1 || s.curve < 0 || s.curve > 100 || s.ambilight < 0 || s.ambilight > 1 ||
         s.ambiStrength < 0 || s.ambiStrength > 100 || s.worldColor < 0 || s.worldColor > 0xFFFFFF || s.room < 0 || s.room > 100 ||
         s.roomGlass < 0 || s.roomGlass > 100 || s.roomReflect < 0 || s.roomReflect > 100 || s.roomLight < 0 || s.roomLight > 100 ||
