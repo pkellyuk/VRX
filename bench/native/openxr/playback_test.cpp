@@ -8,6 +8,7 @@
 #include "foreground_refinement.h"
 #include "gpu_choice.h"
 #include "depth_fusion.h"
+#include "depth_edges.h"
 #include "frame_timing.h"
 #include "screen_curve.h"
 #include "ambilight.h"
@@ -67,6 +68,90 @@ static void TestTrackingAndSwapchains()
     XrReadyImage failedRelease;
     Check(failedRelease.Acquire(XR_NULL_HANDLE, Acquire, Wait), "ready before release error");
     Check(!failedRelease.Release(Release), "release failure must propagate");
+}
+
+// Horizontal depth edges made into steps (depth_edges.h).
+static void TestDepthEdges()
+{
+    const int w = 9, h = 16;
+    auto column = [&](const std::vector<float>& rows)
+    {
+        std::vector<float> m((size_t)w * h);
+        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) m[(size_t)y * w + x] = rows[y];
+        return m;
+    };
+    auto rowsOf = [&](const std::vector<float>& m, int x) { std::vector<float> r(h); for (int y = 0; y < h; y++) r[y] = m[(size_t)y * w + x]; return r; };
+    std::vector<uint8_t> barrier;
+
+    // A soft edge like a window's top: far, a three-row ramp, near.
+    const std::vector<float> soft = { .05f, .05f, .05f, .05f, .05f, .07f, .36f, .61f, .68f, .70f, .70f, .70f, .70f, .70f, .70f, .70f };
+    std::vector<float> m = column(soft);
+    size_t steps = edges::SnapRowEdges(m, nullptr, w, h, barrier);
+    std::vector<float> r = rowsOf(m, 4);
+    Check(steps == (size_t)w, "one step for each column's edge");
+    Check(r[4] == .05f && r[5] == .07f && r[6] == .07f && r[7] == .68f && r[8] == .68f && r[9] == .70f, "a short ramp becomes a step at its middle");
+    Check(barrier[(size_t)6 * w + 4] == 1 && barrier[(size_t)5 * w + 4] == 0 && barrier[(size_t)7 * w + 4] == 0, "the step is marked between its two rows");
+    int marks = 0; for (uint8_t b : barrier) marks += b;
+    Check(marks == w, "nothing else is marked");
+
+    // The picture's own edge two rows higher: the step moves onto it.
+    std::vector<float> luma((size_t)w * h);
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) luma[(size_t)y * w + x] = y <= 4 ? 20.0f : 60.0f;
+    m = column(soft);
+    edges::SnapRowEdges(m, luma.data(), w, h, barrier);
+    r = rowsOf(m, 4);
+    Check(r[4] == .05f && r[5] == .68f && r[6] == .68f && r[8] == .68f && barrier[(size_t)4 * w + 4] == 1, "the step sits on the picture's edge when one is near");
+    // ...and one row lower than the ramp's end.
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) luma[(size_t)y * w + x] = y <= 7 ? 20.0f : 60.0f;
+    m = column(soft);
+    edges::SnapRowEdges(m, luma.data(), w, h, barrier);
+    r = rowsOf(m, 4);
+    Check(r[5] == .07f && r[6] == .07f && r[7] == .07f && r[8] == .68f && barrier[(size_t)7 * w + 4] == 1, "also when it is below the ramp's middle");
+    // A flat picture, or an edge too far away, leaves the step at the middle.
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) luma[(size_t)y * w + x] = y <= 1 ? 20.0f : 60.0f;
+    m = column(soft);
+    edges::SnapRowEdges(m, luma.data(), w, h, barrier);
+    Check(barrier[(size_t)6 * w + 4] == 1 && barrier[(size_t)1 * w + 4] == 0, "a picture edge far from the ramp is ignored");
+
+    // Near above, far below (the bottom edge of something near).
+    std::vector<float> falling(soft.rbegin(), soft.rend());
+    m = column(falling);
+    steps = edges::SnapRowEdges(m, nullptr, w, h, barrier);
+    r = rowsOf(m, 4);
+    Check(steps == (size_t)w && r[7] == .68f && r[8] == .68f && r[9] == .07f && r[10] == .07f && barrier[(size_t)8 * w + 4] == 1, "a falling edge becomes a step too");
+
+    // A slope (longer than ROW_EDGE_MAX rows) and a small change are left alone.
+    std::vector<float> slope(h), slight(h);
+    for (int y = 0; y < h; y++) { slope[y] = 0.05f + 0.05f * y; slight[y] = y < 8 ? 0.40f : 0.48f; }
+    m = column(slope);
+    Check(edges::SnapRowEdges(m, nullptr, w, h, barrier) == 0 && m == column(slope), "a long ramp is a slope and is left alone");
+    m = column(slight);
+    Check(edges::SnapRowEdges(m, nullptr, w, h, barrier) == 0 && m == column(slight), "a small change is left alone");
+    m = column(std::vector<float>(h, 0.3f));
+    Check(edges::SnapRowEdges(m, nullptr, w, h, barrier) == 0, "a flat map has no steps");
+    std::vector<float> wrong(5);
+    Check(edges::SnapRowEdges(wrong, nullptr, w, h, barrier) == 0 && barrier.size() == (size_t)w * h, "a map of the wrong size is left alone");
+
+    // Widening the near side does not cross a step, and without marks it is the plain running max.
+    m = column(soft);
+    edges::SnapRowEdges(m, nullptr, w, h, barrier);
+    std::vector<float> stepped = m;
+    edges::DilateNearRows(m, w, h, 3, barrier);
+    r = rowsOf(m, 4);
+    Check(r[6] == .07f && r[5] == .07f && r[4] == .07f && r[3] == .07f && r[2] == .07f && r[1] == .05f && r[7] == .70f, "depth is not carried across a step");
+    std::vector<uint8_t> none((size_t)w * h, 0);
+    m = stepped;
+    edges::DilateNearRows(m, w, h, 3, none);
+    r = rowsOf(m, 4);
+    Check(r[6] == .70f && r[5] == .68f && r[4] == .68f && r[3] == .07f, "without a mark the near side is widened as before");
+
+    // A mark spreads sideways with the horizontal widening.
+    std::vector<uint8_t> one((size_t)w * h, 0);
+    one[(size_t)5 * w + 4] = 1;
+    edges::SpreadBarrier(one, w, h, 2);
+    Check(one[(size_t)5 * w + 2] == 1 && one[(size_t)5 * w + 6] == 1 && one[(size_t)5 * w + 1] == 0 && one[(size_t)5 * w + 7] == 0 && one[(size_t)4 * w + 4] == 0,
+        "a step's mark spreads as far as the near side is widened");
+    std::printf("PASS: depth edges\n");
 }
 
 static void TestDepthPolicy()
@@ -2791,6 +2876,7 @@ int main(int argc, char** argv)
     TestForegroundRefinement();
     TestDesktopControl();
     TestDepthFusion();
+    TestDepthEdges();
     TestFrameTiming();
     if (argc > 1)
     {

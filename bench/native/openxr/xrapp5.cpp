@@ -151,6 +151,7 @@ using Microsoft::WRL::ComPtr;
 #include "desktop_control.h"
 #include "foreground_refinement.h"
 #include "depth_fusion.h"
+#include "depth_edges.h"
 #include "motion_estimator.h"
 #include "frame_timing.h"
 #include "ambilight.h"
@@ -291,6 +292,7 @@ struct Options
     bool fuse = false;                  // --fuse (likewise)
     bool delayed = false;               // --delayed: game frame timing "delayed to depth" (paired wins if both)
     bool subpixel = true;               // sub-pixel warp (no depth banding); --whole-pixel restores the old warp
+    bool edgeSnap = true;               // horizontal depth edges made into steps (depth_edges.h); --no-edge-snap restores the ramps
     float edgeFade = EDGE_FADE;         // share of the picture's width, each side, over which the edges flatten to the screen plane (0 = off)
     float curve = 0.0f;                 // curved screen: 0 flat .. 1 fully wrapped (screen_curve.h)
     bool ambilight = false;             // spill the picture's edge colours around the screen
@@ -346,6 +348,7 @@ struct WarpConstants                    // must match cbuffer C in kWarpHlsl
     float mirrorTol;
     uint32_t subpixel;
     float edgeFade;                     // px: the shift fades to zero this near the left/right edges (EdgeWeight); 0 = none
+    float rowSnap;                      // nearness: depth rows further apart than this are not blended between (edges::ROW_SNAP); 0 = always blend
 };
 
 struct PrepConstants                    // must match cbuffer C in kPrepHlsl
@@ -630,6 +633,11 @@ struct App
     unsigned postFused = 0, postSteadied = 0, postPasses = 0;
     double postTrustSum = 0, postAgeSum = 0;
     double postStillSum = 0;            // steadied passes: summed share of the picture held as still
+    // Horizontal depth edges made into steps (PublishDepth, depth_edges.h). Worker thread.
+    fusion::Image edgeLuma;             // the picture on the depth grid from the latest steady/fuse pass (empty without one)
+    uint64_t edgeLumaLayout = 0;
+    std::vector<uint8_t> edgeBarrier;
+    uint64_t edgeSteps = 0, edgePublishes = 0;      // since the worker's last summary
     bool motionUnavailableLogged = false, fuseModelLogged = false;
 
     // Anchor model (Depth Anything V2) on its own thread and queue on the depth GPU.
@@ -921,6 +929,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--fuse")) { opt->fuse = true; continue; }
         if (!strcmp(a, "--delayed")) { opt->delayed = true; continue; }
         if (!strcmp(a, "--whole-pixel")) { opt->subpixel = false; continue; }
+        if (!strcmp(a, "--no-edge-snap")) { opt->edgeSnap = false; continue; }
         if (!strcmp(a, "--check-package")) { opt->checkPackage = true; continue; }
         if (!strcmp(a, "--no-foreground")) { opt->foreground = false; continue; }
         if (!strcmp(a, "--normal-gpu-priority")) { opt->boostGpuPriority = false; continue; }
@@ -1888,6 +1897,7 @@ cbuffer C : register(b0)
     float mirrorTol;
     uint  subpixel;     // 1: sample at the fractional source position (no depth banding)
     float edgeFade;     // px: the shift fades to zero this near the left/right edges (EdgeWeight in xr_common.h); 0 = none
+    float rowSnap;      // nearness: depth rows further apart than this are not blended between (depth_edges.h); 0 = always blend
 };
 
 Texture2D<float4>        scene    : register(t0);
@@ -1911,6 +1921,9 @@ float NearAt(int x, int y)
     float c = nearBuf[y1 * DW + x0], d = nearBuf[y1 * DW + x1];
     float top = a + tx * (b - a);
     float bot = c + tx * (d - c);
+    // A step between two depth rows stays a step: blending down the picture's rows
+    // between them would shear the picture there (depth_edges.h).
+    if (rowSnap > 0.0 && abs(bot - top) > rowSnap) return (ty < 0.5) ? top : bot;
     return top + ty * (bot - top);
 }
 
@@ -5083,7 +5096,18 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
     // Worker thread: opt.model is the model that produced this depth.
     const int dilateH = app.opt.dilate >= 0 ? app.opt.dilate : app.opt.model->dilateH;
     const int dilateV = app.opt.dilateV >= 0 ? app.opt.dilateV : app.opt.model->dilateV;
-    DilateNear(preparedDepth, W, H, dilateH, dilateV);
+    if (app.opt.edgeSnap && !app.opt.useTruth && app.opt.source != SourceKind::Synthetic)
+    {
+        // Horizontal edges become steps on the picture's own edges, and the near side
+        // is then widened sideways as before but not up or down across a step.
+        const bool haveLuma = app.edgeLuma.valid() && app.edgeLuma.w == W && app.edgeLuma.h == H && app.edgeLumaLayout == src->layout;
+        app.edgeSteps += edges::SnapRowEdges(preparedDepth, haveLuma ? app.edgeLuma.v.data() : nullptr, W, H, app.edgeBarrier);
+        app.edgePublishes++;
+        DilateNear(preparedDepth, W, H, dilateH, 0);
+        edges::SpreadBarrier(app.edgeBarrier, W, H, dilateH);
+        edges::DilateNearRows(preparedDepth, W, H, dilateV, app.edgeBarrier);
+    }
+    else DilateNear(preparedDepth, W, H, dilateH, dilateV);
     memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
     s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
     s.lo = lo; s.hi = hi; s.completeTime = NowSeconds(); s.reused = reused;
@@ -5299,7 +5323,7 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
     if (!src || gridDone == 0 || nearMap.size() != (size_t)W * H) return;
     const bool steady = app.steadyEnabled.load();
     const bool fuse = FuseActive(app);
-    if (!steady && !fuse) return;
+    if (!steady && !fuse) { app.edgeLuma = {}; return; }
     const auto t0 = std::chrono::steady_clock::now();
     auto stageStart = t0;
     auto stage = [&](int i)
@@ -5312,6 +5336,7 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
     WaitMlFence(app, gridDone);
     std::vector<uint32_t> rgba(app.gridMapped, app.gridMapped + (size_t)W * H);
     fusion::Image luma = fusion::LumaFromRgba(rgba.data(), W, H);
+    if (app.opt.edgeSnap) { app.edgeLuma = luma; app.edgeLumaLayout = src->layout; }    // for PublishDepth
     if (!EnsureMotion(app)) return;
     if (app.postLayout != src->layout)
     {
@@ -5642,6 +5667,12 @@ static void WorkerMain(App* app)
             Log("Worker: %zu passes in 2 s | pass ms p50 %.1f p95 %.1f max %.1f | %s", v.size(), pct(.5), pct(.95), v.back(),
                 !app->secondGpu ? "one GPU" : app->frameTransfer ? "second GPU, copy-engine frames" : "second GPU, prep on headset GPU");
             v.clear();
+            if (app->edgePublishes > 0)
+            {
+                Log("Worker: horizontal depth edges - %.0f column steps per depth map (%s)", (double)app->edgeSteps / app->edgePublishes,
+                    app->edgeLuma.valid() ? "placed on the picture's edges" : "placed at the ramps' middles: no picture on the depth grid without steady depth or fusion");
+                app->edgeSteps = app->edgePublishes = 0;
+            }
             if (app->postPasses > 0 && !app->postMs.empty())
             {
                 // Steady/fuse: their own time after the model (grid wait, motion
@@ -8583,6 +8614,7 @@ static void RunFrameLoop(App& app)
                     c.eye0 = -0.5f * ipd; c.eye1 = 0.5f * ipd;
                     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
                     c.subpixel = app.opt.subpixel ? 1u : 0u;
+                    c.rowSnap = app.opt.edgeSnap ? edges::ROW_SNAP : 0.0f;
                     c.indicator = (app.opt.abSeconds > 0.0) ? (depthOn ? 1u : 2u) : 0u;
                     c.depthLie = app.opt.depthLie ? 1u : 0u;
                     c.writeDepth = useDepthSc && stereo ? 1u : 0u;
@@ -8972,6 +9004,7 @@ static bool DumpEyes(App& app, int fillMode, const char* tag)
     c.nearZ = DEPTH_NEAR_Z; c.farZ = DEPTH_FAR_Z;
     c.exactLoad = (app.srcW == t.cw && app.srcH == t.ch) ? 1u : 0u;
     c.subpixel = app.opt.subpixel ? 1u : 0u;
+    c.rowSnap = app.opt.edgeSnap ? edges::ROW_SNAP : 0.0f;
     c.fillMode = (uint32_t)fillMode;
     c.mirrorTol = MIRROR_TOL;
 

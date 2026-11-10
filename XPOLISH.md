@@ -70,9 +70,46 @@ mode, where zero shift is infinity and not the screen. `--selftest` compares the
 with the CPU reference with the fade on, and checks that the outer columns are the
 picture's own in both eyes.
 
+## Edges across the picture: a step, not a shear
+
+**Cause.** Desktop icons just above a window had their lower halves slanted at about
+45 degrees, right in one eye and left in the other. The warp moves pixels sideways
+only, so where the depth changes from row to row every row is moved a little more
+than the one above: a shear. A dump of that desktop showed the model's own edge to be
+quite sharp (far to near over about 3 depth rows, centred on the window's top border),
+but `DilateNear` then widened the near side by 3 depth rows (about 8 of the picture's)
+in every direction, which carried the whole ramp up onto the icons: about 17 px of
+shift over about 10 rows. Without the widening the ramp sits on the object's own top
+rows instead, which lean the other way (why it was added).
+
+**Fix** (`depth_edges.h`, used by `PublishDepth`; `NearAt` in `kWarpHlsl`).
+
+- Down each column of the depth map, a short ramp (up to 6 rows, each changing by at
+  least 0.03 the same way, 0.12 or more in all) becomes a step between two rows: at the
+  picture's own edge when the luma changes by 6 of 255 levels or more within 2 rows of
+  the ramp's middle, else at the middle. The rows above take the ramp's upper value,
+  the rows below its lower one. A longer ramp is a real slope and is left alone.
+- The near side is still widened sideways, but not up or down across a step.
+- The warp no longer blends between two depth rows that differ by more than 0.25 when
+  it scales the depth up to the picture (that was a ramp again, 3 picture rows tall);
+  each picture row takes the nearer depth row.
+
+The picture is then cut at the edge instead of sheared across it. On the same desktop,
+before and after (`--dump`, with `--no-edge-snap` for before): the icons stand upright
+with at most their last 2 rows cut, and the wallpaper just under a window's bottom
+edge no longer bends. 0.3% of the picture's pixels changed, nearly all of them along
+such edges. The picture's own edges need the picture on the depth grid, which exists
+while steady depth or fusion is on; without them the steps sit at the ramps' middles.
+The worker's 2-second summary reports the number of column steps per depth map.
+
+Not measured: games (a character's outline against a far background is the same
+case, and a short steep surface would now be drawn as a step), and whether a step's
+row changes from pass to pass on moving pictures.
+
 ## Thin parts leaning
 
-Not started. Likely cause: the warp scales the 686x392 depth up to the picture by
+Not started; the steps above may already help where a thin part's edge runs across
+the picture. Likely cause: the warp scales the 686x392 depth up to the picture by
 plain bilinear interpolation (`NearAt` in `kWarpHlsl`), so a spike a few pixels wide
 gets a mix of its object's depth and the sky's, fading toward the tip; the tip moves
 less than the base and leans the opposite way in each eye. Candidate fix: colour-guided
