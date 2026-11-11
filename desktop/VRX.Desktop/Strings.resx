@@ -68,6 +68,7 @@
   <data name="SectionAround" xml:space="preserve"><value>Around the screen</value></data>
   <data name="SectionRoom" xml:space="preserve"><value>Room</value></data>
   <data name="SectionDepth" xml:space="preserve"><value>3D &amp; depth</value></data>
+  <data name="SectionExperimental" xml:space="preserve"><value>Experimental</value></data>
   <data name="SectionSteamVr" xml:space="preserve"><value>SteamVR &amp; shortcuts</value></data>
   <data name="SectionProfile" xml:space="preserve"><value>Profile</value></data>
   <data name="SectionSession" xml:space="preserve"><value>Session details</value></data>
@@ -125,14 +126,30 @@
   <data name="WorldCustom" xml:space="preserve"><value>Custom</value></data>
 
   <!-- 4 Room -->
+  <data name="Environment" xml:space="preserve"><value>Environment</value></data>
+  <data name="EnvironmentTip" xml:space="preserve"><value>Where the screen is. Room (default): the plain room, clean and calm, with glass walls, reflections and a light to choose below. Open air: a screen standing in a field at night under the stars, with low hills on the horizon; the screen lights the ground in front of it. Lounge: a home theatre - an oak floor with a rug, panelled walls with two lamps each side, downlights in the ceiling (both lit by the room light) and timber slats behind the screen. Cinema with seats: a movie theatre with tiered rows of seats round you - velvet curtains, black masking round the screen, a patterned carpet with step lights along the aisles, and sconces on the walls lit by the room light; pick your seat below, which sets how far away the screen is. Each is lit by the picture like the room, and the Room slider sets how much its surfaces reflect. Picking one while the room is off turns the room on. Not with 'Screen follows my head'. Applies live; saved per game.</value></data>
+  <data name="EnvironmentRoom" xml:space="preserve"><value>Room (default)</value></data>
+  <data name="EnvironmentCinema" xml:space="preserve"><value>Cinema</value></data>
+  <data name="EnvironmentOpenAir" xml:space="preserve"><value>Open air at night</value></data>
+  <data name="EnvironmentLounge" xml:space="preserve"><value>Lounge</value></data>
+  <data name="EnvironmentTheatre" xml:space="preserve"><value>Cinema with seats</value></data>
+  <data name="Seat" xml:space="preserve"><value>Seat</value></data>
+  <data name="SeatTip" xml:space="preserve"><value>Where you sit in the cinema with seats. It sets how far away the screen is: the front row 4.6 m away, the middle 7.5 m and the back row 11.4 m. The hall stays the same whatever the screen's width, so Width makes the screen look bigger or smaller from your seat, as a bigger or smaller screen in the same cinema would (at the default 5.7 m the rows are about 0.8, 1.3 and 2 screen widths away). The rows rise behind you, so you look over the seats in front. A seat further back also shows the picture's depth more gently. While you are seated the Distance slider rests and keeps its value. Applies live; saved per game.</value></data>
+  <data name="SeatFront" xml:space="preserve"><value>Front row</value></data>
+  <data name="SeatMiddle" xml:space="preserve"><value>Middle (default)</value></data>
+  <data name="SeatRear" xml:space="preserve"><value>Back row</value></data>
+  <data name="SeatDistance" xml:space="preserve"><value>{0:F1} m from the screen</value><comment>{0} = metres</comment></data>
+  <data name="ValueSeatDistance" xml:space="preserve"><value>{0:F2} m (your seat)</value><comment>{0} = metres; the screen's distance set by the cinema seat</comment></data>
+  <data name="NeedsRoomEnvironment" xml:space="preserve"><value>Room environment only</value></data>
+  <data name="NotInOpenAir" xml:space="preserve"><value>Not in the open air</value></data>
   <data name="RoomLabel" xml:space="preserve"><value>Room — walls lit by the screen</value></data>
-  <data name="RoomTip" xml:space="preserve"><value>Puts you in a dark room whose walls, floor and ceiling are lit by the picture and the ambilight, like a television or a cinema screen in a dark room. 0 is off; higher values make the walls paler, so they reflect more; 30-60 % looks like a cinema. With the room on, the world colour becomes its house lights and the screen is kept level (a tilted floor would feel wrong). Not with 'Screen follows my head'. Glass, reflections and a room light are below. Applies live; saved per game.</value></data>
+  <data name="RoomTip" xml:space="preserve"><value>Puts you in a dark room whose walls, floor and ceiling are lit by the picture and the ambilight, like a television or a cinema screen in a dark room. 0 is off; higher values make the walls paler, so they reflect more; 30-60 % looks like a cinema. With the room on, the world colour becomes its house lights and the screen is kept level (a tilted floor would feel wrong). Not with 'Screen follows my head'. The environment above dresses it as a cinema, the open air or a lounge. Glass, reflections and a room light are below. Applies live; saved per game.</value></data>
   <data name="GlassWalls" xml:space="preserve"><value>Glass walls</value></data>
-  <data name="GlassTip" xml:space="preserve"><value>Turns the side walls, the back wall and the ceiling into glass in slim frames, so you look out over a ground that runs to a horizon in the world colour. With a black world colour it is a glass room at night: you see only the frames and reflections. 0 is solid walls, 100 clear glass. The wall with the screen and the floor stay solid. Glass or reflections also show 1 m floor tiles, so you can count the screen's size in metres. Clear glass keeps less light in, so the room gets a little darker. Applies live; saved per game.</value></data>
+  <data name="GlassTip" xml:space="preserve"><value>Turns the side walls, the back wall and the ceiling into glass in slim frames, so you look out over a ground that runs to a horizon in the world colour. With a black world colour it is a glass room at night: you see only the frames and reflections. 0 is solid walls, 100 clear glass. The wall with the screen and the floor stay solid. Glass or reflections also show 1 m floor tiles, so you can count the screen's size in metres. Clear glass keeps less light in, so the room gets a little darker. Only in the Room environment. Applies live; saved per game.</value></data>
   <data name="Reflections" xml:space="preserve"><value>Reflections</value></data>
-  <data name="ReflectTip" xml:space="preserve"><value>How much the glass, the walls and a polished floor reflect: the screen, its glow and the room light appear mirrored, which shows how big the screen is and how far away. Reflections are stronger at a glancing angle. 0 is none. Applies live; saved per game.</value></data>
+  <data name="ReflectTip" xml:space="preserve"><value>How much the glass, the walls and a polished floor reflect: the screen, its glow and the room light appear mirrored, which shows how big the screen is and how far away. Reflections are stronger at a glancing angle. 0 is none. Only in the Room environment. Applies live; saved per game.</value></data>
   <data name="RoomLight" xml:space="preserve"><value>Room light</value></data>
-  <data name="RoomLightTip" xml:space="preserve"><value>A soft light panel in the ceiling just above and behind you, so the room stays visible when the picture is dark. How much the walls pick it up depends on how pale they are (the Room slider). 0 is off. Applies live; saved per game.</value></data>
+  <data name="RoomLightTip" xml:space="preserve"><value>A soft light panel in the ceiling just above and behind you, so the room stays visible when the picture is dark. How much the walls pick it up depends on how pale they are (the Room slider). In the cinema it lights the wall sconces, in the lounge the downlights and the wall lamps; the open air has none. 0 is off. Applies live; saved per game.</value></data>
   <data name="LightColour" xml:space="preserve"><value>Light colour</value></data>
   <data name="LightColourTip" xml:space="preserve"><value>The room light's colour, from warm (2700 K, like a table lamp) to daylight (6500 K). Applies live; saved per game.</value></data>
   <data name="LightWarm" xml:space="preserve"><value>Warm (2700 K)</value></data>
@@ -161,17 +178,17 @@
   <data name="EdgeStepMinTip" xml:space="preserve"><value>How large the change of depth across an edge must be before it is cut, as a share of the whole depth range. Lower cuts more edges, including shallow ones; higher cuts only the strongest (a window over the desktop is about 60 %) and leaves the rest slanted. 12 % by default. Needs the cut on. Applies live; saved per game.</value></data>
   <data name="WidenNear" xml:space="preserve"><value>Widen near objects up and down</value></data>
   <data name="WidenNearTip" xml:space="preserve"><value>How far the depth of a near object is spread above and below it, compared with the depth model's own amount (100 %). More keeps the object's own top and bottom rows moving with it, but carries the slant further onto what is next to it; 0 % keeps the slant on the object's own edge. Where an edge is cut cleanly, nothing is spread across the cut. Applies live; saved per game.</value></data>
-  <data name="ThinParts" xml:space="preserve"><value>Keep thin parts upright (experimental)</value></data>
+  <data name="ThinParts" xml:space="preserve"><value>Keep thin parts upright</value></data>
   <data name="ThinPartsTip" xml:space="preserve"><value>A thin upright part of something - a spire on a roof, a mast, a post - is often missed by the depth model, so it stays with the background while its foot is dragged along with what it stands on, and it bends opposite ways in the two eyes. On: such parts are found in the picture and given the depth of what they stand on, so they move with it as one piece. It adds work to each depth pass (the session log reports it), may miss parts or flicker on moving pictures, and can leave a slightly speckled patch beside a part. Off by default. Applies live; saved per game.</value></data>
-  <data name="SharpenEdges" xml:space="preserve"><value>Sharpen depth edges with the picture (experimental)</value></data>
+  <data name="SharpenEdges" xml:space="preserve"><value>Sharpen depth edges with the picture</value></data>
   <data name="SharpenEdgesTip" xml:space="preserve"><value>The depth map is much coarser than the picture and its edges are soft, so the picture around an object's outline is moved by an in-between amount: slanted edges, halos, bits of background travelling with an object. Turned on, each pixel takes its depth from the nearby depth samples that look like it, every frame, so an object's depth ends where the object does. While on, it replaces the widening of near objects and the clean cut above. Costs about half a millisecond of GPU time a frame. Not yet judged in the headset: it may flicker along edges in noisy video.</value></data>
-  <data name="BackLayer" xml:space="preserve"><value>Fill behind objects from a background layer (experimental)</value></data>
+  <data name="BackLayer" xml:space="preserve"><value>Fill behind objects from a background layer</value></data>
   <data name="BackLayerTip" xml:space="preserve"><value>When a near object is moved sideways for an eye, a strip of what was behind it comes into view beside it, in that eye only. Normally that strip is filled row by row with the background next to it, mirrored. Turned on, the background behind near objects is made once for both eyes, from the background on either side, and the strip shows that: the same hidden surface in both eyes, the rows agree, and it is soft where the picture had nothing. Works best with sharpened depth edges. Softer than the mirrored picture; not yet judged in the headset.</value></data>
   <data name="ShowDepthMap" xml:space="preserve"><value>Show depth map instead of game</value></data>
   <data name="ShowDepthMapTip" xml:space="preserve"><value>Show the depth used for 3D as a flat grayscale image: white is near, black is far. It is the depth after every setting above, including sharpened edges. Applies immediately. An unavailable depth map shows black. Untick to return to the game.</value></data>
   <data name="Steady" xml:space="preserve"><value>Steady depth — motion vectors</value></data>
   <data name="SteadyTip" xml:space="preserve"><value>Reduces depth shimmer: each new depth estimate is blended with the previous one, moved to where things are now by the graphics card's hardware motion estimator (its video engine, not the shader cores). Only where the motion is verified, so moving edges should not trail. Parts of the picture that have not changed keep their depth almost entirely, so a change elsewhere does not make them twitch. On by default; works on any GPU with a hardware motion estimator. Applies live; saved per game.</value></data>
-  <data name="Fuse" xml:space="preserve"><value>Fuse with Depth Anything V2 (experimental)</value></data>
+  <data name="Fuse" xml:space="preserve"><value>Fuse with Depth Anything V2</value></data>
   <data name="FuseTip" xml:space="preserve"><value>Runs Depth Anything V2 alongside ZipDepth: ZipDepth keeps depth fast, Depth Anything supplies more detailed layering, moved to the current frame with motion vectors. Best with another GPU chosen as the depth GPU; on one GPU it runs at most 10 times a second. Needs the fast depth model. Applies live; saved per game.</value></data>
   <data name="FuseHint" xml:space="preserve"><value>Fusion is best with a second depth GPU. Both can be used together.</value></data>
   <data name="DepthGpu" xml:space="preserve"><value>Depth GPU</value></data>
@@ -184,13 +201,14 @@
   <data name="GpuSizeGB" xml:space="preserve"><value>{0:0.#} GB</value><comment>{0} = gigabytes</comment></data>
   <data name="GpuSizeMB" xml:space="preserve"><value>{0} MB</value><comment>{0} = megabytes</comment></data>
   <data name="GpuNotFound" xml:space="preserve"><value>Not found: {0} (the game's GPU is used)</value><comment>{0} = GPU name</comment></data>
-  <data name="ForegroundPasses" xml:space="preserve"><value>Extra foreground depth passes (experimental)</value></data>
+  <data name="ForegroundPasses" xml:space="preserve"><value>Extra foreground depth passes</value></data>
   <data name="ForegroundTip" xml:space="preserve"><value>Gives persistent nearby regions an extra detail pass when time allows. Uses more GPU time; improvement varies by scene. Toggle during playback to compare.</value></data>
   <data name="FrameTiming" xml:space="preserve"><value>Game frame timing</value></data>
   <data name="FrameTimingTip" xml:space="preserve"><value>Which game frame is shown with the depth. Latest frame (default): smooth and immediate; depth lags slightly behind moving things. Delayed to depth: the game image is held back by the depth delay so they line up much better, and motion stays smooth. Matched to depth: each depth estimate with the exact frame it came from; best alignment, but game motion only updates at the depth rate. Delayed and matched add delay. Applies live; saved per game.</value></data>
   <data name="TimingLatest" xml:space="preserve"><value>Latest frame (default)</value></data>
   <data name="TimingDelayed" xml:space="preserve"><value>Delayed to depth — smooth, slightly behind</value></data>
   <data name="TimingMatched" xml:space="preserve"><value>Matched to depth — exact, updates at the depth rate</value></data>
+  <data name="ExperimentalHint" xml:space="preserve"><value>Options still being tried out. They may cost GPU time, look wrong in some games, or change in a later version. All apply live and are saved per game.</value></data>
   <data name="TimingHint" xml:space="preserve"><value>Delayed and matched line the depth up with the game better, but show the game later.</value></data>
 
   <!-- 6 SteamVR & shortcuts -->

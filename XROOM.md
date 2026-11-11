@@ -6,6 +6,9 @@ floor and ceiling are lit by the picture and the ambilight, like a television or
 cinema screen in a dark room. The slider sets how pale the walls are (0 is off; 30-60%
 looks like a cinema).
 
+The **Environment** list above the slider dresses the same room as a cinema, the open air at
+night or a lounge; the room itself stays the default ([XENV.md](XENV.md)).
+
 Under it, v11 adds four controls, all per game, live and off by default, and all
 resting (with their values kept) while the room is off or the screen follows the head:
 **Glass walls** (0 solid .. 100 clear), **Reflections** (0 off .. 100), **Room light**
