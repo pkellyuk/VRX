@@ -300,7 +300,7 @@ struct Options
     bool refine = false;                // --refine: depth sharpened by the picture, per frame (depth_refine.h)
     bool layerFill = false;             // --fill=layer: what near objects uncover shows the background layer (back_layer.h)
     bool edgeSnap = false;              // --edge-snap: horizontal depth edges made into steps (depth_edges.h) instead of slanted ramps
-    float edgeFade = EDGE_FADE;         // share of the picture's width, each side, over which the edges flatten to the screen plane (0 = off)
+    float edgeFade = 0.0f;              // share of the picture's width, each side, over which the edges flatten to the screen plane (0 = off, the default; EDGE_FADE is the usual width)
     float curve = 0.0f;                 // curved screen: 0 flat .. 1 fully wrapped (screen_curve.h)
     bool ambilight = false;             // spill the picture's edge colours around the screen
     int ambiStrength = kAmbiDefaultStrength;    // percent: the glow's brightness next to the screen

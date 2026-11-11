@@ -328,7 +328,7 @@ static void FillHole(std::vector<int>& src, const float* nrow, int w, int x, int
 // shift is therefore faded smoothly to zero over the outer EDGE_FADE of the width on
 // each side. EdgeWeight is that factor for source column x (0 at the edge, 1 inside);
 // `fade` is the band's width in pixels, 0 for no fade. The shader does the same sums.
-static const float EDGE_FADE = 0.04f;       // share of the picture's width, each side
+static const float EDGE_FADE = 0.04f;       // share of the picture's width, each side: a usual width (the self-test's); off unless asked for
 
 inline float EdgeWeight(int x, int w, float fade)
 {

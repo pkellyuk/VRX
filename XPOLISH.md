@@ -60,12 +60,14 @@ fuse. A full-screen browser shows it most (its scrollbar is about as wide as the
 shift).
 
 **Fix** (`xr_common.h`: `EdgeWeight`, `EDGE_FADE`; the same sums in `kWarpHlsl`). The
-shift fades smoothly to zero over the outer 4% of the width on each side, so the
+shift fades smoothly to zero over a band at each side (4% of the width suits), so the
 picture's edges sit on the screen plane and are identical in both eyes. Anything in
 that band is drawn nearer the screen plane than its depth says. The width is the
 **Flatten the left and right edges** slider in the Depth section (0 off to 15% of the
-width each side, 4% by default, per game, applies live; `EdgeFlatten` in the profile,
-the last value of the v12 control snapshot). Not in head-locked
+width each side, off by default, per game, applies live; `EdgeFlatten` in the profile,
+the last value of the v12 control snapshot). It was 4% by default at first; it is off
+by default now because it is useful on the desktop but flattens whatever a game has at
+its edges. Not in head-locked
 mode, where zero shift is infinity and not the screen. `--selftest` compares the GPU
 with the CPU reference with the fade on, and checks that the outer columns are the
 picture's own in both eyes.

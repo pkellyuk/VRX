@@ -45,8 +45,9 @@ public sealed class Profile
     // The picture's left and right edges are flattened to the screen plane over this
     // percent of its width on each side (v12 snapshot, applies live): 0 off .. 15. With
     // depth at an edge, one eye sees a wider edge than the other, which the eyes cannot
-    // fuse. 4 by default, including for older profiles (EDGE_FADE in xr_common.h).
-    public int EdgeFlatten { get; set; } = 4;
+    // fuse. Off by default, including for older profiles: it helps on the desktop (a
+    // full-screen window's edges) but flattens whatever a game has at its edges.
+    public int EdgeFlatten { get; set; }
     // Depth edges that run across the picture (the top or bottom of anything nearer than
     // what is behind it), v13 snapshot, live. The warp moves the picture sideways only, so
     // such an edge either slants what is next to it (off) or is cut cleanly at the edge

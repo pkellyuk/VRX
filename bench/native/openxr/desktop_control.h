@@ -30,8 +30,8 @@ struct DesktopSettings
     int roomReflect = 0;    // v11: reflections, 0 off .. 100, live
     int roomLight = 0;      // v11: the ceiling panel light, 0 off .. 100, live
     int roomLightColor = 0xFFB46B; // v11: the room light colour 0xRRGGBB, live
-    int edge = 4;           // v12: the picture's left/right edges flattened to the screen plane over this percent of its width
-                            // (each side, 0 off .. 15), live; v1-v11 keep 4 (EDGE_FADE in xr_common.h)
+    int edge = 0;           // v12: the picture's left/right edges flattened to the screen plane over this percent of its width
+                            // (each side, 0 off .. 15), live; v1-v11 have it off
     int edgeSteps = 0;      // v13: depth edges across the picture drawn as steps (1) or as before, slanted (0), live; v1-v12 slanted
     int edgeStepMin = 12;   // v13: the least depth change made a step, percent of the depth range, 5 .. 60, live
     int widen = 100;        // v13: near objects widened up and down, percent of the model's own amount, 0 .. 300, live
