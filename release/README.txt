@@ -1,6 +1,6 @@
-VRX 1.7.9 - Windows x64
+VRX 1.8.0 - Windows x64
 
-Install with VRX-Setup-1.7.9.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.8.0.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -73,6 +73,22 @@ It needs the fixed screen. Under it:
 With Glass or Reflections above 0 the floor shows subtle 1 m tiles, so you can
 count the screen's size in metres.
 
+"Environment" (per game, applies live, needs the room and the fixed screen) dresses
+the room. "Room" (default) is the plain room above. "Open air at night" stands the
+screen in a field under the stars, with low hills on the horizon. "Lounge" is a home
+theatre: an oak floor with a rug, panelled walls with lamps and downlights. "Cinema
+with seats" puts you in a movie theatre - velvet curtains, black masking round the
+screen, a patterned carpet with step lights and sconces - in one of its tiered rows of
+seats. Its "Seat" (front row, middle, back row) sets how far away the screen is (4.6,
+7.5 or 11.4 m) while the Distance slider rests; Width makes the screen bigger or
+smaller in the same hall. Each is lit by the picture like the room; glass and
+reflections are the room's own.
+
+Options still being tried out are in the Experimental section (Expert mode): extra
+foreground depth passes, keeping thin parts upright, sharpening depth edges with the
+picture, filling behind objects from a background layer, showing the depth map
+instead of the game, and fusing with Depth Anything V2.
+
 "Apply to all" copies the settings shown to every game already set up, after an
 OK/Cancel warning. Each game keeps its own path and window.
 
@@ -143,7 +159,7 @@ if verifying the download. Do not disable Windows security features.
 
 VRX itself is free software under the GNU General Public License v3.0: see
 LICENSE. Source: https://github.com/pkellyuk/VRX
-Source for this build: https://github.com/pkellyuk/VRX/tree/v1.7.9 (the exact
+Source for this build: https://github.com/pkellyuk/VRX/tree/v1.8.0 (the exact
 commit is in BUILD.txt).
 Third-party components keep their own licenses; notices and license texts are in
 THIRD-PARTY-NOTICES.txt and the licenses folder.
