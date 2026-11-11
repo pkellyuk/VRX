@@ -260,6 +260,7 @@ public partial class MainWindow : Window
         ReflectSlider.Value = p.RoomReflections;
         LightSlider.Value = p.RoomLight;
         FillLightColourList(p.RoomLightColor);
+        EnvironmentList.SelectedIndex = Math.Clamp(p.RoomEnvironment, 0, Profile.EnvironmentCount - 1);
         WorldHex.Text = p.WorldColor;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
@@ -296,6 +297,7 @@ public partial class MainWindow : Window
             RoomReflections = (int)Math.Round(ReflectSlider.Value),
             RoomLight = (int)Math.Round(LightSlider.Value),
             RoomLightColor = SelectedLightColour(),
+            RoomEnvironment = Math.Clamp(EnvironmentList.SelectedIndex, 0, Profile.EnvironmentCount - 1),
             WorldColor = Profile.TryParseColor(WorldHex.Text, out int world) ? Profile.FormatColor(world) :
                 throw new InvalidDataException(Loc.Get("ErrorWorldColour")),
             SteadyDepth = SteadyCheck.IsChecked == true,
@@ -320,9 +322,29 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { Status.Text = ex.Message; return false; }
     }
-    // The room needs the fixed screen: its slider rests while the screen follows the head.
-    // Glass, reflections and the room light also need the room itself; the light colour
-    // also needs the light. Resting controls keep their saved values.
+    // An environment picked while the room is off turns the room on at a fresh install's level,
+    // so that the choice shows straight away; the room itself (index 0) never does.
+    private void EnvironmentChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ready || loading || EnvironmentList == null || RoomSlider == null)
+        {
+            SettingsChanged(sender, e);
+            return;
+        }
+        int env = EnvironmentList.SelectedIndex;
+        System.Diagnostics.Debug.WriteLine($"[Room] environment {env}, room {RoomSlider.Value:F0} %");
+        if (env > Profile.EnvironmentRoom && Math.Round(RoomSlider.Value) == 0 && RoomSlider.IsEnabled)
+        {
+            RoomSlider.Value = Profile.NewInstallRoom;
+            System.Diagnostics.Debug.WriteLine($"[Room] the room was off: turned on at {Profile.NewInstallRoom} % to show the environment");
+        }
+        SettingsChanged(sender, e);
+    }
+
+    // The room needs the fixed screen: its slider and the environment rest while the screen
+    // follows the head. Glass, reflections and the room light also need the room itself;
+    // glass and reflections only belong to the room environment, and the open air has no room
+    // light; the light colour also needs the light. Resting controls keep their saved values.
     private void UpdateRoomControls()
     {
         // The edge flattening's value: "Off" at 0 (it is updated here with the others).
@@ -340,21 +362,29 @@ public partial class MainWindow : Window
             LightSlider == null || LightValue == null || LightColourList == null) return;
         bool withRoom = !follows && room > 0;
         string resting = Loc.Get(follows ? "NeedsFixedScreen" : "NeedsRoom");
-        GlassSlider.IsEnabled = withRoom;
-        ReflectSlider.IsEnabled = withRoom;
-        LightSlider.IsEnabled = withRoom;
+        int env = EnvironmentList == null ? Profile.EnvironmentRoom : Math.Clamp(EnvironmentList.SelectedIndex, 0, Profile.EnvironmentCount - 1);
+        if (EnvironmentList != null && EnvironmentValue != null)
+        {
+            EnvironmentList.IsEnabled = !follows;
+            EnvironmentValue.Text = follows ? Loc.Get("NeedsFixedScreen") : room == 0 ? Loc.Get("NeedsRoom") : "";
+        }
+        bool look = withRoom && env == Profile.EnvironmentRoom, lit = withRoom && env != Profile.EnvironmentOpenAir;
+        string lookResting = withRoom ? Loc.Get("NeedsRoomEnvironment") : resting, litResting = withRoom ? Loc.Get("NotInOpenAir") : resting;
+        GlassSlider.IsEnabled = look;
+        ReflectSlider.IsEnabled = look;
+        LightSlider.IsEnabled = lit;
         int glass = (int)Math.Round(GlassSlider.Value), reflect = (int)Math.Round(ReflectSlider.Value), light = (int)Math.Round(LightSlider.Value);
-        GlassValue.Text = !withRoom ? resting : glass == 0 ? Loc.Get("ValueSolid") : Loc.Format("ValueClearPercent", glass);
-        ReflectValue.Text = !withRoom ? resting : reflect == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", reflect);
-        LightValue.Text = !withRoom ? resting : light == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", light);
-        LightColourList.IsEnabled = withRoom && light > 0;
+        GlassValue.Text = !look ? lookResting : glass == 0 ? Loc.Get("ValueSolid") : Loc.Format("ValueClearPercent", glass);
+        ReflectValue.Text = !look ? lookResting : reflect == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", reflect);
+        LightValue.Text = !lit ? litResting : light == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", light);
+        LightColourList.IsEnabled = lit && light > 0;
     }
 
-    // The settings sections (2-7) follow whether a game is selected; their headers stay
+    // The settings sections (2-8) follow whether a game is selected; their headers stay
     // usable, so sections can be opened and closed at any time.
     private void SetSettingsEnabled(bool on)
     {
-        foreach (var content in new UIElement?[] { ScreenContent, AroundContent, RoomContent, DepthContent, SteamVrContent, ProfileContent })
+        foreach (var content in new UIElement?[] { ScreenContent, AroundContent, RoomContent, DepthContent, ExperimentalContent, SteamVrContent, ProfileContent })
         {
             if (content == null) continue;
             content.IsEnabled = on;
@@ -997,7 +1027,8 @@ public partial class MainWindow : Window
     private (string Name, Expander Section)[] SectionList() =>
     [
         (AppSettings.SectionGame, GameSection), (AppSettings.SectionScreen, ScreenSection), (AppSettings.SectionAround, AroundSection),
-        (AppSettings.SectionRoom, RoomSection), (AppSettings.SectionDepth, DepthSection), (AppSettings.SectionSteamVr, SteamVrSection),
+        (AppSettings.SectionRoom, RoomSection), (AppSettings.SectionDepth, DepthSection), (AppSettings.SectionExperimental, ExperimentalSection),
+        (AppSettings.SectionSteamVr, SteamVrSection),
         (AppSettings.SectionProfile, ProfileSection), (AppSettings.SectionSession, SessionDetails),
     ];
 
@@ -1333,6 +1364,7 @@ public partial class MainWindow : Window
         legacy.Remove("RoomReflections");
         legacy.Remove("RoomLight");
         legacy.Remove("RoomLightColor");
+        legacy.Remove("RoomEnvironment");
         legacy.Remove("FuseModels");
         legacy.Remove("DesktopWhenAway");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
@@ -1364,39 +1396,43 @@ public partial class MainWindow : Window
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
         var roomy = new Profile { Room = 45 };
         var glassy = new Profile { Room = 45, RoomGlass = 60, RoomReflections = 25, RoomLight = 40, RoomLightColor = "#FFD1A3" };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 17 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 0 0 12 100 0 0 0 0") ||
-            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 0 0 12 100 0 0 0 0") ||
-            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 0 0 12 100 0 0 0 0"))
-            throw new Exception("Control snapshot must be v17 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, the edge flattening, the edge steps flag and least change, the widening, the thin parts flag, the sharpened edges flag, the depth map flag, and the background layer flag (see desktop_control.h)");
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 18 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
+            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 0 0 12 100 0 0 0 0 0"))
+            throw new Exception("Control snapshot must be v18 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, the edge flattening, the edge steps flag and least change, the widening, the thin parts flag, the sharpened edges flag, the depth map flag, the background layer flag, and the environment (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
             throw new Exception("Profiles saved before the sub-pixel warp existed must load with it on");
-        if (store.Load(one.ExecutablePath).EdgeFlatten != 0 || new Profile().EdgeFlatten != 0 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9 0 12 100 0 0 0 0") ||
+        if (store.Load(one.ExecutablePath).EdgeFlatten != 0 || new Profile().EdgeFlatten != 0 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9 0 12 100 0 0 0 0 0") ||
             new Profile { EdgeFlatten = 16 }.Valid() || new Profile { EdgeFlatten = -1 }.Valid())
             throw new Exception("Old and new profiles must have the edge flattening off; it is in the snapshot and 0 to 15");
         var legacyEdges = store.Load(one.ExecutablePath);
         if (legacyEdges.EdgeSteps || legacyEdges.EdgeStepMin != 12 || legacyEdges.WidenNear != 100 ||
-            !new Profile { EdgeSteps = true, EdgeStepMin = 30, WidenNear = 200 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 1 30 200 0 0 0 0") ||
+            !new Profile { EdgeSteps = true, EdgeStepMin = 30, WidenNear = 200 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 1 30 200 0 0 0 0 0") ||
             new Profile { EdgeStepMin = 4 }.Valid() || new Profile { EdgeStepMin = 61 }.Valid() || new Profile { WidenNear = -1 }.Valid() || new Profile { WidenNear = 301 }.Valid())
             throw new Exception("Profiles saved before the edge steps existed must load with them off, at 12 % and 100 % widening; they follow the edge flattening in the snapshot");
-        if (store.Load(one.ExecutablePath).ThinParts || !new Profile { ThinParts = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 1 0 0 0"))
+        if (store.Load(one.ExecutablePath).ThinParts || !new Profile { ThinParts = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 1 0 0 0 0"))
             throw new Exception("Profiles saved before the thin parts setting existed must load with it off; it follows the widening in the snapshot");
-        if (store.Load(one.ExecutablePath).SharpenEdges || !new Profile { SharpenEdges = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 1 0 0"))
+        if (store.Load(one.ExecutablePath).SharpenEdges || !new Profile { SharpenEdges = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 1 0 0 0"))
             throw new Exception("Profiles saved before the sharpened depth edges existed must load with them off; it follows the thin parts flag in the snapshot");
-        if (store.Load(one.ExecutablePath).ShowDepthMap || new Profile().ShowDepthMap || !new Profile { ShowDepthMap = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 1 0"))
+        if (store.Load(one.ExecutablePath).ShowDepthMap || new Profile().ShowDepthMap || !new Profile { ShowDepthMap = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 1 0 0"))
             throw new Exception("The depth map must not be shown by old or new profiles; it follows the sharpened edges flag in the snapshot");
-        if (store.Load(one.ExecutablePath).BackLayer || new Profile().BackLayer || !new Profile { BackLayer = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 1"))
-            throw new Exception("Profiles saved before the background layer existed must load with it off; it is the snapshot's last value");
+        if (store.Load(one.ExecutablePath).BackLayer || new Profile().BackLayer || !new Profile { BackLayer = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 1 0"))
+            throw new Exception("Profiles saved before the background layer existed must load with it off; it is followed by the environment");
         if (store.Load(one.ExecutablePath).ScreenCurve != 0 || store.Load(one.ExecutablePath).Ambilight)
             throw new Exception("Profiles saved before the curve and ambilight existed must load flat, with no glow");
         if (store.Load(one.ExecutablePath).AmbilightStrength != 85 || store.Load(one.ExecutablePath).WorldColor != "#000000")
             throw new Exception("Profiles saved before the glow strength and world colour existed must load at 85 % and black");
         if (store.Load(one.ExecutablePath).Room != 0) throw new Exception("Profiles saved before the room existed must load with it off");
+        if (store.Load(one.ExecutablePath).RoomEnvironment != Profile.EnvironmentRoom || new Profile().RoomEnvironment != Profile.EnvironmentRoom ||
+            !new Profile { RoomEnvironment = Profile.EnvironmentLounge }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 3") ||
+            new Profile { RoomEnvironment = Profile.EnvironmentCount }.Valid() || new Profile { RoomEnvironment = -1 }.Valid() || !new Profile { RoomEnvironment = Profile.EnvironmentOpenAir }.Valid())
+            throw new Exception("Profiles saved before the environments existed must load in the room; the environment is the snapshot's last value, 0 to 3");
         // A fresh install starts with the room set up; nothing else changes, and base
         // settings saved before the room existed keep it off.
         string freshRoot = Path.Combine(output, "newInstall-install");
@@ -1512,6 +1548,43 @@ public partial class MainWindow : Window
         if (GlassSlider.Value != 0 || LightSlider.Value != 0 || LightColourList.SelectedItem as string != Loc.Get("LightSoftWhite") ||
             LightColourList.Items.Contains(Loc.Format("LightCustom", "#123456")))
             throw new Exception("Loading another profile must put back its room look and drop the custom light colour");
+        // The environment: the room by default; another one rests Glass and Reflections (the
+        // room's own), the open air the room light too; picking one with the room off turns the
+        // room on; it rests with the room while the screen follows the head; it is saved.
+        if (EnvironmentList.SelectedIndex != Profile.EnvironmentRoom || ReadProfile().RoomEnvironment != Profile.EnvironmentRoom || !EnvironmentList.IsEnabled ||
+            EnvironmentList.Items.Count != Profile.EnvironmentCount)
+            throw new Exception("The environment must default to the room, with the four to choose from");
+        RoomSlider.Value = 0;
+        if (EnvironmentValue.Text != Loc.Get("NeedsRoom")) throw new Exception("The environment must say it needs the room while the room is off");
+        EnvironmentList.SelectedIndex = Profile.EnvironmentCinema;
+        if (Math.Round(RoomSlider.Value) != Profile.NewInstallRoom || ReadProfile().RoomEnvironment != Profile.EnvironmentCinema || EnvironmentValue.Text != "")
+            throw new Exception("Picking the cinema with the room off must turn the room on and be saved");
+        GlassSlider.Value = 30;
+        if (GlassSlider.IsEnabled || ReflectSlider.IsEnabled || GlassValue.Text != Loc.Get("NeedsRoomEnvironment") || ReflectValue.Text != Loc.Get("NeedsRoomEnvironment") ||
+            !LightSlider.IsEnabled || ReadProfile().RoomGlass != 30)
+            throw new Exception("In the cinema glass and reflections rest (keeping their values) and the room light is available");
+        EnvironmentList.SelectedIndex = Profile.EnvironmentOpenAir;
+        LightSlider.Value = 35;
+        if (LightSlider.IsEnabled || LightValue.Text != Loc.Get("NotInOpenAir") || LightColourList.IsEnabled || ReadProfile().RoomEnvironment != Profile.EnvironmentOpenAir ||
+            ReadProfile().RoomLight != 35)
+            throw new Exception("The open air must rest the room light, keeping its value");
+        EnvironmentList.SelectedIndex = Profile.EnvironmentLounge;
+        if (!LightSlider.IsEnabled || !LightColourList.IsEnabled || GlassSlider.IsEnabled || ReadProfile().RoomEnvironment != Profile.EnvironmentLounge)
+            throw new Exception("The lounge has the room light and its colour, not glass");
+        FollowCheck.IsChecked = true;
+        if (EnvironmentList.IsEnabled || EnvironmentValue.Text != Loc.Get("NeedsFixedScreen") || ReadProfile().RoomEnvironment != Profile.EnvironmentLounge)
+            throw new Exception("The environment must rest, keeping its choice, while the screen follows the head");
+        FollowCheck.IsChecked = false;
+        RoomSlider.Value = 0;
+        EnvironmentList.SelectedIndex = Profile.EnvironmentRoom;
+        if (RoomSlider.Value != 0 || GlassSlider.IsEnabled || GlassValue.Text != Loc.Get("NeedsRoom"))
+            throw new Exception("Picking the room must not turn the room on");
+        var envSaved = ReadProfile();
+        envSaved.RoomEnvironment = Profile.EnvironmentOpenAir;
+        PutProfile(envSaved);
+        if (EnvironmentList.SelectedIndex != Profile.EnvironmentOpenAir || RoomSlider.Value != 0) throw new Exception("A profile's environment must be put back as it is");
+        PutProfile(one);
+        if (EnvironmentList.SelectedIndex != Profile.EnvironmentRoom) throw new Exception("Loading another profile must put back its environment");
         if (AmbiStrengthSlider.Value != 85 || AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength should default to 85 % and follow the ambilight checkbox");
         AmbilightCheck.IsChecked = true;
         if (!AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength must be adjustable with the ambilight on");

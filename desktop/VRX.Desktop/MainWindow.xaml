@@ -157,6 +157,16 @@
     <!-- 4 Room -->
     <Expander x:Name="RoomSection" Header="{l:Tr SectionRoom}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="RoomContent">
+      <DockPanel Margin="0,0,0,10">
+       <TextBlock x:Name="EnvironmentValue" DockPanel.Dock="Right" Style="{StaticResource Value}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+       <TextBlock DockPanel.Dock="Left" Text="{l:Tr Environment}" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+       <ComboBox x:Name="EnvironmentList" SelectedIndex="0" SelectionChanged="EnvironmentChanged" ToolTip="{l:Tr EnvironmentTip}">
+        <ComboBoxItem Content="{l:Tr EnvironmentRoom}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentCinema}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentOpenAir}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentLounge}"/>
+       </ComboBox>
+      </DockPanel>
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" x:Name="RoomValue"/><TextBlock x:Name="RoomLabel" Style="{StaticResource Label}" Text="{l:Tr RoomLabel}"/></DockPanel>
       <Slider x:Name="RoomSlider" Minimum="0" Maximum="100" Value="0" ValueChanged="SettingsChanged" ToolTip="{l:Tr RoomTip}"/>
       <Grid Margin="26,0,0,0">
@@ -196,18 +206,11 @@
       <Slider x:Name="EdgeStepMinSlider" Minimum="5" Maximum="60" Value="12" SmallChange="1" LargeChange="5" TickFrequency="1" IsSnapToTickEnabled="True" IsEnabled="{Binding ElementName=EdgeStepsCheck, Path=IsChecked}" ValueChanged="SettingsChanged" ToolTip="{l:Tr EdgeStepMinTip}"/>
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=WidenSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr WidenNear}"/></DockPanel>
       <Slider x:Name="WidenSlider" Minimum="0" Maximum="300" Value="100" SmallChange="10" LargeChange="50" TickFrequency="10" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" ToolTip="{l:Tr WidenNearTip}"/>
-      <CheckBox x:Name="ThinPartsCheck" Content="{l:Tr ThinParts}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr ThinPartsTip}"/>
-      <CheckBox x:Name="SharpenEdgesCheck" Content="{l:Tr SharpenEdges}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SharpenEdgesTip}"/>
-      <CheckBox x:Name="BackLayerCheck" Content="{l:Tr BackLayer}" ToolTip="{l:Tr BackLayerTip}" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
-      <CheckBox x:Name="ShowDepthMapCheck" Content="{l:Tr ShowDepthMap}" ToolTip="{l:Tr ShowDepthMapTip}" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
       <CheckBox x:Name="SubpixelCheck" Content="{l:Tr Subpixel}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SubpixelTip}"/>
       <CheckBox x:Name="SteadyCheck" Content="{l:Tr Steady}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SteadyTip}"/>
-      <CheckBox x:Name="FuseCheck" Content="{l:Tr Fuse}" IsEnabled="{Binding ElementName=FastModelCheck, Path=IsChecked}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FuseTip}"/>
-      <TextBlock Text="{l:Tr FuseHint}" Style="{StaticResource Hint}" Margin="26,0,0,8"/>
       <TextBlock Text="{l:Tr DepthGpu}" Style="{StaticResource Label}" Margin="0,4,0,4"/>
       <ComboBox x:Name="DepthGpuList" DisplayMemberPath="Label" SelectedValuePath="Id" SelectionChanged="SettingsChanged" ToolTip="{l:Tr DepthGpuTip}"/>
       <TextBlock Text="{l:Tr DepthGpuHint}" Style="{StaticResource Hint}"/>
-      <CheckBox x:Name="ForegroundCheck" Content="{l:Tr ForegroundPasses}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr ForegroundTip}"/>
       <TextBlock Text="{l:Tr FrameTiming}" Style="{StaticResource Label}" Margin="0,8,0,4"/>
       <ComboBox x:Name="TimingList" SelectedIndex="0" SelectionChanged="SettingsChanged" ToolTip="{l:Tr FrameTimingTip}">
        <ComboBoxItem Content="{l:Tr TimingLatest}"/>
@@ -218,7 +221,21 @@
      </StackPanel>
     </Expander>
 
-    <!-- 6 SteamVR & shortcuts -->
+    <!-- 6 Experimental: options still being tried out -->
+    <Expander x:Name="ExperimentalSection" Header="{l:Tr SectionExperimental}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <StackPanel x:Name="ExperimentalContent">
+      <TextBlock Text="{l:Tr ExperimentalHint}" Style="{StaticResource Hint}" Margin="0,0,0,10"/>
+      <CheckBox x:Name="ThinPartsCheck" Content="{l:Tr ThinParts}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr ThinPartsTip}"/>
+      <CheckBox x:Name="SharpenEdgesCheck" Content="{l:Tr SharpenEdges}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr SharpenEdgesTip}"/>
+      <CheckBox x:Name="BackLayerCheck" Content="{l:Tr BackLayer}" ToolTip="{l:Tr BackLayerTip}" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+      <CheckBox x:Name="ShowDepthMapCheck" Content="{l:Tr ShowDepthMap}" ToolTip="{l:Tr ShowDepthMapTip}" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+      <CheckBox x:Name="FuseCheck" Content="{l:Tr Fuse}" IsEnabled="{Binding ElementName=FastModelCheck, Path=IsChecked}" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr FuseTip}"/>
+      <TextBlock Text="{l:Tr FuseHint}" Style="{StaticResource Hint}" Margin="26,0,0,8"/>
+      <CheckBox x:Name="ForegroundCheck" Content="{l:Tr ForegroundPasses}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged" ToolTip="{l:Tr ForegroundTip}"/>
+     </StackPanel>
+    </Expander>
+
+    <!-- 7 SteamVR & shortcuts -->
     <Expander x:Name="SteamVrSection" Header="{l:Tr SectionSteamVr}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="SteamVrContent">
       <CheckBox x:Name="DismissCheck" Content="{l:Tr DismissOnStart}" IsChecked="True" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
@@ -235,7 +252,7 @@
      </StackPanel>
     </Expander>
 
-    <!-- 7 Profile -->
+    <!-- 8 Profile -->
     <Expander x:Name="ProfileSection" Header="{l:Tr SectionProfile}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="ProfileContent">
       <TextBlock Text="{l:Tr ProfileHint}" Style="{StaticResource Hint}" Margin="0,0,0,10"/>
@@ -247,7 +264,7 @@
      </StackPanel>
     </Expander>
 
-    <!-- 8 Session details -->
+    <!-- 9 Session details -->
     <Expander x:Name="SessionDetails" Header="{l:Tr SectionSession}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <TextBox x:Name="LogBox" Height="160" IsReadOnly="True" Background="{StaticResource Well}" Foreground="{StaticResource Soft}" BorderThickness="0" Padding="6" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
     </Expander>

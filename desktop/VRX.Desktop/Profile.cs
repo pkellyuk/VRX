@@ -120,6 +120,13 @@ public sealed class Profile
     public int RoomLight { get; set; }
     public string RoomLightColor { get; set; } = DefaultRoomLightColor;
 
+    // The room's environment (v18 snapshot, live; room.h kRoomEnv*, XENV.md): 0 the room (as
+    // before, the default, also for profiles saved before it existed), 1 a cinema, 2 the open
+    // air at night, 3 a lounge. Glass and reflections are the room's own; the open air has no
+    // room light. Shown while the Room slider is above 0.
+    public const int EnvironmentRoom = 0, EnvironmentCinema = 1, EnvironmentOpenAir = 2, EnvironmentLounge = 3, EnvironmentCount = 4;
+    public int RoomEnvironment { get; set; }
+
     // "#RRGGBB" or "RRGGBB" (any case) -> 0xRRGGBB.
     public static bool TryParseColor(string? text, out int rgb)
     {
@@ -143,10 +150,11 @@ public sealed class Profile
         Range(Height, -2, 2) && Range(Horizontal, -3, 3) && Range(Strength, 0, 2) &&
         ScreenCurve is >= 0 and <= 100 && EdgeFlatten is >= 0 and <= 15 && EdgeStepMin is >= 5 and <= 60 && WidenNear is >= 0 and <= 300 && AmbilightStrength is >= 0 and <= 100 && TryParseColor(WorldColor, out _) && Room is >= 0 and <= 100 &&
         RoomGlass is >= 0 and <= 100 && RoomReflections is >= 0 and <= 100 && RoomLight is >= 0 and <= 100 && TryParseColor(RoomLightColor, out _) &&
+        RoomEnvironment is >= 0 and < EnvironmentCount &&
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 17 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear} {(ThinParts ? 1 : 0)} {(SharpenEdges ? 1 : 0)} {(ShowDepthMap ? 1 : 0)} {(BackLayer ? 1 : 0)}\n");
+        $"VRX 18 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear} {(ThinParts ? 1 : 0)} {(SharpenEdges ? 1 : 0)} {(ShowDepthMap ? 1 : 0)} {(BackLayer ? 1 : 0)} {RoomEnvironment}\n");
 }
 
 public sealed class ProfileStore(string root)

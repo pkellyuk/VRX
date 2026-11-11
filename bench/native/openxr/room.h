@@ -135,6 +135,68 @@ static const int kRoomMirrorMaxH = 256;         // ... and at most (the texture'
 static const float kRoomNudge = 1e-3f;          // a reflected ray starts this far off its face, metres
 static const float kRoomReflFootMax = 0.1f;     // the reflected screen's soft edge, metres, at most
 
+// ENVIRONMENTS (xenvironments, XENV.md). The same convex room dressed four ways, chosen on
+// the desktop: the room (everything above, unchanged), a cinema, the open air at night and
+// a lounge. An environment colours each face (kRoomEnvTint, relative to the Room slider's
+// plain albedo: the lightmap and its bounce take it per channel) and draws its own details
+// in the eye pass (RoomEnvSurface), all box-filtered over each pixel's footprint like the
+// finish. The room's Glass and Reflections belong to the room alone; the open air has no
+// room light either.
+static const int kRoomEnvRoom = 0, kRoomEnvCinema = 1, kRoomEnvOpenAir = 2, kRoomEnvLounge = 3, kRoomEnvCount = 4;
+static const char* const kRoomEnvNames[kRoomEnvCount] = { "room", "cinema", "open air", "lounge" };
+// Each face's colour by environment (front, left, right, floor, ceiling, back), linear.
+static const float kRoomEnvTint[kRoomEnvCount][6][3] = {
+    { { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 } },
+    // cinema: burgundy velvet round the screen and on the walls, dark carpet, a black ceiling
+    { { 0.85f, 0.2f, 0.22f }, { 0.85f, 0.2f, 0.22f }, { 0.85f, 0.2f, 0.22f }, { 0.42f, 0.36f, 0.44f }, { 0.16f, 0.16f, 0.18f }, { 0.85f, 0.2f, 0.22f } },
+    // open air: nothing round you reflects; the ground is a dark field
+    { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 }, { 0.4f, 0.5f, 0.3f }, { 0, 0, 0 }, { 0, 0, 0 } },
+    // lounge: a dark media wall behind the screen, warm greige walls, an oak floor, a warm white ceiling
+    { { 0.38f, 0.36f, 0.34f }, { 0.95f, 0.86f, 0.72f }, { 0.95f, 0.86f, 0.72f }, { 1.0f, 0.64f, 0.36f }, { 1.0f, 0.97f, 0.92f }, { 0.95f, 0.86f, 0.72f } },
+};
+// Cinema: the walls' velvet hangs in folds, the front's curtains in tighter ones (a cosine of
+// the brightness, box-filtered: RoomFolds); black masking round the screen; amber step lights
+// along both aisles, each with a small pool of light on the carpet; sconces on the side walls.
+static const float kRoomFoldPitch = 0.3f, kRoomFoldAmp = 0.4f;          // walls
+static const float kRoomCurtainPitch = 0.22f, kRoomCurtainAmp = 0.55f;  // the front
+static const float kRoomMaskW = 0.3f;           // the masking's width round the screen, metres ...
+static const float kRoomMaskLevel = 0.04f;      // ... and how much of the velvet's light it shows
+static const float kRoomStepInset = 0.75f;      // the step lights: this far from each side wall,
+static const float kRoomStepPitch = 1.0f;       // one every metre from the front,
+static const float kRoomStepW = 0.12f, kRoomStepD = 0.05f;              // this size,
+static const float kRoomStepL[3] = { 0.6f, 0.25f, 0.06f };              // this bright (amber, linear),
+static const float kRoomStepPool = 0.15f, kRoomStepPoolGain = 0.12f;    // with a pool this wide and bright
+// Sconces (cinema) and wall lamps (lounge): bodies on the side walls lit by the room light,
+// each throwing a fan of its light on the wall (RoomSconce), as wide as kRoomHaloW0 + kRoomHaloW1
+// x the height from it.
+static const float kRoomHaloW0 = 0.08f, kRoomHaloW1 = 0.4f;
+static const float kRoomSconceOff = 0.6f;       // an unlit body: this much of the wall's light
+// Open air: a night sky (horizon to zenith, linear) with stars and a line of low hills, over
+// a field lit by the screen; the field's house light is the world colour plus kRoomNight.
+static const float kRoomNight[3] = { 0.01f, 0.013f, 0.024f };
+static const float kRoomSkyHorizon[3] = { 0.016f, 0.021f, 0.042f }, kRoomSkyZenith[3] = { 0.0016f, 0.0022f, 0.0065f };
+static const float kRoomHills[3] = { 0.003f, 0.0038f, 0.006f };         // the hills' own colour (half the field's added)
+static const float kRoomHillFog = 80.0f;        // the field fades into the hills' colour over this distance
+static const float kRoomFieldFall = 3.0f;       // past the lightmap's floor, the screen's light on the field falls off over this
+static const float kRoomOpenHalfWidth = 8.0f;   // the open air's "room" (its floor is the lit field): this wide each side, at least,
+static const float kRoomOpenBehind = 6.0f;      // reaching this far behind the viewer,
+static const float kRoomOpenHeight = 8.0f;      // and this high
+static const int kRoomStarGrid = 40;            // stars: at most one per cell of a 40 x 40 grid on each cube face,
+static const float kRoomStarDensity = 0.5f;     // in half the cells,
+static const float kRoomStarCore = 0.0012f;     // radians: a star's size (its light is kept as a pixel grows)
+static const float kRoomStarRise = 0.1f;        // radians: stars fade in over this much above the horizon
+// Lounge: oak boards along the room, a rug in front of the viewer, wainscot panelling with a
+// dado rail and a skirting board, timber slats on the media wall, downlights in the ceiling.
+static const float kRoomBoardW = 0.18f, kRoomBoardL = 1.8f, kRoomSeamW = 0.004f, kRoomSeam = 0.45f;
+static const float kRoomBoardVar = 0.16f, kRoomGrainPitch = 0.019f, kRoomGrainAmp = 0.05f;
+static const float kRoomRugW = 3.0f, kRoomRugFront = 2.6f, kRoomRugBack = 0.6f, kRoomRugClear = 0.3f, kRoomRugBorder = 0.12f;
+static const float kRoomRugField[3] = { 0.55f, 0.22f, 0.18f }, kRoomRugEdge[3] = { 0.8f, 0.7f, 0.52f };   // relative albedo
+static const float kRoomSkirtH = 0.12f, kRoomDadoY = 0.9f, kRoomDadoW = 0.03f, kRoomDado = 1.12f;
+static const float kRoomGroovePitch = 0.5f, kRoomGrooveW = 0.008f, kRoomGroove = 0.35f;
+static const float kRoomSkirt[3] = { 1.0f, 0.98f, 0.95f };              // relative albedo
+static const float kRoomSlatPitch = 0.06f, kRoomSlatAmp = 0.35f;
+static const float kRoomDownR = 0.055f, kRoomDownTrim = 1.3f;          // downlights: radius, an unlit one's trim
+
 // ------------------------------------------------------------------- geometry
 struct RoomInputs
 {
@@ -142,6 +204,7 @@ struct RoomInputs
     float eye[3] = { 0, 0, 0 };         // the recentred head, screen-local
     float floorY = NAN;                 // the real floor's y, screen-local (NaN: not tracked)
     Cylinder cyl;                       // curved screen, or not (cyl.curved false)
+    int env = kRoomEnvRoom;             // the environment (the open air's room is larger)
 };
 
 struct Room
@@ -180,6 +243,11 @@ struct Room
     // each corner), the back wall's (at -X + k pitchBack), and the crossbar's height
     // (-1e9 when the room is too low for it, so that its bar covers nothing).
     float pitchSide = 0, pitchBack = 0, transomY = -1e9f;
+    // The environment it was built for (the open air's is larger: RoomInputs::env), and the
+    // lounge's rug on the floor: x in [rugX0, rugX1], z in [rugZ0, rugZ1] (all zero when the
+    // floor has no space for one).
+    int env = kRoomEnvRoom;
+    float rugX0 = 0, rugX1 = 0, rugZ0 = 0, rugZ1 = 0;
 };
 
 // Depth of the front wall at x (the room is z >= FrontDepth). tanA is sinA / cosA, the
@@ -255,6 +323,15 @@ inline bool BuildRoom(const RoomInputs& in, Room& out)
     r.yF = std::fmin(std::fmin(floorRef, -0.5f * H - kRoomFloorBelowScreen), ey - 0.8f);
     r.yC = std::fmax(std::fmax(r.yF + kRoomMinHeight, 0.5f * H + r.margin), ey + 0.8f);
     r.zB = ez + std::fmax(1.5f, 0.5f * ez);
+    r.env = in.env >= 0 && in.env < kRoomEnvCount ? in.env : kRoomEnvRoom;
+    if (r.env == kRoomEnvOpenAir)
+    {
+        // No walls to see: the room's floor is the field the screen lights (RoomNightSky
+        // carries its edge on beyond it), made larger so that little light is left there.
+        r.X = std::fmax(r.X, kRoomOpenHalfWidth);
+        r.zB = std::fmax(r.zB, ez + kRoomOpenBehind);
+        r.yC = std::fmax(r.yC, r.yF + kRoomOpenHeight);
+    }
 
     r.curved = in.cyl.curved && in.cyl.radius > 0;
     if (r.curved)
@@ -324,6 +401,20 @@ inline bool BuildRoom(const RoomInputs& in, Room& out)
         r.pitchSide = side / std::fmax(1.0f, std::round(side / kRoomFramePitch));
         r.pitchBack = across / std::fmax(1.0f, std::round(across / kRoomFramePitch));
         r.transomY = r.yF + kRoomTransom <= r.yC - kRoomTransomClear ? r.yF + kRoomTransom : -1e9f;
+    }
+    // The lounge's rug: kRoomRugW wide under the viewer's x, from kRoomRugFront in front of
+    // the head to kRoomRugBack behind it, kept kRoomRugClear off the walls and off the front
+    // behind it (a curved front is deepest at its ends, the rug's corners).
+    {
+        const float w = std::fmin(kRoomRugW, 2.0f * (r.X - kRoomRugClear));
+        const float cx = std::fmin(std::fmax(ex, -r.X + kRoomRugClear + 0.5f * w), r.X - kRoomRugClear - 0.5f * w);
+        const float front = std::fmax(FrontDepth(r, cx - 0.5f * w), FrontDepth(r, cx + 0.5f * w));
+        const float z0 = std::fmax(ez - kRoomRugFront, front + kRoomRugClear), z1 = std::fmin(ez + kRoomRugBack, r.zB - kRoomRugClear);
+        if (w > 2.0f * kRoomRugBorder && z1 - z0 > 2.0f * kRoomRugBorder)
+        {
+            r.rugX0 = cx - 0.5f * w; r.rugX1 = cx + 0.5f * w;
+            r.rugZ0 = z0; r.rugZ1 = z1;
+        }
     }
     r.valid = true;
     if (!RoomInside(r, in.eye)) return false;
@@ -981,6 +1072,7 @@ struct RoomLook
     int reflect = 0;
     int light = 0;
     uint32_t lightRgb = kRoomLightDefault;      // 0xRRGGBB
+    int env = kRoomEnvRoom;                     // the environment (kRoomEnv*): Glass and Reflections are the room's alone
 };
 
 // The coat's Fresnel term (Schlick, F0 = kRoomGlassF0 at Reflections r = 1) at c = |cos|
@@ -1032,6 +1124,16 @@ struct RoomShading
     float glass = 0;                    // T = Glass / 100: how clear the panes are
     float reflect = 0;                  // r = Reflections / 100: the coat's strength
     float fbar = 0;                     // RoomFresnelMean(r): the coat's mean reflectance
+    // The environment (kRoomEnv*): each face's colour (kRoomEnvTint), the bounce per channel
+    // (each face's albedo times its colour; none in the open air, whose light escapes to the
+    // sky), and a house light added to the world colour's (the open air's night). For the
+    // room the colours are 1, the bounce rhoBar's on every channel and the addition 0, so
+    // its lightmap is what it was to the bit.
+    int env = kRoomEnvRoom;
+    float tint[kRoomFaces][3] = { { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 } };
+    float rhoBarRgb[3] = { 0, 0, 0 };
+    float bounceRgb[3] = { 0, 0, 0 };
+    float ambient[3] = { 0, 0, 0 };
 };
 
 // The finish's albedo of face f for the bounce (spec 2.9), given its plain albedo rho: the
@@ -1074,21 +1176,34 @@ inline RoomShading MakeRoomShading(const Room& r, int roomPercent, uint32_t worl
     s.rhoFloor = kRoomFloorAlbedo * s.rhoWall;
     const float ceiling = RoomArea(r, kFaceCeiling);
     s.kappaBar = r.lightValid && ceiling > 0 ? (r.lightX1 - r.lightX0) * (r.lightZ1 - r.lightZ0) / ceiling : 0.0f;
-    s.glass = (float)(look.glass < 0 ? 0 : (look.glass > 100 ? 100 : look.glass)) / 100.0f;
-    s.reflect = (float)(look.reflect < 0 ? 0 : (look.reflect > 100 ? 100 : look.reflect)) / 100.0f;
+    s.env = look.env >= 0 && look.env < kRoomEnvCount ? look.env : kRoomEnvRoom;
+    const bool roomEnv = s.env == kRoomEnvRoom;
+    for (int f = 0; f < kRoomFaces; f++)
+        for (int ch = 0; ch < 3; ch++) s.tint[f][ch] = kRoomEnvTint[s.env][f][ch];
+    // Glass and Reflections are the room's own: another environment has neither.
+    s.glass = roomEnv ? (float)(look.glass < 0 ? 0 : (look.glass > 100 ? 100 : look.glass)) / 100.0f : 0.0f;
+    s.reflect = roomEnv ? (float)(look.reflect < 0 ? 0 : (look.reflect > 100 ? 100 : look.reflect)) / 100.0f : 0.0f;
     s.fbar = RoomFresnelMean(s.reflect);
     s.finish = r.valid && (s.glass > 0 || s.reflect > 0);
-    float total = 0, weighted = 0;
+    float total = 0, weighted = 0, weightedRgb[3] = { 0, 0, 0 };
     for (int f = 0; f < kRoomFaces; f++)
     {
         const float a = RoomArea(r, f);
         const float plain = f == kFaceFloor ? s.rhoFloor : (f == kFaceCeiling ? s.rhoCeiling : s.rhoWall);
         const float rho = s.finish ? RoomFinishAlbedo(r, s, f, plain) : plain;
+        const float seen = f == kFaceFront ? std::fmax(a - screenArea, 0.0f) : a;   // the screen absorbs
         total += a;
-        weighted += rho * (f == kFaceFront ? std::fmax(a - screenArea, 0.0f) : a);   // the screen absorbs
+        weighted += rho * seen;
+        for (int ch = 0; ch < 3; ch++) weightedRgb[ch] += rho * s.tint[f][ch] * seen;
     }
     s.rhoBar = total > 0 ? weighted / total : 0;
     s.invArea = total > 0 ? 1.0f / total : 0;
+    for (int ch = 0; ch < 3; ch++)
+    {
+        s.rhoBarRgb[ch] = total > 0 ? weightedRgb[ch] / total : 0;
+        s.bounceRgb[ch] = s.env == kRoomEnvOpenAir || !(s.rhoBarRgb[ch] < 0.999f) ? 0.0f : s.rhoBarRgb[ch] * s.invArea / (1.0f - s.rhoBarRgb[ch]);
+        s.ambient[ch] = s.env == kRoomEnvOpenAir ? kRoomNight[ch] : 0.0f;
+    }
     s.world[0] = SrgbToLinear((float)((worldRgb >> 16) & 255) / 255.0f);
     s.world[1] = SrgbToLinear((float)((worldRgb >> 8) & 255) / 255.0f);
     s.world[2] = SrgbToLinear((float)(worldRgb & 255) / 255.0f);
@@ -1098,7 +1213,7 @@ inline RoomShading MakeRoomShading(const Room& r, int roomPercent, uint32_t worl
     const float c[3] = { SrgbToLinear((float)((look.lightRgb >> 16) & 255) / 255.0f), SrgbToLinear((float)((look.lightRgb >> 8) & 255) / 255.0f),
                          SrgbToLinear((float)(look.lightRgb & 255) / 255.0f) };
     const float peak = std::fmax(std::fmax(c[0], c[1]), c[2]);
-    s.lightOn = r.valid && r.lightValid && strength > 0 && peak > 0;
+    s.lightOn = r.valid && r.lightValid && strength > 0 && peak > 0 && s.env != kRoomEnvOpenAir;
     if (s.lightOn)
         for (int ch = 0; ch < 3; ch++)
         {
@@ -1110,6 +1225,13 @@ inline RoomShading MakeRoomShading(const Room& r, int roomPercent, uint32_t worl
 }
 
 inline float RoomBounceScale(const RoomShading& sh);
+
+// The bounce on channel ch: the room's from rhoBar (RoomBounceScale, as it always was), an
+// environment's from its coloured albedos (bounceRgb).
+inline float RoomBounceOf(const RoomShading& sh, int ch)
+{
+    return sh.env == kRoomEnvRoom ? RoomBounceScale(sh) : sh.bounceRgb[ch];
+}
 
 // Where a lightmap texel is lit from. A floor or ceiling texel whose centre lies behind
 // a curved front (outside the room) is lit from just inside the wall instead: texels
@@ -1145,9 +1267,9 @@ inline bool RoomTexel(const Room& r, const RoomShading& sh, const std::vector<Ro
     }
     const float rho = face == kFaceFloor ? sh.rhoFloor : (face == kFaceCeiling ? sh.rhoCeiling : sh.rhoWall);
     const float shade = face == kFaceFloor ? kRoomShadeFloor : (face == kFaceCeiling ? kRoomShadeCeiling : 1.0f);
-    const float bounceScale = RoomBounceScale(sh);
+    // The face's colour times what it was (the room: 1 x, its bounce from rhoBar, the night 0).
     for (int ch = 0; ch < 3; ch++)
-        out[ch] = (rho / kRoomPi) * (E[ch] + flux[ch] * bounceScale) + shade * sh.world[ch];
+        out[ch] = sh.tint[face][ch] * ((rho / kRoomPi) * (E[ch] + flux[ch] * RoomBounceOf(sh, ch)) + shade * (sh.world[ch] + sh.ambient[ch]));
     return true;
 }
 
@@ -1184,8 +1306,10 @@ static const uint32_t kRoomFlagLight = 64;      // the room light is on: its pan
 // Rows 0-10 are v10's. Rows 11-20 are v11's: the finish (row 11: glass, reflections and
 // the coat's mean reflectance; row 12: the frames), the room light (rows 13-15), the
 // mirror picture's size (row 16, zero while Reflections is 0), and the eye pass's
-// reciprocals and screen bounds (rows 17-20).
-// kRoomCbufferHlsl declares rows 0-20.
+// reciprocals and screen bounds (rows 17-20). The environments (XENV.md) take row 16's third
+// value and rows 21-31: the faces' colours, the bounce per channel, the side walls' lights,
+// the lounge's rug and the open air's night.
+// kRoomCbufferHlsl declares all 32 rows.
 struct RoomConstants                            // must match kRoomCbufferHlsl
 {
     float X = 0, yF = 0, yC = 0, zB = 0;                            // row 0
@@ -1204,26 +1328,33 @@ struct RoomConstants                            // must match kRoomCbufferHlsl
     float lightX0 = 0, lightX1 = 0, lightZ0 = 0, lightZ1 = 0;       // 13
     float lightL[4] = { 0, 0, 0, 0 };           // 14: emitted rgb, w = the panel is valid
     float lightSeen[4] = { 0, 0, 0, 0 };        // 15: seen rgb
-    uint32_t mirrorW = 0, mirrorH = 0, upad0 = 0, upad1 = 0;        // 16: the mirror picture in use (RoomMirrorSize)
+    uint32_t mirrorW = 0, mirrorH = 0, env = 0, upad1 = 0;          // 16: the mirror picture in use (RoomMirrorSize); the environment
     float invH = 0, inv2X = 0, invSide = 0, invFloorZ = 0;          // 17
     float inv2sMax = 0, invGlowW = 0, invGlowH = 0, tanA = 0;       // 18
     float wingS = 0, scrTanWrap = 0, scrBoxX = 0, scrBoxY = 0;      // 19
     float scrBoxZ = 0, rpad6 = 0, rpad7 = 0, rpad8 = 0;             // 20
-    float pad5[44] = {};                                            // 21-31
+    float tint[kRoomFaces][4] = {};             // 21-26: each face's colour (RoomShading::tint), w 0
+    float bounceRgb[4] = { 0, 0, 0, 0 };        // 27: the bounce per channel (RoomShading::bounceRgb)
+    float sconcePitch = 0, sconceZ0 = 0, sconceY = 0, sconceHalfW = 0;  // 28: the side walls' lights (RoomSconce): every pitch from z0, at y
+    float sconceHalfH = 0, haloGain = 0, haloUp = 0, haloDown = 0;      // 29: their size and the fan of light (gain 0: none)
+    float rugX0 = 0, rugX1 = 0, rugZ0 = 0, rugZ1 = 0;                   // 30: the lounge's rug (Room::rug*)
+    float ambient[4] = { 0, 0, 0, 0 };          // 31: added to the world colour's house light (RoomShading::ambient)
 };
 static_assert(sizeof(RoomConstants) == 512, "RoomConstants is one 512-byte constant buffer");
 static_assert(offsetof(RoomConstants, glowH) == 160 && offsetof(RoomConstants, glass) == 176, "rows 0-10 are v10's; row 11 starts at 176");
 static_assert(offsetof(RoomConstants, pitchSide) == 192 && offsetof(RoomConstants, lightX0) == 208 && offsetof(RoomConstants, lightL) == 224 &&
               offsetof(RoomConstants, lightSeen) == 240 && offsetof(RoomConstants, mirrorW) == 256 && offsetof(RoomConstants, invH) == 272 &&
               offsetof(RoomConstants, inv2sMax) == 288 && offsetof(RoomConstants, wingS) == 304 && offsetof(RoomConstants, scrBoxZ) == 320 &&
-              offsetof(RoomConstants, pad5) == 336, "rows 11-20 as in the v11 spec (section 3.5)");
+              offsetof(RoomConstants, tint) == 336, "rows 11-20 as in the v11 spec (section 3.5)");
+static_assert(offsetof(RoomConstants, bounceRgb) == 432 && offsetof(RoomConstants, sconcePitch) == 448 && offsetof(RoomConstants, sconceHalfH) == 464 &&
+              offsetof(RoomConstants, rugX0) == 480 && offsetof(RoomConstants, ambient) == 496, "rows 21-31: the environment (XENV.md)");
 
 // Whether any of the v11 controls is on in these constants, so that the eye pass needs
 // their code (xrapp5.cpp RoomEyePso picks its look variant): the room light, the finish or
-// the reflections.
+// the reflections - or an environment other than the room.
 inline bool RoomLookOn(const RoomConstants& rc)
 {
-    return (rc.flags & (kRoomFlagLight | kRoomFlagFinish | kRoomFlagReflect)) != 0;
+    return (rc.flags & (kRoomFlagLight | kRoomFlagFinish | kRoomFlagReflect)) != 0 || rc.env != (uint32_t)kRoomEnvRoom;
 }
 
 inline float RoomBounceScale(const RoomShading& sh)
@@ -1275,6 +1406,27 @@ inline RoomConstants MakeRoomConstants(const Room& r, const RoomShading& sh, con
     const RoomScreenBox box = RoomScreenBounds(view.cyl);
     c.wingS = r.wingS; c.scrTanWrap = box.tanWrap; c.scrBoxX = box.boxX; c.scrBoxY = box.boxY;
     c.scrBoxZ = box.boxZ;
+    // Rows 16 and 21-31: the environment - its faces' colours, the bounce per channel, the
+    // side walls' lights (the cinema's sconces in every bay, the lounge's two lamps a wall),
+    // the lounge's rug and the open air's night.
+    c.env = (uint32_t)sh.env;
+    for (int f = 0; f < kRoomFaces; f++)
+        for (int ch = 0; ch < 3; ch++) c.tint[f][ch] = sh.tint[f][ch];
+    for (int ch = 0; ch < 3; ch++) { c.bounceRgb[ch] = RoomBounceOf(sh, ch); c.ambient[ch] = sh.ambient[ch]; }
+    if (sh.env == kRoomEnvCinema || sh.env == kRoomEnvLounge)
+    {
+        const bool cinema = sh.env == kRoomEnvCinema;
+        const float side = r.zB - r.zSide;
+        c.sconcePitch = cinema ? r.pitchSide : 0.5f * side;
+        c.sconceZ0 = r.zSide + 0.5f * c.sconcePitch;
+        c.sconceY = std::fmin(r.yF + (cinema ? 2.0f : 1.6f), r.yC - 0.4f);
+        c.sconceHalfW = cinema ? 0.07f : 0.11f;
+        c.sconceHalfH = cinema ? 0.13f : 0.08f;
+        c.haloGain = cinema ? 0.5f : 0.6f;
+        c.haloUp = cinema ? 0.9f : 0.6f;
+        c.haloDown = cinema ? 0.12f : 0.45f;
+    }
+    if (sh.env == kRoomEnvLounge) { c.rugX0 = r.rugX0; c.rugX1 = r.rugX1; c.rugZ0 = r.rugZ0; c.rugZ1 = r.rugZ1; }
     return c;
 }
 
@@ -1610,7 +1762,15 @@ struct RoomSurfaceInfo
     int env = 0;                        // beyond the glass: 0 not drawn, 1 sky, 2 horizon, 3 ground
     float fresnel = 0;                  // the coat's reflectance where a reflection was traced (F, or Ff on the floor), else 0
     float kappaS = 0;                   // how much of that reflection is the screen (its soft edge)
+    int envPart = 0;                    // what an environment drew (kRoomPart*), 0 nothing of its own
+    float star = 0;                     // the open air: the stars' light at the sample
 };
+
+// What an environment drew at a sample (RoomSurfaceInfo::envPart): the open air's sky, hills
+// and field beyond the room; the cinema's masking, sconces (lit or not) and step lights; the
+// lounge's rug, downlights and floorboards' seams; and the fan of a lit light on a wall.
+static const int kRoomPartSky = 1, kRoomPartHills = 2, kRoomPartField = 3, kRoomPartMask = 4, kRoomPartSconce = 5,
+                 kRoomPartStep = 6, kRoomPartRug = 7, kRoomPartDownlight = 8, kRoomPartHalo = 9, kRoomPartSeam = 10;
 
 // A face's axis (0 x, 1 y, 2 z) and the sign of its normal into the room along it.
 inline int RoomFaceAxis(int face, float* sgn)
@@ -1844,6 +2004,330 @@ inline bool RoomSurface(const RoomConstants& rc, int face, const float o[3], con
     return true;
 }
 
+// ------------------------------------------------------------- environments' details
+// A cosine of period P (the cinema's folds, the lounge's slats and the oak's grain): cos(2 pi
+// s / P), box-filtered over a footprint f round s, which multiplies it by sinc(pi f / P). From
+// a footprint of a whole period on it is let go (0), where the filter's later lobes would
+// only show moire. The angle comes from s / P's fraction, so a large s keeps its precision.
+inline float RoomFolds(float s, float P, float f)
+{
+    if (!(P > 0) || !(f >= 0)) return 0;
+    const float x = kRoomPi * f / P;
+    if (!(x < kRoomPi)) return 0;
+    const float q = s / P;
+    const float c = std::cos(2.0f * kRoomPi * (q - std::floor(q)));
+    return x < 1e-4f ? c : c * (std::sin(x) / x);
+}
+
+// The front wall at chart coordinate s from the constants (FrontPoint's): its point (x, z)
+// and its normal into the room.
+inline void RoomFrontAt(const RoomConstants& rc, float s, float* x, float* z, float* nx, float* nz)
+{
+    if (!x || !z || !nx || !nz) return;
+    if ((rc.flags & kRoomFlagCurved) == 0) { *x = s; *z = -rc.g; *nx = 0; *nz = 1; return; }
+    const float as = std::fabs(s), sign = s < 0 ? -1.0f : 1.0f;
+    if (as <= rc.R * rc.phiA)
+    {
+        const float phi = as / rc.R;
+        *x = sign * rc.Rg * std::sin(phi); *z = rc.R - rc.Rg * std::cos(phi);
+        *nx = -sign * std::sin(phi); *nz = std::cos(phi);
+        return;
+    }
+    const float along = (as - rc.R * rc.phiA) * (rc.Rg / rc.R);
+    *x = sign * (rc.xa + along * rc.cosA); *z = rc.za + along * rc.sinA;
+    *nx = -sign * rc.sinA; *nz = rc.cosA;
+}
+
+// The side walls' lights at wall point (z, y), footprint fz along and fy up: the body's
+// cover (box-filtered: one every sconcePitch from sconceZ0, at sconceY) and, through `halo`,
+// the fan of light it throws on the wall round it, smooth and so unfiltered: exp(-dz^2 /
+// 2 w^2) with w = kRoomHaloW0 + kRoomHaloW1 |dy|, falling off over haloUp above the light
+// and haloDown below it, dz along the wall to the nearest light. No lights (pitch 0): 0, 0.
+inline float RoomSconce(const RoomConstants& rc, float z, float y, float fz, float fy, float* halo)
+{
+    if (halo) *halo = 0;
+    if (!(rc.sconcePitch > 0) || !(rc.haloUp > 0) || !(rc.haloDown > 0)) return 0;
+    const float body = RoomPulse(z - rc.sconceZ0, rc.sconcePitch, 2.0f * rc.sconceHalfW, fz) * RoomBar(y, rc.sconceY, 2.0f * rc.sconceHalfH, fy);
+    const float q = (z - rc.sconceZ0) / rc.sconcePitch;
+    const float dz = (q - std::floor(q + 0.5f)) * rc.sconcePitch, dy = y - rc.sconceY;
+    const float w = kRoomHaloW0 + kRoomHaloW1 * std::fabs(dy);
+    const float fall = dy >= 0 ? std::exp(-dy / rc.haloUp) : std::exp(dy / rc.haloDown);
+    if (halo) *halo = std::exp(-0.5f * (dz / w) * (dz / w)) * fall;
+    return body;
+}
+
+// The stars a unit direction n meets, linear rgb (0 where none), for a pixel `pa` radians
+// across: at most one star in each cell of a kRoomStarGrid x kRoomStarGrid grid on each cube
+// face (in kRoomStarDensity of them), kept 0.35 of a cell inside its cell. A star is a
+// Gaussian kRoomStarCore wide, widened to 0.7 of the pixel (so that it never falls between
+// pixels) but to a tenth of a cell's angle at most (so that it ends inside its cell), its
+// peak lowered as it widens so that its light stays the same. Returns its brightness.
+inline float RoomStars(const float n[3], float pa, float rgb[3])
+{
+    if (!n || !rgb) return 0;
+    rgb[0] = rgb[1] = rgb[2] = 0;
+    const float an[3] = { std::fabs(n[0]), std::fabs(n[1]), std::fabs(n[2]) };
+    const int axis = an[0] >= an[1] && an[0] >= an[2] ? 0 : (an[1] >= an[2] ? 1 : 2);
+    const int a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;
+    if (!(an[axis] > 0)) return 0;
+    const float sa = n[a1] / an[axis], sb = n[a2] / an[axis];
+    const int face = axis * 2 + (n[axis] < 0 ? 1 : 0);
+    const float N = (float)kRoomStarGrid;
+    const int i = std::min(std::max((int)std::floor((sa + 1.0f) * 0.5f * N), 0), kRoomStarGrid - 1);
+    const int j = std::min(std::max((int)std::floor((sb + 1.0f) * 0.5f * N), 0), kRoomStarGrid - 1);
+    const int key = i + 64 * face;
+    const uint32_t h1 = RoomHash(key, j);
+    const float limit = kRoomStarDensity * 65536.0f;
+    if (!((float)h1 < limit)) return 0;
+    const float h2 = (float)RoomHash(key, j + 128) / 65535.0f, h3 = (float)RoomHash(key, j + 256) / 65535.0f;
+    const float h4 = (float)RoomHash(key, j + 384) / 65535.0f;
+    float v[3];
+    v[axis] = n[axis] < 0 ? -1.0f : 1.0f;
+    v[a1] = -1.0f + 2.0f * ((float)i + 0.35f + 0.3f * h2) / N;
+    v[a2] = -1.0f + 2.0f * ((float)j + 0.35f + 0.3f * h3) / N;
+    const float vl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    v[0] /= vl; v[1] /= vl; v[2] /= vl;
+    const float cx = v[1] * n[2] - v[2] * n[1], cy = v[2] * n[0] - v[0] * n[2], cz = v[0] * n[1] - v[1] * n[0];
+    const float ang2 = cx * cx + cy * cy + cz * cz;
+    const float sigma = std::fmin(std::fmax(0.7f * pa, kRoomStarCore), 0.1f / N);
+    const float m2 = h4 * h4, m6 = m2 * m2 * m2;
+    const float peak = (0.04f + 1.4f * m6) * (kRoomStarCore / sigma) * (kRoomStarCore / sigma);
+    const float I = peak * std::exp(-0.5f * ang2 / (sigma * sigma));
+    const float t = (float)h1 / limit;
+    const float warm[3] = { 1.0f, 0.86f, 0.72f }, cool[3] = { 0.78f, 0.86f, 1.0f };
+    for (int k = 0; k < 3; k++) rgb[k] = I * (warm[k] + (cool[k] - warm[k]) * t);
+    return I;
+}
+
+// The low hills along the open air's horizon: their height in radians above it at azimuth
+// az (0 towards the screen), up to 0.068 (4 degrees); where it dips below 0 the plain
+// reaches the horizon between them.
+inline float RoomHillHeight(float az)
+{
+    return 0.03f + 0.022f * std::sin(3.0f * az + 1.1f) + 0.012f * std::sin(7.0f * az + 0.3f) + 0.004f * std::sin(19.0f * az + 2.0f);
+}
+
+// The open air as a ray (o, d) sees it, whichever face it left the room by: there are no
+// walls. Below the horizon, the field: where the ray meets the floor's plane, the lightmap's
+// floor (clamped to its edge, and past the edge its screen light - what it has above the
+// field's house light G - falling off over kRoomFieldFall), so the field is lit by the screen
+// without a seam wherever the room's faces happen to lie (a curved front's wings cross the
+// field beside the viewer); it fades into the hills' colour with distance. Above it, a night
+// sky (kRoomSkyHorizon to kRoomSkyZenith, with the world colour's sky on top as beyond the
+// room's glass) and its stars, which rise over kRoomStarRise; in front of them the hills,
+// their edge filtered over the pixel's angle. `kind` (may be null): kRoomPartSky,
+// kRoomPartHills or kRoomPartField; `star` (may be null): the stars' light added.
+inline bool RoomNightSky(const RoomConstants& rc, const RoomLightmap& light, const float o[3], const float d[3], const float Dx[3], const float Dy[3],
+                         float out[3], int* kind, float* star)
+{
+    if (!o || !d || !Dx || !Dy || !out) return false;
+    const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!(len > 0)) return false;
+    const float n[3] = { d[0] / len, d[1] / len, d[2] / len };
+    float G[3], Hc[3];
+    for (int ch = 0; ch < 3; ch++)
+    {
+        G[ch] = kRoomShadeFloor * rc.tint[kFaceFloor][ch] * (rc.world[ch] + rc.ambient[ch]);
+        Hc[ch] = kRoomHills[ch] + 0.5f * G[ch];
+    }
+    if (star) *star = 0;
+    if (n[1] < -kRoomEnvHorizonDy)
+    {
+        const float tg = (rc.yF - o[1]) / d[1];
+        float q[3], Lf[3];
+        RoomAt(o, d, tg, q);
+        const float u = (q[0] + rc.X) * rc.inv2X, v = (q[2] + rc.g) * rc.invFloorZ;
+        const float uc = std::fmin(std::fmax(u, 0.0f), 1.0f), vc = std::fmin(std::fmax(v, 0.0f), 1.0f);
+        if (!light.Sample(kFaceFloor, uc, vc, Lf)) return false;
+        const float ex = (u - uc) * 2.0f * rc.X, ez = (v - vc) * (rc.zB + rc.g);
+        const float k = 1.0f + std::sqrt(ex * ex + ez * ez) / kRoomFieldFall;
+        const float fall = 1.0f / (k * k);
+        const float fog = 1.0f - std::exp(-tg * len / kRoomHillFog);
+        for (int ch = 0; ch < 3; ch++)
+        {
+            const float field = G[ch] + (Lf[ch] - G[ch]) * fall;
+            out[ch] = field + (Hc[ch] - field) * fog;
+        }
+        if (kind) *kind = kRoomPartField;
+        return true;
+    }
+    const float el = std::asin(std::fmin(n[1], 1.0f)), az = std::atan2(n[0], -n[2]);
+    const float lx = std::sqrt(Dx[0] * Dx[0] + Dx[1] * Dx[1] + Dx[2] * Dx[2]), ly = std::sqrt(Dy[0] * Dy[0] + Dy[1] * Dy[1] + Dy[2] * Dy[2]);
+    const float pa = std::fmax(0.5f * (lx + ly) / len, 1e-6f);
+    const float cover = std::fmin(std::fmax((RoomHillHeight(az) - el) / pa + 0.5f, 0.0f), 1.0f);
+    const float sd = std::sqrt(std::fmax(n[1], 0.0f));
+    const float rise = std::fmin(std::fmax(el / kRoomStarRise, 0.0f), 1.0f);
+    float srgb[3];
+    const float I = RoomStars(n, pa, srgb) * rise;
+    for (int ch = 0; ch < 3; ch++)
+    {
+        const float hw = kRoomEnvHorizon * rc.world[ch];
+        const float sky = kRoomSkyHorizon[ch] + (kRoomSkyZenith[ch] - kRoomSkyHorizon[ch]) * sd + hw + (kRoomEnvZenith * rc.world[ch] - hw) * sd;
+        out[ch] = (1.0f - cover) * (sky + srgb[ch] * rise) + cover * Hc[ch];
+    }
+    if (star) *star = (1.0f - cover) * I;
+    if (kind) *kind = cover > 0.5f ? kRoomPartHills : kRoomPartSky;
+    return true;
+}
+
+// An environment's surface (XENV.md): L comes in as the lightmap's light at the sample (on
+// `face` at chart u, v; ray o, d with differentials Dx, Dy) and goes out as what the eye sees
+// there, before the glow on the front. The room is RoomSurface's. The open air is the field
+// and the night sky whichever face the ray left by (RoomNightSky, which reads `light`). The
+// cinema and the lounge draw their details, box-filtered over the footprint along the face's
+// two axes; the room light lights the side walls' lights and the lounge's downlights
+// (lightSeen, while flag 64 is on).
+inline bool RoomEnvSurface(const RoomConstants& rc, int face, float u, float v, const float o[3], const float d[3], const float Dx[3], const float Dy[3],
+                           float L[3], RoomSurfaceInfo* info, const RoomLightmap* light)
+{
+    if (!o || !d || !Dx || !Dy || !L) return false;
+    if (face < 0 || face >= kRoomFaces) return false;
+    const int env = (int)rc.env;
+    if (env == kRoomEnvRoom || env >= kRoomEnvCount) return true;
+    if (env == kRoomEnvOpenAir)
+    {
+        if (!light) return false;
+        int kind = 0;
+        float star = 0;
+        if (!RoomNightSky(rc, *light, o, d, Dx, Dy, L, &kind, &star)) return false;
+        if (info) { info->envPart = kind; info->star = star; }
+        return true;
+    }
+    // The sample's point on its face and its footprint along the face's axes: fa across (s on
+    // the front, z on the side walls, x on the back wall, the floor and the ceiling), fb the
+    // other way (y on the walls and the front, z on the floor and the ceiling). The front's
+    // point comes from its chart (u, v), its footprint from the plane tangent there.
+    float p[3], n[3] = { 0, 0, 0 }, Px[3], Py[3], fa = kRoomFootMin, fb = kRoomFootMin, s = 0;
+    if (face == kFaceFront)
+    {
+        float x, z, nx, nz;
+        s = -rc.sMax + u * 2.0f * rc.sMax;
+        RoomFrontAt(rc, s, &x, &z, &nx, &nz);
+        p[0] = x; p[1] = rc.yC - v * (rc.yC - rc.yF); p[2] = z;
+        n[0] = nx; n[2] = nz;
+        const float dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        const float t = ((p[0] - o[0]) * d[0] + (p[1] - o[1]) * d[1] + (p[2] - o[2]) * d[2]) / dd;
+        if (!(t > 0) || !RoomPlaneFootprint(t, d, n, Dx, Dy, Px, Py)) return true;
+        fa = std::fmin(std::fmax(std::fabs(Px[0] * nz - Px[2] * nx) + std::fabs(Py[0] * nz - Py[2] * nx), kRoomFootMin), kRoomFootMax);
+        fb = RoomFootprintAxis(Px, Py, 1);
+    }
+    else
+    {
+        float sgn;
+        const int axis = RoomFaceAxis(face, &sgn);
+        const float plane = face == kFaceLeft ? -rc.X : (face == kFaceRight ? rc.X : (face == kFaceFloor ? rc.yF : (face == kFaceCeiling ? rc.yC : rc.zB)));
+        n[axis] = sgn;
+        const float t = (plane - o[axis]) / d[axis];
+        if (!(t > 0) || !(t < 3.0e38f)) return true;
+        RoomAt(o, d, t, p);
+        if (!RoomPlaneFootprint(t, d, n, Dx, Dy, Px, Py)) return true;
+        fa = RoomFootprintAxis(Px, Py, face == kFaceLeft || face == kFaceRight ? 2 : 0);
+        fb = RoomFootprintAxis(Px, Py, face == kFaceFloor || face == kFaceCeiling ? 2 : 1);
+    }
+    const bool lightOn = (rc.flags & kRoomFlagLight) != 0;
+    const float* tint = rc.tint[face];
+    int part = 0;
+    if (env == kRoomEnvCinema)
+    {
+        if (face == kFaceFront)
+        {
+            const float mask = RoomBar(s, 0.0f, rc.screenW + 2.0f * kRoomMaskW, fa) * RoomBar(p[1], 0.0f, rc.screenH + 2.0f * kRoomMaskW, fb);
+            const float folds = 1.0f + kRoomCurtainAmp * RoomFolds(s, kRoomCurtainPitch, fa);
+            for (int ch = 0; ch < 3; ch++) L[ch] *= mask * kRoomMaskLevel + (1.0f - mask) * folds;
+            if (mask > 0.5f) part = kRoomPartMask;
+        }
+        else if (face == kFaceLeft || face == kFaceRight || face == kFaceBack)
+        {
+            const float folds = 1.0f + kRoomFoldAmp * RoomFolds(face == kFaceBack ? p[0] : p[2], kRoomFoldPitch, fa);
+            for (int ch = 0; ch < 3; ch++) L[ch] *= folds;
+        }
+        else if (face == kFaceFloor)
+        {
+            const float stepX = rc.X - kRoomStepInset, ax = std::fabs(p[0]);
+            const float z0 = p[2] - rc.zSide - 0.5f * kRoomStepPitch;
+            const float cover = RoomBar(ax, stepX, kRoomStepW, fa) * RoomPulse(z0, kRoomStepPitch, kRoomStepD, fb);
+            const float q = z0 / kRoomStepPitch;
+            const float dz = (q - std::floor(q + 0.5f)) * kRoomStepPitch, dx = ax - stepX;
+            const float pool = kRoomStepPoolGain * std::exp(-0.5f * (dx * dx + dz * dz) / (kRoomStepPool * kRoomStepPool));
+            for (int ch = 0; ch < 3; ch++) L[ch] = (1.0f - cover) * (L[ch] + pool * kRoomStepL[ch] * tint[ch]) + cover * kRoomStepL[ch];
+            if (cover > 0.5f) part = kRoomPartStep;
+        }
+    }
+    else if (env == kRoomEnvLounge)
+    {
+        if (face == kFaceFront)
+        {
+            const float slats = 1.0f + kRoomSlatAmp * RoomFolds(s, kRoomSlatPitch, fa);
+            for (int ch = 0; ch < 3; ch++) L[ch] *= slats;
+        }
+        else if (face == kFaceLeft || face == kFaceRight || face == kFaceBack)
+        {
+            const float across = face == kFaceBack ? p[0] : p[2];
+            const float panel = RoomBar(p[1], rc.yF + 0.5f * kRoomDadoY, kRoomDadoY, fb);
+            const float groove = RoomPulse(across, kRoomGroovePitch, kRoomGrooveW, fa) * panel;
+            const float dado = RoomBar(p[1], rc.yF + kRoomDadoY, kRoomDadoW, fb);
+            const float skirt = RoomBar(p[1], rc.yF + 0.5f * kRoomSkirtH, kRoomSkirtH, fb);
+            const float wall = (1.0f - kRoomGroove * groove) * (1.0f - dado) + kRoomDado * dado;
+            for (int ch = 0; ch < 3; ch++) L[ch] *= wall * (1.0f - skirt) + skirt * (tint[ch] > 0 ? kRoomSkirt[ch] / tint[ch] : 1.0f);
+        }
+        else if (face == kFaceFloor)
+        {
+            const float bi = std::floor(p[0] / kRoomBoardW);
+            const float off = (float)RoomHash((int)bi, 911) / 65535.0f * kRoomBoardL;
+            const float zz = p[2] - off;
+            const float bj = std::floor(zz / kRoomBoardL);
+            const float fade = std::fmin(std::fmax(1.0f - 2.0f * fa / kRoomBoardW, 0.0f), 1.0f);
+            const float seam = std::fmax(RoomPulse(p[0], kRoomBoardW, kRoomSeamW, fa), RoomPulse(zz, kRoomBoardL, kRoomSeamW, fb) * fade);
+            const float tone = 1.0f + kRoomBoardVar * ((float)RoomHash((int)bi, (int)bj) / 65535.0f - 0.5f) * fade;
+            const float grain = 1.0f + kRoomGrainAmp * RoomFolds(p[0], kRoomGrainPitch, fa);
+            const float wood = (1.0f - kRoomSeam * seam) * tone * grain;
+            float cover = 0, inner = 0;
+            if (rc.rugX1 > rc.rugX0 && rc.rugZ1 > rc.rugZ0)
+            {
+                const float cx = 0.5f * (rc.rugX0 + rc.rugX1), cz = 0.5f * (rc.rugZ0 + rc.rugZ1), w = rc.rugX1 - rc.rugX0, dl = rc.rugZ1 - rc.rugZ0;
+                cover = RoomBar(p[0], cx, w, fa) * RoomBar(p[2], cz, dl, fb);
+                inner = RoomBar(p[0], cx, w - 2.0f * kRoomRugBorder, fa) * RoomBar(p[2], cz, dl - 2.0f * kRoomRugBorder, fb);
+            }
+            const float edge = std::fmax(cover - inner, 0.0f);
+            for (int ch = 0; ch < 3; ch++)
+            {
+                const float rug = tint[ch] > 0 ? (inner * kRoomRugField[ch] + edge * kRoomRugEdge[ch]) / tint[ch] : 0.0f;
+                L[ch] *= (1.0f - cover) * wood + rug;
+            }
+            if (cover > 0.5f) part = kRoomPartRug;
+            else if (seam > 0.1f) part = kRoomPartSeam;
+        }
+        else if (face == kFaceCeiling && rc.lightX1 > rc.lightX0 && rc.lightZ1 > rc.lightZ0)
+        {
+            // Six downlights in the room light's panel, three across and two along.
+            const float cw = (rc.lightX1 - rc.lightX0) / 3.0f, cd = (rc.lightZ1 - rc.lightZ0) / 2.0f;
+            const float qx = (p[0] - rc.lightX0) / cw, qz = (p[2] - rc.lightZ0) / cd;
+            const float dx = (qx - std::floor(qx) - 0.5f) * cw, dz = (qz - std::floor(qz) - 0.5f) * cd;
+            const float within = RoomPanelCoverage(rc, p[0], p[2], fa, fb);
+            const float disc = std::fmin(std::fmax((kRoomDownR - std::sqrt(dx * dx + dz * dz)) / (0.5f * (fa + fb)) + 0.5f, 0.0f), 1.0f) * within;
+            for (int ch = 0; ch < 3; ch++) L[ch] = lightOn ? L[ch] + disc * rc.lightSeen[ch] : L[ch] * (1.0f + disc * (kRoomDownTrim - 1.0f));
+            if (disc > 0.5f) part = kRoomPartDownlight;
+        }
+    }
+    // The side walls' lights (the cinema's sconces, the lounge's lamps): lit by the room
+    // light, each with its fan of light on the wall in the wall's own colour; unlit, a dark
+    // fitting.
+    if (face == kFaceLeft || face == kFaceRight)
+    {
+        float halo = 0;
+        const float body = RoomSconce(rc, p[2], p[1], fa, fb, &halo);
+        for (int ch = 0; ch < 3; ch++)
+        {
+            const float lit = lightOn ? L[ch] + rc.haloGain * tint[ch] * halo * rc.lightSeen[ch] : L[ch];
+            L[ch] = (1.0f - body) * lit + body * (lightOn ? rc.lightSeen[ch] : kRoomSconceOff * L[ch]);
+        }
+        if (body > 0.5f) part = kRoomPartSconce;
+        else if (lightOn && rc.haloGain > 0 && halo > 0.3f) part = kRoomPartHalo;
+    }
+    if (info) info->envPart = part;
+    return true;
+}
+
 // A sample's own ray and its pixel's ray differentials, for the v11 look (RoomSurface).
 struct RoomSampleRay
 {
@@ -1872,13 +2356,16 @@ inline bool RoomSampleColour(const CurveConstants& c, const RoomView& view, cons
     if (kind == kRoomKindOutside) { out[0] = c.world[0]; out[1] = c.world[1]; out[2] = c.world[2]; return true; }
     float L[3];
     if (!in.light->Sample(kind - 1, u, v, L)) return false;
+    // An environment's surface comes before the glow: the glow is light on the wall.
+    const bool env = in.rc->env != (uint32_t)kRoomEnvRoom;
+    if (env && (!ray || !RoomEnvSurface(*in.rc, kind - 1, u, v, ray->o, ray->d, ray->Dx, ray->Dy, L, info, in.light))) return false;
     if (kind - 1 == kFaceFront && view.glowOn && in.glow && gu >= 0 && gu <= 1 && gv >= 0 && gv <= 1)
     {
         float g[4];
         if (!SampleRgba(*in.glow, gu, gv, g)) return false;
         for (int ch = 0; ch < 3; ch++) L[ch] += SrgbToLinear(g[ch]);
     }
-    if (ray && RoomLookOn(*in.rc) && !RoomSurface(*in.rc, kind - 1, ray->o, ray->d, ray->Dx, ray->Dy, L, info, &c, &in)) return false;
+    if (!env && ray && RoomLookOn(*in.rc) && !RoomSurface(*in.rc, kind - 1, ray->o, ray->d, ray->Dx, ray->Dy, L, info, &c, &in)) return false;
     for (int ch = 0; ch < 3; ch++) out[ch] = LinearToSrgb(std::fmax(L[ch], 0.0f));
     return true;
 }
@@ -2006,6 +2493,64 @@ inline std::string RoomHlslDefines()
     defInt("ROOM_PART_WING_L", kRoomPartWingL);
     defInt("ROOM_PART_WING_R", kRoomPartWingR);
     def("ROOM_SCREEN_PAD", RoomHlslFloat(kRoomScreenPad));
+    // The environments (XENV.md).
+    auto def3 = [&](const char* name, const float v[3])
+    {
+        def(name, "float3(" + RoomHlslFloat(v[0]) + ", " + RoomHlslFloat(v[1]) + ", " + RoomHlslFloat(v[2]) + ")");
+    };
+    defUint("ROOM_ENV_ROOM", (uint32_t)kRoomEnvRoom);
+    defUint("ROOM_ENV_CINEMA", (uint32_t)kRoomEnvCinema);
+    defUint("ROOM_ENV_OPEN_AIR", (uint32_t)kRoomEnvOpenAir);
+    defUint("ROOM_ENV_LOUNGE", (uint32_t)kRoomEnvLounge);
+    defUint("ROOM_ENV_COUNT", (uint32_t)kRoomEnvCount);
+    def("ROOM_FOLD_PITCH", RoomHlslFloat(kRoomFoldPitch));
+    def("ROOM_FOLD_AMP", RoomHlslFloat(kRoomFoldAmp));
+    def("ROOM_CURTAIN_PITCH", RoomHlslFloat(kRoomCurtainPitch));
+    def("ROOM_CURTAIN_AMP", RoomHlslFloat(kRoomCurtainAmp));
+    def("ROOM_MASK_W", RoomHlslFloat(kRoomMaskW));
+    def("ROOM_MASK_LEVEL", RoomHlslFloat(kRoomMaskLevel));
+    def("ROOM_STEP_INSET", RoomHlslFloat(kRoomStepInset));
+    def("ROOM_STEP_PITCH", RoomHlslFloat(kRoomStepPitch));
+    def("ROOM_STEP_W", RoomHlslFloat(kRoomStepW));
+    def("ROOM_STEP_D", RoomHlslFloat(kRoomStepD));
+    def3("ROOM_STEP_L", kRoomStepL);
+    def("ROOM_STEP_POOL", RoomHlslFloat(kRoomStepPool));
+    def("ROOM_STEP_POOL_GAIN", RoomHlslFloat(kRoomStepPoolGain));
+    def("ROOM_HALO_W0", RoomHlslFloat(kRoomHaloW0));
+    def("ROOM_HALO_W1", RoomHlslFloat(kRoomHaloW1));
+    def("ROOM_SCONCE_OFF", RoomHlslFloat(kRoomSconceOff));
+    def3("ROOM_SKY_HORIZON", kRoomSkyHorizon);
+    def3("ROOM_SKY_ZENITH", kRoomSkyZenith);
+    def3("ROOM_HILLS", kRoomHills);
+    def("ROOM_HILL_FOG", RoomHlslFloat(kRoomHillFog));
+    def("ROOM_FIELD_FALL", RoomHlslFloat(kRoomFieldFall));
+    defInt("ROOM_STAR_GRID", kRoomStarGrid);
+    def("ROOM_STAR_DENSITY", RoomHlslFloat(kRoomStarDensity));
+    def("ROOM_STAR_CORE", RoomHlslFloat(kRoomStarCore));
+    def("ROOM_STAR_RISE", RoomHlslFloat(kRoomStarRise));
+    def("ROOM_SHADE_FLOOR", RoomHlslFloat(kRoomShadeFloor));
+    def("ROOM_BOARD_W", RoomHlslFloat(kRoomBoardW));
+    def("ROOM_BOARD_L", RoomHlslFloat(kRoomBoardL));
+    def("ROOM_SEAM_W", RoomHlslFloat(kRoomSeamW));
+    def("ROOM_SEAM", RoomHlslFloat(kRoomSeam));
+    def("ROOM_BOARD_VAR", RoomHlslFloat(kRoomBoardVar));
+    def("ROOM_GRAIN_PITCH", RoomHlslFloat(kRoomGrainPitch));
+    def("ROOM_GRAIN_AMP", RoomHlslFloat(kRoomGrainAmp));
+    def("ROOM_RUG_BORDER", RoomHlslFloat(kRoomRugBorder));
+    def3("ROOM_RUG_FIELD", kRoomRugField);
+    def3("ROOM_RUG_EDGE", kRoomRugEdge);
+    def("ROOM_SKIRT_H", RoomHlslFloat(kRoomSkirtH));
+    def3("ROOM_SKIRT", kRoomSkirt);
+    def("ROOM_DADO_Y", RoomHlslFloat(kRoomDadoY));
+    def("ROOM_DADO_W", RoomHlslFloat(kRoomDadoW));
+    def("ROOM_DADO", RoomHlslFloat(kRoomDado));
+    def("ROOM_GROOVE_PITCH", RoomHlslFloat(kRoomGroovePitch));
+    def("ROOM_GROOVE_W", RoomHlslFloat(kRoomGrooveW));
+    def("ROOM_GROOVE", RoomHlslFloat(kRoomGroove));
+    def("ROOM_SLAT_PITCH", RoomHlslFloat(kRoomSlatPitch));
+    def("ROOM_SLAT_AMP", RoomHlslFloat(kRoomSlatAmp));
+    def("ROOM_DOWN_R", RoomHlslFloat(kRoomDownR));
+    def("ROOM_DOWN_TRIM", RoomHlslFloat(kRoomDownTrim));
     std::string bayer = "{ ";
     for (int i = 0; i < 64; i++)
     {
