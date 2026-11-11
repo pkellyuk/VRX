@@ -56,6 +56,7 @@ public partial class MainWindow : Window
         System.Diagnostics.Debug.WriteLine($"[MainWindow] UI culture {CultureInfo.CurrentUICulture.Name}, format culture {CultureInfo.CurrentCulture.Name}, pseudo {Loc.Pseudo}");
         FillWorldList();
         FillLightColourList(Profile.DefaultRoomLightColor);
+        UpdateRoomControls();                          // the distance's value text, before any profile
         WorldHex.Text = WorldPresets[0].Hex;           // data, not text: kept out of the XAML
         WorldList.SelectedIndex = 0;
         ShowGpuChoice(Gpus.Same);
@@ -260,7 +261,8 @@ public partial class MainWindow : Window
         ReflectSlider.Value = p.RoomReflections;
         LightSlider.Value = p.RoomLight;
         FillLightColourList(p.RoomLightColor);
-        EnvironmentList.SelectedIndex = Math.Clamp(p.RoomEnvironment, 0, Profile.EnvironmentCount - 1);
+        EnvironmentList.SelectedIndex = Profile.ShownEnvironment(p.RoomEnvironment);
+        SeatList.SelectedIndex = Math.Clamp(p.RoomSeat, Profile.SeatFront, Profile.SeatCount - 1);
         WorldHex.Text = p.WorldColor;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
@@ -298,6 +300,7 @@ public partial class MainWindow : Window
             RoomLight = (int)Math.Round(LightSlider.Value),
             RoomLightColor = SelectedLightColour(),
             RoomEnvironment = Math.Clamp(EnvironmentList.SelectedIndex, 0, Profile.EnvironmentCount - 1),
+            RoomSeat = Math.Clamp(SeatList.SelectedIndex, Profile.SeatFront, Profile.SeatCount - 1),
             WorldColor = Profile.TryParseColor(WorldHex.Text, out int world) ? Profile.FormatColor(world) :
                 throw new InvalidDataException(Loc.Get("ErrorWorldColour")),
             SteadyDepth = SteadyCheck.IsChecked == true,
@@ -354,6 +357,13 @@ public partial class MainWindow : Window
             EdgeValue.Text = edge == 0 ? Loc.Get("ValueOff") : Loc.Format("ValuePercent", edge);
         }
         if (RoomSlider == null || RoomValue == null || FollowCheck == null) return;
+        // The distance: the slider's, or in the theatre the seat's (the slider rests, keeping its value).
+        if (DistanceSlider != null && DistanceValue != null)
+        {
+            bool seated = Seated;
+            DistanceSlider.IsEnabled = !seated;
+            DistanceValue.Text = seated ? Loc.Format("ValueSeatDistance", ViewDistance()) : Loc.Format("ValueMetres", DistanceSlider.Value);
+        }
         bool follows = FollowCheck.IsChecked == true;
         RoomSlider.IsEnabled = !follows;
         int room = (int)Math.Round(RoomSlider.Value);
@@ -367,6 +377,13 @@ public partial class MainWindow : Window
         {
             EnvironmentList.IsEnabled = !follows;
             EnvironmentValue.Text = follows ? Loc.Get("NeedsFixedScreen") : room == 0 ? Loc.Get("NeedsRoom") : "";
+        }
+        if (SeatRow != null && SeatList != null && SeatValue != null)
+        {
+            SeatRow.Visibility = env == Profile.EnvironmentTheatre ? Visibility.Visible : Visibility.Collapsed;
+            SeatList.IsEnabled = !follows;
+            SeatValue.Text = follows ? Loc.Get("NeedsFixedScreen") : room == 0 ? Loc.Get("NeedsRoom") :
+                Loc.Format("SeatDistance", Profile.SeatDistance(SeatList.SelectedIndex));
         }
         bool look = withRoom && env == Profile.EnvironmentRoom, lit = withRoom && env != Profile.EnvironmentOpenAir;
         string lookResting = withRoom ? Loc.Get("NeedsRoomEnvironment") : resting, litResting = withRoom ? Loc.Get("NotInOpenAir") : resting;
@@ -402,9 +419,20 @@ public partial class MainWindow : Window
         // moving rather than waiting until the player releases the slider.
         if (!saveTimer.IsEnabled) saveTimer.Start();
     }
+    // The theatre is in use (it needs the room and the fixed screen): the seat, not the
+    // Distance slider, sets the screen's distance.
+    private bool Seated => FollowCheck?.IsChecked != true && Math.Round(RoomSlider?.Value ?? 0) > 0 &&
+                           EnvironmentList?.SelectedIndex == Profile.EnvironmentTheatre;
+
+    // The screen's distance the engine will use: the seat's in the theatre, else the slider's.
+    private double ViewDistance() => Seated && SeatList != null
+        ? Profile.SeatDistance(SeatList.SelectedIndex)
+        : DistanceSlider?.Value ?? 0;
+
     private void DrawPreview()
     {
-        double centre = 270 + HorizontalSlider.Value * 20, y = 150 - DistanceSlider.Value * 17;
+        // A seat further back than the top view reaches is drawn at its far edge.
+        double centre = 270 + HorizontalSlider.Value * 20, y = 150 - Math.Min(ViewDistance(), 8.3) * 17;
         ScreenLine.X1 = centre - WidthSlider.Value * 10; ScreenLine.X2 = centre + WidthSlider.Value * 10;
         ScreenLine.Y1 = ScreenLine.Y2 = y;
         DrawCurve(centre, y);
@@ -537,7 +565,7 @@ public partial class MainWindow : Window
 
         double wrap = fraction * 70 * Math.PI / 180;
         double sag = WidthSlider.Value / wrap * (1 - Math.Cos(wrap / 2));
-        sag = Math.Min(sag, DistanceSlider.Value * 0.45) * 17;
+        sag = Math.Min(sag, Math.Min(ViewDistance(), 8.3) * 0.45) * 17;
         arcSagPx = sag;
         var figure = new PathFigure { StartPoint = new Point(ScreenLine.X1, y + sag) };
         figure.Segments.Add(new QuadraticBezierSegment(new Point(centre, y - sag), new Point(ScreenLine.X2, y + sag), true));
@@ -561,7 +589,7 @@ public partial class MainWindow : Window
         if (!dragging) return;
         var point = e.GetPosition(Preview);
         HorizontalSlider.Value = Math.Round(Math.Clamp((point.X - 270) / 20, -3, 3), 2);
-        DistanceSlider.Value = Math.Round(Math.Clamp((150 - point.Y) / 17, 1, 8), 2);
+        if (!Seated) DistanceSlider.Value = Math.Round(Math.Clamp((150 - point.Y) / 17, 1, 8), 2);
     }
     private void PreviewUp(object sender, MouseButtonEventArgs e) { dragging = false; Preview.ReleaseMouseCapture(); }
     private void UpdateButtons()
@@ -1365,6 +1393,7 @@ public partial class MainWindow : Window
         legacy.Remove("RoomLight");
         legacy.Remove("RoomLightColor");
         legacy.Remove("RoomEnvironment");
+        legacy.Remove("RoomSeat");
         legacy.Remove("FuseModels");
         legacy.Remove("DesktopWhenAway");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
@@ -1396,33 +1425,33 @@ public partial class MainWindow : Window
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
         var roomy = new Profile { Room = 45 };
         var glassy = new Profile { Room = 45, RoomGlass = 60, RoomReflections = 25, RoomLight = 40, RoomLightColor = "#FFD1A3" };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 18 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
-            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 0 0 12 100 0 0 0 0 0") ||
-            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 0 0 12 100 0 0 0 0 0"))
-            throw new Exception("Control snapshot must be v18 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, the edge flattening, the edge steps flag and least change, the widening, the thin parts flag, the sharpened edges flag, the depth map flag, the background layer flag, and the environment (see desktop_control.h)");
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 19 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
+            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 0 0 12 100 0 0 0 0 0 1"))
+            throw new Exception("Control snapshot must be v19 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, the edge flattening, the edge steps flag and least change, the widening, the thin parts flag, the sharpened edges flag, the depth map flag, the background layer flag, the environment, and the seat (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
             throw new Exception("Profiles saved before the sub-pixel warp existed must load with it on");
-        if (store.Load(one.ExecutablePath).EdgeFlatten != 0 || new Profile().EdgeFlatten != 0 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9 0 12 100 0 0 0 0 0") ||
+        if (store.Load(one.ExecutablePath).EdgeFlatten != 0 || new Profile().EdgeFlatten != 0 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9 0 12 100 0 0 0 0 0 1") ||
             new Profile { EdgeFlatten = 16 }.Valid() || new Profile { EdgeFlatten = -1 }.Valid())
             throw new Exception("Old and new profiles must have the edge flattening off; it is in the snapshot and 0 to 15");
         var legacyEdges = store.Load(one.ExecutablePath);
         if (legacyEdges.EdgeSteps || legacyEdges.EdgeStepMin != 12 || legacyEdges.WidenNear != 100 ||
-            !new Profile { EdgeSteps = true, EdgeStepMin = 30, WidenNear = 200 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 1 30 200 0 0 0 0 0") ||
+            !new Profile { EdgeSteps = true, EdgeStepMin = 30, WidenNear = 200 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 1 30 200 0 0 0 0 0 1") ||
             new Profile { EdgeStepMin = 4 }.Valid() || new Profile { EdgeStepMin = 61 }.Valid() || new Profile { WidenNear = -1 }.Valid() || new Profile { WidenNear = 301 }.Valid())
             throw new Exception("Profiles saved before the edge steps existed must load with them off, at 12 % and 100 % widening; they follow the edge flattening in the snapshot");
-        if (store.Load(one.ExecutablePath).ThinParts || !new Profile { ThinParts = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 1 0 0 0 0"))
+        if (store.Load(one.ExecutablePath).ThinParts || !new Profile { ThinParts = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 1 0 0 0 0 1"))
             throw new Exception("Profiles saved before the thin parts setting existed must load with it off; it follows the widening in the snapshot");
-        if (store.Load(one.ExecutablePath).SharpenEdges || !new Profile { SharpenEdges = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 1 0 0 0"))
+        if (store.Load(one.ExecutablePath).SharpenEdges || !new Profile { SharpenEdges = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 1 0 0 0 1"))
             throw new Exception("Profiles saved before the sharpened depth edges existed must load with them off; it follows the thin parts flag in the snapshot");
-        if (store.Load(one.ExecutablePath).ShowDepthMap || new Profile().ShowDepthMap || !new Profile { ShowDepthMap = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 1 0 0"))
+        if (store.Load(one.ExecutablePath).ShowDepthMap || new Profile().ShowDepthMap || !new Profile { ShowDepthMap = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 1 0 0 1"))
             throw new Exception("The depth map must not be shown by old or new profiles; it follows the sharpened edges flag in the snapshot");
-        if (store.Load(one.ExecutablePath).BackLayer || new Profile().BackLayer || !new Profile { BackLayer = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 1 0"))
+        if (store.Load(one.ExecutablePath).BackLayer || new Profile().BackLayer || !new Profile { BackLayer = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 1 0 1"))
             throw new Exception("Profiles saved before the background layer existed must load with it off; it is followed by the environment");
         if (store.Load(one.ExecutablePath).ScreenCurve != 0 || store.Load(one.ExecutablePath).Ambilight)
             throw new Exception("Profiles saved before the curve and ambilight existed must load flat, with no glow");
@@ -1430,9 +1459,23 @@ public partial class MainWindow : Window
             throw new Exception("Profiles saved before the glow strength and world colour existed must load at 85 % and black");
         if (store.Load(one.ExecutablePath).Room != 0) throw new Exception("Profiles saved before the room existed must load with it off");
         if (store.Load(one.ExecutablePath).RoomEnvironment != Profile.EnvironmentRoom || new Profile().RoomEnvironment != Profile.EnvironmentRoom ||
-            !new Profile { RoomEnvironment = Profile.EnvironmentLounge }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 3") ||
+            !new Profile { RoomEnvironment = Profile.EnvironmentLounge }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 3 1") ||
             new Profile { RoomEnvironment = Profile.EnvironmentCount }.Valid() || new Profile { RoomEnvironment = -1 }.Valid() || !new Profile { RoomEnvironment = Profile.EnvironmentOpenAir }.Valid())
-            throw new Exception("Profiles saved before the environments existed must load in the room; the environment is the snapshot's last value, 0 to 3");
+            throw new Exception("Profiles saved before the environments existed must load in the room; the environment comes before the seat, 0 to 4");
+        // The theatre's seat: the middle for old and new profiles, the snapshot's last value, 0 to 2;
+        // its distance is room.h RoomTheatreLayout's (playback_test checks the same numbers there).
+        if (store.Load(one.ExecutablePath).RoomSeat != Profile.SeatMiddle || new Profile().RoomSeat != Profile.SeatMiddle ||
+            !new Profile { RoomEnvironment = Profile.EnvironmentTheatre, RoomSeat = Profile.SeatRear }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 4 2") ||
+            new Profile { RoomSeat = Profile.SeatCount }.Valid() || new Profile { RoomSeat = -1 }.Valid() || !new Profile { RoomEnvironment = Profile.EnvironmentTheatre }.Valid() ||
+            new Profile { RoomEnvironment = Profile.EnvironmentCount }.Valid())
+            throw new Exception("The theatre and its seat: the middle by default and for old profiles, last in the snapshot, the seat 0 to 2 and the environment 0 to 4");
+        if (Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatFront) - 4.56f) > 1e-4f || Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatRear) - 11.4f) > 1e-4f ||
+            Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatMiddle) - (4.56f + 3 * 6.84f / 7)) > 1e-4f || Math.Abs(Profile.TheatreDistance(10f, Profile.SeatRear) - 20f) > 1e-4f ||
+            Math.Abs(Profile.TheatreDistance(1f, Profile.SeatFront) - 2f) > 1e-4f || Profile.TheatreDistance(0f, Profile.SeatFront) != 0 ||
+            Profile.TheatreDistance(5.7f, 7) != Profile.TheatreDistance(5.7f, Profile.SeatMiddle))
+            throw new Exception("The seat's distance must be room.h's: 4.56, 7.49 and 11.4 m for a 5.7 m screen, 20 m at the back for 10 m, 2 m at the front for 1 m");
+        if (Profile.SeatDistance(Profile.SeatFront) != Profile.TheatreDistance(5.7f, Profile.SeatFront) || Profile.SeatDistance(Profile.SeatRear) != Profile.TheatreDistance(5.7f, Profile.SeatRear))
+            throw new Exception("The hall's seats must be the layout for the default 5.7 m screen, whatever the screen's width");
         // A fresh install starts with the room set up; nothing else changes, and base
         // settings saved before the room existed keep it off.
         string freshRoot = Path.Combine(output, "newInstall-install");
@@ -1553,16 +1596,21 @@ public partial class MainWindow : Window
         // room on; it rests with the room while the screen follows the head; it is saved.
         if (EnvironmentList.SelectedIndex != Profile.EnvironmentRoom || ReadProfile().RoomEnvironment != Profile.EnvironmentRoom || !EnvironmentList.IsEnabled ||
             EnvironmentList.Items.Count != Profile.EnvironmentCount)
-            throw new Exception("The environment must default to the room, with the four to choose from");
+            throw new Exception("The environment must default to the room, with the others to choose from");
+        if (((ComboBoxItem)EnvironmentList.Items[Profile.EnvironmentCinema]).Visibility != Visibility.Collapsed ||
+            ((ComboBoxItem)EnvironmentList.Items[Profile.EnvironmentTheatre]).Visibility != Visibility.Visible ||
+            Profile.ShownEnvironment(Profile.EnvironmentCinema) != Profile.EnvironmentTheatre || Profile.ShownEnvironment(Profile.EnvironmentLounge) != Profile.EnvironmentLounge ||
+            Profile.ShownEnvironment(Profile.EnvironmentCount) != Profile.EnvironmentRoom || Profile.ShownEnvironment(-1) != Profile.EnvironmentRoom)
+            throw new Exception("The seatless cinema must be hidden from the list, a profile saved with it shown as the cinema with seats");
         RoomSlider.Value = 0;
         if (EnvironmentValue.Text != Loc.Get("NeedsRoom")) throw new Exception("The environment must say it needs the room while the room is off");
-        EnvironmentList.SelectedIndex = Profile.EnvironmentCinema;
-        if (Math.Round(RoomSlider.Value) != Profile.NewInstallRoom || ReadProfile().RoomEnvironment != Profile.EnvironmentCinema || EnvironmentValue.Text != "")
-            throw new Exception("Picking the cinema with the room off must turn the room on and be saved");
+        EnvironmentList.SelectedIndex = Profile.EnvironmentTheatre;
+        if (Math.Round(RoomSlider.Value) != Profile.NewInstallRoom || ReadProfile().RoomEnvironment != Profile.EnvironmentTheatre || EnvironmentValue.Text != "")
+            throw new Exception("Picking the cinema with seats with the room off must turn the room on and be saved");
         GlassSlider.Value = 30;
         if (GlassSlider.IsEnabled || ReflectSlider.IsEnabled || GlassValue.Text != Loc.Get("NeedsRoomEnvironment") || ReflectValue.Text != Loc.Get("NeedsRoomEnvironment") ||
             !LightSlider.IsEnabled || ReadProfile().RoomGlass != 30)
-            throw new Exception("In the cinema glass and reflections rest (keeping their values) and the room light is available");
+            throw new Exception("In the cinema with seats glass and reflections rest (keeping their values) and the room light is available");
         EnvironmentList.SelectedIndex = Profile.EnvironmentOpenAir;
         LightSlider.Value = 35;
         if (LightSlider.IsEnabled || LightValue.Text != Loc.Get("NotInOpenAir") || LightColourList.IsEnabled || ReadProfile().RoomEnvironment != Profile.EnvironmentOpenAir ||
@@ -1579,10 +1627,43 @@ public partial class MainWindow : Window
         EnvironmentList.SelectedIndex = Profile.EnvironmentRoom;
         if (RoomSlider.Value != 0 || GlassSlider.IsEnabled || GlassValue.Text != Loc.Get("NeedsRoom"))
             throw new Exception("Picking the room must not turn the room on");
+        // The theatre: the seat appears with it and sets the distance, the Distance slider rests
+        // (keeping its value) and comes back with any other environment.
+        RoomSlider.Value = 45;
+        double keptDistance = DistanceSlider.Value;
+        if (SeatRow.Visibility == Visibility.Visible) throw new Exception("The seat must only show in the cinema with seats");
+        EnvironmentList.SelectedIndex = Profile.EnvironmentTheatre;
+        if (SeatRow.Visibility != Visibility.Visible || SeatList.SelectedIndex != Profile.SeatMiddle || DistanceSlider.IsEnabled ||
+            DistanceValue.Text != Loc.Format("ValueSeatDistance", (double)Profile.SeatDistance(Profile.SeatMiddle)) ||
+            ReadProfile().RoomEnvironment != Profile.EnvironmentTheatre || ReadProfile().Distance != keptDistance || !LightSlider.IsEnabled || GlassSlider.IsEnabled)
+            throw new Exception("The cinema with seats must show the seat, rest the Distance slider (keeping its value) and show the seat's distance");
+        SeatList.SelectedIndex = Profile.SeatRear;
+        if (ReadProfile().RoomSeat != Profile.SeatRear || DistanceValue.Text != Loc.Format("ValueSeatDistance", (double)Profile.SeatDistance(Profile.SeatRear)) ||
+            SeatValue.Text != Loc.Format("SeatDistance", Profile.SeatDistance(Profile.SeatRear)))
+            throw new Exception("The back row must be saved and move the screen to its distance");
+        double seatWidth = WidthSlider.Value;
+        WidthSlider.Value = seatWidth > 5 ? 3 : 8;
+        bool hallKept = DistanceValue.Text == Loc.Format("ValueSeatDistance", (double)Profile.SeatDistance(Profile.SeatRear));
+        WidthSlider.Value = seatWidth;
+        if (!hallKept) throw new Exception("The screen's width must not move the seat: the hall stays, the screen grows or shrinks in it");
+        FollowCheck.IsChecked = true;
+        if (!DistanceSlider.IsEnabled || SeatList.IsEnabled || SeatValue.Text != Loc.Get("NeedsFixedScreen") || DistanceValue.Text != Loc.Format("ValueMetres", DistanceSlider.Value))
+            throw new Exception("Following the head, the seat rests and the Distance slider is back");
+        FollowCheck.IsChecked = false;
+        EnvironmentList.SelectedIndex = Profile.EnvironmentLounge;
+        if (SeatRow.Visibility == Visibility.Visible || !DistanceSlider.IsEnabled || DistanceSlider.Value != keptDistance || ReadProfile().RoomSeat != Profile.SeatRear)
+            throw new Exception("Another environment hides the seat (keeping it) and gives the Distance slider back at its value");
+        SeatList.SelectedIndex = Profile.SeatMiddle;
+        RoomSlider.Value = 0;
+        EnvironmentList.SelectedIndex = Profile.EnvironmentRoom;
         var envSaved = ReadProfile();
         envSaved.RoomEnvironment = Profile.EnvironmentOpenAir;
         PutProfile(envSaved);
         if (EnvironmentList.SelectedIndex != Profile.EnvironmentOpenAir || RoomSlider.Value != 0) throw new Exception("A profile's environment must be put back as it is");
+        envSaved.RoomEnvironment = Profile.EnvironmentCinema;
+        PutProfile(envSaved);
+        if (EnvironmentList.SelectedIndex != Profile.EnvironmentTheatre || ReadProfile().RoomEnvironment != Profile.EnvironmentTheatre)
+            throw new Exception("A profile saved with the seatless cinema must open in the cinema with seats");
         PutProfile(one);
         if (EnvironmentList.SelectedIndex != Profile.EnvironmentRoom) throw new Exception("Loading another profile must put back its environment");
         if (AmbiStrengthSlider.Value != 85 || AmbiStrengthSlider.IsEnabled) throw new Exception("Glow strength should default to 85 % and follow the ambilight checkbox");

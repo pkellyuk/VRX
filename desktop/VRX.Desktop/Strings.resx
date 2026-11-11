@@ -127,11 +127,19 @@
 
   <!-- 4 Room -->
   <data name="Environment" xml:space="preserve"><value>Environment</value></data>
-  <data name="EnvironmentTip" xml:space="preserve"><value>Where the screen is. Room (default): the plain room, clean and calm, with glass walls, reflections and a light to choose below. Cinema: a movie theatre - velvet curtains, black masking round the screen, a dark carpet with step lights along the aisles, and sconces on the walls lit by the room light. Open air: a screen standing in a field at night under the stars, with low hills on the horizon; the screen lights the ground in front of it. Lounge: a home theatre - an oak floor with a rug, panelled walls with two lamps each side, downlights in the ceiling (both lit by the room light) and timber slats behind the screen. Each is lit by the picture like the room, and the Room slider sets how much its surfaces reflect. Picking one while the room is off turns the room on. Not with 'Screen follows my head'. Applies live; saved per game.</value></data>
+  <data name="EnvironmentTip" xml:space="preserve"><value>Where the screen is. Room (default): the plain room, clean and calm, with glass walls, reflections and a light to choose below. Open air: a screen standing in a field at night under the stars, with low hills on the horizon; the screen lights the ground in front of it. Lounge: a home theatre - an oak floor with a rug, panelled walls with two lamps each side, downlights in the ceiling (both lit by the room light) and timber slats behind the screen. Cinema with seats: a movie theatre with tiered rows of seats round you - velvet curtains, black masking round the screen, a patterned carpet with step lights along the aisles, and sconces on the walls lit by the room light; pick your seat below, which sets how far away the screen is. Each is lit by the picture like the room, and the Room slider sets how much its surfaces reflect. Picking one while the room is off turns the room on. Not with 'Screen follows my head'. Applies live; saved per game.</value></data>
   <data name="EnvironmentRoom" xml:space="preserve"><value>Room (default)</value></data>
   <data name="EnvironmentCinema" xml:space="preserve"><value>Cinema</value></data>
   <data name="EnvironmentOpenAir" xml:space="preserve"><value>Open air at night</value></data>
   <data name="EnvironmentLounge" xml:space="preserve"><value>Lounge</value></data>
+  <data name="EnvironmentTheatre" xml:space="preserve"><value>Cinema with seats</value></data>
+  <data name="Seat" xml:space="preserve"><value>Seat</value></data>
+  <data name="SeatTip" xml:space="preserve"><value>Where you sit in the cinema with seats. It sets how far away the screen is: the front row 4.6 m away, the middle 7.5 m and the back row 11.4 m. The hall stays the same whatever the screen's width, so Width makes the screen look bigger or smaller from your seat, as a bigger or smaller screen in the same cinema would (at the default 5.7 m the rows are about 0.8, 1.3 and 2 screen widths away). The rows rise behind you, so you look over the seats in front. A seat further back also shows the picture's depth more gently. While you are seated the Distance slider rests and keeps its value. Applies live; saved per game.</value></data>
+  <data name="SeatFront" xml:space="preserve"><value>Front row</value></data>
+  <data name="SeatMiddle" xml:space="preserve"><value>Middle (default)</value></data>
+  <data name="SeatRear" xml:space="preserve"><value>Back row</value></data>
+  <data name="SeatDistance" xml:space="preserve"><value>{0:F1} m from the screen</value><comment>{0} = metres</comment></data>
+  <data name="ValueSeatDistance" xml:space="preserve"><value>{0:F2} m (your seat)</value><comment>{0} = metres; the screen's distance set by the cinema seat</comment></data>
   <data name="NeedsRoomEnvironment" xml:space="preserve"><value>Room environment only</value></data>
   <data name="NotInOpenAir" xml:space="preserve"><value>Not in the open air</value></data>
   <data name="RoomLabel" xml:space="preserve"><value>Room — walls lit by the screen</value></data>

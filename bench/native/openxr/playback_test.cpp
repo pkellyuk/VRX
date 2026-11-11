@@ -798,7 +798,18 @@ static void TestDesktopControl()
     Check(!ParseDesktopSettings("VRX 18 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4", settings), "v18 unknown environment rejected");
     Check(!ParseDesktopSettings("VRX 18 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 -1", settings), "v18 negative environment rejected");
     Check(!ParseDesktopSettings("VRX 18 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 1 0", settings), "v18 trailing value rejected");
-    Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 1", settings), "a newer snapshot version is rejected");
+    Check(!ParseDesktopSettings("VRX 18 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4", settings), "v18 has no theatre");
+    Check(ParseDesktopSettings("VRX 18 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 1", settings) && settings.seat == 1,
+          "a v18 snapshot has the middle seat");
+    Check(ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 2", settings) && settings.version == 19 &&
+          settings.env == 4 && settings.seat == 2, "v19 theatre, rear seat");
+    Check(ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 0", settings) && settings.seat == 0,
+          "v19 front seat");
+    Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4", settings), "v19 missing seat rejected");
+    Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 3", settings), "v19 unknown seat rejected");
+    Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 5 1", settings), "v19 unknown environment rejected");
+    Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 1 0", settings), "v19 trailing value rejected");
+    Check(!ParseDesktopSettings("VRX 20 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 1", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -2767,8 +2778,9 @@ static void TestRoom()
         for (int ch = 0; ch < 3; ch++) rest = rest && rc.bounceRgb[ch] == rc.bounceScale;
         rest = rest && rc.bounceRgb[3] == 0;
         for (size_t i = offsetof(RoomConstants, sconcePitch); i < sizeof(RoomConstants); i++) rest = rest && bytes[i] == 0;
-        Check(sizeof(RoomConstants) == 512 && offsetof(RoomConstants, glass) == 176 && rest,
-            "RoomConstants is 512 bytes; rows 11 and 16 and the padding of row 20 are zero with the controls at 0, and the room's rows 21-31 white, its bounce and zero");
+        Check(sizeof(RoomConstants) == 768 && offsetof(RoomConstants, glass) == 176 && rest,
+            "RoomConstants is 768 bytes; rows 11 and 16 and the padding of row 20 are zero with the controls at 0, the room's rows 21-31 white, its bounce and zero, "
+            "and rows 32-47 (the theatre and padding) zero");
         Check(rc.pitchSide == room.pitchSide && rc.pitchBack == room.pitchBack && rc.transomY == room.transomY && !RoomLookOn(rc),
             "row 12 carries the frames' bays and crossbar; with the controls at 0 flags 16 and 64 are clear (the plain eye pass)");
         Check(rc.X == room.X && rc.zSide == room.zSide && rc.glowBlock == (uint32_t)layout.block && rc.emitters == (uint32_t)layout.count() &&
@@ -3403,6 +3415,234 @@ static void TestRoomEnvironments()
     }
 }
 
+// The theatre (room.h kRoomEnvTheatre, XENV.md "Cinema with seats"): the seat's layout and
+// distance, the stands round the viewer, rays through them, their light, the constants and
+// the coarse patches. SelfTestRoom compares the GPU with these functions.
+// RoomStandsTrace with the ray's reciprocal worked out, as the classification has it.
+static bool TraceStands(const RoomStands& s, const float o[3], const float d[3], float tMax, RoomStandsHit& h)
+{
+    // (A zero component's reciprocal is never used: the tracer checks the sign of d first.)
+    float rcp[3];
+    for (int k = 0; k < 3; k++) rcp[k] = d[k] != 0 ? 1.0f / d[k] : std::numeric_limits<float>::infinity();
+    return RoomStandsTrace(s, o, d, rcp, tMax, h);
+}
+
+static void TestRoomTheatre()
+{
+    // ---- the layout: rows a metre apart from 0.8 to 2 screen widths, the seat's distance
+    {
+        RoomTheatre front, middle, rear, tiny, big, odd;
+        Check(RoomTheatreLayout(5.7f, kRoomSeatFront, front) && RoomTheatreLayout(5.7f, kRoomSeatMiddle, middle) && RoomTheatreLayout(5.7f, kRoomSeatRear, rear),
+              "theatre: the default screen's layouts");
+        Check(front.rows == 8 && middle.rows == 8 && std::fabs(front.pitch - 6.84f / 7.0f) < 1e-5f && std::fabs(front.front - 4.56f) < 1e-5f,
+              "theatre: 5.7 m wide: 8 rows 0.977 m apart, the first 4.56 m from the screen");
+        Check(front.viewerRow == 0 && std::fabs(front.distance - 4.56f) < 1e-5f && rear.viewerRow == 7 && std::fabs(rear.distance - 11.4f) < 1e-4f &&
+              middle.viewerRow == 3 && middle.distance > 1.2f * 5.7f && middle.distance < 1.4f * 5.7f,
+              "theatre: front 0.8, rear 2 and middle about 1.3 screen widths away");
+        Check(RoomTheatreLayout(1.0f, kRoomSeatMiddle, tiny) && tiny.rows == kRoomRowsMin && tiny.front == kRoomFrontRowMin && tiny.pitch >= kRoomRowPitchMin - 1e-5f &&
+              tiny.viewerRow >= 1 && tiny.viewerRow <= tiny.rows - 2, "theatre: a tiny screen keeps four rows at least, no closer than 2 m, a seat between");
+        Check(RoomTheatreLayout(10.0f, kRoomSeatRear, big) && big.rows == 13 && std::fabs(big.distance - 20.0f) < 1e-4f, "theatre: a 10 m screen has 13 rows to 20 m");
+        Check(RoomTheatreLayout(5.7f, 9, odd) && odd.viewerRow == middle.viewerRow && !RoomTheatreLayout(0.0f, kRoomSeatFront, odd),
+              "theatre: an unknown seat is the middle; no screen, no layout");
+        RoomTheatre hall;
+        Check(RoomTheatreSeat(kRoomSeatRear, hall) && hall.rows == rear.rows && hall.distance == rear.distance && kRoomHallWidth == 5.7f,
+              "theatre: the hall's seats are the layout for the default 5.7 m screen");
+    }
+
+    // ---- the stands round the middle seat
+    RoomTheatre seat;
+    Check(RoomTheatreSeat(kRoomSeatMiddle, seat), "theatre: the middle seat");
+    {
+        // The carpet: its mean over a tile (sampled finely) is the floor's tint, so the
+        // lightmap's light is the pattern's; seen from afar (a footprint of many tiles) it
+        // filters to the same mean; the lattice's crossing is gold, a cell's heart gold, its
+        // diamond teal and the rest burgundy.
+        double mean[3] = { 0, 0, 0 };
+        const int n = 300;
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < n; j++)
+            {
+                float c[3];
+                RoomCarpet(((float)i + 0.5f) * kRoomCarpetTile / n, ((float)j + 0.5f) * kRoomCarpetTile / n, 1e-4f, 1e-4f, c);
+                for (int ch = 0; ch < 3; ch++) mean[ch] += c[ch] / ((double)n * n);
+            }
+        const float* tint = kRoomEnvTint[kRoomEnvTheatre][kFaceFloor];
+        float afar[3], gold[3], heart[3], diamond[3], base[3];
+        RoomCarpet(0.123f, 0.456f, 7.0f, 7.0f, afar);
+        RoomCarpet(0.0f, 0.0f, 1e-4f, 1e-4f, gold);
+        RoomCarpet(0.5f * kRoomCarpetTile, 0.0f, 1e-4f, 1e-4f, heart);
+        RoomCarpet(0.5f * kRoomCarpetTile + 0.03f, 0.0f, 1e-4f, 1e-4f, diamond);
+        RoomCarpet(0.25f * kRoomCarpetTile, 0.0f, 1e-4f, 1e-4f, base);
+        bool ok = true;
+        for (int ch = 0; ch < 3; ch++)
+            ok = ok && std::fabs(mean[ch] - tint[ch]) < 0.01f * tint[ch] + 0.002f && std::fabs(afar[ch] - tint[ch]) < 0.03f * tint[ch] + 0.003f &&
+                 std::fabs(gold[ch] - kRoomCarpetGold[ch]) < 1e-4f && std::fabs(heart[ch] - kRoomCarpetGold[ch]) < 1e-4f &&
+                 std::fabs(diamond[ch] - kRoomCarpetTeal[ch]) < 1e-4f && std::fabs(base[ch] - kRoomCarpetBase[ch]) < 1e-4f;
+        if (!ok)
+            fprintf(stderr, "carpet mean %.4f %.4f %.4f, afar %.4f %.4f %.4f\n", mean[0], mean[1], mean[2], afar[0], afar[1], afar[2]);
+        Check(ok, "theatre: the carpet's mean is the floor's tint, from afar too; gold lattice and hearts, teal diamonds, burgundy");
+    }
+    RoomInputs in;
+    in.W = 5.7f; in.H = 5.7f * 9.0f / 16.0f; in.eye[1] = 0.05f; in.eye[2] = seat.distance; in.env = kRoomEnvTheatre; in.seat = kRoomSeatMiddle;
+    Room room;
+    Check(BuildRoom(in, room) && room.env == kRoomEnvTheatre && room.standsRows == seat.rows && room.viewerRow == seat.viewerRow && RoomInside(room, in.eye),
+          "theatre: the room builds round the viewer");
+    const float viewerTread = room.standsT0 + (float)room.viewerRow * room.standsRiser;
+    Check(std::fabs(room.standsZ0 + (float)room.viewerRow * room.standsPitch - in.eye[2]) < 1e-5f && std::fabs(in.eye[1] - viewerTread - kRoomSeatedEye) < 1e-5f,
+          "theatre: the viewer's row runs through the head, its tread a seated eye height below it");
+    const float rearTread = room.standsT0 + (float)(room.standsRows - 1) * room.standsRiser;
+    Check(room.yF <= room.standsT0 - kRoomStageDrop + 1e-5f && room.yF <= -0.5f * in.H - kRoomFloorBelowScreen + 1e-5f && room.yC >= rearTread + kRoomHeadroom - 1e-5f &&
+          room.zB >= room.standsZ0 + ((float)room.standsRows - 0.5f) * room.standsPitch + kRoomRearWalk - 1e-4f && room.X >= kRoomStandsWidth * in.W + kRoomAisle - 1e-5f,
+          "theatre: the floor in front, the ceiling, the back wall and the side walls make room for the stands");
+    Check(room.seatX0 == in.eye[0] && room.seatBlock + 0.5f * kRoomSeatPitch + kRoomAisle <= room.X + 1e-5f, "theatre: the seats line up on the viewer, an aisle each side");
+    {
+        // The hall does not follow the screen: a 2 m and a 10 m screen get the same rows; the
+        // narrow one the hall's own walls (an aisle beyond seats 0.6 x 5.7 m each side), the
+        // wide one wider walls round the same rows.
+        RoomInputs narrowIn = in, wideIn = in;
+        narrowIn.W = 2.0f; narrowIn.H = 2.0f * 9.0f / 16.0f;
+        wideIn.W = 10.0f; wideIn.H = 10.0f * 9.0f / 16.0f;
+        Room rs, rl;
+        Check(BuildRoom(narrowIn, rs) && BuildRoom(wideIn, rl) && rs.standsRows == room.standsRows && rl.standsRows == room.standsRows &&
+              rs.standsPitch == room.standsPitch && rl.standsPitch == room.standsPitch && rs.viewerRow == room.viewerRow && rl.viewerRow == room.viewerRow &&
+              rs.standsZ0 == room.standsZ0 && std::fabs(rs.X - (kRoomStandsWidth * kRoomHallWidth + kRoomAisle)) < 1e-5f && rl.X > room.X,
+              "theatre: the screen's width leaves the hall's rows alone (and its walls, unless wider than 5.7 m)");
+    }
+    const RoomStands stands = MakeRoomStands(room);
+    {
+        // Straight down from the eye: the viewer's own seat's cushion.
+        const float down[3] = { 0, -1, 0 };
+        RoomStandsHit h;
+        Check(TraceStands(stands, in.eye, down, 3.0e38f, h) && h.part == kRoomStandCushion && h.normal == 2 &&
+              std::fabs(h.t - (kRoomSeatedEye - kRoomCushion[2])) < 1e-4f && h.object == room.standsRows + room.viewerRow * room.seatCols - room.seatJMin,
+              "theatre: straight down, the viewer's own seat's cushion");
+        Check(h.cell == room.viewerRow, "theatre: a hit says its row");
+        // Leaning back and down into the own seat's bounding box: its armrest is still there.
+        const float lean[3] = { in.eye[0] + 0.5f * kRoomSeatPitch, viewerTread + 0.85f, in.eye[2] + 0.1f };
+        Check(TraceStands(stands, lean, down, 3.0e38f, h) && h.part == kRoomStandArmTop && std::fabs(h.t - (0.85f - kRoomArm[2])) < 1e-4f,
+              "theatre: from inside the own seat's bounding box, its armrest below");
+        // Down just in front of the own row's seats (behind the row in front's backs): its tread.
+        const float gap[3] = { in.eye[0] + kRoomSeatPitch - 0.5f * kRoomSeatPitch + 0.02f, in.eye[1], in.eye[2] - 0.3f };
+        Check(TraceStands(stands, gap, down, 3.0e38f, h) && h.part == kRoomStandTread && std::fabs(h.t - kRoomSeatedEye) < 1e-4f,
+              "theatre: down in front of the seats, the tread");
+        // Down onto the next seat: its cushion's top.
+        const float o[3] = { in.eye[0] + kRoomSeatPitch, in.eye[1], in.eye[2] + 0.05f };
+        Check(TraceStands(stands, o, down, 3.0e38f, h) && h.part == kRoomStandCushion && h.normal == 2 &&
+              std::fabs(h.t - (kRoomSeatedEye - kRoomCushion[2])) < 1e-4f, "theatre: down onto the next seat, its cushion");
+        // Between the next two seats: an armrest.
+        const float oa[3] = { in.eye[0] + 0.5f * kRoomSeatPitch, in.eye[1], in.eye[2] };
+        Check(TraceStands(stands, oa, down, 3.0e38f, h) && h.part == kRoomStandArmTop && h.normal == 2 && std::fabs(h.t - (kRoomSeatedEye - kRoomArm[2])) < 1e-4f,
+              "theatre: down between two seats, the top of the armrest's round top");
+        // The next seat's back: down onto the crown of its round top, and 5 cm off it, lower on the curve.
+        const float zBack = in.eye[2] + 0.5f * (kRoomBack[3] + kRoomBack[4]);
+        const float ob[3] = { in.eye[0] + kRoomSeatPitch, in.eye[1], zBack }, ob5[3] = { in.eye[0] + kRoomSeatPitch, in.eye[1], zBack + 0.05f };
+        const float crownY = viewerTread + kRoomBack[2] - kRoomBackR + std::sqrt(kRoomBackR * kRoomBackR - 0.05f * 0.05f);
+        Check(TraceStands(stands, ob, down, 3.0e38f, h) && h.part == kRoomStandBackTop && h.normal == 2 && std::fabs(h.t - (kRoomSeatedEye - kRoomBack[2])) < 1e-4f &&
+              TraceStands(stands, ob5, down, 3.0e38f, h) && h.part == kRoomStandBackTop && std::fabs(in.eye[1] - h.t - crownY) < 1e-4f,
+              "theatre: down onto a seat back's round top, on its crown and lower 5 cm off it");
+        // Just under the crown, from behind the row into the gap between two backs: the back's
+        // flat end (its half disc), where the line through the gap meets it. (From behind: a ray
+        // starting between the seats would start inside their bounding boxes, as an eye never does.)
+        const float oe[3] = { in.eye[0] + 1.5f * kRoomSeatPitch, viewerTread + kRoomBack[2] - 0.03f, zBack + 0.5f }, west[3] = { -0.05f, 0, -0.5f };
+        Check(TraceStands(stands, oe, west, 3.0e38f, h) && h.part == kRoomStandBack && h.normal == 0 && std::fabs(h.t - 1.0f) < 1e-4f,
+              "theatre: under the crown into the gap between two backs, the back's flat end");
+        // Down past a back's square corner, outside the curve: the cushion behind it is not there, the tread is.
+        const float oc[3] = { in.eye[0] + kRoomSeatPitch + kRoomBack[0] - 0.001f, in.eye[1], in.eye[2] + kRoomBack[4] - 0.001f };
+        RoomSeatCap cap;
+        Check(RoomSeatCapOf(in.eye[0] + kRoomSeatPitch, viewerTread, in.eye[2], 1, cap) && TraceStands(stands, oc, down, 3.0e38f, h) &&
+              h.part == kRoomStandBackTop && in.eye[1] - h.t < viewerTread + kRoomBack[2] - 0.04f,
+              "theatre: down by a back's corner, the curve lower than the square corner was");
+        // Backwards at seat height: under the next row's cushion and back, to the riser of the row after.
+        const float low[3] = { in.eye[0], viewerTread + 0.45f, in.eye[2] + 0.5f }, back[3] = { 0, 0, 1 };
+        Check(TraceStands(stands, low, back, 3.0e38f, h) && h.part == kRoomStandRiser && h.normal == 5 &&
+              std::fabs(low[2] + h.t - (room.standsZ0 + ((float)room.viewerRow + 1.5f) * room.standsPitch)) < 1e-4f,
+              "theatre: looking back at seat height, under the next row's seat to the riser of the row after");
+        // At the screen: its middle and its bottom edge are seen over the rows in front.
+        const float toMiddle[3] = { -in.eye[0], -in.eye[1], -in.eye[2] }, toBottom[3] = { -in.eye[0], -0.5f * in.H - in.eye[1], -in.eye[2] };
+        Check(!TraceStands(stands, in.eye, toMiddle, 1.0f, h) && !TraceStands(stands, in.eye, toBottom, 1.0f, h),
+              "theatre: from the middle seat the whole screen is seen over the rows in front");
+        // Looking forward and down: the backs of the seats in front - grazing, a round top; steeper, a back.
+        const float ahead[3] = { 0, -0.5f, -1.0f }, steeper[3] = { 0, -0.7f, -1.0f };
+        Check(TraceStands(stands, in.eye, ahead, 3.0e38f, h) && h.part == kRoomStandBackTop && h.normal == 2 &&
+              TraceStands(stands, in.eye, steeper, 3.0e38f, h) && h.part == kRoomStandBack && h.normal == 4,
+              "theatre: ahead and down, over the seats in front onto a round top, steeper onto a seat's back");
+    }
+
+    // ---- the coarse patches and the constants
+    RoomEmitterLayout layout = RoomLayout(in.W, in.H, 256, 178);
+    std::vector<RoomEmitter> em;
+    Check(!BuildRoomEmitters(room, in.cyl, in.W, in.H, 0.5f * in.W + room.margin, 0.5f * in.H + room.margin, layout, em), "theatre: its emitters need the coarse patches");
+    layout.coarse = kRoomCoarse;
+    Check(BuildRoomEmitters(room, in.cyl, in.W, in.H, 0.5f * in.W + room.margin, 0.5f * in.H + room.margin, layout, em) && (int)em.size() == layout.total() &&
+          layout.total() == layout.count() + kRoomCoarse, "theatre: the coarse patches after the room's emitters");
+    {
+        float area = 0, coarseArea = 0;
+        for (int k = 0; k < layout.gridX * layout.gridY; k++) area += em[(size_t)k].c[0][3];
+        for (int k = 0; k < kRoomCoarse; k++) coarseArea += em[(size_t)layout.count() + k].c[0][3];
+        Check(std::fabs(coarseArea - area) < 1e-3f * area && std::fabs(coarseArea - in.W * in.H) < 1e-3f * in.W * in.H, "theatre: the coarse patches cover the screen once");
+        // Their radiance: the exact mean of their picture's pixels, as the screen's patches.
+        const int sw = 64, sh = 36;
+        std::vector<unsigned char> pic((size_t)sw * sh * 4, 0);
+        for (int y = 0; y < sh; y++)
+            for (int x = 0; x < sw; x++) pic[((size_t)y * sw + x) * 4 + 0] = x < sw / 2 ? 255 : 0;
+        std::vector<unsigned char> glow((size_t)256 * 178 * 4, 0);
+        float table[256];
+        RoomDecodeTable(table);
+        Check(RoomEmitRadiance(layout, pic.data(), sw, sh, sw * 4, glow.data(), 256 * 4, false, 1.0f, table, em), "theatre: emit");
+        static_assert(kRoomCoarse == 1, "the test below expects one coarse patch, the whole picture");
+        const RoomEmitter& whole = em[(size_t)layout.count()];
+        Check(std::fabs(whole.L[0] - 0.5f) < 1e-6f && whole.L[1] == 0 && whole.L[2] == 0, "theatre: the coarse patch is the mean of the whole picture");
+        // The lightmap leaves them out: its texel is the same with them dark.
+        RoomLook look;
+        look.env = kRoomEnvTheatre; look.light = 30;
+        const RoomShading sh2 = MakeRoomShading(room, 40, 0, in.W * in.H, look);
+        std::vector<RoomEmitter> dark = em;
+        for (int k = 0; k < kRoomCoarse; k++) dark[(size_t)layout.count() + k].L[0] = 0;
+        float a[3], b[3];
+        Check(RoomTexel(room, sh2, em, kFaceFloor, 30, 40, a) && RoomTexel(room, sh2, dark, kFaceFloor, 30, 40, b) && a[0] == b[0],
+              "theatre: the lightmap leaves the coarse patches out (they light only the stands)");
+        RoomView view;
+        view.W = in.W; view.H = in.H; view.glowOn = false; view.glowHalfW = 0.5f * in.W + room.margin; view.glowHalfH = 0.5f * in.H + room.margin;
+        const RoomConstants rc = MakeRoomConstants(room, sh2, layout, view, sw, sh, 1.0f);
+        Check(rc.env == (uint32_t)kRoomEnvTheatre && RoomLookOn(rc) && rc.standsRows == (uint32_t)room.standsRows && rc.viewerRow == (uint32_t)room.viewerRow &&
+              rc.coarseFirst == (uint32_t)layout.count() && rc.coarseCount == (uint32_t)kRoomCoarse && rc.standsZEnd == room.zB && rc.emitters == (uint32_t)layout.count() &&
+              rc.sconcePitch == room.pitchSide && (rc.flags & kRoomFlagLight) != 0, "theatre: the constants carry the stands, the coarse patches and the cinema's sconces");
+        const RoomStands fromConstants = MakeRoomStands(rc);
+        Check(fromConstants.rows == stands.rows && fromConstants.z0 == stands.z0 && fromConstants.t0 == stands.t0 && fromConstants.zEnd == stands.zEnd &&
+              fromConstants.x0 == stands.x0 && fromConstants.block == stands.block, "theatre: the stands from the constants are the room's");
+
+        // ---- the stands' light: the screen lights what faces it, not what faces away
+        for (int k = 0; k < kRoomCoarse; k++) for (int ch = 0; ch < 3; ch++) em[(size_t)layout.count() + k].L[ch] = 1.0f;
+        const RoomEmitter* coarse = em.data() + layout.count();
+        const RoomEmitter* lamp = em.data() + (layout.count() - 1);
+        const float Dx[3] = { 1e-3f, 0, 0 }, Dy[3] = { 0, 1e-3f, 0 };
+        const float zc = room.standsZ0 + (float)(room.viewerRow - 1) * room.standsPitch;
+        const float o[3] = { in.eye[0] + kRoomSeatPitch, 0.0f, zc + 0.36f };
+        float facing[3], away[3];
+        const float toScreen[3] = { 0, 0, -1 }, fromScreen[3] = { 0, 0, 1 };
+        // The back of a seat in the row in front, from behind (+z face) and from in front (-z face).
+        const float oBehind[3] = { o[0], viewerTread - room.standsRiser + 0.8f, zc + 0.9f }, oFront[3] = { o[0], viewerTread - room.standsRiser + 0.8f, zc - 0.1f };
+        Check(RoomStandsColour(rc, coarse, lamp, kRoomStandBack, 4, oBehind, toScreen, (oBehind[2] - (zc + kRoomBack[4])), Dx, Dy, away, nullptr) &&
+              RoomStandsColour(rc, coarse, lamp, kRoomStandBack, 5, oFront, fromScreen, ((zc + kRoomBack[3]) - oFront[2]), Dx, Dy, facing, nullptr),
+              "theatre: a seat back's two sides");
+        Check(facing[0] > 2.0f * away[0] && away[0] > 0, "theatre: a seat back's side towards the screen is lit by it; its other side only by the room light and the bounce");
+        // A tread under a seat is darker than the same tread just in front of the seat.
+        float under[3], open[3];
+        const float dn[3] = { 0, -1, 0 };
+        const float oUnder[3] = { o[0], viewerTread - room.standsRiser + 0.3f, zc + 0.05f };
+        const float oOpen[3] = { o[0], viewerTread - room.standsRiser + 0.3f, zc - 0.42f };
+        Check(RoomStandsColour(rc, coarse, lamp, kRoomStandTread, 2, oUnder, dn, 0.3f, Dx, Dy, under, nullptr) &&
+              RoomStandsColour(rc, coarse, lamp, kRoomStandTread, 2, oOpen, dn, 0.3f, Dx, Dy, open, nullptr), "theatre: two treads");
+        Check(under[0] < 0.6f * open[0], "theatre: the floor under a seat is darker");
+        RoomSurfaceInfo info;
+        float strip[3];
+        const float oStrip[3] = { 0.5f * (room.seatBlock + 0.5f * kRoomSeatPitch + kRoomArm[0] + room.X), viewerTread + 0.3f,
+                                  room.standsZ0 + ((float)room.viewerRow - 0.5f) * room.standsPitch + 0.5f * kRoomNosingW };
+        Check(RoomStandsColour(rc, coarse, lamp, kRoomStandTread, 2, oStrip, dn, 0.3f, Dx, Dy, strip, &info) && info.envPart == kRoomPartStep &&
+              std::fabs(strip[0] - kRoomStepL[0]) < 1e-3f, "theatre: a step light on the front edge of each tread in the aisles");
+    }
+}
+
 int main(int argc, char** argv)
 {
     TestForegroundRefinement();
@@ -3418,7 +3658,7 @@ int main(int argc, char** argv)
         const std::string path(argv[1]); DesktopSettings settings;
         Check(ReadDesktopSettings(std::wstring(path.begin(), path.end()), settings), "read C# emitted snapshot");
         Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7 && settings.menuKey == 120 && settings.foreground == 1 && settings.paired == 1 &&
-            settings.version == 18 && settings.env == 0 && settings.layer == 0 && settings.showDepthMap == 0 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
+            settings.version == 19 && settings.env == 0 && settings.seat == 1 && settings.layer == 0 && settings.showDepthMap == 0 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
             "C# to native control contract");
     }
     TestCaptureSelection();
@@ -3433,5 +3673,6 @@ int main(int argc, char** argv)
     TestScreenCurve();
     TestRoom();
     TestRoomEnvironments();
+    TestRoomTheatre();
     std::puts("PASS: room geometry, rays and light, room environments, curved screen geometry, ambilight constants, game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop, capture downscale, depth GPU choice");
 }

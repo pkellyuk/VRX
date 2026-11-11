@@ -118,7 +118,7 @@
         <Slider x:Name="WidthSlider" Minimum="1" Maximum="10" Value="5.7" ValueChanged="SettingsChanged"/>
        </StackPanel>
        <StackPanel Grid.Column="2">
-        <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValueMetres, Element=DistanceSlider}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Distance}"/></DockPanel>
+        <DockPanel><TextBlock x:Name="DistanceValue" DockPanel.Dock="Right" Style="{StaticResource Value}"/><TextBlock Style="{StaticResource Label}" Text="{l:Tr Distance}"/></DockPanel>
         <Slider x:Name="DistanceSlider" Minimum="1" Maximum="8" Value="3" ValueChanged="SettingsChanged"/>
        </StackPanel>
        <StackPanel Grid.Row="1">
@@ -162,9 +162,20 @@
        <TextBlock DockPanel.Dock="Left" Text="{l:Tr Environment}" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0,0,12,0"/>
        <ComboBox x:Name="EnvironmentList" SelectedIndex="0" SelectionChanged="EnvironmentChanged" ToolTip="{l:Tr EnvironmentTip}">
         <ComboBoxItem Content="{l:Tr EnvironmentRoom}"/>
-        <ComboBoxItem Content="{l:Tr EnvironmentCinema}"/>
+        <!-- The seatless cinema, hidden: the cinema with seats replaces it (Profile.EnvironmentCinema). -->
+        <ComboBoxItem Content="{l:Tr EnvironmentCinema}" Visibility="Collapsed"/>
         <ComboBoxItem Content="{l:Tr EnvironmentOpenAir}"/>
         <ComboBoxItem Content="{l:Tr EnvironmentLounge}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentTheatre}"/>
+       </ComboBox>
+      </DockPanel>
+      <DockPanel x:Name="SeatRow" Margin="0,0,0,10" Visibility="Collapsed">
+       <TextBlock x:Name="SeatValue" DockPanel.Dock="Right" Style="{StaticResource Value}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+       <TextBlock DockPanel.Dock="Left" Text="{l:Tr Seat}" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+       <ComboBox x:Name="SeatList" SelectedIndex="1" SelectionChanged="SettingsChanged" ToolTip="{l:Tr SeatTip}">
+        <ComboBoxItem Content="{l:Tr SeatFront}"/>
+        <ComboBoxItem Content="{l:Tr SeatMiddle}"/>
+        <ComboBoxItem Content="{l:Tr SeatRear}"/>
        </ComboBox>
       </DockPanel>
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" x:Name="RoomValue"/><TextBlock x:Name="RoomLabel" Style="{StaticResource Label}" Text="{l:Tr RoomLabel}"/></DockPanel>

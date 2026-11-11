@@ -123,9 +123,45 @@ public sealed class Profile
     // The room's environment (v18 snapshot, live; room.h kRoomEnv*, XENV.md): 0 the room (as
     // before, the default, also for profiles saved before it existed), 1 a cinema, 2 the open
     // air at night, 3 a lounge. Glass and reflections are the room's own; the open air has no
-    // room light. Shown while the Room slider is above 0.
-    public const int EnvironmentRoom = 0, EnvironmentCinema = 1, EnvironmentOpenAir = 2, EnvironmentLounge = 3, EnvironmentCount = 4;
+    // room light. Shown while the Room slider is above 0. The seatless cinema (1) is hidden
+    // from the list - the cinema with seats (4) replaces it - and a profile saved with it
+    // opens in the cinema with seats (Shown); the engine still draws it.
+    public const int EnvironmentRoom = 0, EnvironmentCinema = 1, EnvironmentOpenAir = 2, EnvironmentLounge = 3, EnvironmentTheatre = 4, EnvironmentCount = 5;
     public int RoomEnvironment { get; set; }
+
+    // The environment the list shows for a saved one: the hidden seatless cinema becomes the
+    // cinema with seats; anything out of range the room.
+    public static int ShownEnvironment(int environment) =>
+        environment == EnvironmentCinema ? EnvironmentTheatre : environment is >= EnvironmentRoom and < EnvironmentCount ? environment : EnvironmentRoom;
+
+    // The theatre (4, "Cinema with seats"; v19 snapshot, live): your seat, front, middle (the
+    // default) or rear, which sets the screen's distance in place of the Distance slider - the
+    // seat's in the hall (SeatDistance), whatever the screen's width, so the Width slider still
+    // makes the screen look bigger or smaller.
+    public const int SeatFront = 0, SeatMiddle = 1, SeatRear = 2, SeatCount = 3;
+    public int RoomSeat { get; set; } = SeatMiddle;
+
+    // room.h RoomTheatreLayout, in the same float arithmetic: the rows a metre apart (0.95 at
+    // least, four at least) from 0.8 screen widths (2 m at least) to 2; front is the first
+    // row, rear the last, middle the row nearest 1.3 widths. The screen's distance from the
+    // seat, metres (0 for no width).
+    // room.h kRoomHallWidth and RoomTheatreSeat: the hall's rows are laid out for a 5.7 m
+    // screen (the default width) whatever the screen's own width; a seat's distance, metres.
+    public const float HallWidth = 5.7f;
+    public static float SeatDistance(int seat) => TheatreDistance(HallWidth, seat);
+
+    public static float TheatreDistance(float width, int seat)
+    {
+        if (!(width > 0) || !float.IsFinite(width)) return 0;
+        int s = seat is < SeatFront or >= SeatCount ? SeatMiddle : seat;
+        float front = MathF.Max(0.8f * width, 2.0f);
+        float rear = MathF.Max(2.0f * width, front + 3 * 0.95f);
+        int rows = Math.Max(4, (int)MathF.Round((rear - front) / 1.0f, MidpointRounding.AwayFromZero) + 1);
+        if ((rear - front) / (rows - 1) < 0.95f) rows = (int)MathF.Floor((rear - front) / 0.95f + 1e-4f) + 1;
+        float pitch = (rear - front) / (rows - 1);
+        int row = s == SeatFront ? 0 : s == SeatRear ? rows - 1 : Math.Clamp((int)MathF.Round((1.3f * width - front) / pitch, MidpointRounding.AwayFromZero), 1, rows - 2);
+        return front + row * pitch;
+    }
 
     // "#RRGGBB" or "RRGGBB" (any case) -> 0xRRGGBB.
     public static bool TryParseColor(string? text, out int rgb)
@@ -150,11 +186,11 @@ public sealed class Profile
         Range(Height, -2, 2) && Range(Horizontal, -3, 3) && Range(Strength, 0, 2) &&
         ScreenCurve is >= 0 and <= 100 && EdgeFlatten is >= 0 and <= 15 && EdgeStepMin is >= 5 and <= 60 && WidenNear is >= 0 and <= 300 && AmbilightStrength is >= 0 and <= 100 && TryParseColor(WorldColor, out _) && Room is >= 0 and <= 100 &&
         RoomGlass is >= 0 and <= 100 && RoomReflections is >= 0 and <= 100 && RoomLight is >= 0 and <= 100 && TryParseColor(RoomLightColor, out _) &&
-        RoomEnvironment is >= 0 and < EnvironmentCount &&
+        RoomEnvironment is >= 0 and < EnvironmentCount && RoomSeat is >= SeatFront and < SeatCount &&
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 18 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear} {(ThinParts ? 1 : 0)} {(SharpenEdges ? 1 : 0)} {(ShowDepthMap ? 1 : 0)} {(BackLayer ? 1 : 0)} {RoomEnvironment}\n");
+        $"VRX 19 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear} {(ThinParts ? 1 : 0)} {(SharpenEdges ? 1 : 0)} {(ShowDepthMap ? 1 : 0)} {(BackLayer ? 1 : 0)} {RoomEnvironment} {RoomSeat}\n");
 }
 
 public sealed class ProfileStore(string root)
