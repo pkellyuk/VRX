@@ -6239,13 +6239,63 @@ static bool LoadModel(App& app);
 static bool CreateDmlDevice(ID3D12Device* device, ComPtr<IDMLDevice>& out)
 {
     if (!device) { Log("CreateDmlDevice: FAIL no device"); return false; }
-    HMODULE dmllib = LoadLibraryW(L"DirectML.dll");
-    if (!dmllib) { Log("CreateDmlDevice: FAIL DirectML.dll"); return false; }
+    // By full path, never by name: System32 has its own (older) DirectML.dll, which a
+    // missing engine copy would otherwise load in silence.
+    const auto dmlPath = ExecutableDirectory() / L"DirectML.dll";
+    if (!std::filesystem::is_regular_file(dmlPath))
+    {
+        Log("CreateDmlDevice: FAIL DirectML.dll is missing from the engine folder - verify the files in Steam (Properties - Installed Files - Verify integrity) or reinstall, and check your antivirus quarantine");
+        return false;
+    }
+    HMODULE dmllib = LoadLibraryExW(dmlPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!dmllib) { Log("CreateDmlDevice: FAIL DirectML.dll could not be loaded (error %lu) - verify the files in Steam or reinstall", GetLastError()); return false; }
+    Log("CreateDmlDevice: loaded %ls", dmlPath.c_str());
     auto createDmlDevice = (HRESULT(WINAPI*)(ID3D12Device*, DML_CREATE_DEVICE_FLAGS, REFIID, void**))
         GetProcAddress(dmllib, "DMLCreateDevice");
     if (!createDmlDevice) { Log("CreateDmlDevice: FAIL DMLCreateDevice export"); return false; }
     if (FAILED(createDmlDevice(device, DML_CREATE_DEVICE_FLAG_NONE, IID_PPV_ARGS(&out)))) { Log("CreateDmlDevice: FAIL DMLCreateDevice"); return false; }
     return true;
+}
+
+// The engine's own ONNX Runtime, loaded by full path from the engine folder and
+// never linked by name. Windows 11 now ships an older onnxruntime.dll in System32
+// (1.17 by late 2026); when the engine's copy went missing (antivirus quarantine,
+// an interrupted update), the by-name import silently loaded that one, whose API is
+// too old, and the only message was "no OrtApi" (Steam report, 1.8.0).
+// Returns null, with a message the desktop app shows, when it cannot be used.
+static const OrtApi* LoadOnnxRuntime()
+{
+    Log("LoadOnnxRuntime: enter");
+
+    const auto path = ExecutableDirectory() / L"onnxruntime.dll";
+    if (!std::filesystem::is_regular_file(path))
+    {
+        Log("LoadOnnxRuntime: FAIL onnxruntime.dll is missing from the engine folder - verify the files in Steam (Properties - Installed Files - Verify integrity) or reinstall, and check your antivirus quarantine");
+        return nullptr;
+    }
+    HMODULE lib = LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!lib)
+    {
+        Log("LoadOnnxRuntime: FAIL onnxruntime.dll could not be loaded (error %lu) - verify the files in Steam or reinstall", GetLastError());
+        return nullptr;
+    }
+    Log("LoadOnnxRuntime: loaded %ls", path.c_str());
+
+    using GetApiBaseFn = const OrtApiBase*(ORT_API_CALL*)();
+    auto getApiBase = reinterpret_cast<GetApiBaseFn>(GetProcAddress(lib, "OrtGetApiBase"));
+    if (!getApiBase) { Log("LoadOnnxRuntime: FAIL onnxruntime.dll has no OrtGetApiBase - the file is damaged; verify the files in Steam or reinstall"); return nullptr; }
+    const OrtApiBase* base = getApiBase();
+    if (!base) { Log("LoadOnnxRuntime: FAIL OrtGetApiBase returned null - verify the files in Steam or reinstall"); return nullptr; }
+
+    const char* version = base->GetVersionString ? base->GetVersionString() : "unknown";
+    const OrtApi* api = base->GetApi(ORT_API_VERSION);
+    if (!api)
+    {
+        Log("LoadOnnxRuntime: FAIL onnxruntime.dll is version %s, too old for this engine (needs API %d) - verify the files in Steam or reinstall", version ? version : "unknown", ORT_API_VERSION);
+        return nullptr;
+    }
+    Log("LoadOnnxRuntime: exit ok (ONNX Runtime %s, API %d)", version ? version : "unknown", ORT_API_VERSION);
+    return api;
 }
 
 // One-time ONNX Runtime + DirectML setup. The model itself is loaded by LoadModel,
@@ -6254,8 +6304,10 @@ static bool InitModel(App& app)
 {
     Log("InitModel: enter");
 
-    ort = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-    if (!ort) { Log("InitModel: FAIL no OrtApi"); return false; }
+    ort = LoadOnnxRuntime();
+    // No "FAIL" here: the desktop app shows the last FAIL line, which must stay the
+    // LoadOnnxRuntime one that says what to do.
+    if (!ort) { Log("InitModel: exit, ONNX Runtime unavailable"); return false; }
     if (OrtStatus* st = ort->GetExecutionProviderApi("DML", ORT_API_VERSION, (const void**)&app.dmlApi)) { Fail("GetExecutionProviderApi(DML)", st); return false; }
     if (!app.dmlApi) { Log("InitModel: FAIL null OrtDmlApi"); return false; }
 
@@ -11407,9 +11459,11 @@ int wmain(int argc, wchar_t** wideArgv)
         for (const auto* name : { L"openxr_loader.dll", L"DirectML.dll" })
         {
             HMODULE module = LoadLibraryW((ExecutableDirectory() / name).c_str());
-            if (!module) { Log("Package check: missing dependency (%lu)", GetLastError()); return 1; }
+            if (!module) { Log("Package check: missing dependency %ls (%lu)", name, GetLastError()); return 1; }
             FreeLibrary(module);
         }
+        // The engine's own ONNX Runtime, at the API version it was built for.
+        if (!LoadOnnxRuntime()) { Log("Package check: ONNX Runtime unusable"); return 1; }
         Log("Package check: PASS (model and native dependencies available; no VR session started)");
         return 0;
     }
