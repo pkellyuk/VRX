@@ -2246,11 +2246,13 @@ public partial class MainWindow : Window
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         }
         finally { chooser.Close(); }
-        if (chooser.Place is not { Width: 930, Height: 610, Maximized: false })
-            throw new Exception($"The chooser must report its size when it closes (got {chooser.Place})");
+        // HWND sizes round to physical pixels (for example 930.4 DIPs at 125% DPI).
+        if (chooser.Place is not { Maximized: false } place || Math.Abs(place.Width - 930) > 1 || Math.Abs(place.Height - 610) > 1)
+            throw new Exception($"The chooser must report its size when it closes (got {chooser.Place?.Width:R} x {chooser.Place?.Height:R}, maximized {chooser.Place?.Maximized})");
         var chooserStore = new ProfileStore(Path.Combine(output, "chooser-settings"));
         chooserStore.SaveAppSettings(new AppSettings { ChooserWindow = chooser.Place });
-        if (chooserStore.LoadAppSettings().ChooserWindow is not { Width: 930, Height: 610 } ||
+        if (chooserStore.LoadAppSettings().ChooserWindow is not { } savedChooser ||
+            savedChooser.Width != chooser.Place!.Width || savedChooser.Height != chooser.Place.Height ||
             AppSettings.ValidSize(new WindowPlace { Width = -4, Height = 300 }) != null)
             throw new Exception("The chooser's size must round-trip through app-settings.json, and nonsense sizes be dropped");
         System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestChooser exit: {screens.Count} display(s), {apps.Count} app(s)");

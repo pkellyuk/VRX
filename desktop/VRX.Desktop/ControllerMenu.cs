@@ -21,6 +21,7 @@ public sealed class ControllerMenu : IDisposable
     public const int PixelsAt = HeaderBytes + EventCount * 16;
     public const int Capacity = PixelsAt + Width * Height * 4;
     public const int Magic = 0x58524356;
+    public const int TitleLeft = 24, TitleTop = 24, TitleHeight = 56, TitleRight = Width - 24;
     private readonly MemoryMappedFile map;
     private readonly MemoryMappedViewAccessor memory;
     private readonly Mutex mutex;
@@ -28,7 +29,9 @@ public sealed class ControllerMenu : IDisposable
     private readonly UserControl surface;
     private readonly ScrollViewer scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden };
     private readonly StackPanel body = new();
-    private readonly TextBlock heading = new() { FontSize = 28, FontWeight = FontWeights.SemiBold, Margin = new(0, 0, 0, 6) };
+    private readonly TextBlock heading = new() { FontSize = 26, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+    private readonly Border titleBar = new() { Height = TitleHeight, Background = new SolidColorBrush(Color.FromRgb(37, 50, 72)),
+        CornerRadius = new(8), Padding = new(12, 0, 12, 0), Margin = new(0, 0, 0, 8) };
     private readonly TextBlock status = new() { FontSize = 16, TextWrapping = TextWrapping.Wrap, MaxHeight = 56 };
     private readonly Dictionary<FrameworkElement, Action<Point, bool>> targets = new();
     private readonly List<Action> refresh = new();
@@ -59,10 +62,14 @@ public sealed class ControllerMenu : IDisposable
         }
         finally { mutex.ReleaseMutex(); }
 
-        var root = new DockPanel { Margin = new(24) };
+        var root = new DockPanel { Margin = new(TitleLeft, TitleTop, Width - TitleRight, 24) };
         var top = new StackPanel();
         DockPanel.SetDock(top, Dock.Top);
-        top.Children.Add(heading);
+        var title = new DockPanel();
+        var dragHint = new TextBlock { Text = Loc.Get("ControllerMenuDrag"), FontSize = 16,
+            VerticalAlignment = VerticalAlignment.Center, Margin = new(12, 0, 0, 0) };
+        DockPanel.SetDock(dragHint, Dock.Right); title.Children.Add(dragHint); title.Children.Add(heading);
+        titleBar.Child = title; top.Children.Add(titleBar);
         top.Children.Add(new TextBlock { Text = Loc.Get("ControllerMenuHint"), FontSize = 16, Margin = new(0, 0, 0, 10) });
         var toolbar = new WrapPanel();
         top.Children.Add(toolbar);
@@ -337,9 +344,9 @@ public sealed class ControllerMenu : IDisposable
         foreach (var update in refresh.ToArray()) update();
         surface.UpdateLayout();
         bitmap.Clear(); bitmap.Render(surface); bitmap.CopyPixels(pixels, Width * 4, 0);
-        // A small solid texel region for the renderer's low-latency pointer quad.
+        // A solid white texel region for the renderer's low-latency beams and pointer.
         for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++)
-        { int p = (y * Width + x) * 4; pixels[p] = 255; pixels[p + 1] = 210; pixels[p + 2] = 120; pixels[p + 3] = 255; }
+        { int p = (y * Width + x) * 4; pixels[p] = pixels[p + 1] = pixels[p + 2] = pixels[p + 3] = 255; }
         if (!Lock()) return;
         try { memory.WriteArray(PixelsAt, pixels, 0, pixels.Length); memory.Write(16, ++generation); }
         finally { mutex.ReleaseMutex(); }
@@ -362,6 +369,10 @@ public sealed class ControllerMenu : IDisposable
         finally { mutex.ReleaseMutex(); }
         Tick();
         if (memory.ReadInt32(16) == 0) throw new Exception("Visible controller menu did not publish a bitmap");
+        var bar = titleBar.TranslatePoint(new Point(0, 0), surface);
+        if (bar.X != TitleLeft || bar.Y != TitleTop || titleBar.ActualHeight != TitleHeight || titleBar.ActualWidth != TitleRight - TitleLeft)
+            throw new Exception("The visible title bar must match the renderer's drag region");
+        if (pixels.Take(4).Any(b => b != 255)) throw new Exception("Controller beams must use solid white texels");
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using (var file = File.Create(System.IO.Path.Combine(output, "controller-menu-sections.png"))) encoder.Save(file);
 
@@ -411,6 +422,44 @@ public sealed class ControllerMenu : IDisposable
             }
         }
         if (!targets.Keys.OfType<Button>().Any()) throw new Exception("Controller section navigation lost its buttons");
+
+        void ClickButton(string label)
+        {
+            Tick();
+            var button = targets.Keys.OfType<Button>().Single(b => b.Content?.ToString() == label);
+            var p = button.TranslatePoint(new Point(button.ActualWidth / 2, button.ActualHeight / 2), surface);
+            Pointer(1, (float)(p.X / Width), (float)(p.Y / Height), 0);
+            Pointer(2, (float)(p.X / Width), (float)(p.Y / Height), 0);
+        }
+
+        // Exercise the nested pages through real hit testing. Isolated source controls
+        // let us check validation/events without changing the user's active profile.
+        var choices = new ComboBox();
+        for (int i = 0; i < 25; i++) choices.Items.Add(new ComboBoxItem { Content = $"Option {i}" });
+        choices.Items.Add(new ComboBoxItem { Content = "Hidden option", Visibility = Visibility.Collapsed });
+        choices.SelectedIndex = 0;
+        Choices(choices); Tick();
+        if (targets.Keys.OfType<Button>().Any(b => b.Content?.ToString() == "Hidden option"))
+            throw new Exception("Hidden desktop options must stay hidden in the controller menu");
+        Pointer(3, .5f, .5f, -1000); Tick();
+        if (scroll.VerticalOffset <= 0) throw new Exception("Thumbstick input did not scroll the option list");
+        scroll.ScrollToTop(); Tick();
+        ClickButton("Option 1");
+        if (choices.SelectedIndex != 1) throw new Exception("Controller option selection did not update its desktop source");
+
+        var hex = new TextBox { Text = "#123456" };
+        int committed = 0;
+        hex.LostFocus += (_, _) => committed++;
+        HexEditor(hex);
+        ClickButton(Loc.Get("ControllerMenuDelete"));
+        ClickButton("A");
+        ClickButton(Loc.Get("ControllerMenuApply"));
+        if (hex.Text != "#12345A" || committed != 1)
+            throw new Exception("Controller colour keypad did not commit through desktop validation");
+        ConfirmApply(); Tick();
+        if (heading.Text != Loc.Get("ApplyAllTitle")) throw new Exception("Apply to all needs an in-headset confirmation");
+        ClickButton(Loc.Get("ControllerMenuCancel"));
+        if (heading.Text != Loc.Get("ControllerMenuTitle")) throw new Exception("Cancelling Apply to all must return to the menu");
         Enable(false); Tick();
         if (memory.ReadInt32(8) != 0 || memory.ReadInt32(12) != 0) throw new Exception("Disabling controllers must hide the panel and stop input");
     }

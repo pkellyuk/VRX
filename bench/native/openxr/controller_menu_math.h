@@ -31,17 +31,53 @@ inline XrVector3f Rotate(XrQuaternionf q, XrVector3f v)
 }
 inline XrQuaternionf Inverse(XrQuaternionf q) { return {-q.x,-q.y,-q.z,q.w}; }
 
-// A stationary console, facing the seated player. Its top edge clears the bottom
-// of a level screen by five degrees. It is re-anchored only on opening/recentering,
-// never when the player tilts their head down to read it.
-inline XrPosef Place(XrVector3f eye, XrQuaternionf yaw, float screenBottomAngle, XrExtent2Df size)
+inline float Dot(XrVector3f a, XrVector3f b) { return a.x*b.x+a.y*b.y+a.z*b.z; }
+inline XrVector3f Cross(XrVector3f a, XrVector3f b) { return {a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}; }
+inline XrVector3f Normalize(XrVector3f v) { const float n = std::sqrt(Dot(v,v)); return n > 1e-6f ? Scale(v,1/n) : XrVector3f{0,0,0}; }
+
+// Open in the current gaze direction, then remain fixed until grabbed or reopened.
+inline XrPosef Place(XrPosef eye)
 {
-    constexpr float distance = 1.2f, pi = 3.14159265358979323846f;
-    const float half = std::atan2(size.height * .5f, distance);
-    const float down = std::clamp(std::max(40*pi/180, screenBottomAngle + half + 5*pi/180), 40*pi/180, 75*pi/180);
-    const XrQuaternionf pitch{-std::sin(down*.5f),0,0,std::cos(down*.5f)};
-    const auto orientation = Multiply(yaw,pitch);
-    return {orientation, Add(eye, Rotate(orientation,{0,0,-distance}))};
+    return {eye.orientation, Add(eye.position, Rotate(eye.orientation,{0,0,-1.2f}))};
+}
+
+struct PanelDrag
+{
+    float distance = 0;
+    XrVector3f offset{};
+    void Begin(XrPosef panel, XrExtent2Df size, XrPosef ray, float u, float v)
+    {
+        const auto point = Add(panel.position,Rotate(panel.orientation,{(u-.5f)*size.width,(.5f-v)*size.height,0}));
+        const auto delta = Sub(point,ray.position);
+        distance = std::sqrt(Dot(delta,delta));
+        offset = Sub(panel.position,point);
+    }
+    void Move(XrPosef& panel, XrPosef ray) const
+    {
+        panel.position = Add(Add(ray.position,Rotate(ray.orientation,{0,0,-distance})),offset);
+    }
+};
+
+// Rotation whose local X/Y axes are the billboard's right/up vectors.
+inline XrQuaternionf Axes(XrVector3f x, XrVector3f y, XrVector3f z)
+{
+    XrQuaternionf q{};
+    const float trace = x.x+y.y+z.z;
+    if (trace > 0) { const float s = 2*std::sqrt(trace+1); q = {(y.z-z.y)/s,(z.x-x.z)/s,(x.y-y.x)/s,s/4}; }
+    else if (x.x > y.y && x.x > z.z) { const float s = 2*std::sqrt(1+x.x-y.y-z.z); q = {s/4,(y.x+x.y)/s,(z.x+x.z)/s,(y.z-z.y)/s}; }
+    else if (y.y > z.z) { const float s = 2*std::sqrt(1+y.y-x.x-z.z); q = {(y.x+x.y)/s,s/4,(z.y+y.z)/s,(z.x-x.z)/s}; }
+    else { const float s = 2*std::sqrt(1+z.z-x.x-y.y); q = {(z.x+x.z)/s,(z.y+y.z)/s,s/4,(x.y-y.x)/s}; }
+    return q;
+}
+
+// A thin white compositor quad along the ray, billboarded towards the viewer.
+inline XrPosef Beam(XrPosef ray, float distance, XrVector3f eye)
+{
+    const auto up = Rotate(ray.orientation,{0,0,-1});
+    const auto middle = Add(ray.position,Scale(up,distance*.5f));
+    auto right = Normalize(Cross(up,Sub(eye,middle)));
+    if (Dot(right,right) < .5f) right = Rotate(ray.orientation,{1,0,0});
+    return {Axes(right,up,Normalize(Cross(right,up))),middle};
 }
 
 // UV origin is the bitmap's upper-left. Reject behind/parallel rays; a drag can

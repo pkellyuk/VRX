@@ -1,7 +1,6 @@
 #pragma once
 #include "controller_menu_protocol.h"
 #include "controller_menu_math.h"
-#include "screen_anchor.h"
 #include <string>
 #include <vector>
 #include <cstring>
@@ -17,7 +16,8 @@ class ControllerMenu
     vrxmenu::Shared* shared = nullptr;
     ULONGLONG nextOpen = 0;
     bool enabled = false, visible = false, attempted = false, ready = false;
-    bool pendingOpen = false, clickArmed = false, pressed = false;
+    bool pendingOpen = false, clickArmed = false, pressed = false, draggingPanel = false;
+    vrxmenu::PanelDrag panelDrag;
     vrxmenu::PressLatch toggleLatch[2];
     bool wasFocused = false;
     bool needsDeactivate = false;
@@ -26,7 +26,7 @@ class ControllerMenu
     uint32_t frame = 0;
     uint64_t fenceValue = 0;
     float u = -1, v = -1;
-    bool pointerHit = false;
+    bool pointerHit = false, beamVisible[2]{};
     XrInstance instance = XR_NULL_HANDLE;
     XrSession session = XR_NULL_HANDLE;
     XrSpace local = XR_NULL_HANDLE, head = XR_NULL_HANDLE, hands[2]{};
@@ -36,10 +36,9 @@ class ControllerMenu
     XrSwapchain swapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageD3D12KHR> images;
     XrPosef pose{{0,0,0,1},{0,0,0}};
-    XrVector3f anchorEye{};
-    XrQuaternionf anchorYaw{0,0,0,1};
     XrExtent2Df size{.85f,.68f};
     XrCompositionLayerQuad layer{XR_TYPE_COMPOSITION_LAYER_QUAD}, cursor{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad beams[2]{{XR_TYPE_COMPOSITION_LAYER_QUAD},{XR_TYPE_COMPOSITION_LAYER_QUAD}};
     Ptr<ID3D12CommandAllocator> allocator;
     Ptr<ID3D12GraphicsCommandList> commands;
     Ptr<ID3D12Resource> upload;
@@ -78,25 +77,25 @@ class ControllerMenu
         xrStringToPath_(instance,text,&result);
         return result;
     }
-    bool Action(XrActionSet set, XrAction& action, const char* name, const char* label, XrActionType type)
+    bool Action(XrActionSet set, XrAction& action, const char* actionName, const char* label, XrActionType type)
     {
         XrActionCreateInfo ci{XR_TYPE_ACTION_CREATE_INFO};
-        strcpy_s(ci.actionName,name); strcpy_s(ci.localizedActionName,label);
+        strcpy_s(ci.actionName,actionName); strcpy_s(ci.localizedActionName,label);
         ci.actionType = type; ci.countSubactionPaths = 2; ci.subactionPaths = handPaths;
         return XrOk(xrCreateAction_(set,&ci,&action),"xrCreateAction");
     }
-    void Bindings(const char* profile, const char* leftToggle, const char* rightToggle, bool rightX = false)
+    void Bindings(const char* profile, const char* leftToggle, const char* rightToggle)
     {
         std::vector<XrActionSuggestedBinding> bindings;
         for (int h = 0; h < 2; ++h)
         {
             const std::string base = h ? "/user/hand/right/input/" : "/user/hand/left/input/";
-            bindings.push_back({toggle,Path((base+(h ? rightToggle : leftToggle)).c_str())});
+            const char* button = h ? rightToggle : leftToggle;
+            if (button) bindings.push_back({toggle,Path((base+button).c_str())});
             bindings.push_back({aim,Path((base+"aim/pose").c_str())});
             bindings.push_back({select,Path((base+"trigger/value").c_str())});
             bindings.push_back({scroll,Path((base+"thumbstick").c_str())});
         }
-        if (rightX) bindings.push_back({toggle,Path("/user/hand/right/input/x/click")});
         XrInteractionProfileSuggestedBinding info{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
         info.interactionProfile = Path(profile); info.countSuggestedBindings = uint32_t(bindings.size()); info.suggestedBindings = bindings.data();
         // An unsupported optional profile is normal. Other profiles can still bind.
@@ -119,14 +118,16 @@ class ControllerMenu
         if (!XrOk(xrCreateActionSet_(instance,&si,&toggleSet),"xrCreateActionSet")) return false;
         strcpy_s(si.actionSetName,"vrx_menu_ui"); strcpy_s(si.localizedActionSetName,"VRX settings pointer");
         if (!XrOk(xrCreateActionSet_(instance,&si,&uiSet),"xrCreateActionSet")) return false;
-        if (!Action(toggleSet,toggle,"menu","Show or hide settings (X / A)",XR_ACTION_TYPE_BOOLEAN_INPUT) ||
+        if (!Action(toggleSet,toggle,"menu","Show or hide settings (Menu)",XR_ACTION_TYPE_BOOLEAN_INPUT) ||
             !Action(uiSet,aim,"aim","Point at settings",XR_ACTION_TYPE_POSE_INPUT) ||
             !Action(uiSet,select,"select","Select or drag setting",XR_ACTION_TYPE_FLOAT_INPUT) ||
             !Action(uiSet,scroll,"scroll","Scroll settings",XR_ACTION_TYPE_VECTOR2F_INPUT)) return false;
-        Bindings("/interaction_profiles/oculus/touch_controller","x/click","a/click");
-        Bindings("/interaction_profiles/valve/index_controller","a/click","a/click");
-        if (frameProfile) Bindings("/interaction_profiles/valve/frame_controller_valve","dpad_down/click","a/click",true);
-        if (genericProfile) Bindings("/interaction_profiles/khr/generic_controller","primary/click","primary/click");
+        Bindings("/interaction_profiles/oculus/touch_controller","menu/click",nullptr);
+        // Index and the generic profile expose no application Menu button.
+        // Keep those usable via a stick click; the runtime's system button is reserved.
+        Bindings("/interaction_profiles/valve/index_controller","thumbstick/click","thumbstick/click");
+        if (frameProfile) Bindings("/interaction_profiles/valve/frame_controller_valve","view/click","menu/click");
+        if (genericProfile) Bindings("/interaction_profiles/khr/generic_controller","thumbstick/click","thumbstick/click");
         XrActionSet sets[]{toggleSet,uiSet};
         XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
         attach.countActionSets = 2; attach.actionSets = sets;
@@ -151,7 +152,7 @@ class ControllerMenu
         if (!format) { error = "No RGBA/BGRA controller menu swapchain format"; return false; }
         rgba = format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
         XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-        ci.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+        ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
         ci.format = format; ci.sampleCount = 1; ci.width = vrxmenu::Width; ci.height = vrxmenu::Height;
         ci.faceCount = ci.arraySize = ci.mipCount = 1;
         if (!XrOk(xrCreateSwapchain_(session,&ci,&swapchain),"xrCreateSwapchain")) return false;
@@ -183,7 +184,8 @@ class ControllerMenu
     void Close()
     {
         if (visible || pressed) Event(vrxmenu::Cancel);
-        visible = false; pressed = false; activeHand = -1; pointerHit = false; clickArmed = false;
+        visible = false; pressed = false; draggingPanel = false; activeHand = -1; pointerHit = false; clickArmed = false;
+        beamVisible[0] = beamVisible[1] = false;
         if (shared) shared->header.visible = 0;
     }
     bool Locate(XrSpace space, XrTime time, XrPosef& result)
@@ -220,7 +222,9 @@ class ControllerMenu
             {
                 D3D12_RESOURCE_BARRIER barrier{}; barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                 barrier.Transition.pResource = images[index].texture; barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-                barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON; barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+                // OpenXR hands color swapchain images to D3D12 in RENDER_TARGET
+                // state and requires that same state when the image is released.
+                barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET; barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
                 commands->ResourceBarrier(1,&barrier);
                 D3D12_TEXTURE_COPY_LOCATION from{}; from.pResource = upload.Get(); from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; from.PlacedFootprint = footprint;
                 D3D12_TEXTURE_COPY_LOCATION to{}; to.pResource = images[index].texture; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
@@ -247,9 +251,10 @@ public:
 
     void Update(PFN_xrGetInstanceProcAddr getProc, XrInstance xrInstance, XrSession xrSession, XrSpace space,
         ID3D12Device* device, ID3D12CommandQueue* gfxQueue, bool focused, bool shouldRender, XrTime time,
-        const ScreenAnchor& screen, bool frameProfile, bool genericProfile)
+        bool frameProfile, bool genericProfile)
     {
         pointerHit = false;
+        beamVisible[0] = beamVisible[1] = false;
         const float dt = lastTime ? std::clamp(float(time-lastTime)*1e-9f,0.0f,.05f) : 1.0f/90;
         lastTime = time;
         if (name.empty()) return;
@@ -318,25 +323,15 @@ public:
             XrPosef eye;
             if (Locate(head,time,eye))
             {
-                anchorEye = eye.position; anchorYaw = YawOnly(eye.orientation);
+                pose = vrxmenu::Place(eye);
                 visible = true; shared->header.visible = 1; pendingOpen = false; clickArmed = false;
                 Event(vrxmenu::Cancel);
             }
         }
         if (!visible) { ReleaseMutex(mutex); return; }
 
-        // Screen sliders may move/enlarge the game while the menu is open. Clear
-        // its lower edge from the saved anchor, without following today's head tilt.
-        float bottom = 0;
-        for (float x : {-.5f,0.0f,.5f}) for (float y : {-.5f,0.0f,.5f})
-        {
-            auto corner = vrxmenu::Add(screen.pose.position,vrxmenu::Rotate(screen.pose.orientation,{x*screen.size.width,y*screen.size.height,0}));
-            auto relative = vrxmenu::Rotate(vrxmenu::Inverse(anchorYaw),vrxmenu::Sub(corner,anchorEye));
-            if (relative.z < -.1f) bottom = std::max(bottom,std::atan2(-relative.y,-relative.z));
-        }
-        pose = vrxmenu::Place(anchorEye,anchorYaw,bottom,size);
-
         bool hit[2]{}, down[2]{}, tracked[2]{}, selectActive = false; float us[2]{}, vs[2]{}, sticks[2]{};
+        XrPosef rays[2]{};
         for (int h = 0; h < 2; ++h)
         {
             XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO}; gi.subactionPath = handPaths[h]; gi.action = select;
@@ -346,22 +341,43 @@ public:
             gi.action = scroll; XrActionStateVector2f stick{XR_TYPE_ACTION_STATE_VECTOR2F};
             if (XR_SUCCEEDED(xrGetActionStateVector2f_(session,&gi,&stick)) && stick.isActive) sticks[h] = stick.currentState.y;
             gi.action = aim; XrActionStatePose state{XR_TYPE_ACTION_STATE_POSE};
-            XrPosef ray;
-            tracked[h] = XR_SUCCEEDED(xrGetActionStatePose_(session,&gi,&state)) && state.isActive && Locate(hands[h],time,ray);
-            if (tracked[h]) hit[h] = vrxmenu::Hit(pose,size,ray,us[h],vs[h],!(pressed && activeHand == h));
+            tracked[h] = XR_SUCCEEDED(xrGetActionStatePose_(session,&gi,&state)) && state.isActive && Locate(hands[h],time,rays[h]);
         }
+        if (draggingPanel && activeHand >= 0 && tracked[activeHand] && down[activeHand])
+            panelDrag.Move(pose,rays[activeHand]);
+        for (int h = 0; h < 2; ++h)
+            if (tracked[h]) hit[h] = vrxmenu::Hit(pose,size,rays[h],us[h],vs[h],!(pressed && activeHand == h));
         if (uiWasActive && selectActive && !down[0] && !down[1]) clickArmed = true;
         const int hand = pressed ? activeHand : (hit[1] && down[1] ? 1 : (hit[0] && down[0] ? 0 : (hit[1] ? 1 : (hit[0] ? 0 : -1))));
-        if (pressed && (hand < 0 || !tracked[hand] || !hit[hand])) { Event(vrxmenu::Cancel); pressed = false; activeHand = -1; clickArmed = false; }
+        if (pressed && (hand < 0 || !tracked[hand] || !hit[hand])) { Event(vrxmenu::Cancel); pressed = false; draggingPanel = false; activeHand = -1; clickArmed = false; }
         else if (hand >= 0)
         {
             u = us[hand]; v = vs[hand]; pointerHit = u>=0 && u<=1 && v>=0 && v<=1;
-            Event(vrxmenu::Move,u,v);
+            if (!draggingPanel) Event(vrxmenu::Move,u,v);
             if (down[hand] && !pressed && clickArmed)
-            { pressed = true; activeHand = hand; clickArmed = false; Event(vrxmenu::Down,u,v); }
+            {
+                pressed = true; activeHand = hand; clickArmed = false;
+                draggingPanel = vrxmenu::TitleHit(u,v);
+                if (draggingPanel) { panelDrag.Begin(pose,size,rays[hand],u,v); Event(vrxmenu::Cancel); }
+                else Event(vrxmenu::Down,u,v);
+            }
             if (!down[hand] && pressed)
-            { Event(vrxmenu::Up,u,v); pressed = false; activeHand = -1; }
-            if (!pressed && std::fabs(sticks[hand]) > .2f) Event(vrxmenu::Scroll,u,v,sticks[hand]*800*dt);
+            { Event(draggingPanel ? vrxmenu::Cancel : vrxmenu::Up,u,v); pressed = false; draggingPanel = false; activeHand = -1; }
+            if (!pressed && std::fabs(sticks[hand]) > .2f) Event(vrxmenu::Scroll,u,v,sticks[hand]*1600*dt);
+        }
+        XrPosef eye;
+        if (Locate(head,time,eye)) for (int h = 0; h < 2; ++h) if (tracked[h])
+        {
+            float bu = 0, bv = 0, length = 2;
+            if (vrxmenu::Hit(pose,size,rays[h],bu,bv))
+            {
+                const auto point = vrxmenu::Add(pose.position,vrxmenu::Rotate(pose.orientation,{(bu-.5f)*size.width,(.5f-bv)*size.height,.003f}));
+                const auto delta = vrxmenu::Sub(point,rays[h].position);
+                length = std::sqrt(vrxmenu::Dot(delta,delta));
+            }
+            beams[h].space = local; beams[h].eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            beams[h].pose = vrxmenu::Beam(rays[h],length,eye.position); beams[h].size = {.0025f,length};
+            beams[h].subImage = {swapchain,{{0,0},{8,8}},0}; beamVisible[h] = true;
         }
         if (!pressed && (down[0] || down[1])) clickArmed = false;
         shared->header.pointerX = pointerHit ? u : -1; shared->header.pointerY = pointerHit ? v : -1;
@@ -381,6 +397,7 @@ public:
     {
         if (!enabled || !visible || !uploaded) return;
         layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
+        for (int h = 0; h < 2; ++h) if (beamVisible[h]) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&beams[h]);
         if (pointerHit) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&cursor);
     }
 

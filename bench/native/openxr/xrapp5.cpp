@@ -10381,7 +10381,7 @@ static void RunFrameLoop(App& app)
         if (XR_FAILED(xrBeginFrame_(app.session, nullptr))) { Log("RunFrameLoop: xrBeginFrame failed"); app.stop = true; break; }
         frames++; repFrames++;
 
-        const XrCompositionLayerBaseHeader* layers[VIEWS + 4] = {};
+        const XrCompositionLayerBaseHeader* layers[VIEWS + 6] = {}; // screen/room, menu, two beams and pointer
         uint32_t layerCount = 0;
         XrCompositionLayerProjection worldProj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
         XrCompositionLayerProjectionView worldViews[VIEWS];
@@ -11033,7 +11033,7 @@ static void RunFrameLoop(App& app)
         }
 
         app.controllerMenu.Update(g_getProc, app.instance, app.session, app.space, app.device.Get(), app.gfxQueue.Get(),
-            state == XR_SESSION_STATE_FOCUSED, fs.shouldRender && trackingWasValid, fs.predictedDisplayTime, screen,
+            state == XR_SESSION_STATE_FOCUSED, fs.shouldRender && trackingWasValid, fs.predictedDisplayTime,
             app.frameControllerProfile, app.genericControllerProfile);
         if (state == XR_SESSION_STATE_FOCUSED && fs.shouldRender && trackingWasValid)
             app.controllerMenu.Append(layers, layerCount);
