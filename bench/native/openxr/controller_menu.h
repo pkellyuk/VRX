@@ -7,10 +7,24 @@
 #include <cstring>
 
 // Optional OpenXR actions plus a compositor quad. The desktop owns the settings;
-// this class only transports a bitmap and pointer events. It never emulates a
-// gamepad, changes Windows focus, or requests SteamVR dashboard focus.
+// this class transports panel bitmaps/pointer events and the opt-in screen mouse.
+// It does not emulate a gamepad or request SteamVR dashboard focus.
 class ControllerMenu
 {
+    struct Surface
+    {
+        XrPosef pose{{0,0,0,1},{0,0,0}};
+        XrExtent2Df size{.85f,.68f};
+        vrxmenu::PanelFlight flight;
+        uint32_t id = 0, frame = 0;
+        bool visible = false;
+        float distance = 0;
+        float hoverTime = 0;
+        XrCompositionLayerQuad layer{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    } surfaces[vrxmenu::MaxSnapshots+1];
+    int activeSurface = 0;
+    bool resizing = false, wallDrag = false;
+    vrxmenu::PanelResize panelResize;
     template<class T> using Ptr = Microsoft::WRL::ComPtr<T>;
     std::wstring name;
     HANDLE mapping = nullptr, mutex = nullptr, fenceEvent = nullptr;
@@ -22,13 +36,18 @@ class ControllerMenu
     vrxmenu::PanelDrag secondDrag;
     vrxmenu::TwoHandDrag twoHandDrag;
     bool twoHanded = false, previousDown[2]{};
-    vrxmenu::PanelFlight flight;
     vrxmenu::MouseLatch mouse;
     vrxmenu::MouseLatch rightMouse;
+    vrxmenu::MouseLatch panelRight;
+    int panelRightTarget = 0;
+    float panelRightU = 0, panelRightV = 0;
+    HWND keyboardWindow = nullptr;
     bool pointersVisible = true, controlScreen = false, screenPointerHit = false;
     Room sceneRoom;
     XrPosef screenPose{{0,0,0,1},{0,0,0}};
     XrExtent2Df screenSize{};
+    XrFovf viewFov{-.7f,.7f,.65f,-.65f};
+    uint32_t lastArrange = 0;
     Cylinder screenCylinder;
     RECT mouseRect{};
     HWND mouseWindow = nullptr;
@@ -50,8 +69,6 @@ class ControllerMenu
     XrAction secondary = XR_NULL_HANDLE;
     XrSwapchain swapchain = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageD3D12KHR> images;
-    XrPosef pose{{0,0,0,1},{0,0,0}};
-    XrExtent2Df size{.85f,.68f};
     XrCompositionLayerQuad layer{XR_TYPE_COMPOSITION_LAYER_QUAD}, back{XR_TYPE_COMPOSITION_LAYER_QUAD}, cursor{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad beams[2]{{XR_TYPE_COMPOSITION_LAYER_QUAD},{XR_TYPE_COMPOSITION_LAYER_QUAD}};
     XrCompositionLayerQuad screenCursor{XR_TYPE_COMPOSITION_LAYER_QUAD};
@@ -61,7 +78,7 @@ class ControllerMenu
     Ptr<ID3D12Fence> fence;
     ID3D12CommandQueue* queue = nullptr;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
-    bool rgba = false, uploaded = false;
+    bool rgba = false, uploaded = false, textureDirty = false;
     std::vector<uint8_t> pixels;
     std::string error;
 
@@ -111,7 +128,7 @@ class ControllerMenu
             bindings.push_back({aim,Path((base+"aim/pose").c_str())});
             bindings.push_back({select,Path((base+"trigger/value").c_str())});
             bindings.push_back({scroll,Path((base+"thumbstick").c_str())});
-            if (h == 1) bindings.push_back({secondary,Path((base+"thumbstick/click").c_str())});
+            if (h == 1) bindings.push_back({secondary,Path((base+"squeeze/value").c_str())});
         }
         XrInteractionProfileSuggestedBinding info{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
         info.interactionProfile = Path(profile); info.countSuggestedBindings = uint32_t(bindings.size()); info.suggestedBindings = bindings.data();
@@ -136,7 +153,7 @@ class ControllerMenu
         strcpy_s(si.actionSetName,"vrx_menu_ui"); strcpy_s(si.localizedActionSetName,"VRX settings pointer");
         if (!XrOk(xrCreateActionSet_(instance,&si,&uiSet),"xrCreateActionSet")) return false;
         if (!Action(toggleSet,toggle,"menu","Show or hide settings (Menu)",XR_ACTION_TYPE_BOOLEAN_INPUT) ||
-            !Action(toggleSet,secondary,"screen_right_click","Right-click screen",XR_ACTION_TYPE_BOOLEAN_INPUT) ||
+            !Action(toggleSet,secondary,"screen_right_click","Right-click screen (right grip)",XR_ACTION_TYPE_FLOAT_INPUT) ||
             !Action(uiSet,aim,"aim","Point at settings",XR_ACTION_TYPE_POSE_INPUT) ||
             !Action(uiSet,select,"select","Select or drag setting",XR_ACTION_TYPE_FLOAT_INPUT) ||
             !Action(uiSet,scroll,"scroll","Scroll settings",XR_ACTION_TYPE_VECTOR2F_INPUT)) return false;
@@ -171,7 +188,7 @@ class ControllerMenu
         rgba = format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
         XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
         ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
-        ci.format = format; ci.sampleCount = 1; ci.width = vrxmenu::Width; ci.height = vrxmenu::Height;
+        ci.format = format; ci.sampleCount = 1; ci.width = vrxmenu::AtlasWidth; ci.height = vrxmenu::AtlasHeight;
         ci.faceCount = ci.arraySize = ci.mipCount = 1;
         if (!XrOk(xrCreateSwapchain_(session,&ci,&swapchain),"xrCreateSwapchain")) return false;
         if (!XrOk(xrEnumerateSwapchainImages_(swapchain,0,&count,nullptr),"xrEnumerateSwapchainImages")) return false;
@@ -192,12 +209,12 @@ class ControllerMenu
         commands->Close();
         fenceEvent = CreateEventW(nullptr,FALSE,FALSE,nullptr);
         if (!fenceEvent) { error = "Controller menu fence event failed"; return false; }
-        pixels.resize(vrxmenu::Width * vrxmenu::Height * 4);
+        pixels.resize(vrxmenu::AtlasWidth * vrxmenu::AtlasHeight * 4);
         return true;
     }
 
     void Event(vrxmenu::EventKind kind, float x = -1, float y = -1, float value = 0)
-    { if (shared) vrxmenu::Push(*shared,{kind,x,y,value}); }
+    { if (shared) vrxmenu::Push(*shared,{vrxmenu::EventKind(int(kind)+activeSurface*16),x,y,value}); }
     void ResetToggle() { for (auto& latch : toggleLatch) latch.Reset(); }
     void ReleaseMouse()
     {
@@ -206,6 +223,31 @@ class ControllerMenu
         if (rightMouse.Step(false,false) < 0)
         { INPUT input{}; input.type = INPUT_MOUSE; input.mi.dwFlags = MOUSEEVENTF_RIGHTUP; SendInput(1,&input,sizeof(input)); }
         screenPointerHit = false;
+    }
+    void ServiceKeyboard(bool active)
+    {
+        auto& state = shared->keyboard;
+        HWND target = mouseWindow ? mouseWindow : keyboardWindow;
+        state.targetWindow = reinterpret_cast<uint64_t>(target);
+        state.flags = active && target && IsWindow(target) && !IsIconic(target) ? 1u : 0u;
+        if (uint32_t(state.write-state.read) > 256) { state.read = state.write; return; }
+        if (state.read == state.write) return;
+        if (!state.flags) { state.read = state.write; return; }
+        SetForegroundWindow(target);
+        if (GetAncestor(GetForegroundWindow(),GA_ROOT) != GetAncestor(target,GA_ROOT))
+        { state.flags = 0; state.read = state.write; error = "Keyboard target could not receive Windows focus"; return; }
+        std::vector<INPUT> input;
+        while (state.read != state.write)
+        {
+            const auto key = state.events[state.read++ % 256];
+            INPUT down{}; down.type = INPUT_KEYBOARD;
+            if (key.type == 0) { down.ki.wScan = WORD(key.code); down.ki.dwFlags = KEYEVENTF_UNICODE; }
+            else if (key.type == 1) down.ki.wVk = WORD(key.code);
+            else continue;
+            input.push_back(down); down.ki.dwFlags |= KEYEVENTF_KEYUP; input.push_back(down);
+        }
+        if (!input.empty() && SendInput(UINT(input.size()),input.data(),sizeof(INPUT)) != input.size())
+            error = "Windows blocked floating keyboard input (the target may be running elevated)";
     }
     void ScreenMouse(bool allowed, bool down, bool rightDown, float x, float y)
     {
@@ -233,16 +275,26 @@ class ControllerMenu
         { auto& input = inputs[count++]; input.type = INPUT_MOUSE; input.mi.dwFlags = edge > 0 ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP; }
         if (rightEdge)
         { auto& input = inputs[count++]; input.type = INPUT_MOUSE; input.mi.dwFlags = rightEdge > 0 ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP; }
+        if (allowed && (edge > 0 || rightEdge > 0))
+        {
+            keyboardWindow = mouseWindow ? mouseWindow : GetAncestor(WindowFromPoint(point),GA_ROOT);
+            if (shared) shared->keyboard.focusSerial++;
+        }
         if (count && SendInput(count,inputs,sizeof(INPUT)) != count)
         { error = "Windows blocked controller mouse input (the target may be running elevated)"; ReleaseMouse(); }
     }
     void Close(bool keepWall = false)
     {
         if (visible || pressed) Event(vrxmenu::Cancel);
-        visible = keepWall && flight.stuck; pressed = false; draggingPanel = false; activeHand = -1; pointerHit = false; clickArmed = false;
-        if (!keepWall) flight.Reset();
+        visible = keepWall && surfaces[0].flight.stuck; pressed = false; draggingPanel = resizing = false; activeHand = -1; pointerHit = false; clickArmed = false;
+        if (!keepWall) surfaces[0].flight.Reset();
+        activeSurface = 0;
+        surfaces[0].visible = visible;
         twoHanded = false; previousDown[0] = previousDown[1] = true;
+        wallDrag = false;
         ReleaseMouse();
+        if (panelRight.Step(false,false) < 0 && shared)
+            vrxmenu::Push(*shared,{vrxmenu::EventKind(int(vrxmenu::RightUp)+panelRightTarget*16),panelRightU,panelRightV,0});
         beamVisible[0] = beamVisible[1] = false;
         if (shared) shared->header.visible = visible ? 1 : 0;
     }
@@ -265,14 +317,16 @@ class ControllerMenu
         void* data = nullptr;
         D3D12_RANGE empty{0,0};
         bool copied = SUCCEEDED(upload->Map(0,&empty,&data));
+        int rows = vrxmenu::Height;
+        for (int s = 1; s <= vrxmenu::MaxSnapshots; ++s) if (surfaces[s].visible) rows = (s/vrxmenu::AtlasColumns+1)*vrxmenu::Height;
         if (copied)
         {
-            for (int y = 0; y < vrxmenu::Height; ++y)
+            for (int y = 0; y < rows; ++y)
             {
                 auto* dest = static_cast<uint8_t*>(data) + footprint.Offset + y * footprint.Footprint.RowPitch;
-                const auto* src = pixels.data() + y * vrxmenu::Width * 4;
-                std::memcpy(dest,src,vrxmenu::Width*4);
-                if (rgba) for (int x = 0; x < vrxmenu::Width; ++x) std::swap(dest[x*4],dest[x*4+2]);
+                const auto* src = pixels.data() + y * vrxmenu::AtlasWidth * 4;
+                std::memcpy(dest,src,vrxmenu::AtlasWidth*4);
+                if (rgba) for (int x = 0; x < vrxmenu::AtlasWidth; ++x) std::swap(dest[x*4],dest[x*4+2]);
             }
             upload->Unmap(0,nullptr);
             copied = SUCCEEDED(allocator->Reset()) && SUCCEEDED(commands->Reset(allocator.Get(),nullptr));
@@ -286,7 +340,8 @@ class ControllerMenu
                 commands->ResourceBarrier(1,&barrier);
                 D3D12_TEXTURE_COPY_LOCATION from{}; from.pResource = upload.Get(); from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; from.PlacedFootprint = footprint;
                 D3D12_TEXTURE_COPY_LOCATION to{}; to.pResource = images[index].texture; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-                commands->CopyTextureRegion(&to,0,0,0,&from,nullptr);
+                D3D12_BOX region{0,0,0,vrxmenu::AtlasWidth,UINT(rows),1};
+                commands->CopyTextureRegion(&to,0,0,0,&from,&region);
                 std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter); commands->ResourceBarrier(1,&barrier);
                 copied = SUCCEEDED(commands->Close());
                 if (copied)
@@ -304,13 +359,48 @@ class ControllerMenu
     }
 
 public:
-    void SetScene(const Room& room, XrPosef screen, XrExtent2Df extent, const Cylinder& cylinder, RECT target, HWND window)
+    void CopyPanelPixels(int surface, const uint8_t* source)
     {
-        if (flight.stuck && (!room.valid || room.env == kRoomEnvOpenAir)) flight.Reset();
+        const int column = surface%vrxmenu::AtlasColumns, row = surface/vrxmenu::AtlasColumns;
+        for (int y = 0; y < vrxmenu::Height; ++y)
+            memcpy(pixels.data()+(size_t(row*vrxmenu::Height+y)*vrxmenu::AtlasWidth+column*vrxmenu::Width)*4,
+                source+size_t(y)*vrxmenu::Width*4,size_t(vrxmenu::Width)*4);
+    }
+    void SetScene(const Room& room, XrPosef screen, XrExtent2Df extent, const Cylinder& cylinder, RECT target, HWND window, XrFovf fov = {-.7f,.7f,.65f,-.65f})
+    {
+        for (auto& surface : surfaces)
+            if (surface.flight.stuck && (!room.valid || room.env == kRoomEnvOpenAir)) surface.flight.Reset();
         sceneRoom = room; screenPose = screen; screenSize = extent; screenCylinder = cylinder; mouseRect = target; mouseWindow = window;
+        viewFov = fov;
+        for (auto& surface : surfaces) if (surface.visible)
+            vrxmenu::ContainPanel(surface.pose,surface.size,sceneRoom,screenPose);
     }
     void Configure(std::wstring mappingName) { name = std::move(mappingName); }
     const std::string& Error() const { return error; }
+    bool TakeSnapshotRequest()
+    {
+        if (!shared || !Lock()) return false;
+        const bool requested = enabled && shared->header.snapshotRequest != shared->header.snapshotAck;
+        if (requested) shared->header.snapshotAck++;
+        ReleaseMutex(mutex); return requested;
+    }
+    bool CompleteSnapshot(const std::wstring& path)
+    {
+        if (!shared) { if (!path.empty()) DeleteFileW(path.c_str()); return true; }
+        if (!Lock()) return false;
+        bool accepted = false;
+        if (!path.empty() && path.size() < vrxmenu::SnapshotPathChars)
+            for (auto& snapshot : shared->snapshots) if (!snapshot.active && !snapshot.ready)
+            {
+                snapshot.id++; if (!snapshot.id) snapshot.id++;
+                snapshot.frame = 0;
+                snapshot.kind = vrxmenu::SnapshotPanel;
+                memcpy(snapshot.path,path.c_str(),(path.size()+1)*sizeof(char16_t));
+                snapshot.ready = 1; accepted = true; break;
+            }
+        if (!accepted) { shared->header.snapshotError++; if (!path.empty()) DeleteFileW(path.c_str()); }
+        ReleaseMutex(mutex); return true;
+    }
 
     void Update(PFN_xrGetInstanceProcAddr getProc, XrInstance xrInstance, XrSession xrSession, XrSpace space,
         ID3D12Device* device, ID3D12CommandQueue* gfxQueue, bool focused, bool shouldRender, XrTime time,
@@ -338,6 +428,7 @@ public:
         const bool live = GetTickCount64()-shared->header.heartbeat < 2000;
         const bool wanted = shared->header.enabled && live;
         controlScreen = wanted && shared->header.controlScreen;
+        ServiceKeyboard(wanted && focused && shouldRender && controlScreen);
         const bool becameEnabled = wanted && !enabled;
         if (!wanted)
         {
@@ -352,7 +443,7 @@ public:
             ReleaseMutex(mutex); return;
         }
         enabled = true;
-        if (becameEnabled) { pendingOpen = !flight.stuck; pointersVisible = true; ResetToggle(); }
+        if (becameEnabled) { pendingOpen = !surfaces[0].flight.stuck; pointersVisible = true; ResetToggle(); }
         if (!attempted)
         {
             instance = xrInstance; session = xrSession; local = space;
@@ -370,42 +461,85 @@ public:
         }
         if (!wasFocused) { ResetToggle(); clickArmed = false; }
         wasFocused = true;
-        const bool uiWasActive = (visible || controlScreen) && pointersVisible;
+        bool anySnapshot = false;
+        for (int s = 1; s <= vrxmenu::MaxSnapshots; ++s) anySnapshot |= shared->snapshots[s-1].active != 0;
+        const bool uiWasActive = (visible || controlScreen || anySnapshot) && pointersVisible;
         XrActiveActionSet sets[]{{toggleSet,XR_NULL_PATH},{uiSet,XR_NULL_PATH}};
         XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO}; sync.countActiveActionSets = uiWasActive ? 2 : 1; sync.activeActionSets = sets;
         XrResult result = xrSyncActions_(session,&sync);
         if (result != XR_SUCCESS) { Close(true); ResetToggle(); ReleaseMutex(mutex); return; }
         bool togglePressed = false;
         XrActionStateGetInfo secondaryInfo{XR_TYPE_ACTION_STATE_GET_INFO}; secondaryInfo.action = secondary; secondaryInfo.subactionPath = handPaths[1];
-        XrActionStateBoolean secondaryState{XR_TYPE_ACTION_STATE_BOOLEAN};
-        const bool rightClickDown = XR_SUCCEEDED(xrGetActionStateBoolean_(session,&secondaryInfo,&secondaryState)) && secondaryState.isActive && secondaryState.currentState;
+        XrActionStateFloat secondaryState{XR_TYPE_ACTION_STATE_FLOAT};
+        const bool rightClickDown = XR_SUCCEEDED(xrGetActionStateFloat_(session,&secondaryInfo,&secondaryState)) && secondaryState.isActive && secondaryState.currentState > .55f;
         for (int h = 0; h < 2; ++h)
         {
             XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO}; gi.action = toggle; gi.subactionPath = handPaths[h];
             XrActionStateBoolean value{XR_TYPE_ACTION_STATE_BOOLEAN};
             if (XR_SUCCEEDED(xrGetActionStateBoolean_(session,&gi,&value)) && value.isActive)
-                togglePressed |= toggleLatch[h].Press(value.currentState != 0) && !(controlScreen && h == 1 && rightClickDown);
+                togglePressed |= toggleLatch[h].Press(value.currentState != 0);
             else toggleLatch[h].Reset();
         }
         if (visible && togglePressed)
         {
             pendingOpen = false;
-            if (flight.ToggleHidesPanel()) { Close(); ReleaseMutex(mutex); return; }
-            pointersVisible = !pointersVisible; clickArmed = false; ReleaseMouse();
+            if (!surfaces[0].flight.stuck) { Close(); ReleaseMutex(mutex); return; }
+            Close(); pendingOpen = true; pointersVisible = true;
         }
         if (!visible && (pendingOpen || togglePressed))
         {
             XrPosef eye;
             if (Locate(head,time,eye))
             {
-                pose = vrxmenu::Place(eye);
-                pointersVisible = true; flight.Reset();
+                surfaces[0].pose = vrxmenu::Place(eye);
+                pointersVisible = true; surfaces[0].flight.Reset();
                 visible = true; shared->header.visible = 1; pendingOpen = false; clickArmed = false;
                 Event(vrxmenu::Cancel);
             }
         }
-        if (!visible && !controlScreen) { ReleaseMouse(); ReleaseMutex(mutex); return; }
-        flight.Step(pose,size,sceneRoom,screenPose,dt);
+        surfaces[0].visible = visible;
+        for (int s = 1; s <= vrxmenu::MaxSnapshots; ++s)
+        {
+            auto& surface = surfaces[s]; const auto& snapshot = shared->snapshots[s-1];
+            surface.visible = snapshot.active && snapshot.ready == 2;
+            if (surface.visible && surface.id != snapshot.id)
+            {
+                surface.id = snapshot.id; surface.frame = 0; surface.flight.Reset(); surface.size = {.85f,.68f};
+                XrPosef eye;
+                if (Locate(head,time,eye))
+                {
+                    surface.pose = vrxmenu::Place(eye);
+                    surface.pose.position = vrxmenu::Add(surface.pose.position,vrxmenu::Rotate(eye.orientation,{.18f*s,.05f,-.05f*s}));
+                }
+            }
+        }
+        if (shared->header.arrange != lastArrange)
+        {
+            XrPosef eye;
+            if (Locate(head,time,eye))
+            {
+                lastArrange = shared->header.arrange;
+                XrPosef poses[7]{}; XrExtent2Df sizes[7]{}; int indices[7]{}, count = 0;
+                for (int s = 0; s <= vrxmenu::MaxSnapshots; ++s) if (surfaces[s].visible)
+                { indices[count] = s; poses[count] = surfaces[s].pose; sizes[count++] = surfaces[s].size; }
+                vrxmenu::ArrangePanels(eye,viewFov,poses,sizes,count,sceneRoom,screenPose,uint32_t(GetTickCount64()) ^ lastArrange*2654435761u);
+                for (int i = 0; i < count; ++i)
+                {
+                    auto& surface = surfaces[indices[i]];
+                    surface.pose = poses[i]; surface.size = sizes[i]; surface.flight.Reset(); surface.hoverTime = 0;
+                    activeSurface = indices[i]; Event(vrxmenu::Cancel);
+                }
+                activeSurface = 0; pressed = draggingPanel = resizing = twoHanded = wallDrag = false;
+                activeHand = -1; clickArmed = false; ReleaseMouse();
+            }
+        }
+        if (!visible && !controlScreen && !anySnapshot) { ReleaseMouse(); ReleaseMutex(mutex); return; }
+        for (auto& surface : surfaces) if (surface.visible)
+        {
+            if (!(pressed && activeSurface == int(&surface-surfaces)))
+                surface.flight.Step(surface.pose,surface.size,sceneRoom,screenPose,dt);
+            vrxmenu::ContainPanel(surface.pose,surface.size,sceneRoom,screenPose);
+        }
 
         bool hit[2]{}, down[2]{}, tracked[2]{}, selectActive = false; float us[2]{}, vs[2]{}, sticks[2]{};
         XrPosef rays[2]{};
@@ -421,6 +555,53 @@ public:
             gi.action = aim; XrActionStatePose state{XR_TYPE_ACTION_STATE_POSE};
             tracked[h] = pointersVisible && XR_SUCCEEDED(xrGetActionStatePose_(session,&gi,&state)) && state.isActive && Locate(hands[h],time,rays[h],&trackingFlags[h]);
         }
+        int targets[2]{-1,-1}; float targetU[2]{}, targetV[2]{}, targetDistance[2]{1e9f,1e9f};
+        auto findTargets = [&]()
+        {
+        targets[0] = targets[1] = -1; targetDistance[0] = targetDistance[1] = 1e9f;
+        for (int h = 0; h < 2; ++h) if (tracked[h])
+            for (int s = 0; s <= vrxmenu::MaxSnapshots; ++s) if (surfaces[s].visible)
+            {
+                float hu = 0, hv = 0;
+                const auto& surface = surfaces[s];
+                if (!vrxmenu::Hit(surface.pose,surface.size,rays[h],hu,hv,true,true)) continue;
+                float physicalU = hu;
+                if (vrxmenu::Rotate(vrxmenu::Inverse(surface.pose.orientation),vrxmenu::Sub(rays[h].position,surface.pose.position)).z < 0) physicalU = 1-hu;
+                const auto point = vrxmenu::Add(surface.pose.position,vrxmenu::Rotate(surface.pose.orientation,{(physicalU-.5f)*surface.size.width,(.5f-hv)*surface.size.height,0}));
+                const auto delta = vrxmenu::Sub(point,rays[h].position);
+                const float distance = std::sqrt(vrxmenu::Dot(delta,delta));
+                if (distance < targetDistance[h]) { targets[h] = s; targetU[h] = hu; targetV[h] = hv; targetDistance[h] = distance; }
+            }
+        };
+        findTargets();
+        XrPosef viewer;
+        if (Locate(head,time,viewer))
+        {
+            for (int s = 0; s <= vrxmenu::MaxSnapshots; ++s) if (surfaces[s].visible)
+            {
+                auto& surface = surfaces[s];
+                surface.hoverTime = std::max(0.0f,surface.hoverTime-dt);
+                if (targets[0] == s || targets[1] == s) surface.hoverTime = .35f;
+                const bool clicking = (targets[0] == s && down[0]) || (targets[1] == s && down[1]);
+                if (surface.hoverTime > 0 && !(pressed && activeSurface == s) && !clicking)
+                {
+                    vrxmenu::FaceViewer(surface.pose,viewer.position,dt);
+                    surface.flight.angularVelocity = {0,0,0};
+                    vrxmenu::ContainPanel(surface.pose,surface.size,sceneRoom,screenPose);
+                }
+            }
+            findTargets(); // pick against the rotated panel, so buttons still line up
+        }
+        if (pressed && !surfaces[activeSurface].visible)
+        { Event(vrxmenu::Cancel); pressed = draggingPanel = resizing = twoHanded = false; activeHand = -1; clickArmed = false; }
+        if (!pressed)
+            activeSurface = targets[1] >= 0 && down[1] ? targets[1] : targets[0] >= 0 && down[0] ? targets[0] :
+                targets[1] >= 0 ? targets[1] : targets[0] >= 0 ? targets[0] : 0;
+        auto& pose = surfaces[activeSurface].pose;
+        auto& size = surfaces[activeSurface].size;
+        auto& flight = surfaces[activeSurface].flight;
+        if (resizing && activeHand >= 0 && tracked[activeHand] && down[activeHand])
+        { panelResize.Move(pose,size,rays[activeHand]); flight.FitToWall(pose,size,sceneRoom,screenPose); }
         if (draggingPanel && activeHand >= 0)
         {
             const int other = 1-activeHand;
@@ -448,20 +629,29 @@ public:
                 else
                 {
                     if (activeHand == 1) panelDrag.PushPull(sticks[1],dt);
-                    panelDrag.Move(pose,rays[activeHand],dt);
+                    panelDrag.Move(pose,rays[activeHand],wallDrag && flight.stuck ? 0 : dt);
                 }
             }
+        }
+        const auto bounds = vrxmenu::ContainPanel(pose,size,sceneRoom,screenPose);
+        if (draggingPanel && activeHand >= 0 && tracked[activeHand] && down[activeHand])
+        {
+            if (!twoHanded && bounds.wallDistance <= (wallDrag ? .14f : .025f))
+                flight.Dock(pose,size,sceneRoom,screenPose,bounds.wall);
+            else flight.stuck = false;
         }
         for (int h = 0; h < 2; ++h)
             if (tracked[h])
             {
                 // A swinging sheet can turn edge-on or away from the pointer.
                 // Keep its pinched pixel captured until release or tracking loss.
-                if (draggingPanel && activeHand == h)
+                if (resizing && activeHand == h)
+                { hit[h] = true; us[h] = u; vs[h] = v; }
+                else if (draggingPanel && activeHand == h)
                 { hit[h] = true; us[h] = panelDrag.grabU; vs[h] = panelDrag.grabV; }
                 else if (draggingPanel && twoHanded)
                 { hit[h] = true; us[h] = secondDrag.grabU; vs[h] = secondDrag.grabV; }
-                else if (visible) hit[h] = vrxmenu::Hit(pose,size,rays[h],us[h],vs[h],!(pressed && activeHand == h),true);
+                else if (targets[h] == activeSurface) { hit[h] = true; us[h] = targetU[h]; vs[h] = targetV[h]; }
             }
         if (draggingPanel && !twoHanded && activeHand >= 0 && down[activeHand] && tracked[activeHand])
         {
@@ -476,18 +666,24 @@ public:
         }
         if (uiWasActive && selectActive && !down[0] && !down[1]) clickArmed = true;
         const int hand = pressed ? activeHand : (hit[1] && down[1] ? 1 : (hit[0] && down[0] ? 0 : (hit[1] ? 1 : (hit[0] ? 0 : -1))));
-        if (pressed && (hand < 0 || !tracked[hand] || !hit[hand])) { Event(vrxmenu::Cancel); pressed = false; draggingPanel = false; activeHand = -1; clickArmed = false; }
+        if (pressed && (hand < 0 || !tracked[hand] || !hit[hand])) { Event(vrxmenu::Cancel); pressed = false; draggingPanel = resizing = false; activeHand = -1; clickArmed = false; }
         else if (hand >= 0)
         {
             u = us[hand]; v = vs[hand]; pointerHit = u>=0 && u<=1 && v>=0 && v<=1;
-            if (!draggingPanel) Event(vrxmenu::Move,u,v);
+            if (!draggingPanel && !resizing) Event(vrxmenu::Move,u,v);
             if (down[hand] && !pressed && clickArmed)
             {
                 pressed = true; activeHand = hand; clickArmed = false;
-                draggingPanel = vrxmenu::TitleHit(u,v);
-                if (draggingPanel)
+                resizing = vrxmenu::EdgeHit(u,v);
+                draggingPanel = !resizing && vrxmenu::TitleHit(u,v);
+                if (resizing) { flight.flying = false; panelResize.Begin(pose,size,rays[hand],u,v); Event(vrxmenu::Cancel); }
+                else if (draggingPanel)
                 {
-                    flight.Reset(); panelDrag.Begin(pose,size,rays[hand],u,v); Event(vrxmenu::Cancel);
+                    wallDrag = flight.stuck;
+                    const int wallFace = flight.dockFace;
+                    flight.Reset();
+                    if (wallDrag) { flight.stuck = true; flight.dockFace = wallFace; }
+                    panelDrag.Begin(pose,size,rays[hand],u,v); Event(vrxmenu::Cancel);
                     const int other = 1-hand;
                     if (tracked[other] && down[other] && !previousDown[other] && hit[other] && vrxmenu::TitleHit(us[other],vs[other]))
                     {
@@ -500,15 +696,31 @@ public:
                 else Event(vrxmenu::Down,u,v);
             }
             if (!down[hand] && pressed)
-            { if (draggingPanel) flight.Release(pose,panelDrag); Event(draggingPanel ? vrxmenu::Cancel : vrxmenu::Up,u,v); pressed = false; draggingPanel = false; activeHand = -1; }
+            {
+                if (draggingPanel)
+                {
+                    const auto released = vrxmenu::ContainPanel(pose,size,sceneRoom,screenPose);
+                    if (released.wallDistance <= (wallDrag ? .14f : .04f)) flight.Dock(pose,size,sceneRoom,screenPose,released.wall);
+                    else flight.Release(pose,panelDrag);
+                }
+                Event(draggingPanel || resizing ? vrxmenu::Cancel : vrxmenu::Up,u,v);
+                pressed = false; draggingPanel = resizing = wallDrag = false; activeHand = -1;
+            }
             if (!pressed && std::fabs(sticks[hand]) > .2f) Event(vrxmenu::Scroll,u,v,sticks[hand]*1600*dt);
         }
         float su = 0, sv = 0;
         XrPosef screenPoint{};
         constexpr auto mouseTracking = XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
-        const bool screenHit = controlScreen && pointersVisible && tracked[1] && (trackingFlags[1] & mouseTracking) == mouseTracking && !hit[1] && !pressed &&
+        const bool screenHit = controlScreen && pointersVisible && tracked[1] && (trackingFlags[1] & mouseTracking) == mouseTracking && targets[1] < 0 && !pressed &&
             vrxmenu::ScreenHit(screenPose,screenSize,screenCylinder,rays[1],su,sv,screenPoint);
         ScreenMouse(screenHit,down[1],rightClickDown,su,sv);
+        const bool contextAllowed = tracked[1] && !pressed && targets[1] > 0 &&
+            shared->snapshots[targets[1]-1].kind == vrxmenu::BrowserPanel && (!panelRight.held || targets[1] == panelRightTarget);
+        const int contextEdge = panelRight.Step(contextAllowed,rightClickDown);
+        if (contextEdge > 0) panelRightTarget = targets[1];
+        if (contextAllowed) { panelRightU = targetU[1]; panelRightV = targetV[1]; }
+        if (contextEdge)
+            vrxmenu::Push(*shared,{vrxmenu::EventKind(int(contextEdge > 0 ? vrxmenu::RightDown : vrxmenu::RightUp)+panelRightTarget*16),panelRightU,panelRightV,0});
         screenPointerHit = screenHit;
         screenCursor.space = local; screenCursor.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
         screenCursor.pose = screenPoint; screenCursor.size = {.012f,.012f};
@@ -516,30 +728,34 @@ public:
         XrPosef eye;
         if (Locate(head,time,eye)) for (int h = 0; h < 2; ++h) if (tracked[h])
         {
-            if (!pointersVisible || (!visible && !(h == 1 && controlScreen))) continue;
-            float bu = 0, bv = 0, length = 2;
+            if (!pointersVisible || (!visible && !anySnapshot && !(h == 1 && controlScreen))) continue;
+            float length = 2;
             if (draggingPanel && activeHand == h) length = panelDrag.distance;
             else if (draggingPanel && twoHanded) length = secondDrag.distance;
             else if (h == 1 && screenHit)
             { const auto delta = vrxmenu::Sub(screenPoint.position,rays[h].position); length = std::sqrt(vrxmenu::Dot(delta,delta)); }
-            else if (visible && vrxmenu::Hit(pose,size,rays[h],bu,bv,true,true))
-            {
-                if (vrxmenu::Rotate(vrxmenu::Inverse(pose.orientation),vrxmenu::Sub(rays[h].position,pose.position)).z < 0) bu = 1-bu;
-                const auto point = vrxmenu::Add(pose.position,vrxmenu::Rotate(pose.orientation,{(bu-.5f)*size.width,(.5f-bv)*size.height,.003f}));
-                const auto delta = vrxmenu::Sub(point,rays[h].position);
-                length = std::sqrt(vrxmenu::Dot(delta,delta));
-            }
+            else if (targets[h] >= 0) length = targetDistance[h];
             beams[h].space = local; beams[h].eyeVisibility = XR_EYE_VISIBILITY_BOTH;
             beams[h].pose = vrxmenu::Beam(rays[h],length,eye.position); beams[h].size = {.0025f,length};
             beams[h].subImage = {swapchain,{{0,0},{8,8}},0}; beamVisible[h] = true;
         }
         if (!pressed && (down[0] || down[1])) clickArmed = false;
-        shared->header.pointerX = pointerHit ? u : -1; shared->header.pointerY = pointerHit ? v : -1;
+        shared->header.pointerX = pointerHit && activeSurface == 0 ? u : -1; shared->header.pointerY = pointerHit && activeSurface == 0 ? v : -1;
         const uint32_t nextFrame = shared->header.frame;
-        const bool newFrame = nextFrame != 0 && nextFrame != frame;
-        if (newFrame) std::memcpy(pixels.data(),shared->pixels,pixels.size());
+        bool newFrame = nextFrame != 0 && nextFrame != frame;
+        if (newFrame) CopyPanelPixels(0,shared->pixels);
+        for (int s = 1; s <= vrxmenu::MaxSnapshots; ++s)
+        {
+            const auto& snapshot = shared->snapshots[s-1];
+            if (surfaces[s].visible && snapshot.frame != surfaces[s].frame)
+            {
+                CopyPanelPixels(s,snapshot.pixels);
+                surfaces[s].frame = snapshot.frame; newFrame = true;
+            }
+        }
+        textureDirty |= newFrame;
         ReleaseMutex(mutex);
-        if (newFrame && fence->GetCompletedValue() >= fenceValue && Upload()) frame = nextFrame;
+        if (textureDirty && fence->GetCompletedValue() >= fenceValue && Upload()) { frame = nextFrame; textureDirty = false; }
         layer.space = local; layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH; layer.pose = pose; layer.size = size;
         layer.subImage = {swapchain,{{0,0},{vrxmenu::Width,vrxmenu::Height}},0};
         back = layer;
@@ -552,16 +768,30 @@ public:
         if (draggingPanel) pointerHit = false;
         previousDown[0] = down[0]; previousDown[1] = down[1];
         cursor.size = {.012f,.012f}; cursor.subImage.imageRect = {{0,0},{8,8}};
+        XrPosef eyePose;
+        if (Locate(head,time,eyePose)) for (int s = 0; s <= vrxmenu::MaxSnapshots; ++s)
+        {
+            auto& surface = surfaces[s]; auto& quad = surface.layer;
+            quad.space = local; quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+            quad.pose = surface.pose; quad.size = surface.size;
+            const auto delta = vrxmenu::Sub(surface.pose.position,eyePose.position);
+            surface.distance = vrxmenu::Dot(delta,delta);
+            if (vrxmenu::Rotate(vrxmenu::Inverse(surface.pose.orientation),vrxmenu::Sub(eyePose.position,surface.pose.position)).z < 0)
+                quad.pose.orientation = vrxmenu::Multiply(surface.pose.orientation,{0,1,0,0});
+            quad.subImage = {swapchain,{{(s%vrxmenu::AtlasColumns)*vrxmenu::Width,(s/vrxmenu::AtlasColumns)*vrxmenu::Height},{vrxmenu::Width,vrxmenu::Height}},0};
+        }
     }
 
     void Append(const XrCompositionLayerBaseHeader** layers, uint32_t& count) const
     {
-        if (!uploaded || (!enabled && !flight.stuck)) return;
-        if (visible)
-        {
-            layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
-            layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&back);
-        }
+        if (!uploaded) return;
+        std::vector<int> order;
+        for (int s = 0; s <= vrxmenu::MaxSnapshots; ++s)
+            if (surfaces[s].visible && (s != 0 || enabled || surfaces[0].flight.stuck))
+                order.push_back(s);
+        std::sort(order.begin(),order.end(),[&](int a, int b) { return surfaces[a].distance > surfaces[b].distance; });
+        for (int s : order) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&surfaces[s].layer);
         for (int h = 0; h < 2; ++h) if (beamVisible[h]) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&beams[h]);
         if (pointerHit) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&cursor);
         if (screenPointerHit) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&screenCursor);
@@ -575,7 +805,13 @@ public:
         ReleaseMouse();
         if (fence && fence->GetCompletedValue() < fenceValue && fenceEvent &&
             SUCCEEDED(fence->SetEventOnCompletion(fenceValue,fenceEvent))) WaitForSingleObject(fenceEvent,2000);
-        if (Lock()) { Close(); ReleaseMutex(mutex); }
+        if (Lock())
+        {
+            Close();
+            for (auto& snapshot : shared->snapshots)
+                if (snapshot.ready == 1) DeleteFileW(reinterpret_cast<const wchar_t*>(snapshot.path));
+            ReleaseMutex(mutex);
+        }
         if (head && xrDestroySpace_) xrDestroySpace_(head);
         for (auto hand : hands) if (hand && xrDestroySpace_) xrDestroySpace_(hand);
         if (swapchain && xrDestroySwapchain_) xrDestroySwapchain_(swapchain);

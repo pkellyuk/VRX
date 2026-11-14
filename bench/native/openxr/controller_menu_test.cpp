@@ -55,7 +55,7 @@ int main()
 
         // The initial grab must not jump; translating or turning the controller
         // carries the same title-bar point. Zero elapsed time must not jump it.
-        pointer.position = Add(eye,Rotate(heading,{.1f,.30f,0}));
+        pointer.position = Add(eye,Rotate(heading,{.1f,.28f,0}));
         assert(Hit(pose,menuSize,pointer,u,v) && TitleHit(u,v));
         const float grabU = u, grabV = v;
         PanelDrag drag; drag.Begin(pose,menuSize,pointer,u,v);
@@ -77,8 +77,8 @@ int main()
         assert(Near(start.x,pointer.position.x) && Near(start.y,pointer.position.y) && Near(start.z,pointer.position.z));
         assert(Near(end.x,expected.x) && Near(end.y,expected.y) && Near(end.z,expected.z));
     }
-    assert(TitleHit(.5f,50.0f/Height));
-    assert(!TitleHit(.5f,100.0f/Height) && !TitleHit(.01f,50.0f/Height));
+    assert(TitleHit(.5f,float(TitleTop+2)/Height));
+    assert(!TitleHit(.5f,float(TitleTop+TitleHeight+10)/Height) && !TitleHit(.01f,float(TitleTop+2)/Height));
     const auto straightBeam = Beam({{0,0,0,1},{0,0,0}},2,{0,0,0});
     assert(std::isfinite(straightBeam.orientation.w)); // viewer exactly along ray
     // A tilted sheet pinched off-centre hangs with its centre below the grab.
@@ -206,35 +206,127 @@ int main()
             assert(Near(sheet.position.x,frozen.position.x) && Near(sheet.position.y,frozen.position.y));
             flight.Reset(); assert(flight.ToggleHidesPanel()); // grabbing removes the visibility exception
         }
-    // Floor hits and no-room misses never receive the wall visibility exception.
+    // Downward throws float clear of the floor; free throws coast and stop in place.
     PanelFlight fall; fall.flying = true; fall.velocity = {0,-10,0};
     XrPosef sheet{{0,0,0,1},{0,0,3}};
     for (int i = 0; i < 90 && fall.flying; ++i) fall.Step(sheet,menuSize,room,{{0,0,0,1},{0,0,0}},1.0f/90);
     assert(!fall.flying && !fall.stuck && fall.ToggleHidesPanel());
+    assert(sheet.position.y - menuSize.height*.5f >= room.yF+.149f);
     PanelDrag place; place.grab = {0,.3f,0};
     PanelFlight release; release.Release(sheet,place); assert(!release.flying);
     place.pivotVelocity = {2,0,0}; release.Release(sheet,place); assert(release.flying);
     const auto releasedAt = sheet;
     for (int i = 0; i < 900; ++i) release.Step(sheet,menuSize,Room{},roomPose,1.0f/90);
-    assert(!release.flying && !release.stuck && Near(sheet.position.x,releasedAt.position.x));
-    // A free throw falls only about 20 cm in half a second at Moon-like gravity.
+    assert(!release.flying && !release.stuck && sheet.position.x > releasedAt.position.x+2.1f && sheet.position.x < releasedAt.position.x+2.23f);
+    // No vertical acceleration, and the exponential coast is frame-rate independent.
     for (float hz : {72.0f,90.0f,120.0f})
     {
         PanelFlight lunar; lunar.flying = true; lunar.velocity = {1,0,0};
         XrPosef floating{{0,0,0,1},{0,0,0}};
         for (int i = 0; i < int(hz*.5f); ++i) lunar.Step(floating,menuSize,Room{},roomPose,1/hz);
-        assert(std::fabs(floating.position.y + .2025f) < .0001f);
-        assert(std::fabs(floating.position.x - .5f) < .0001f);
+        assert(Near(floating.position.y,0));
+        assert(std::fabs(floating.position.x - (1-std::exp(-.45f))/.9f) < .0001f);
     }
+    assert(EdgeHit(.0125f,.5f) && EdgeHit(.99f,.5f) && EdgeHit(.5f,.015f));
+    assert(EdgeHit(.04f,.5f) && EdgeHit(.5f,.05f)); // wider grab area
+    assert(!EdgeHit(.5f,.5f) && !EdgeHit(-.01f,.5f));
+    XrPosef resizePose{{0,0,0,1},{0,0,-1.2f}};
+    XrExtent2Df resizeSize = menuSize;
+    XrPosef resizeRay{{0,0,0,1},{menuSize.width*.49f,0,0}};
+    PanelResize edge; edge.Begin(resizePose,resizeSize,resizeRay,.99f,.5f);
+    const float fixedLeft = resizePose.position.x - resizeSize.width*.5f;
+    resizeRay.position.x += .2f; assert(edge.Move(resizePose,resizeSize,resizeRay));
+    assert(resizeSize.width > menuSize.width && Near(resizePose.position.x-resizeSize.width*.5f,fixedLeft));
     assert(BuildCylinder(4,2,3,.8f,roomInput.cyl) && BuildRoom(roomInput,room));
     PanelFlight curveFlight; curveFlight.flying = true; curveFlight.velocity = {0,0,-30};
     sheet = {{0,0,0,1},{.5f,0,3}};
     for (int i = 0; i < 90 && curveFlight.flying; ++i) curveFlight.Step(sheet,menuSize,room,{{0,0,0,1},{0,0,0}},1.0f/90);
     assert(curveFlight.stuck);
+    XrExtent2Df fittedSize{1.6f,1.28f};
+    curveFlight.FitToWall(sheet,fittedSize,room,{{0,0,0,1},{0,0,0}});
     for (float x : {-.5f,.5f})
     {
-        const auto corner = Add(sheet.position,Rotate(sheet.orientation,{x*menuSize.width,0,0}));
+        const auto corner = Add(sheet.position,Rotate(sheet.orientation,{x*fittedSize.width,0,0}));
         assert(corner.z > FrontDepth(room,corner.x));
+    }
+    // Dragging, resizing, hovering and even old poses already outside the room
+    // all use the same full-rectangle constraint, in the room's actual frame.
+    auto checkCorners = [&](XrPosef panelPose, XrExtent2Df panelSize, const Room& boundsRoom)
+    {
+        for (float x : {-.5f,.5f}) for (float y : {-.5f,.5f})
+        {
+            const auto world = Add(panelPose.position,Rotate(panelPose.orientation,{x*panelSize.width,y*panelSize.height,0}));
+            const auto local = Rotate(Inverse(roomPose.orientation),Sub(world,roomPose.position));
+            float corner[]{local.x,local.y,local.z}; assert(RoomInside(boundsRoom,corner));
+        }
+    };
+    for (bool curved : {false,true})
+    {
+        RoomInputs boundedInput = roomInput;
+        if (!curved) boundedInput.cyl = Cylinder{};
+        Room boundedRoom; assert(BuildRoom(boundedInput,boundedRoom));
+        for (auto centre : {XrVector3f{-20,-20,-20},XrVector3f{20,20,20},XrVector3f{0,0,3},XrVector3f{3,1,-.1f}})
+            for (float yaw : {-3.0f,-1.5f,0.0f,.9f}) for (float pitch : {-.7f,0.0f,.8f}) for (float roll : {-.6f,.4f})
+            {
+                auto rotation = Multiply({0,std::sin(yaw*.5f),0,std::cos(yaw*.5f)},
+                    Multiply({std::sin(pitch*.5f),0,0,std::cos(pitch*.5f)},{0,0,std::sin(roll*.5f),std::cos(roll*.5f)}));
+                XrPosef panelPose{Multiply(roomPose.orientation,rotation),Add(roomPose.position,Rotate(roomPose.orientation,centre))};
+                XrExtent2Df panelSize{3,2.4f};
+                ContainPanel(panelPose,panelSize,boundedRoom,roomPose);
+                checkCorners(panelPose,panelSize,boundedRoom);
+            }
+        PanelFlight wall;
+        XrPosef onWall{roomPose.orientation,Add(roomPose.position,Rotate(roomPose.orientation,{.5f,0,-1}))};
+        XrExtent2Df wallSize = menuSize;
+        wall.Dock(onWall,wallSize,boundedRoom,roomPose,kFaceFront);
+        onWall.position = Add(onWall.position,Rotate(roomPose.orientation,{.5f,.2f,.06f}));
+        const auto nearby = ContainPanel(onWall,wallSize,boundedRoom,roomPose);
+        assert(nearby.wallDistance <= .14f);
+        wall.Dock(onWall,wallSize,boundedRoom,roomPose,nearby.wall);
+        assert(wall.stuck && !wall.flying); checkCorners(onWall,wallSize,boundedRoom);
+        const auto eye = Add(roomPose.position,Rotate(roomPose.orientation,{-.5f,.5f,3}));
+        for (int i = 0; i < 90; ++i)
+        {
+            FaceViewer(onWall,eye,1.0f/90);
+            ContainPanel(onWall,wallSize,boundedRoom,roomPose);
+            checkCorners(onWall,wallSize,boundedRoom);
+        }
+        assert(Dot(Rotate(onWall.orientation,{0,0,1}),Normalize(Sub(eye,onWall.position))) > .99f);
+    }
+    XrPosef belowViewer{{0,0,0,1},{0,0,0}};
+    for (int i = 0; i < 90; ++i) FaceViewer(belowViewer,{0,2,0},1.0f/90);
+    assert(Rotate(belowViewer.orientation,{0,0,1}).y > .99f);
+    // Arrange all seven surfaces within the gaze frustum, close to the user,
+    // facing them, with no projected overlap in the normal room layout.
+    const XrFovf arrangeFov{-.8f,.8f,.7f,-.7f};
+    XrPosef arrangeEye{roomPose.orientation,Add(roomPose.position,Rotate(roomPose.orientation,{0,0,3}))};
+    RoomInputs arrangeInputs; arrangeInputs.W = 4; arrangeInputs.H = 2; arrangeInputs.eye[2] = 3; arrangeInputs.floorY = -2;
+    Room arrangeRoom; assert(BuildRoom(arrangeInputs,arrangeRoom));
+    for (int count = 1; count <= 7; ++count) for (uint32_t seed : {1u,99u,123456u})
+    {
+        XrPosef poses[7]{}; XrExtent2Df sizes[7]{}; float boxes[7][4]{};
+        for (int i = 0; i < count; ++i) sizes[i] = menuSize;
+        ArrangePanels(arrangeEye,arrangeFov,poses,sizes,count,arrangeRoom,roomPose,seed);
+        for (int i = 0; i < count; ++i)
+        {
+            const auto delta = Sub(poses[i].position,arrangeEye.position);
+            assert(std::sqrt(Dot(delta,delta)) < 1.9f);
+            assert(Dot(Rotate(poses[i].orientation,{0,0,1}),Normalize(Scale(delta,-1))) > .999f);
+            assert(Near(sizes[i].width/sizes[i].height,menuSize.width/menuSize.height));
+            boxes[i][0] = boxes[i][2] = 1e9f; boxes[i][1] = boxes[i][3] = -1e9f;
+            for (float x : {-.5f,.5f}) for (float y : {-.5f,.5f})
+            {
+                const auto world = Add(poses[i].position,Rotate(poses[i].orientation,{x*sizes[i].width,y*sizes[i].height,0}));
+                const auto local = Rotate(Inverse(arrangeEye.orientation),Sub(world,arrangeEye.position));
+                assert(local.z < 0 && std::fabs(std::atan2(local.x,-local.z)) < .8f && std::fabs(std::atan2(local.y,-local.z)) < .7f);
+                float px = local.x/-local.z, py = local.y/-local.z;
+                boxes[i][0] = std::min(boxes[i][0],px); boxes[i][1] = std::max(boxes[i][1],px);
+                boxes[i][2] = std::min(boxes[i][2],py); boxes[i][3] = std::max(boxes[i][3],py);
+            }
+            checkCorners(poses[i],sizes[i],arrangeRoom);
+        }
+        for (int i = 0; i < count; ++i) for (int j = i+1; j < count; ++j)
+            assert(boxes[i][1] <= boxes[j][0] || boxes[j][1] <= boxes[i][0] || boxes[i][3] <= boxes[j][2] || boxes[j][3] <= boxes[i][2]);
     }
     // Mouse mode needs a fresh press and always balances a captured down.
     MouseLatch mouse;
@@ -268,5 +360,5 @@ int main()
     assert(shared->events[UINT32_MAX%EventCount].kind == Up);
     for (int i = 0; i < EventCount+1; ++i) Push(*shared,{Move,0,0,0});
     assert(uint32_t(shared->header.write-shared->header.read) > EventCount); // consumer must cancel drag
-    puts("PASS: lunar gravity, push/pull, two-hand pins/scaling/wrist rotation/handoff, swept wall throws, wall-only visibility, mouse press/drag/release, flat/curved screen picking and IPC");
+    puts("PASS: full-panel room constraints, hover facing, wall resticking, thick resize borders, inertial coast, two-hand manipulation, mouse input, screen picking and snapshot IPC");
 }

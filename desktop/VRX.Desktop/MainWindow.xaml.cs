@@ -1864,6 +1864,7 @@ public partial class MainWindow : Window
         SmokeTestAutoAttach(output, sample, one);
         using (var menu = new ControllerMenu(@"Local\VRX.Controllers.Test." + Guid.NewGuid().ToString("N"),
             SectionList().Select(s => s.Section).ToArray(), Status, RecenterButton, ApplyAllConfirmed)) menu.SmokeTest(output);
+        await FloatingBrowser.SmokeTest(output);
         SmokeTestModes(output, sample, one);
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);

@@ -327,7 +327,40 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ControllerMenuBack" xml:space="preserve"><value>Back / sections</value></data>
   <data name="ControllerMenuControlScreen" xml:space="preserve"><value>Control screen</value></data>
   <data name="ControllerMenuStopControlScreen" xml:space="preserve"><value>Stop controlling screen</value></data>
-  <data name="ControllerMenuScreenHint" xml:space="preserve"><value>Right trigger: left-click / drag · Right stick click: right-click · Menu: hide settings</value></data>
+  <data name="ControllerMenuScreenHint" xml:space="preserve"><value>Right trigger: left-click / drag · Right grip: right-click · Menu: hide settings</value></data>
+  <data name="SnapshotTake" xml:space="preserve"><value>Snapshot</value></data>
+  <data name="SnapshotOpenFolder" xml:space="preserve"><value>Open images folder</value></data>
+  <data name="SnapshotTitle" xml:space="preserve"><value>Snapshot · hold title to move</value></data>
+  <data name="SnapshotSave" xml:space="preserve"><value>Save</value></data>
+  <data name="SnapshotDelete" xml:space="preserve"><value>Delete</value></data>
+  <data name="SnapshotClose" xml:space="preserve"><value>Close</value></data>
+  <data name="SnapshotSaved" xml:space="preserve"><value>Saved in VRX / images</value></data>
+  <data name="SnapshotLimit" xml:space="preserve"><value>Close a floating window to make room for another.</value></data>
+  <data name="BrowserOpen" xml:space="preserve"><value>Browser</value></data>
+  <data name="BrowserTitle" xml:space="preserve"><value>Browser · hold title to move</value></data>
+  <data name="BrowserGo" xml:space="preserve"><value>Go</value></data>
+  <data name="BrowserNew" xml:space="preserve"><value>New browser</value></data>
+  <data name="BrowserLicenses" xml:space="preserve"><value>Licenses</value></data>
+  <data name="BrowserBack" xml:space="preserve"><value>Back</value></data>
+  <data name="BrowserReload" xml:space="preserve"><value>Reload</value></data>
+  <data name="BrowserLoading" xml:space="preserve"><value>Loading…</value></data>
+  <data name="BrowserOpenLink" xml:space="preserve"><value>Open link in new window</value></data>
+  <data name="BrowserCopyLink" xml:space="preserve"><value>Copy link</value></data>
+  <data name="BrowserCopy" xml:space="preserve"><value>Copy</value></data>
+  <data name="BrowserPaste" xml:space="preserve"><value>Paste</value></data>
+  <data name="KeyboardOpen" xml:space="preserve"><value>Keyboard</value></data>
+  <data name="ArrangeWindows" xml:space="preserve"><value>Arrange windows</value></data>
+  <data name="KeyboardTitle" xml:space="preserve"><value>Keyboard · hold title to move</value></data>
+  <data name="KeyboardShift" xml:space="preserve"><value>Shift</value></data>
+  <data name="KeyboardSpace" xml:space="preserve"><value>Space</value></data>
+  <data name="KeyboardEnter" xml:space="preserve"><value>Enter</value></data>
+  <data name="KeyboardHint" xml:space="preserve"><value>Tap keys, or hold the trigger and swipe across letters. Release to type; choose another suggestion to replace the word.</value></data>
+  <data name="KeyboardChooseTarget" xml:space="preserve"><value>Select a browser field, or enable Control screen and click a game/Windows field.</value></data>
+  <data name="KeyboardBrowserTarget" xml:space="preserve"><value>Typing into browser: {0}</value></data>
+  <data name="KeyboardWindowsTarget" xml:space="preserve"><value>Typing into the selected game/Windows window</value></data>
+  <data name="KeyboardAddWord" xml:space="preserve"><value>Add word: {0}</value></data>
+  <data name="SnapshotFailed" xml:space="preserve"><value>Snapshot could not be captured. Try again.</value></data>
+  <data name="SnapshotFileError" xml:space="preserve"><value>Image: {0}</value></data>
   <data name="ControllerMenuSelect" xml:space="preserve"><value>Select an option</value></data>
   <data name="ControllerMenuDelete" xml:space="preserve"><value>Delete digit</value></data>
   <data name="ControllerMenuApply" xml:space="preserve"><value>Apply</value></data>

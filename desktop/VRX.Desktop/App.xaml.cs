@@ -13,4 +13,8 @@ public partial class App : Application
         MainWindow = window;
         window.Show();
     }
+    protected override void OnExit(ExitEventArgs e)
+    {
+        FloatingBrowserRuntime.Shutdown(); base.OnExit(e);
+    }
 }

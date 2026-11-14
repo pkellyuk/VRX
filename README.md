@@ -43,13 +43,20 @@ input focus. The controller's **Menu** button then shows or hides it. White beam
 either controller point at controls; squeeze the trigger to select or drag. Hold the
 trigger on the title bar to pick up the panel: it hangs from the grabbed point,
 swings under Moon-like gravity (1.62 m/s²) as you move it, and turns when you twist
-your wrist. Release slowly to leave it in place, or throw it at a room wall to stick
-it there, upright.
-A wall-mounted panel stays visible when Menu hides the beams, and also when
-Controllers is switched off. Grab its title bar again to detach it; recentering
-brings it back in front of you. Only wall attachment has this visibility exception:
-floor/ceiling hits and panels placed in mid-air still hide normally. Open air has
-no walls; a missed throw returns after eight seconds. Both sides remain readable. Move
+your wrist. Release slowly to leave it in place, or throw it to let it coast, with
+no downward acceleration, until inertia fades and it stops. Thrown panels float
+clear of the floor and ceiling. Hitting a room wall sticks the panel there, upright.
+A wall-mounted menu stays visible when Controllers is switched off; **Menu always
+recalls it in front of you** when controllers are enabled. Grab its title bar to
+detach it instead. Its softly glowing edge can be held with the trigger and dragged
+to resize it, including while attached to a wall. The wider frame gives a larger
+grab area. All four corners stay inside the room while moving, rotating or resizing;
+panels cannot be pushed through its walls. Pointing a beam at a panel gently turns
+it to face you, including a wall-mounted panel, while keeping it inside the room.
+Dragging a mounted panel near the wall slides and resticks it; pull it about 14 cm
+clear to detach it. Releasing a panel against any wall attaches it without a throw.
+Open air has no walls to stick to.
+Both sides remain readable. Move
 the pointing controller's thumbstick up/down to scroll (twice the original speed).
 Sections, option lists, a colour keypad and the Apply to all
 confirmation stay inside the panel. Settings use the same profile, validation and live
@@ -59,6 +66,42 @@ While holding the title bar with the right trigger, thumbstick up pushes it away
 and down pulls it closer. Grab another title-bar point with the left trigger to
 use both hands: move them together to carry it, turn your wrists to rotate it,
 or spread them apart to enlarge it. Release either trigger to continue with one hand.
+
+**Snapshot** captures the game frame currently displayed, at its original resolution,
+and opens it as a separate floating panel. Snapshots have the same title-bar movement,
+throwing, wall attachment and glowing resize edges. They remain visible when the
+settings menu is hidden. Each has **Save**, **Delete** and **Close** along its bottom:
+Save writes a PNG into `images` under the VRX folder (the repository root for a local
+build, or beside the packaged app); Close dismisses the panel and keeps any saved
+image; Delete removes its saved image, if any, and dismisses it. Unsaved snapshots
+are discarded when closed or when VR ends. Up to six extra floating panels can be
+open, shared between snapshots, browsers and the keyboard; close one to make room.
+Panel previews now render at 1920×1536, twice the old resolution in each direction.
+Saved images contain the original picture,
+without the panel border or buttons.
+
+**Browser** opens an independent off-screen Chromium browser in a floating panel;
+press it again, or use **New browser**, to open another. Each keeps its own page
+and navigation history. Use the beam and trigger to click/drag, the right grip to
+right-click, and the thumbstick to scroll. Right-click menus appear inside the panel.
+Back, forward, reload and the address field are at the top. Click the address field
+to edit it with the floating keyboard; Enter or Go navigates. Browser links opened
+in a new window create another panel. **Open images folder** opens snapshot saves
+in desktop Explorer.
+
+**Arrange windows** brings the menu and all open floating panels into your current
+field of view, facing you at a nearby distance. It shuffles their positions in a
+spaced layout and scales them to fit, keeping them inside the room. Wall-mounted
+panels are detached and moving panels stop. Press again for a different arrangement.
+
+**Keyboard** opens or recalls a separate floating QWERTY panel. Tap letters or hold
+the trigger while swiping across them, then release to commit the best English
+word suggestion. The other suggestions replace that word. Shift, symbols, space,
+backspace, Enter, Tab and cursor keys are available. Tap completions also work.
+The initial predictor uses a local English vocabulary; explicitly select **Add word**
+to teach it unfamiliar words. Predictions stay local. Type into the last browser
+field you clicked, or enable **Control screen** and click a game/Windows field to
+type there instead. Clicking the keyboard does not steal the target's desktop focus.
 
 The panel opens 1.2 metres ahead, centred where your headset is looking, including its
 up/down angle. It then stays fixed until you drag it. Opening it again or recentering
@@ -76,8 +119,8 @@ be remapped in the runtime. This feature controls VRX's settings; it does not fo
 motion-controller poses to the captured flat game. **Control screen** in the menu
 optionally makes the right beam a mouse on the displayed picture (flat or curved):
 point to move the cursor, press the right trigger to left-click, and hold it to drag.
-Click the right thumbstick for a right-click. In this mode, the right stick click
-does not toggle the menu on Index/generic controllers; the left stick click still does.
+Squeeze the right grip for a right-click. Thumbstick clicks retain their normal
+menu-toggle bindings on Index/generic controllers.
 **Stop controlling screen** turns this off. Menu controls take priority over screen
 clicks. Losing tracking or XR input focus, leaving the screen, hiding the beams, or
 turning Controllers off releases the mouse button; release and press the trigger
@@ -90,9 +133,11 @@ cancels any drag and deactivates its actions and screen mouse control.
 Until first enabled, no controller actions, menu texture or desktop menu view are created.
 
 Developer checks: `bench\native\openxr\test-controllers.bat` locates Visual Studio's C++
-tools, tests placement/ray picking and compiles the full controller adapter without a
-headset. `VRX.Desktop.exe --smoke-test` also checks settings persistence, bitmap IPC and
-two-way slider/checkbox updates and writes controller-menu screenshots to `desktop/out`.
+tools, tests panel motion/ray picking and the full controller adapter, and verifies
+asynchronous GPU snapshot readback with WARP without a headset. `VRX.Desktop.exe
+--smoke-test` also checks settings persistence, bitmap IPC, slider/checkbox updates,
+snapshot Save/Delete/Close and full-resolution PNG output. It writes panel screenshots
+to `desktop/out`.
 Hardware checks still require a headset: Menu press/hold, either-hand beams, title-bar
 movement, dragging beyond a slider, thumbstick scrolling, focus/tracking loss, reopening/recentering and
 turning the feature on/off during playback. Check both Easy and Expert, flat and curved
@@ -219,7 +264,10 @@ release workflow is ready to sign once a certificate is available; the
 [code signing policy](https://vrx3d.uk/code-signing.html) describes what would be signed
 and how it is built.
 
-VRX makes no network connections and collects no data: see the
+VRX does not collect telemetry. Its optional embedded browser connects to the sites
+you open and stores its browser profile under `%LOCALAPPDATA%\VRX\browser`.
+Swipe prediction runs locally; explicitly learned words are stored under
+`%LOCALAPPDATA%\VRX\keyboard-words.json`. Capture and depth processing stay local. See the
 [privacy policy](https://vrx3d.uk/privacy.html).
 
 ## License

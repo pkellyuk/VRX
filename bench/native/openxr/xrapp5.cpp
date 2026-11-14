@@ -155,6 +155,7 @@ using Microsoft::WRL::ComPtr;
 #include "xr_frame_guard.h"
 #include "screen_anchor.h"
 #include "controller_menu.h"
+#include "snapshot_capture.h"
 #include "capture_window.h"
 #include "desktop_control.h"
 #include "foreground_refinement.h"
@@ -461,6 +462,10 @@ struct App
 {
     Options opt;
     ControllerMenu controllerMenu;
+    ScreenSnapshotCapture snapshotCapture;
+    SourceRef snapshotFrameHold;
+    std::wstring snapshotCompletionPath;
+    bool snapshotCompletionPending = false;
     bool frameControllerProfile = false, genericControllerProfile = false;
 
     // OpenXR
@@ -10382,7 +10387,9 @@ static void RunFrameLoop(App& app)
         if (XR_FAILED(xrBeginFrame_(app.session, nullptr))) { Log("RunFrameLoop: xrBeginFrame failed"); app.stop = true; break; }
         frames++; repFrames++;
 
-        const XrCompositionLayerBaseHeader* layers[VIEWS + 8] = {}; // screen/room, two-sided menu, beams, menu and screen pointers
+        const XrCompositionLayerBaseHeader* layers[16] = {}; // scene, menu, six snapshots, beams and pointers (within core OpenXR limits)
+        SourceRef snapshotFramePresented;
+        XrFovf menuFov{-.7f,.7f,.65f,-.65f};
         uint32_t layerCount = 0;
         XrCompositionLayerProjection worldProj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
         XrCompositionLayerProjectionView worldViews[VIEWS];
@@ -10415,6 +10422,14 @@ static void RunFrameLoop(App& app)
             if (!validTracking) ++invalidTrackingFrames;
             if (validTracking)
             {
+            menuFov = views[0].fov;
+            for (int eye = 1; eye < VIEWS; ++eye)
+            {
+                menuFov.angleLeft = std::max(menuFov.angleLeft,views[eye].fov.angleLeft);
+                menuFov.angleRight = std::min(menuFov.angleRight,views[eye].fov.angleRight);
+                menuFov.angleUp = std::min(menuFov.angleUp,views[eye].fov.angleUp);
+                menuFov.angleDown = std::max(menuFov.angleDown,views[eye].fov.angleDown);
+            }
 
             float ex = views[1].pose.position.x - views[0].pose.position.x;
             float ey = views[1].pose.position.y - views[0].pose.position.y;
@@ -10753,6 +10768,7 @@ static void RunFrameLoop(App& app)
 
                 if (source)
                 {
+                    snapshotFramePresented = source;
                     // a captured frame comes from another device: make the gfx queue
                     // wait for it on the GPU timeline (no CPU stall)
                     if (SourceFence(app) != app.fence.Get())
@@ -11057,10 +11073,21 @@ static void RunFrameLoop(App& app)
                 if (GetMonitorInfoW(app.cap.monitor,&info)) mouseTarget = info.rcMonitor;
             }
         }
-        app.controllerMenu.SetScene(room,screen.pose,app.opt.headLocked ? XrExtent2Df{} : screen.size,cylinder,mouseTarget,mouseWindow);
+        app.controllerMenu.SetScene(room,screen.pose,app.opt.headLocked ? XrExtent2Df{} : screen.size,cylinder,mouseTarget,mouseWindow,menuFov);
         app.controllerMenu.Update(g_getProc, app.instance, app.session, app.space, app.device.Get(), app.gfxQueue.Get(),
             state == XR_SESSION_STATE_FOCUSED, fs.shouldRender && trackingWasValid, fs.predictedDisplayTime,
             app.frameControllerProfile, app.genericControllerProfile);
+        std::wstring capturedPath;
+        if (app.snapshotCapture.Poll(capturedPath))
+        { app.snapshotFrameHold.reset(); app.snapshotCompletionPath = std::move(capturedPath); app.snapshotCompletionPending = true; }
+        if (app.snapshotCompletionPending && app.controllerMenu.CompleteSnapshot(app.snapshotCompletionPath))
+        { app.snapshotCompletionPending = false; app.snapshotCompletionPath.clear(); }
+        if (!app.snapshotCompletionPending && !app.snapshotCapture.Busy() && app.controllerMenu.TakeSnapshotRequest())
+        {
+            if (snapshotFramePresented && app.snapshotCapture.Start(app.device.Get(),app.gfxQueue.Get(),app.srcTex[snapshotFramePresented->index].Get()))
+                app.snapshotFrameHold = snapshotFramePresented;
+            else { app.snapshotCompletionPending = true; app.snapshotCompletionPath.clear(); }
+        }
         if (fs.shouldRender && trackingWasValid)
             app.controllerMenu.Append(layers, layerCount);
         if (app.controllerMenu.Error() != controllerError)
@@ -11472,6 +11499,8 @@ static void Shutdown(App& app)
     DumpDebugMessages(app);
 
     if (ort) ReleaseModel(app);
+    app.snapshotCapture.Discard(); app.snapshotFrameHold.reset();
+    if (!app.snapshotCompletionPath.empty()) DeleteFileW(app.snapshotCompletionPath.c_str());
     app.controllerMenu.Shutdown();
     if (app.colorSc) xrDestroySwapchain_(app.colorSc);
     if (app.eyeSc) xrDestroySwapchain_(app.eyeSc);

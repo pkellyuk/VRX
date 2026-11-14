@@ -43,6 +43,43 @@ inline XrPosef Place(XrPosef eye)
     return {eye.orientation, Add(eye.position, Rotate(eye.orientation,{0,0,-1.2f}))};
 }
 
+constexpr float ResizeBorderU = 40.0f/960, ResizeBorderV = 40.0f/768;
+inline bool EdgeHit(float u, float v)
+{
+    return u >= 0 && u <= 1 && v >= 0 && v <= 1 &&
+        (u < ResizeBorderU || u > 1-ResizeBorderU || v < ResizeBorderV || v > 1-ResizeBorderV);
+}
+
+struct PanelResize
+{
+    XrPosef plane{};
+    XrExtent2Df original{};
+    XrVector3f anchor{}, anchorLocal{}, initialDelta{};
+    void Begin(XrPosef pose, XrExtent2Df size, XrPosef ray, float u, float v)
+    {
+        plane = pose; original = size;
+        if (Rotate(Inverse(pose.orientation),Sub(ray.position,pose.position)).z < 0) u = 1-u;
+        anchorLocal = {(u < ResizeBorderU ? .5f : u > 1-ResizeBorderU ? -.5f : 0)*size.width,
+                       (v < ResizeBorderV ? -.5f : v > 1-ResizeBorderV ? .5f : 0)*size.height,0};
+        anchor = Add(pose.position,Rotate(pose.orientation,anchorLocal));
+        initialDelta = Sub({(u-.5f)*size.width,(.5f-v)*size.height,0},anchorLocal);
+    }
+    bool Move(XrPosef& pose, XrExtent2Df& size, XrPosef ray) const
+    {
+        const auto inverse = Inverse(plane.orientation);
+        const auto origin = Rotate(inverse,Sub(ray.position,plane.position));
+        const auto direction = Rotate(inverse,Rotate(ray.orientation,{0,0,-1}));
+        if (std::fabs(direction.z) < 1e-5f) return false;
+        const float t = -origin.z/direction.z;
+        if (!std::isfinite(t) || t <= 0) return false;
+        const auto delta = Sub(Add(origin,Scale(direction,t)),anchorLocal);
+        const float scale = std::clamp(Dot(delta,initialDelta)/std::max(.0001f,Dot(initialDelta,initialDelta)),.35f/original.width,2.0f/original.width);
+        size = {original.width*scale,original.height*scale};
+        pose.position = Sub(anchor,Rotate(plane.orientation,Scale(anchorLocal,scale)));
+        return true;
+    }
+};
+
 struct PanelDrag
 {
     float distance = 0;

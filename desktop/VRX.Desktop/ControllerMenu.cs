@@ -18,10 +18,14 @@ public sealed class ControllerMenu : IDisposable
 {
     // Versioned, same-user, session-specific IPC; see controller_menu_protocol.h.
     public const int Width = 960, Height = 768, HeaderBytes = 64, EventCount = 64;
+    public const int PixelWidth = Width * 2, PixelHeight = Height * 2;
     public const int PixelsAt = HeaderBytes + EventCount * 16;
-    public const int Capacity = PixelsAt + Width * Height * 4;
+    public const int MaxSnapshots = 6, SnapshotMetaBytes = 1056, SnapshotPathChars = 512;
+    public const int PixelBytes = PixelWidth * PixelHeight * 4, SnapshotsAt = PixelsAt + PixelBytes, SnapshotBytes = SnapshotMetaBytes + PixelBytes;
+    public const int KeyboardAt = SnapshotsAt + MaxSnapshots * SnapshotBytes, KeyboardEventsAt = KeyboardAt + 24;
+    public const int Capacity = KeyboardEventsAt + 256 * 8;
     public const int Magic = 0x58524356;
-    public const int TitleLeft = 24, TitleTop = 24, TitleHeight = 56, TitleRight = Width - 24;
+    public const int TitleLeft = 48, TitleTop = 48, TitleHeight = 56, TitleRight = Width - 48;
     private readonly MemoryMappedFile map;
     private readonly MemoryMappedViewAccessor memory;
     private readonly Mutex mutex;
@@ -38,8 +42,8 @@ public sealed class ControllerMenu : IDisposable
     private readonly List<Action> refresh = new();
     private readonly IReadOnlyList<Expander> sections;
     private readonly Action applyAll;
-    private readonly RenderTargetBitmap bitmap = new(Width, Height, 96, 96, PixelFormats.Pbgra32);
-    private readonly byte[] pixels = new byte[Width * Height * 4];
+    private readonly RenderTargetBitmap bitmap = new(PixelWidth, PixelHeight, 192, 192, PixelFormats.Pbgra32);
+    private readonly byte[] pixels = new byte[PixelBytes];
     private FrameworkElement? held;
     private bool enabled, disposed;
     private bool controlScreen;
@@ -47,6 +51,15 @@ public sealed class ControllerMenu : IDisposable
     private int generation;
     private int pageGeneration;
     private Action? back;
+    private readonly IFloatingPanel?[] snapshots = new IFloatingPanel?[MaxSnapshots];
+    private readonly int[] snapshotFrames = new int[MaxSnapshots];
+    private readonly int[] pendingPanelKinds = Enumerable.Repeat(-1, MaxSnapshots).ToArray();
+    private uint snapshotError;
+    private string imagesFolder = Path.Combine(EngineSession.RepositoryRoot(), "images");
+    private readonly SwipePredictor predictor = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX", "keyboard-words.json"));
+    private IFloatingTextTarget? textTarget;
+    private uint keyboardFocusSerial;
+    private uint pendingArrange;
 
     public ControllerMenu(string name, IReadOnlyList<Expander> sections, TextBlock desktopStatus,
         Button recenter, Action applyAll)
@@ -60,12 +73,12 @@ public sealed class ControllerMenu : IDisposable
         try
         {
             memory.WriteArray(0, new byte[HeaderBytes], 0, HeaderBytes);
-            memory.Write(0, Magic); memory.Write(4, 1);
+            memory.Write(0, Magic); memory.Write(4, 3);
             memory.Write(20, -1.0f); memory.Write(24, -1.0f);
         }
         finally { mutex.ReleaseMutex(); }
 
-        var root = new DockPanel { Margin = new(TitleLeft, TitleTop, Width - TitleRight, 24) };
+        var root = new DockPanel { Margin = new(TitleLeft, TitleTop, Width - TitleRight, 48) };
         var top = new StackPanel();
         DockPanel.SetDock(top, Dock.Top);
         var title = new DockPanel();
@@ -85,8 +98,33 @@ public sealed class ControllerMenu : IDisposable
             controlScreen = !controlScreen;
             controlScreenButton.Content = Loc.Get(controlScreen ? "ControllerMenuStopControlScreen" : "ControllerMenuControlScreen");
             interactionHint.Text = Loc.Get(controlScreen ? "ControllerMenuScreenHint" : "ControllerMenuHint");
+            if (controlScreen) { textTarget = null; SetKeyboardTarget(); }
         });
         toolbar.Children.Add(controlScreenButton);
+        toolbar.Children.Add(ActionButton(Loc.Get("SnapshotTake"), () =>
+        {
+            if (!Lock()) return;
+            try
+            {
+                bool free = Enumerable.Range(0, MaxSnapshots).Any(i => memory.ReadInt32(SnapshotsAt + i * SnapshotBytes + 8) == 0 && memory.ReadInt32(SnapshotsAt + i * SnapshotBytes + 12) == 0);
+                if (!free) { interactionHint.Text = Loc.Get("SnapshotLimit"); return; }
+                memory.Write(48, unchecked(memory.ReadUInt32(48) + 1));
+            }
+            finally { mutex.ReleaseMutex(); }
+        }));
+        toolbar.Children.Add(ActionButton(Loc.Get("SnapshotOpenFolder"), () =>
+        {
+            try
+            {
+                Directory.CreateDirectory(imagesFolder);
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(imagesFolder) { UseShellExecute = true });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+            { interactionHint.Text = Loc.Format("SnapshotFileError", ex.Message); }
+        }));
+        toolbar.Children.Add(ActionButton(Loc.Get("BrowserOpen"), () => OpenBrowser("https://www.google.com")));
+        toolbar.Children.Add(ActionButton(Loc.Get("KeyboardOpen"), OpenKeyboard));
+        toolbar.Children.Add(ActionButton(Loc.Get("ArrangeWindows"), () => pendingArrange++));
         root.Children.Add(top);
         DockPanel.SetDock(status, Dock.Bottom);
         Bind(status, TextBlock.TextProperty, desktopStatus, nameof(TextBlock.Text));
@@ -96,7 +134,7 @@ public sealed class ControllerMenu : IDisposable
         surface = new UserControl
         {
             Width = Width, Height = Height, FontSize = 21, FontFamily = new FontFamily("Segoe UI"),
-            Foreground = Brushes.White, Content = new Border { Background = new SolidColorBrush(Color.FromRgb(16, 24, 40)), Child = root },
+            Foreground = Brushes.White, Content = FloatingPanelChrome.Wrap(root),
             Language = System.Windows.Markup.XmlLanguage.GetLanguage(CultureInfo.CurrentCulture.IetfLanguageTag)
         };
         Home();
@@ -114,6 +152,7 @@ public sealed class ControllerMenu : IDisposable
             interactionHint.Text = Loc.Get("ControllerMenuHint");
         }
         held = null;
+        if (!value) foreach (var snapshot in snapshots) snapshot?.Pointer(4, -1, -1);
         if (!Lock()) return; // Tick retries; a busy renderer must not block WPF.
         try { memory.Write(8, value ? 1 : 0); memory.Write(36, controlScreen ? 1 : 0); }
         finally { mutex.ReleaseMutex(); }
@@ -123,6 +162,76 @@ public sealed class ControllerMenu : IDisposable
     {
         try { return mutex.WaitOne(0); }
         catch (AbandonedMutexException) { return true; }
+    }
+
+    private int AddPanel(int kind, Func<IFloatingPanel> create)
+    {
+        if (!Lock()) return -1;
+        int slot = -1;
+        try
+        {
+            for (int i = 0; i < MaxSnapshots; i++)
+                if (snapshots[i] == null && memory.ReadInt32(SnapshotsAt+i*SnapshotBytes+8) == 0 && memory.ReadInt32(SnapshotsAt+i*SnapshotBytes+12) == 0)
+                { slot = i; memory.Write(SnapshotsAt+i*SnapshotBytes+12, 3); break; }
+        }
+        finally { mutex.ReleaseMutex(); }
+        if (slot < 0) { interactionHint.Text = Loc.Get("SnapshotLimit"); return -1; }
+        try
+        {
+            snapshots[slot] = create(); snapshotFrames[slot] = 0;
+            pendingPanelKinds[slot] = kind; // Tick publishes the bitmap and metadata together.
+            return slot;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            snapshots[slot]?.Dispose(); snapshots[slot] = null;
+            pendingPanelKinds[slot] = -2; // Retry releasing the reserved slot without blocking WPF.
+            interactionHint.Text = ex.Message; return -1;
+        }
+    }
+    private void OpenBrowser(string url)
+    {
+        int slot = AddPanel(1, () => new FloatingBrowser(FocusBrowser, OpenKeyboard, OpenBrowser, url));
+        if (slot >= 0) FocusBrowser((FloatingBrowser)snapshots[slot]!);
+    }
+    private void OpenKeyboard()
+    {
+        for (int i = 0; i < MaxSnapshots; i++) if (snapshots[i] is FloatingKeyboard { Closed: false })
+        {
+            if (Lock())
+            {
+                try { long at = SnapshotsAt+i*SnapshotBytes; memory.Write(at, unchecked(memory.ReadUInt32(at)+1)); }
+                finally { mutex.ReleaseMutex(); }
+            }
+            SetKeyboardTarget(); return;
+        }
+        if (AddPanel(2, () => new FloatingKeyboard(predictor, SendKeyboardEdit)) >= 0) SetKeyboardTarget();
+    }
+    private void FocusBrowser(FloatingBrowser browser) { textTarget = browser; SetKeyboardTarget(); }
+    private void SetKeyboardTarget()
+    {
+        string label = textTarget is FloatingBrowser browser ? Loc.Format("KeyboardBrowserTarget", browser.Address) :
+            controlScreen ? Loc.Get("KeyboardWindowsTarget") : Loc.Get("KeyboardChooseTarget");
+        foreach (var keyboard in snapshots.OfType<FloatingKeyboard>()) keyboard.SetTarget(label);
+    }
+    private bool SendKeyboardEdit(KeyboardEdit edit)
+    {
+        if (textTarget is FloatingBrowser { Closed: false } browser) { if (!browser.CanType) return false; browser.Edit(edit); return true; }
+        if (!Lock()) return false;
+        try
+        {
+            if (!enabled || !controlScreen || (memory.ReadUInt32(KeyboardAt+12)&1) == 0) return false;
+            uint write = memory.ReadUInt32(KeyboardAt), read = memory.ReadUInt32(KeyboardAt+4);
+            int count = edit.Backspaces + edit.Text.Length + (edit.Key != 0 ? 1 : 0);
+            if (unchecked(write-read)+count > 256) return false;
+            void Add(int type, int code)
+            { long at = KeyboardEventsAt+(write++ % 256)*8; memory.Write(at, type); memory.Write(at+4, code); }
+            for (int i = 0; i < edit.Backspaces; i++) Add(1, 8);
+            foreach (char c in edit.Text) Add(0, c);
+            if (edit.Key != 0) Add(1, edit.Key);
+            memory.Write(KeyboardAt, write); return true;
+        }
+        finally { mutex.ReleaseMutex(); }
     }
 
     private void Page(string title, Action? parent)
@@ -331,16 +440,31 @@ public sealed class ControllerMenu : IDisposable
     {
         if (disposed || !Lock()) return;
         var events = new List<(int Kind, float X, float Y, float Value)>();
+        var ready = new List<(int Slot, string Path)>();
         bool visible;
+        bool windowsFocus = false;
         try
         {
             memory.Write(8, enabled ? 1 : 0);
             memory.Write(36, enabled && controlScreen ? 1 : 0);
             memory.Write(40, unchecked((ulong)Environment.TickCount64));
+            if (pendingArrange != 0) { memory.Write(60, unchecked(memory.ReadUInt32(60)+pendingArrange)); pendingArrange = 0; }
             visible = enabled && memory.ReadInt32(12) != 0;
+            if (memory.ReadUInt32(KeyboardAt+8) != keyboardFocusSerial)
+            { keyboardFocusSerial = memory.ReadUInt32(KeyboardAt+8); windowsFocus = true; }
+            if (memory.ReadUInt32(56) != snapshotError)
+            { snapshotError = memory.ReadUInt32(56); interactionHint.Text = Loc.Get("SnapshotFailed"); }
+            for (int i = 0; i < MaxSnapshots; i++)
+                if (memory.ReadInt32(SnapshotsAt + i * SnapshotBytes + 12) == 1 && snapshots[i] == null)
+                {
+                    var path = new byte[SnapshotPathChars * 2];
+                    memory.ReadArray(SnapshotsAt + i * SnapshotBytes + 32, path, 0, path.Length);
+                    ready.Add((i, System.Text.Encoding.Unicode.GetString(path).Split('\0')[0]));
+                }
             uint write = memory.ReadUInt32(28), read = memory.ReadUInt32(32);
             // A producer overflow cancels a drag; never turn a dropped release into a stuck slider.
-            if (unchecked(write - read) > EventCount) { held = null; read = write; }
+            if (unchecked(write - read) > EventCount)
+            { held = null; foreach (var snapshot in snapshots) snapshot?.Pointer(4, -1, -1); read = write; }
             while (read != write)
             {
                 int offset = HeaderBytes + (int)(read % EventCount) * 16;
@@ -350,20 +474,73 @@ public sealed class ControllerMenu : IDisposable
             memory.Write(32, read);
         }
         finally { mutex.ReleaseMutex(); }
+        if (windowsFocus) { textTarget = null; SetKeyboardTarget(); }
+        foreach (var item in ready)
+        {
+            try
+            {
+                var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad;
+                using (var stream = File.OpenRead(item.Path)) { image.StreamSource = stream; image.EndInit(); }
+                image.Freeze();
+                snapshots[item.Slot] = new FloatingSnapshot(image, imagesFolder);
+                snapshotFrames[item.Slot] = 0;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or System.IO.FileFormatException)
+            { interactionHint.Text = Loc.Format("SnapshotFileError", ex.Message); }
+            finally
+            {
+                string full = Path.GetFullPath(item.Path);
+                if (full.StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase) && Path.GetFileName(full).StartsWith("VRX", StringComparison.OrdinalIgnoreCase))
+                    try { File.Delete(full); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+        }
+        foreach (var e in events.Where(e => e.Kind >= 16))
+        {
+            int slot = e.Kind / 16 - 1;
+            if (slot >= 0 && slot < MaxSnapshots)
+                snapshots[slot]?.Pointer(enabled ? e.Kind % 16 : 4, e.X, e.Y, e.Value);
+        }
+        for (int i = 0; i < MaxSnapshots; i++)
+        {
+            var snapshot = snapshots[i];
+            if (snapshot == null && pendingPanelKinds[i] == -1 && !ready.Any(r => r.Slot == i)) continue;
+            byte[]? rendered = snapshot is { Closed: false, Dirty: true } ? snapshot.Render() : null;
+            if (!Lock()) continue;
+            try
+            {
+                long at = SnapshotsAt + i * SnapshotBytes;
+                if (snapshot == null || snapshot.Closed)
+                {
+                    memory.Write(at + 8, 0); memory.Write(at + 12, 0);
+                    if (ReferenceEquals(snapshot, textTarget)) { textTarget = null; SetKeyboardTarget(); }
+                    snapshot?.Dispose(); snapshots[i] = null;
+                    pendingPanelKinds[i] = -1;
+                }
+                else if (rendered != null)
+                {
+                    if (pendingPanelKinds[i] >= 0)
+                    { memory.Write(at, unchecked(memory.ReadUInt32(at)+1)); memory.Write(at+16, pendingPanelKinds[i]); pendingPanelKinds[i] = -1; }
+                    memory.WriteArray(at + SnapshotMetaBytes, rendered, 0, rendered.Length);
+                    memory.Write(at + 4, ++snapshotFrames[i]); memory.Write(at + 8, 1); memory.Write(at + 12, 2);
+                    snapshot.Published();
+                }
+            }
+            finally { mutex.ReleaseMutex(); }
+        }
         if (!visible) { held = null; return; }
         surface.Measure(new Size(Width, Height)); surface.Arrange(new Rect(0, 0, Width, Height)); surface.UpdateLayout();
         int page = pageGeneration;
-        foreach (var e in events)
+        foreach (var e in events.Where(e => e.Kind < 16))
         {
             Pointer(e.Kind, e.X, e.Y, e.Value);
             if (page != pageGeneration) break; // remaining events describe the old bitmap
         }
         foreach (var update in refresh.ToArray()) update();
         surface.UpdateLayout();
-        bitmap.Clear(); bitmap.Render(surface); bitmap.CopyPixels(pixels, Width * 4, 0);
+        bitmap.Clear(); bitmap.Render(surface); bitmap.CopyPixels(pixels, PixelWidth * 4, 0);
         // A solid white texel region for the renderer's low-latency beams and pointer.
         for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++)
-        { int p = (y * Width + x) * 4; pixels[p] = pixels[p + 1] = pixels[p + 2] = pixels[p + 3] = 255; }
+        { int p = (y * PixelWidth + x) * 4; pixels[p] = pixels[p + 1] = pixels[p + 2] = pixels[p + 3] = 255; }
         if (!Lock()) return;
         try { memory.WriteArray(PixelsAt, pixels, 0, pixels.Length); memory.Write(16, ++generation); }
         finally { mutex.ReleaseMutex(); }
@@ -373,6 +550,8 @@ public sealed class ControllerMenu : IDisposable
     {
         if (disposed) return;
         Enable(false); disposed = true; timer.Stop();
+        foreach (var panel in snapshots) panel?.Dispose();
+        predictor.Save();
         memory.Dispose(); map.Dispose(); mutex.Dispose();
     }
 
@@ -381,17 +560,74 @@ public sealed class ControllerMenu : IDisposable
     internal void SmokeTest(string output)
     {
         Enable(true);
+        imagesFolder = Path.Combine(output, "snapshot-ipc-images");
+        FloatingSnapshot.SmokeTest(output);
+        FloatingKeyboard.SmokeTest(output);
         if (!Lock()) throw new Exception("Menu test could not lock IPC");
         try { memory.Write(12, 1); }
         finally { mutex.ReleaseMutex(); }
         Tick();
+        // A ready GPU-capture file becomes an independently rendered snapshot slot.
+        string captureFile = Path.Combine(Path.GetTempPath(), "VRX-" + Guid.NewGuid().ToString("N") + ".bmp");
+        var captureImage = BitmapSource.Create(2, 2, 96, 96, PixelFormats.Bgra32, null,
+            new byte[] { 0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 255, 255, 255, 255 }, 8);
+        var bmp = new BmpBitmapEncoder(); bmp.Frames.Add(BitmapFrame.Create(captureImage));
+        using (var file = File.Create(captureFile)) bmp.Save(file);
+        if (!Lock()) throw new Exception("Snapshot test could not lock IPC");
+        try
+        {
+            memory.Write(SnapshotsAt, 1); memory.Write(SnapshotsAt + 12, 1);
+            var path = System.Text.Encoding.Unicode.GetBytes(captureFile + '\0'); memory.WriteArray(SnapshotsAt + 32, path, 0, path.Length);
+        }
+        finally { mutex.ReleaseMutex(); }
+        Tick();
+        if (snapshots[0] == null || memory.ReadInt32(SnapshotsAt + 8) != 1 || memory.ReadInt32(SnapshotsAt + 12) != 2 || memory.ReadInt32(SnapshotsAt + 4) == 0 || File.Exists(captureFile))
+            throw new Exception("Snapshot capture handoff did not publish a bitmap or clean its temporary file");
+        // Route the bottom-edge Save and Delete buttons through snapshot event IDs.
+        void SnapshotClick(float x)
+        {
+            if (!Lock()) throw new Exception("Snapshot test could not lock IPC");
+            try
+            {
+                uint write = memory.ReadUInt32(28);
+                foreach (int kind in new[] { 17, 18 })
+                {
+                    int at = HeaderBytes + (int)(write++ % EventCount) * 16;
+                    memory.Write(at, kind); memory.Write(at + 4, x); memory.Write(at + 8, .90f); memory.Write(at + 12, 0f);
+                }
+                memory.Write(28, write);
+            }
+            finally { mutex.ReleaseMutex(); }
+            Tick();
+        }
+        SnapshotClick(.1f);
+        string? savedSnapshot = (snapshots[0] as FloatingSnapshot)?.SavedPath;
+        if (savedSnapshot == null || !File.Exists(savedSnapshot)) throw new Exception("Snapshot Save did not route through IPC");
+        SnapshotClick(.24f);
+        if (snapshots[0] != null || memory.ReadInt32(SnapshotsAt + 8) != 0 || File.Exists(savedSnapshot))
+            throw new Exception("Snapshot Delete did not close the slot and delete its image through IPC");
         if (memory.ReadInt32(16) == 0) throw new Exception("Visible controller menu did not publish a bitmap");
         var bar = titleBar.TranslatePoint(new Point(0, 0), surface);
         if (bar.X != TitleLeft || bar.Y != TitleTop || titleBar.ActualHeight != TitleHeight || titleBar.ActualWidth != TitleRight - TitleLeft)
             throw new Exception("The visible title bar must match the renderer's drag region");
         if (pixels.Take(4).Any(b => b != 255)) throw new Exception("Controller beams must use solid white texels");
         ClickButton(Loc.Get("ControllerMenuControlScreen")); Tick();
+        uint beforeArrange = memory.ReadUInt32(60);
+        ClickButton(Loc.Get("ArrangeWindows")); Tick();
+        if (memory.ReadUInt32(60) != unchecked(beforeArrange+1)) throw new Exception("Arrange windows did not send its request through IPC");
         if (memory.ReadInt32(36) != 1) throw new Exception("Control screen button did not enable mouse mode through IPC");
+        if (!Lock()) throw new Exception("Keyboard test could not lock IPC");
+        try { memory.Write(KeyboardAt+12, 1); }
+        finally { mutex.ReleaseMutex(); }
+        if (!SendKeyboardEdit(new KeyboardEdit("hi", Key: 13, Backspaces: 1)) || memory.ReadUInt32(KeyboardAt) != 4 ||
+            memory.ReadInt32(KeyboardEventsAt) != 1 || memory.ReadInt32(KeyboardEventsAt+4) != 8 ||
+            memory.ReadInt32(KeyboardEventsAt+12) != 'h' || memory.ReadInt32(KeyboardEventsAt+28) != 13)
+            throw new Exception("Floating keyboard did not queue Unicode text and editing keys for Windows");
+        if (!Lock()) throw new Exception("Keyboard test could not lock IPC");
+        try { memory.Write(KeyboardAt+12, 0); }
+        finally { mutex.ReleaseMutex(); }
+        if (SendKeyboardEdit(new KeyboardEdit("blocked")) || memory.ReadUInt32(KeyboardAt) != 4)
+            throw new Exception("Keyboard must not send text while Windows target is inactive");
         ClickButton(Loc.Get("ControllerMenuStopControlScreen")); Tick();
         if (memory.ReadInt32(36) != 0) throw new Exception("Stop controlling screen did not disable mouse mode");
         ClickButton(Loc.Get("ControllerMenuControlScreen")); Tick();
