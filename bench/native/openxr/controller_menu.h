@@ -37,7 +37,7 @@ class ControllerMenu
     std::vector<XrSwapchainImageD3D12KHR> images;
     XrPosef pose{{0,0,0,1},{0,0,0}};
     XrExtent2Df size{.85f,.68f};
-    XrCompositionLayerQuad layer{XR_TYPE_COMPOSITION_LAYER_QUAD}, cursor{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad layer{XR_TYPE_COMPOSITION_LAYER_QUAD}, back{XR_TYPE_COMPOSITION_LAYER_QUAD}, cursor{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad beams[2]{{XR_TYPE_COMPOSITION_LAYER_QUAD},{XR_TYPE_COMPOSITION_LAYER_QUAD}};
     Ptr<ID3D12CommandAllocator> allocator;
     Ptr<ID3D12GraphicsCommandList> commands;
@@ -344,9 +344,16 @@ public:
             tracked[h] = XR_SUCCEEDED(xrGetActionStatePose_(session,&gi,&state)) && state.isActive && Locate(hands[h],time,rays[h]);
         }
         if (draggingPanel && activeHand >= 0 && tracked[activeHand] && down[activeHand])
-            panelDrag.Move(pose,rays[activeHand]);
+            panelDrag.Move(pose,rays[activeHand],dt);
         for (int h = 0; h < 2; ++h)
-            if (tracked[h]) hit[h] = vrxmenu::Hit(pose,size,rays[h],us[h],vs[h],!(pressed && activeHand == h));
+            if (tracked[h])
+            {
+                // A swinging sheet can turn edge-on or away from the pointer.
+                // Keep its pinched pixel captured until release or tracking loss.
+                if (draggingPanel && activeHand == h)
+                { hit[h] = true; us[h] = panelDrag.grabU; vs[h] = panelDrag.grabV; }
+                else hit[h] = vrxmenu::Hit(pose,size,rays[h],us[h],vs[h],!(pressed && activeHand == h),true);
+            }
         if (uiWasActive && selectActive && !down[0] && !down[1]) clickArmed = true;
         const int hand = pressed ? activeHand : (hit[1] && down[1] ? 1 : (hit[0] && down[0] ? 0 : (hit[1] ? 1 : (hit[0] ? 0 : -1))));
         if (pressed && (hand < 0 || !tracked[hand] || !hit[hand])) { Event(vrxmenu::Cancel); pressed = false; draggingPanel = false; activeHand = -1; clickArmed = false; }
@@ -369,8 +376,10 @@ public:
         if (Locate(head,time,eye)) for (int h = 0; h < 2; ++h) if (tracked[h])
         {
             float bu = 0, bv = 0, length = 2;
-            if (vrxmenu::Hit(pose,size,rays[h],bu,bv))
+            if (draggingPanel && activeHand == h) length = panelDrag.distance;
+            else if (vrxmenu::Hit(pose,size,rays[h],bu,bv,true,true))
             {
+                if (vrxmenu::Rotate(vrxmenu::Inverse(pose.orientation),vrxmenu::Sub(rays[h].position,pose.position)).z < 0) bu = 1-bu;
                 const auto point = vrxmenu::Add(pose.position,vrxmenu::Rotate(pose.orientation,{(bu-.5f)*size.width,(.5f-bv)*size.height,.003f}));
                 const auto delta = vrxmenu::Sub(point,rays[h].position);
                 length = std::sqrt(vrxmenu::Dot(delta,delta));
@@ -388,8 +397,14 @@ public:
         if (newFrame && fence->GetCompletedValue() >= fenceValue && Upload()) frame = nextFrame;
         layer.space = local; layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH; layer.pose = pose; layer.size = size;
         layer.subImage = {swapchain,{{0,0},{vrxmenu::Width,vrxmenu::Height}},0};
+        back = layer;
+        back.pose.orientation = vrxmenu::Multiply(pose.orientation,{0,1,0,0});
         cursor = layer;
-        cursor.pose.position = vrxmenu::Add(pose.position,vrxmenu::Rotate(pose.orientation,{(u-.5f)*size.width,(.5f-v)*size.height,.003f}));
+        const bool fromBack = hand >= 0 && vrxmenu::Rotate(vrxmenu::Inverse(pose.orientation),vrxmenu::Sub(rays[hand].position,pose.position)).z < 0;
+        const float cursorU = fromBack ? 1-u : u;
+        cursor.pose = fromBack ? back.pose : pose;
+        cursor.pose.position = vrxmenu::Add(pose.position,vrxmenu::Rotate(pose.orientation,{(cursorU-.5f)*size.width,(.5f-v)*size.height,fromBack ? -.003f : .003f}));
+        if (draggingPanel) pointerHit = false;
         cursor.size = {.012f,.012f}; cursor.subImage.imageRect = {{0,0},{8,8}};
     }
 
@@ -397,6 +412,7 @@ public:
     {
         if (!enabled || !visible || !uploaded) return;
         layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
+        layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&back);
         for (int h = 0; h < 2; ++h) if (beamVisible[h]) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&beams[h]);
         if (pointerHit) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&cursor);
     }

@@ -53,7 +53,7 @@ int main()
         assert(Near(u,.5f+.2f/menuSize.width) && Near(v,.5f-.1f/menuSize.height));
 
         // The initial grab must not jump; translating or turning the controller
-        // carries the same title-bar point, without rotating the panel itself.
+        // carries the same title-bar point. Zero elapsed time must not jump it.
         pointer.position = Add(eye,Rotate(heading,{.1f,.30f,0}));
         assert(Hit(pose,menuSize,pointer,u,v) && TitleHit(u,v));
         const float grabU = u, grabV = v;
@@ -80,6 +80,52 @@ int main()
     assert(!TitleHit(.5f,100.0f/Height) && !TitleHit(.01f,50.0f/Height));
     const auto straightBeam = Beam({{0,0,0,1},{0,0,0}},2,{0,0,0});
     assert(std::isfinite(straightBeam.orientation.w)); // viewer exactly along ray
+    // A tilted sheet pinched off-centre hangs with its centre below the grab.
+    // The exact grabbed point is preserved during every physics step, including
+    // wrist turns and movement, at common headset frame rates.
+    for (float hz : {72.0f,90.0f,120.0f})
+    {
+        const float dt = 1/hz;
+        XrPosef sheet{{std::sin(.3f),0,0,std::cos(.3f)},{0,0,-1.2f}};
+        const float gu = .7f, gv = .06f;
+        const XrVector3f localGrab{(gu-.5f)*menuSize.width,(.5f-gv)*menuSize.height,0};
+        const auto pin = Add(sheet.position,Rotate(sheet.orientation,localGrab));
+        XrPosef hand{sheet.orientation,Add(pin,Rotate(sheet.orientation,{0,0,1}))};
+        PanelDrag drag; drag.Begin(sheet,menuSize,hand,gu,gv);
+        for (int i = 0; i < int(8*hz); ++i)
+        {
+            drag.Move(sheet,hand,dt);
+            const auto held = Add(sheet.position,Rotate(sheet.orientation,localGrab));
+            const auto pivot = drag.Point(hand);
+            assert(Near(held.x,pivot.x) && Near(held.y,pivot.y) && Near(held.z,pivot.z));
+            const auto q = sheet.orientation;
+            assert(Near(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w,1));
+        }
+        auto radius = Sub(sheet.position,drag.Point(hand));
+        assert(std::fabs(radius.x) < .003f && std::fabs(radius.z) < .003f && radius.y < -.3f);
+        // Moving the pinch point excites a swing, without detaching the sheet.
+        for (int i = 0; i < int(hz*.5f); ++i)
+        {
+            hand.position.x += dt*.6f;
+            drag.Move(sheet,hand,dt);
+        }
+        radius = Sub(sheet.position,drag.Point(hand));
+        assert(std::fabs(radius.x) > .005f);
+        // Wrist yaw can rotate the hanging sheet independently of gravity.
+        const auto oldNormal = Rotate(sheet.orientation,{0,0,1});
+        hand.orientation = Multiply({0,std::sin(.4f),0,std::cos(.4f)},hand.orientation);
+        for (int i = 0; i < int(3*hz); ++i) drag.Move(sheet,hand,dt);
+        const auto normal = Rotate(sheet.orientation,{0,0,1});
+        assert(Dot(oldNormal,normal) < .9f);
+    }
+    // The back stays readable and pickable after turning the sheet around.
+    XrPosef front{{0,0,0,1},{0,0,-2}}, backRay{{0,1,0,0},{-.2f,.2f,-3}};
+    assert(Hit(front,menuSize,backRay,u,v,true,true));
+    assert(Near(u,.5f+.2f/menuSize.width));
+    PanelDrag backDrag; backDrag.Begin(front,menuSize,backRay,u,v);
+    const auto oldCentre = front.position;
+    backDrag.Move(front,backRay);
+    assert(Near(front.position.x,oldCentre.x) && Near(front.position.y,oldCentre.y) && Near(front.position.z,oldCentre.z));
     // IPC layout and ordered events, including wraparound of the sequence.
     auto shared = std::make_unique<Shared>();
     shared->header.write = shared->header.read = UINT32_MAX-1;
@@ -89,5 +135,5 @@ int main()
     assert(shared->events[UINT32_MAX%EventCount].kind == Up);
     for (int i = 0; i < EventCount+1; ++i) Push(*shared,{Move,0,0,0});
     assert(uint32_t(shared->header.write-shared->header.read) > EventCount); // consumer must cancel drag
-    puts("PASS: menu ray hits, gaze placement, title-bar drag, white beam geometry, invalid rays, IPC layout and event wrap/overflow");
+    puts("PASS: menu ray hits, gaze placement, pinned gravity swing at 72/90/120 Hz, wrist yaw, two-sided picking, white beam geometry, invalid rays, IPC layout and event wrap/overflow");
 }

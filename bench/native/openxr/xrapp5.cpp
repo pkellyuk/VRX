@@ -2309,7 +2309,7 @@ void main(uint3 id : SV_DispatchThreadID)
             else
             {
                 c0 = scene.SampleLevel(samp, float2(((float)j0 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
-                c1 = scene.SampleLevel(samp, float2(((float)j1 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
+)HLSL" R"HLSL(                c1 = scene.SampleLevel(samp, float2(((float)j1 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
             }
             float4 own = c0 + f * (c1 - c0);
             float4 layer = BackAt(p, (int)y);
@@ -3604,7 +3604,7 @@ void StandsSamplesH(uint e, uint2 xy, out float4 T, out int4 K)
             // The objects seen round the pixel, each once, from the lowest.
             float best = 3.0e38;
             int part = -1, normal = -1, last = -1;
-            [loop] for (int m = 0; m < 9; m++)
+)HLSL" R"HLSL(            [loop] for (int m = 0; m < 9; m++)
             {
                 int next = 0x7fffffff;
                 [unroll] for (int c = 0; c < 9; c++)
@@ -4198,7 +4198,7 @@ float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx,
             float dx = (qx - floor(qx) - 0.5) * cw, dz = (qz - floor(qz) - 0.5) * cd;
             float within = BarH(p.x, 0.5 * (lightX0 + lightX1), lightX1 - lightX0, fa) * BarH(p.z, 0.5 * (lightZ0 + lightZ1), lightZ1 - lightZ0, fb);
             float disc = min(max((ROOM_DOWN_R - sqrt(dx * dx + dz * dz)) / (0.5 * (fa + fb)) + 0.5, 0.0), 1.0) * within;
-            L = lightOn ? L + disc * lightSeen.rgb : L * (1.0 + disc * (ROOM_DOWN_TRIM - 1.0));
+)HLSL" R"HLSL(            L = lightOn ? L + disc * lightSeen.rgb : L * (1.0 + disc * (ROOM_DOWN_TRIM - 1.0));
         }
     }
 #endif
@@ -4454,7 +4454,7 @@ float3 LookColour(int kind, float2 uv, float2 guv, uint e, float3 o, float3 d, f
         return Enc(max(Le, 0.0));
     }
 #if ROOM_STANDS
-    // The stands' variant serves the theatre alone, which has no glass or reflections.
+)HLSL" R"HLSL(    // The stands' variant serves the theatre alone, which has no glass or reflections.
     return RoomColour(kind, uv, guv, e);
 #else
     if (kind == 1 + ROOM_FACE_FRONT) return RoomColour(kind, uv, guv, e);
@@ -10381,7 +10381,7 @@ static void RunFrameLoop(App& app)
         if (XR_FAILED(xrBeginFrame_(app.session, nullptr))) { Log("RunFrameLoop: xrBeginFrame failed"); app.stop = true; break; }
         frames++; repFrames++;
 
-        const XrCompositionLayerBaseHeader* layers[VIEWS + 6] = {}; // screen/room, menu, two beams and pointer
+        const XrCompositionLayerBaseHeader* layers[VIEWS + 7] = {}; // screen/room, two-sided menu, two beams and pointer
         uint32_t layerCount = 0;
         XrCompositionLayerProjection worldProj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
         XrCompositionLayerProjectionView worldViews[VIEWS];

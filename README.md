@@ -41,7 +41,9 @@ an in-headset settings panel. It is **off by default**, remembered app-wide, and
 in either desktop mode. Turning it on during playback opens the panel when VRX has XR
 input focus. The controller's **Menu** button then shows or hides it. White beams from
 either controller point at controls; squeeze the trigger to select or drag. Hold the
-trigger on the title bar to move the whole panel, and release to leave it there. Move
+trigger on the title bar to pick up the panel: it hangs from the grabbed point,
+swings under gravity as you move it, and turns when you twist your wrist. Release
+to leave it at its current position and angle. Both sides remain readable. Move
 the pointing controller's thumbstick up/down to scroll (twice the original speed).
 Sections, option lists, a colour keypad and the Apply to all
 confirmation stay inside the panel. Settings use the same profile, validation and live

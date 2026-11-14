@@ -44,17 +44,65 @@ inline XrPosef Place(XrPosef eye)
 struct PanelDrag
 {
     float distance = 0;
-    XrVector3f offset{};
+    float grabU = 0, grabV = 0, inertia = 1;
+    XrVector3f grab{}, previousPivot{}, pivotVelocity{}, angularVelocity{};
+    XrQuaternionf handOffset{0,0,0,1};
+    XrVector3f Point(XrPosef ray) const
+    { return Add(ray.position,Rotate(ray.orientation,{0,0,-distance})); }
     void Begin(XrPosef panel, XrExtent2Df size, XrPosef ray, float u, float v)
     {
-        const auto point = Add(panel.position,Rotate(panel.orientation,{(u-.5f)*size.width,(.5f-v)*size.height,0}));
+        grabU = u; grabV = v;
+        if (Rotate(Inverse(panel.orientation),Sub(ray.position,panel.position)).z < 0) u = 1-u;
+        grab = {(u-.5f)*size.width,(.5f-v)*size.height,0};
+        const auto point = Add(panel.position,Rotate(panel.orientation,grab));
         const auto delta = Sub(point,ray.position);
         distance = std::sqrt(Dot(delta,delta));
-        offset = Sub(panel.position,point);
+        previousPivot = point; pivotVelocity = angularVelocity = {0,0,0};
+        handOffset = Multiply(Inverse(ray.orientation),panel.orientation);
+        // Unit-mass plate about the pinched point, with isotropic rotational
+        // inertia for a stable, lightweight hanging-sheet interaction.
+        inertia = Dot(grab,grab) + (size.width*size.width+size.height*size.height)/12;
     }
-    void Move(XrPosef& panel, XrPosef ray) const
+    void Move(XrPosef& panel, XrPosef ray, float dt = 0)
     {
-        panel.position = Add(Add(ray.position,Rotate(ray.orientation,{0,0,-distance})),offset);
+        const auto pivot = Point(ray);
+        dt = std::clamp(dt,0.0f,.05f);
+        if (dt > 0)
+        {
+            const auto velocity = Scale(Sub(pivot,previousPivot),1/dt);
+            auto acceleration = Scale(Sub(velocity,pivotVelocity),1/dt);
+            const float a = std::sqrt(Dot(acceleration,acceleration));
+            if (a > 40) acceleration = Scale(acceleration,40/a);
+            pivotVelocity = velocity;
+            const auto gravity = Sub({0,-9.81f,0},acceleration);
+            const auto target = Multiply(ray.orientation,handOffset);
+            // Small fixed substeps keep the swing stable at different headset rates.
+            const int steps = int(std::ceil(dt*240));
+            const float step = dt/steps;
+            for (int i = 0; i < steps; ++i)
+            {
+                const auto radius = Rotate(panel.orientation,Scale(grab,-1));
+                auto torque = Scale(Cross(radius,gravity),1/inertia);
+                auto twist = Multiply(target,Inverse(panel.orientation));
+                if (twist.w < 0) twist = {-twist.x,-twist.y,-twist.z,-twist.w};
+                // Fingers can turn the sheet around the vertical axis, while
+                // gravity controls pitch and roll instead of locking the old tilt.
+                torque.y += 20*twist.y;
+                angularVelocity = Scale(Add(angularVelocity,Scale(torque,step)),std::exp(-2.5f*step));
+                float speed = std::sqrt(Dot(angularVelocity,angularVelocity));
+                if (speed > 8) { angularVelocity = Scale(angularVelocity,8/speed); speed = 8; }
+                if (speed > 1e-6f)
+                {
+                    const auto axis = Scale(angularVelocity,std::sin(speed*step*.5f)/speed);
+                    auto q = Multiply({axis.x,axis.y,axis.z,std::cos(speed*step*.5f)},panel.orientation);
+                    const float n = std::sqrt(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w);
+                    panel.orientation = {q.x/n,q.y/n,q.z/n,q.w/n};
+                }
+            }
+        }
+        previousPivot = pivot;
+        // Exact pivot constraint: the pinched pixel never slides away from the ray.
+        panel.position = Sub(pivot,Rotate(panel.orientation,grab));
     }
 };
 
@@ -82,15 +130,16 @@ inline XrPosef Beam(XrPosef ray, float distance, XrVector3f eye)
 
 // UV origin is the bitmap's upper-left. Reject behind/parallel rays; a drag can
 // request unbounded UVs so the slider still clamps correctly beyond its ends.
-inline bool Hit(XrPosef panel, XrExtent2Df size, XrPosef aim, float& u, float& v, bool bounded = true)
+inline bool Hit(XrPosef panel, XrExtent2Df size, XrPosef aim, float& u, float& v, bool bounded = true, bool twoSided = false)
 {
     auto inverse = Inverse(panel.orientation);
     auto origin = Rotate(inverse, Sub(aim.position,panel.position));
     auto direction = Rotate(inverse, Rotate(aim.orientation,{0,0,-1}));
-    if (!std::isfinite(direction.z) || direction.z >= -1e-5f || size.width <= 0 || size.height <= 0) return false;
+    if (!std::isfinite(direction.z) || std::fabs(direction.z) < 1e-5f || (!twoSided && direction.z >= 0) || size.width <= 0 || size.height <= 0) return false;
     const float t = -origin.z / direction.z;
     if (!std::isfinite(t) || t <= 0) return false;
     u = .5f + (origin.x+t*direction.x)/size.width;
+    if (twoSided && origin.z < 0) u = 1-u;
     v = .5f - (origin.y+t*direction.y)/size.height;
     return std::isfinite(u) && std::isfinite(v) && (!bounded || (u>=0 && u<=1 && v>=0 && v<=1));
 }
