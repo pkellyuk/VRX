@@ -37,6 +37,8 @@ class ControllerMenu
     vrxmenu::PanelDrag secondDrag;
     vrxmenu::TwoHandDrag twoHandDrag;
     bool twoHanded = false, previousDown[2]{};
+    vrxmenu::PointerAim pointerAim[2];
+    vrxmenu::StableClick stableClick[2],stableScreenClick;
     vrxmenu::MouseLatch mouse;
     vrxmenu::MouseLatch rightMouse;
     vrxmenu::MouseLatch panelRight;
@@ -224,6 +226,8 @@ class ControllerMenu
     void ResetToggle() { for (auto& latch : toggleLatch) latch.Reset(); }
     void ReleaseMouse()
     {
+        for(int h=0;h<2;h++) { pointerAim[h].Reset(); stableClick[h].Reset(); }
+        stableScreenClick.Reset();
         if (mouse.Step(false,false) < 0)
         { INPUT input{}; input.type = INPUT_MOUSE; input.mi.dwFlags = MOUSEEVENTF_LEFTUP; SendInput(1,&input,sizeof(input)); }
         if (rightMouse.Step(false,false) < 0)
@@ -577,6 +581,8 @@ public:
             if (XR_SUCCEEDED(xrGetActionStateVector2f_(session,&gi,&stick)) && stick.isActive) sticks[h] = stick.currentState.y;
             gi.action = aim; XrActionStatePose state{XR_TYPE_ACTION_STATE_POSE};
             tracked[h] = pointersVisible && XR_SUCCEEDED(xrGetActionStatePose_(session,&gi,&state)) && state.isActive && Locate(hands[h],time,rays[h],&trackingFlags[h]);
+            if(tracked[h]) rays[h]=pointerAim[h].Step(rays[h],dt,down[h]);
+            else { pointerAim[h].Reset(); stableClick[h].Reset(); }
         }
         int targets[2]{-1,-1}; float targetU[2]{}, targetV[2]{}, targetDistance[2]{1e9f,1e9f};
         auto findTargets = [&]()
@@ -693,6 +699,8 @@ public:
         else if (hand >= 0)
         {
             u = us[hand]; v = vs[hand]; pointerHit = u>=0 && u<=1 && v>=0 && v<=1;
+            if(!draggingPanel && !resizing) stableClick[hand].Apply(down[hand],u,v);
+            else stableClick[hand].Reset();
             if (!draggingPanel && !resizing) Event(vrxmenu::Move,u,v);
             if (down[hand] && !pressed && clickArmed)
             {
@@ -736,6 +744,7 @@ public:
         constexpr auto mouseTracking = XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
         const bool screenHit = controlScreen && pointersVisible && tracked[1] && (trackingFlags[1] & mouseTracking) == mouseTracking && targets[1] < 0 && !pressed &&
             vrxmenu::ScreenHit(screenPose,screenSize,screenCylinder,rays[1],su,sv,screenPoint);
+        if(screenHit) stableScreenClick.Apply(down[1],su,sv); else stableScreenClick.Reset();
         ScreenMouse(screenHit,down[1],rightClickDown,su,sv);
         const bool contextAllowed = tracked[1] && !pressed && targets[1] > 0 &&
             shared->snapshots[targets[1]-1].kind == vrxmenu::BrowserPanel && (!panelRight.held || targets[1] == panelRightTarget);

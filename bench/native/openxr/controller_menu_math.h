@@ -231,6 +231,57 @@ inline XrQuaternionf Axes(XrVector3f x, XrVector3f y, XrVector3f z)
     return q;
 }
 
+// Adaptive aim filtering removes small tremors, while large deliberate movements
+// catch up quickly. Quaternions are interpolated on their shortest arc.
+struct PointerAim
+{
+    XrPosef pose{};
+    bool ready=false,wasPressed=false;
+    void Reset() { ready=wasPressed=false; }
+    XrPosef Step(XrPosef raw,float dt,bool pressed)
+    {
+        const bool edge=pressed!=wasPressed; wasPressed=pressed;
+        if(!ready || dt<=0 || dt>.1f) { pose=raw; ready=true; return pose; }
+        // The click uses the aim the user just saw, before squeezing/releasing
+        // the trigger disturbed their hand. Subsequent drag samples catch up.
+        if(edge) return pose;
+        const auto delta=Sub(raw.position,pose.position);
+        const auto turn=Sub(Rotate(raw.orientation,{0,0,-1}),Rotate(pose.orientation,{0,0,-1}));
+        const float motion=std::clamp(std::max(std::sqrt(Dot(delta,delta))/.04f,std::sqrt(Dot(turn,turn))/.04f),0.0f,1.0f);
+        const float tau=(pressed ? .10f:.065f)*(1-motion)+.008f*motion;
+        const float alpha=1-std::exp(-dt/tau);
+        pose.position=Add(pose.position,Scale(delta,alpha));
+        auto q=raw.orientation;
+        if(pose.orientation.x*q.x+pose.orientation.y*q.y+pose.orientation.z*q.z+pose.orientation.w*q.w<0) q={-q.x,-q.y,-q.z,-q.w};
+        auto& p=pose.orientation;
+        p={p.x+(q.x-p.x)*alpha,p.y+(q.y-p.y)*alpha,p.z+(q.z-p.z)*alpha,p.w+(q.w-p.w)*alpha};
+        const float length=std::sqrt(p.x*p.x+p.y*p.y+p.z*p.z+p.w*p.w);
+        if(length>1e-6f) p={p.x/length,p.y/length,p.z/length,p.w/length};
+        else p=raw.orientation;
+        return pose;
+    }
+};
+
+// Hold the clicked pixel through a small trigger squeeze/release wobble. Once a
+// deliberate drag exceeds twelve physical panel pixels, motion is unrestricted.
+struct StableClick
+{
+    bool held=false,moved=false;
+    float x=0,y=0;
+    void Reset() { held=moved=false; }
+    void Apply(bool down,float& u,float& v)
+    {
+        if(down && !held) { x=u; y=v; moved=false; }
+        if(held || down)
+        {
+            const float dx=(u-x)*1920,dy=(v-y)*1536;
+            if(dx*dx+dy*dy>12*12) moved=true;
+            if(!moved) { u=x; v=y; }
+        }
+        held=down;
+    }
+};
+
 // A thin white compositor quad along the ray, billboarded towards the viewer.
 inline XrPosef Beam(XrPosef ray, float distance, XrVector3f eye)
 {

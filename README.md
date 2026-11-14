@@ -90,6 +90,10 @@ in a new window create another panel. **Open images folder** opens snapshot save
 in desktop Explorer.
 Pages show a red scanning activity strip below navigation while loading. Browser
 audio plays through Windows' selected output; off-screen video targets 60 fps.
+The browser's **− / percentage / +** buttons zoom from 25% to 300%; click the
+percentage to reset to 100%. Controller aim is stabilized against small tremors,
+and a short trigger wobble keeps the click on its original pixel. Deliberate drags
+still move normally.
 All floating panels have a shallow 8 mm casing visible from the side.
 
 **Arrange windows** brings the menu and all open floating panels into your current

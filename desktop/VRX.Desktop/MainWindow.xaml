@@ -178,6 +178,10 @@
         <ComboBoxItem Content="{l:Tr EnvironmentOpenAir}"/>
         <ComboBoxItem Content="{l:Tr EnvironmentLounge}"/>
         <ComboBoxItem Content="{l:Tr EnvironmentTheatre}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentDungeon}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentHell}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentCyberpunk}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentStarship}"/>
        </ComboBox>
       </DockPanel>
       <DockPanel x:Name="SeatRow" Margin="0,0,0,10" Visibility="Collapsed">

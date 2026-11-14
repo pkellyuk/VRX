@@ -12,6 +12,31 @@ static bool Near(float a, float b) { return std::fabs(a-b) < 1e-4f; }
 int main()
 {
     using namespace vrxmenu;
+    PointerAim steady;
+    XrPosef raw{{0,0,0,1},{0,0,0}};
+    steady.Step(raw,1.0f/90,false);
+    float jitter=0;
+    for(int i=0;i<180;i++)
+    {
+        float angle=i%2 ? .006f:-.006f;
+        raw.orientation={0,std::sin(angle*.5f),0,std::cos(angle*.5f)};
+        raw.position.x=i%2 ? .002f:-.002f;
+        auto filtered=steady.Step(raw,1.0f/90,true);
+        if(i>90) jitter=std::max(jitter,std::fabs(Rotate(filtered.orientation,{0,0,-1}).x));
+    }
+    assert(jitter<.003f);
+    raw.orientation={0,std::sin(.15f),0,std::cos(.15f)};
+    const auto beforeRelease=steady.pose;
+    auto released=steady.Step(raw,1.0f/90,false);
+    assert(Near(released.orientation.y,beforeRelease.orientation.y));
+    auto deliberate=steady.Step(raw,1.0f/90,false);
+    assert(std::fabs(Rotate(deliberate.orientation,{0,0,-1}).x)>.2f);
+    steady.Reset(); assert(Near(steady.Step(raw,1.0f/90,false).position.x,raw.position.x));
+    StableClick click;
+    float cx=.5f,cy=.5f; click.Apply(true,cx,cy);
+    cx+=.003f; cy+=.002f; click.Apply(false,cx,cy); assert(Near(cx,.5f) && Near(cy,.5f));
+    click.Apply(true,cx,cy); cx+=.03f; click.Apply(true,cx,cy); assert(Near(cx,.53f));
+    cx+=.001f; click.Apply(false,cx,cy); assert(Near(cx,.531f));
     PressLatch toggle;
     assert(!toggle.Press(true)); // held while enabling or regaining focus
     assert(!toggle.Press(false));

@@ -125,8 +125,11 @@ public sealed class Profile
     // air at night, 3 a lounge. Glass and reflections are the room's own; the open air has no
     // room light. Shown while the Room slider is above 0. The seatless cinema (1) is hidden
     // from the list - the cinema with seats (4) replaces it - and a profile saved with it
-    // opens in the cinema with seats (Shown); the engine still draws it.
-    public const int EnvironmentRoom = 0, EnvironmentCinema = 1, EnvironmentOpenAir = 2, EnvironmentLounge = 3, EnvironmentTheatre = 4, EnvironmentCount = 5;
+    // opens in the cinema with seats (Shown); the engine still draws it. Dungeon (5)
+    // and Hell (6) share the room's bounds, with their own masonry and emissive detail.
+    // Cyberpunk (7) and Starship (8) use the theatre's tiered seating and seat distance.
+    public const int EnvironmentRoom = 0, EnvironmentCinema = 1, EnvironmentOpenAir = 2, EnvironmentLounge = 3, EnvironmentTheatre = 4, EnvironmentDungeon = 5, EnvironmentHell = 6, EnvironmentCyberpunk = 7, EnvironmentStarship = 8, EnvironmentCount = 9;
+    public static bool HasSeats(int environment) => environment is EnvironmentTheatre or EnvironmentCyberpunk or EnvironmentStarship;
     public int RoomEnvironment { get; set; }
 
     // The environment the list shows for a saved one: the hidden seatless cinema becomes the

@@ -1011,7 +1011,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
                 if (!_stricmp(name, kRoomEnvNames[k])) env = k;
             if (!_stricmp(name, "openair") || !_stricmp(name, "open-air")) env = kRoomEnvOpenAir;
             if (env < 0 && name[0] >= '0' && name[0] <= '9' && name[1] == 0) env = name[0] - '0';
-            if (env < 0 || env >= kRoomEnvCount) { Log("ParseArgs: --room-env takes room, cinema, open-air, lounge or theatre (or 0-4): %s", a); return false; }
+            if (env < 0 || env >= kRoomEnvCount) { Log("ParseArgs: --room-env takes room, cinema, open-air, lounge, theatre, dungeon, hell, cyberpunk or starship (or 0-8): %s", a); return false; }
             opt->roomEnv = env;
             continue;
         }
@@ -1144,7 +1144,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
     if (opt->roomEnv != kRoomEnvRoom)
         Log("ParseArgs: room environment %s%s%s", kRoomEnvNames[opt->roomEnv], opt->room > 0 ? "" : " (it needs the room: --room above 0)",
             opt->roomGlass > 0 || opt->roomReflect > 0 ? " - glass and reflections are the room's own, so they rest" : "");
-    if (opt->roomEnv == kRoomEnvTheatre)
+    if (RoomHasSeats(opt->roomEnv))
         Log("ParseArgs: theatre seat %s (it sets the screen's distance)", opt->roomSeat == kRoomSeatFront ? "front" : (opt->roomSeat == kRoomSeatRear ? "rear" : "middle"));
 
     Log("ParseArgs: source %s (monitor %d, window '%ls', image '%ls') seconds %.0f",
@@ -4094,15 +4094,20 @@ float3 NightSkyH(float3 o, float3 d, float3 Dx, float3 Dy)
 
 // room.h RoomEnvSurface: an environment's surface - the lightmap's light L at a sample on
 // `face` (chart uv, ray o, d) as the eye sees it, before the glow on the front.
+/*VRX_THEME_SURFACE*/
+float DecorationGainH()
+{
+    return (flags & ROOM_FLAG_LIGHT) != 0 ? saturate(max(lightL.r,max(lightL.g,lightL.b))/ROOM_LIGHT_MAX)*saturate(rhoWall/ROOM_MAX_ALBEDO) : 0.0;
+}
 float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx, float3 Dy)
 {
 #if ROOM_STANDS
     // The stands' variant serves the theatre alone: the cinema's walls, no other environment.
-    if (roomEnv != ROOM_ENV_THEATRE) return L;
+    if (roomEnv != ROOM_ENV_THEATRE && roomEnv != ROOM_ENV_CYBERPUNK && roomEnv != ROOM_ENV_STARSHIP) return L;
 #else
     if (roomEnv == ROOM_ENV_OPEN_AIR) return NightSkyH(o, d, Dx, Dy);
 #endif
-    if (roomEnv != ROOM_ENV_CINEMA && roomEnv != ROOM_ENV_LOUNGE && roomEnv != ROOM_ENV_THEATRE) return L;
+    if (roomEnv != ROOM_ENV_CINEMA && roomEnv != ROOM_ENV_LOUNGE && roomEnv != ROOM_ENV_THEATRE && roomEnv != ROOM_ENV_DUNGEON && roomEnv != ROOM_ENV_HELL && roomEnv != ROOM_ENV_CYBERPUNK && roomEnv != ROOM_ENV_STARSHIP) return L;
     float3 p, n = float3(0, 0, 0), Px, Py;
     float fa, fb, s = 0.0;
     if (face == ROOM_FACE_FRONT)
@@ -4134,6 +4139,18 @@ float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx,
         fb = (face == ROOM_FACE_FLOOR || face == ROOM_FACE_CEILING) ? FootAxisH(Px.z, Py.z) : FootAxisH(Px.y, Py.y);
     }
     bool lightOn = (flags & ROOM_FLAG_LIGHT) != 0;
+    float decorationGain=DecorationGainH();
+    float3 fixtureLight=lightL.rgb/ROOM_LIGHT_MAX*saturate(rhoWall/ROOM_MAX_ALBEDO);
+    if (roomEnv >= ROOM_ENV_DUNGEON && roomEnv < ROOM_ENV_COUNT)
+    {
+        float a = face == ROOM_FACE_FRONT ? s : (face == ROOM_FACE_LEFT || face == ROOM_FACE_RIGHT ? p.z : p.x);
+        float b = face == ROOM_FACE_FLOOR || face == ROOM_FACE_CEILING ? p.z : p.y;
+        float r=L.r, g=L.g, blue=L.b;
+        if(roomEnv == ROOM_ENV_CYBERPUNK || roomEnv == ROOM_ENV_STARSHIP)
+            FutureSurface((int)roomEnv,face,a,b,standsRows>0 ? standsT0+float(viewerRow)*standsRiser : yF,fa,fb,d.x,d.y,d.z,decorationGain,r,g,blue);
+        else ThemeSurface((int)roomEnv,face,a,b,yF,fa,fb,decorationGain,r,g,blue);
+        return float3(r,g,blue);
+    }
     float3 tint = roomTint[face].rgb;
     if (roomEnv == ROOM_ENV_CINEMA || roomEnv == ROOM_ENV_THEATRE)
     {
@@ -4153,7 +4170,7 @@ float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx,
             float q = z0 / ROOM_STEP_PITCH;
             float dz = (q - floor(q + 0.5)) * ROOM_STEP_PITCH, dx = ax - stepX;
             float pool = ROOM_STEP_POOL_GAIN * exp(-0.5 * (dx * dx + dz * dz) / (ROOM_STEP_POOL * ROOM_STEP_POOL));
-            L = (1.0 - cover) * (L + pool * ROOM_STEP_L * tint) + cover * ROOM_STEP_L;
+            L = (1.0 - cover) * (L + pool * ROOM_STEP_L * tint*decorationGain) + cover * ROOM_STEP_L*decorationGain;
         }
         else if (face == ROOM_FACE_FLOOR && roomEnv == ROOM_ENV_THEATRE)
         {
@@ -4204,7 +4221,7 @@ float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx,
             float dx = (qx - floor(qx) - 0.5) * cw, dz = (qz - floor(qz) - 0.5) * cd;
             float within = BarH(p.x, 0.5 * (lightX0 + lightX1), lightX1 - lightX0, fa) * BarH(p.z, 0.5 * (lightZ0 + lightZ1), lightZ1 - lightZ0, fb);
             float disc = min(max((ROOM_DOWN_R - sqrt(dx * dx + dz * dz)) / (0.5 * (fa + fb)) + 0.5, 0.0), 1.0) * within;
-)HLSL" R"HLSL(            L = lightOn ? L + disc * lightSeen.rgb : L * (1.0 + disc * (ROOM_DOWN_TRIM - 1.0));
+)HLSL" R"HLSL(            L = lightOn ? L + disc * fixtureLight : L * (1.0 + disc * (ROOM_DOWN_TRIM - 1.0));
         }
     }
 #endif
@@ -4212,8 +4229,8 @@ float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx,
     {
         float halo;
         float body = SconceH(p.z, p.y, fa, fb, halo);
-        float3 lit = lightOn ? L + haloGain * tint * halo * lightSeen.rgb : L;
-        L = (1.0 - body) * lit + body * (lightOn ? lightSeen.rgb : ROOM_SCONCE_OFF * L);
+        float3 lit = lightOn ? L + haloGain * tint * halo * fixtureLight : L;
+        L = (1.0 - body) * lit + body * (lightOn ? fixtureLight : ROOM_SCONCE_OFF * L);
     }
     return L;
 }
@@ -4404,6 +4421,8 @@ float3 StandsColourH(int kind, float t, float3 o, float3 d, float3 Dx, float3 Dy
         pattern = CarpetH(p.x, part == ROOM_STAND_TREAD ? p.z : p.y, fu, fv);
     }
     float3 colour = carpet ? pattern : (part == ROOM_STAND_ARM || part == ROOM_STAND_ARM_TOP ? ROOM_ARM_COLOUR : ROOM_UPHOLSTERY);
+    bool future=roomEnv==ROOM_ENV_CYBERPUNK || roomEnv==ROOM_ENV_STARSHIP;
+    if(future) colour=carpet ? float3(.14,.18,.24) : (part==ROOM_STAND_ARM || part==ROOM_STAND_ARM_TOP ? ROOM_ARM_COLOUR : (roomEnv==ROOM_ENV_STARSHIP ? float3(.23,.32,.40) : float3(.15,.17,.29)));
     float ao = 1.0, strip = 0.0;
     if (part == ROOM_STAND_TREAD)
     {
@@ -4421,7 +4440,7 @@ float3 StandsColourH(int kind, float t, float3 o, float3 d, float3 Dx, float3 Dy
             strip = BarH(abs(p.x), 0.5 * (edge + X), X - edge - 0.3, fa) * BarH(p.z, zc - 0.5 * standsPitch + 0.5 * ROOM_NOSING_W, ROOM_NOSING_W, fb);
     }
     float3 lit = colour * ((rho / PI) * (E + flux * bounceRgb.rgb) + shade * hemi * (roomWorld.rgb + envAmbient.rgb)) * ao * tone * sheen;
-    return (1.0 - strip) * lit + strip * ROOM_STEP_L;
+    return (1.0 - strip) * lit + strip * (future ? float3(.025,.50,.80) : ROOM_STEP_L)*DecorationGainH();
 }
 #endif
 #endif
@@ -5216,9 +5235,14 @@ static bool BuildRoomShaderTexts(RoomShaderTexts& out)
     out.defineBytes = roomDefines.size();
     const std::string eyeHead = std::string("#define ROOM_REGISTER b1\n") + roomDefines + curveText.substr(0, curveMain) +
                                 kRoomCbufferHlsl + kRoomGeomHlsl;
-    out.eye = std::string("#define ROOM_LOOK 0\n#define ROOM_STANDS 0\n") + eyeHead + kCurveRoomHlsl;
-    out.eyeLook = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 0\n") + eyeHead + kCurveRoomHlsl;
-    out.eyeStands = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 1\n") + eyeHead + kCurveRoomHlsl;
+    std::string eyeBody(kCurveRoomHlsl);
+    const std::string themeMarker = "/*VRX_THEME_SURFACE*/";
+    const size_t themeAt = eyeBody.find(themeMarker);
+    if (themeAt == std::string::npos) return false;
+    eyeBody.replace(themeAt,themeMarker.size(),RoomThemeHlsl()+RoomFutureHlsl()+"\n");
+    out.eye = std::string("#define ROOM_LOOK 0\n#define ROOM_STANDS 0\n") + eyeHead + eyeBody;
+    out.eyeLook = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 0\n") + eyeHead + eyeBody;
+    out.eyeStands = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 1\n") + eyeHead + eyeBody;
     out.light = std::string("#define ROOM_REGISTER b0\n") + roomDefines + kRoomCbufferHlsl + kRoomGeomHlsl + kRoomHlsl;
     out.emit = std::string("#define ROOM_EMIT 1\n") + out.light;
     out.mirror = std::string("#define ROOM_MIRROR 1\n") + out.light;
@@ -8600,12 +8624,12 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
     // tiles, glass, the reflections and the mirror picture). Then {flat, curved} x {cinema,
     // open air, lounge} (XENV.md), each with the room light at 50% (which the open air has
     // not), in two dispatches that between them see each environment's details.
-    for (int ci = 0; ci < 14; ci++)
+    for (int ci = 0; ci < 22; ci++)
     {
-        const int envIdx = ci >= 12 ? kRoomEnvTheatre : (ci >= 6 ? (ci - 6) % 3 + 1 : kRoomEnvRoom);
-        const bool envCase = envIdx != kRoomEnvRoom, theatreCase = envIdx == kRoomEnvTheatre;
-        const bool curvedCase = theatreCase ? ci == 13 : (envCase ? ci >= 9 : ci >= 3), lightCase = !envCase && ci % 3 == 1, lookCase = !envCase && ci % 3 == 2;
-        const bool envLight = envIdx == kRoomEnvCinema || envIdx == kRoomEnvLounge || theatreCase;
+        const int envIdx = ci >= 18 ? kRoomEnvCyberpunk+(ci-18)/2 : (ci >= 14 ? (ci < 16 ? kRoomEnvDungeon : kRoomEnvHell) : (ci >= 12 ? kRoomEnvTheatre : (ci >= 6 ? (ci - 6) % 3 + 1 : kRoomEnvRoom)));
+        const bool envCase = envIdx != kRoomEnvRoom, theatreCase = RoomHasSeats(envIdx);
+        const bool curvedCase = ci >= 14 ? (ci%2 == 1) : (theatreCase ? ci == 13 : (envCase ? ci >= 9 : ci >= 3)), lightCase = !envCase && ci % 3 == 1, lookCase = !envCase && ci % 3 == 2;
+        const bool envLight = envCase && envIdx != kRoomEnvOpenAir;
         char name[32];
         if (envCase) snprintf(name, sizeof(name), "%s-%s", curvedCase ? "curved" : "flat", envIdx == kRoomEnvOpenAir ? "openair" : kRoomEnvNames[envIdx]);
         else snprintf(name, sizeof(name), "%s%s", curvedCase ? "curved" : "flat", lightCase ? "-light" : (lookCase ? "-look" : ""));
@@ -8622,7 +8646,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         // The curved case uses 16-texel glow blocks, the path 4:3 and taller pictures take.
         RoomEmitterLayout layout = RoomLayout(width, height, app.ambiW, app.ambiH, curvedCase ? 16 : kRoomGlowBlock);
         if (layout.count() == 0) { Log("SelfTestRoom[%s]: SKIPPED - no emitter layout fits a %dx%d glow", name, app.ambiW, app.ambiH); continue; }
-        layout.coarse = room.env == kRoomEnvTheatre ? kRoomCoarse : 0;
+        layout.coarse = RoomHasSeats(room.env) ? kRoomCoarse : 0;
         std::vector<RoomEmitter> em;
         if (!BuildRoomEmitters(room, cyl, width, height, 0.5f * width + margin, 0.5f * height + margin, layout, em)) { Log("SelfTestRoom[%s]: FAIL emitters", name); return false; }
         // The theatre's stands, drawn into the self-test's id buffer before each eye pass.
@@ -8817,7 +8841,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         CurveConstants cc;
         std::vector<std::vector<unsigned char>> got;
         size_t bad = 0, kinds[kRoomKinds] = {}, eyeKinds[VIEWS][kRoomKinds] = {}, panelPx = 0, leftWingPx = 0, reflPx[VIEWS] = {};
-        size_t parts[12] = {}, starPx = 0;      // what the environment drew (kRoomPart*), and pixels with a star above 0.02
+        size_t parts[kRoomPartCount] = {}, starPx = 0;      // environment detail coverage and pixels with a star above 0.02
         int worst = 0;
         bool lookCovered = true;
         RgbaImage glowImg{ glowPx[0].data(), app.ambiW, app.ambiH, app.ambiW * 4 };
@@ -8844,11 +8868,16 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
             if (envCase)
             {
                 // {eye 0 yaw, pitch, eye 1 yaw, pitch} for dispatches A and B (see above).
-                static const float kEnvViews[4][2][4] = {
+                static const float kEnvViews[][2][4] = {
                     { { 0, 0, 75, -10 }, { -60, -40, 180, 0 } },
                     { { 0, 8, 110, -12 }, { 180, 45, -90, 2 } },
                     { { 0, -35, -75, 0 }, { 180, 60, 90, -25 } },
+                    { { 0, -15, 75, -35 }, { 180, -15, -70, -50 } },
+                    { { 0, -15, 85, -10 }, { 180, 45, -85, -40 } },
+                    { { 0, -15, 85, -10 }, { 180, 45, -85, -40 } },
+                    { { 0, -15, 75, -35 }, { 180, -15, -70, -50 } },
                     { { 0, -15, 75, -35 }, { 180, -15, -70, -50 } } };
+                static_assert(std::size(kEnvViews)==kRoomEnvCount-1,"Every environment needs explicit render-test viewpoints");
                 const float* v = kEnvViews[envIdx - 1][di];
                 eyes[0] = XrPosef{ YawPitch(v[0], v[1]), { 0, 1.55f, 0 } };
                 eyes[1] = XrPosef{ YawPitch(v[2], v[3]), { 0.064f, 1.55f, 0 } };
@@ -8895,7 +8924,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
                         skyPx += info.env == 1;
                         horizonPx += info.env == 2;
                         if (di == 0) reflPx[e] += info.kappaS > 0 && info.fresnel > 0;
-                        if (info.envPart > 0 && info.envPart < 12) parts[info.envPart]++;
+                        if (info.envPart > 0 && info.envPart < kRoomPartCount) parts[info.envPart]++;
                         starPx += info.star > 0.02f;
                         float o[3], d[3], u, v, gu, gv;
                         CurveRay(cc, (int)e, x + 0.5f, y + 0.5f, o, d);
@@ -8949,7 +8978,15 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         {
             // Each environment's details, from the CPU reference over both dispatches.
             const size_t few = total / 2000;
-            if (theatreCase)
+            if (envIdx==kRoomEnvCyberpunk || envIdx==kRoomEnvStarship)
+            {
+                size_t seats=0; for(int n=0;n<6;n++) seats+=kinds[kRoomKindStands+kRoomStandBack*6+n];
+                framed=seats>few && parts[kRoomPartMetal]>few && parts[kRoomPartNeon]>0 &&
+                    (envIdx==kRoomEnvCyberpunk ? parts[kRoomPartDisplay]>few : parts[kRoomPartViewport]>few);
+                Log("SelfTestRoom[%s]: future cinema %s - seats %zu, metal %zu, neon %zu, displays %zu, space viewports %zu",name,framed ? "covered":"FAIL",
+                    seats,parts[kRoomPartMetal],parts[kRoomPartNeon],parts[kRoomPartDisplay],parts[kRoomPartViewport]);
+            }
+            else if (theatreCase)
             {
                 // The stands: each part's pixels over its six faces.
                 size_t stand[kRoomStandParts] = {};
@@ -8966,6 +9003,13 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
                 framed = parts[kRoomPartMask] > onePercent && parts[kRoomPartSconce] > 0 && parts[kRoomPartHalo] > few && parts[kRoomPartStep] > 0;
             else if (envIdx == kRoomEnvOpenAir)
                 framed = parts[kRoomPartSky] > onePercent && parts[kRoomPartHills] > few && parts[kRoomPartField] > onePercent && starPx > 0;
+            else if (envIdx == kRoomEnvDungeon || envIdx == kRoomEnvHell)
+            {
+                framed = parts[kRoomPartStone] > few && parts[kRoomPartArch] > few &&
+                    (envIdx == kRoomEnvDungeon ? parts[kRoomPartTorch] > 0 && parts[kRoomPartIron] > 0 : parts[kRoomPartLava] > few && parts[kRoomPartRune] > 0);
+                Log("SelfTestRoom[%s]: theme details %s - stone %zu, arches %zu, iron %zu, torches %zu, lava %zu, runes %zu", name,framed ? "covered":"FAIL",
+                    parts[kRoomPartStone],parts[kRoomPartArch],parts[kRoomPartIron],parts[kRoomPartTorch],parts[kRoomPartLava],parts[kRoomPartRune]);
+            }
             else
                 framed = parts[kRoomPartRug] > onePercent && parts[kRoomPartSeam] > few && parts[kRoomPartDownlight] > 0 && parts[kRoomPartSconce] > 0 &&
                          parts[kRoomPartHalo] > few;
@@ -10471,7 +10515,7 @@ static void RunFrameLoop(App& app)
             const float viewWidth = controlled ? desktop.width : 2.0f * ScreenAnchor::distance * tanHalfX;
             float viewDistance = controlled ? desktop.distance : ScreenAnchor::distance;
             RoomTheatre theatre;
-            const bool seated = roomWanted && app.opt.roomEnv == kRoomEnvTheatre && RoomTheatreSeat(app.opt.roomSeat, theatre);
+            const bool seated = roomWanted && RoomHasSeats(app.opt.roomEnv) && RoomTheatreSeat(app.opt.roomSeat, theatre);
             if (seated) viewDistance = theatre.distance;
             if (seated && std::fabs(seatedLogged - viewDistance) > 1e-3f)
             {
@@ -10569,7 +10613,7 @@ static void RunFrameLoop(App& app)
                     else
                     {
                         roomLayout = RoomLayout(in.W, in.H, app.ambiW, app.ambiH);
-                        roomLayout.coarse = room.env == kRoomEnvTheatre && roomLayout.count() > 0 ? kRoomCoarse : 0;
+                        roomLayout.coarse = RoomHasSeats(room.env) && roomLayout.count() > 0 ? kRoomCoarse : 0;
                         if (roomLayout.count() == 0 ||
                             !BuildRoomEmitters(room, cylinder, in.W, in.H, 0.5f * in.W + margin, 0.5f * in.H + margin, roomLayout, roomGeometry))
                         {
@@ -10582,7 +10626,7 @@ static void RunFrameLoop(App& app)
                             roomRejected = false;
                             roomFailedLogged = false;
                             roomGeometryDirty = true;
-                            standsVerts = room.env == kRoomEnvTheatre ? UploadStandsMesh(app, room, 0) : 0;
+                            standsVerts = RoomHasSeats(room.env) ? UploadStandsMesh(app, room, 0) : 0;
                             // Say which floor won: SteamVR's (or the seated guess), or the screen's
                             // bottom edge when the screen reaches below it.
                             char floorWhy[128];

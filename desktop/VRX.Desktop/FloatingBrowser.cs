@@ -46,6 +46,8 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     private readonly TextBlock addressText = new() { FontSize = 19, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly TextBlock status = new() { Foreground = Brushes.LightGray, FontSize = 15, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly Dictionary<Button, Action> actions = new();
+    private readonly Button zoomReset;
+    private double zoom=1.0;
     private readonly object pixelsLock = new();
     private byte[]? pixels, popup;
     private int pixelsWidth, pixelsHeight, popupWidth, popupHeight;
@@ -90,15 +92,18 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
         bottom.Children.Add(Button(Loc.Get("KeyboardOpen"), 160, () => { focus(this); openKeyboard(); }));
         bottom.Children.Add(Button(Loc.Get("BrowserNew"), 190, () => newWindow("https://www.google.com")));
         bottom.Children.Add(Button(Loc.Get("BrowserLicenses"), 130, () => browser!.Load("chrome://credits")));
+        bottom.Children.Add(Button("−",48,()=>SetZoom(zoom-.1)));
+        zoomReset=Button("100%",80,()=>SetZoom(1)); bottom.Children.Add(zoomReset);
+        bottom.Children.Add(Button("+",48,()=>SetZoom(zoom+.1)));
         bottom.Children.Add(Button(Loc.Get("SnapshotClose"), 130, () => Closed = true)); Add(bottom, 4);
         surface = new UserControl { Width = ControllerMenu.Width, Height = ControllerMenu.Height, FontFamily = new FontFamily("Segoe UI"), Content = FloatingPanelChrome.Wrap(root) };
         browser = new ChromiumWebBrowser(initialUrl, automaticallyCreateBrowser: false, useLegacyRenderHandler: false)
         { Size = new System.Drawing.Size(ViewWidth, ViewHeight) };
         browser.RenderHandler = new RenderHandler(browser, this);
         browser.MenuHandler = new MenuHandler(this); browser.LifeSpanHandler = new Popups(this);
-        browser.BrowserInitialized += (_, _) => { browser.SetZoomLevel(Math.Log(2) / Math.Log(1.2)); browser.GetBrowserHost().SetAudioMuted(false); };
+        browser.BrowserInitialized += (_, _) => { browser.SetZoomLevel(Math.Log(2*Volatile.Read(ref zoom)) / Math.Log(1.2)); browser.GetBrowserHost().SetAudioMuted(false); };
         browser.AddressChanged += (_, e) => surface.Dispatcher.BeginInvoke(() =>
-        { if (!Closed && !addressFocus) { address = e.Address; addressText.Text = address; Changed(); } });
+        { if (!Closed && !addressFocus) { address = e.Address; addressText.Text = address; SetZoom(zoom); Changed(); } });
         browser.LoadingStateChanged += (_, e) => surface.Dispatcher.BeginInvoke(() =>
         { if (!Closed) { loading = e.IsLoading; if (loading) loadClock.Restart(); status.Text = loading ? Loc.Get("BrowserLoading") : address; Changed(); } });
         address = initialUrl; addressText.Text = initialUrl; browser.CreateBrowser(browserSettings: new BrowserSettings { WindowlessFrameRate = 60 });
@@ -107,6 +112,13 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     {
         var button = new Button { Content = text, Width = width, Height = 48, FontSize = 20, Margin = new Thickness(0, 0, 6, 0), Padding = new Thickness(8, 0, 8, 0) };
         actions[button] = () => { action(); Changed(); }; return button;
+    }
+    private void SetZoom(double value)
+    {
+        zoom=Math.Round(Math.Clamp(value,.25,3),2);
+        zoomReset.Content=$"{zoom*100:0}%";
+        if(browser.IsBrowserInitialized) browser.SetZoomLevel(Math.Log(2*zoom)/Math.Log(1.2));
+        Changed();
     }
     private void Navigate()
     {
@@ -354,6 +366,15 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
         ClickControl(one.actions.Keys.Single(b => b.Content?.ToString() == Loc.Get("KeyboardOpen")));
         ClickControl(one.actions.Keys.Single(b => b.Content?.ToString() == Loc.Get("BrowserNew")));
         if (keyboardOpens != 1 || openedWindows.Count != 1) throw new Exception("Offscreen browser toolbar buttons did not receive clicks");
+        var initialWidth=await one.browser.EvaluateScriptAsync("window.innerWidth");
+        ClickControl(one.actions.Keys.Single(b=>b.Content?.ToString()=="+"));
+        deadline=DateTime.UtcNow.AddSeconds(5);
+        do { response=await one.browser.EvaluateScriptAsync("window.innerWidth"); if(Convert.ToDouble(response.Result)<Convert.ToDouble(initialWidth.Result)) break; await Task.Delay(25); } while(DateTime.UtcNow<deadline);
+        if(Convert.ToDouble(response.Result)>=Convert.ToDouble(initialWidth.Result) || one.zoomReset.Content?.ToString()!="110%") throw new Exception("Browser zoom button did not enlarge the page");
+        one.Render(); ClickControl(one.zoomReset);
+        deadline=DateTime.UtcNow.AddSeconds(5);
+        do { response=await one.browser.EvaluateScriptAsync("window.innerWidth"); if(Convert.ToDouble(response.Result)==Convert.ToDouble(initialWidth.Result)) break; await Task.Delay(25); } while(DateTime.UtcNow<deadline);
+        if(Convert.ToDouble(response.Result)!=Convert.ToDouble(initialWidth.Result)) throw new Exception("Browser zoom reset did not restore the page");
         async Task ClickElement(string id)
         {
             var hit = await one.browser.EvaluateScriptAsync($"JSON.stringify((()=>{{let r=document.getElementById('{id}').getBoundingClientRect();return {{x:(r.x+r.width/2)*devicePixelRatio,y:(r.y+r.height/2)*devicePixelRatio}};}})())");

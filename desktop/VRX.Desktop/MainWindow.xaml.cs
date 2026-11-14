@@ -384,7 +384,7 @@ public partial class MainWindow : Window
         }
         if (SeatRow != null && SeatList != null && SeatValue != null)
         {
-            SeatRow.Visibility = env == Profile.EnvironmentTheatre ? Visibility.Visible : Visibility.Collapsed;
+            SeatRow.Visibility = Profile.HasSeats(env) ? Visibility.Visible : Visibility.Collapsed;
             SeatList.IsEnabled = !follows;
             SeatValue.Text = follows ? Loc.Get("NeedsFixedScreen") : room == 0 ? Loc.Get("NeedsRoom") :
                 Loc.Format("SeatDistance", Profile.SeatDistance(SeatList.SelectedIndex));
@@ -426,7 +426,7 @@ public partial class MainWindow : Window
     // The theatre is in use (it needs the room and the fixed screen): the seat, not the
     // Distance slider, sets the screen's distance.
     private bool Seated => FollowCheck?.IsChecked != true && Math.Round(RoomSlider?.Value ?? 0) > 0 &&
-                           EnvironmentList?.SelectedIndex == Profile.EnvironmentTheatre;
+                           Profile.HasSeats(EnvironmentList?.SelectedIndex ?? Profile.EnvironmentRoom);
 
     // The screen's distance the engine will use: the seat's in the theatre, else the slider's.
     private double ViewDistance() => Seated && SeatList != null
@@ -1507,7 +1507,11 @@ public partial class MainWindow : Window
             !new Profile { RoomEnvironment = Profile.EnvironmentTheatre, RoomSeat = Profile.SeatRear }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 4 2") ||
             new Profile { RoomSeat = Profile.SeatCount }.Valid() || new Profile { RoomSeat = -1 }.Valid() || !new Profile { RoomEnvironment = Profile.EnvironmentTheatre }.Valid() ||
             new Profile { RoomEnvironment = Profile.EnvironmentCount }.Valid())
-            throw new Exception("The theatre and its seat: the middle by default and for old profiles, last in the snapshot, the seat 0 to 2 and the environment 0 to 4");
+            throw new Exception("The theatre and its seat: the middle by default and for old profiles, last in the snapshot, the seat 0 to 2 and the environment in range");
+        foreach (int themedEnvironment in new[] { Profile.EnvironmentDungeon, Profile.EnvironmentHell, Profile.EnvironmentCyberpunk, Profile.EnvironmentStarship })
+            if (!new Profile { RoomEnvironment = themedEnvironment }.Valid() ||
+                !new Profile { RoomEnvironment = themedEnvironment }.Control(0,0,false).TrimEnd().EndsWith($" {themedEnvironment} 1"))
+                throw new Exception("Themed rooms must be valid saved profiles and reach the engine through control snapshots");
         if (Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatFront) - 4.56f) > 1e-4f || Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatRear) - 11.4f) > 1e-4f ||
             Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatMiddle) - (4.56f + 3 * 6.84f / 7)) > 1e-4f || Math.Abs(Profile.TheatreDistance(10f, Profile.SeatRear) - 20f) > 1e-4f ||
             Math.Abs(Profile.TheatreDistance(1f, Profile.SeatFront) - 2f) > 1e-4f || Profile.TheatreDistance(0f, Profile.SeatFront) != 0 ||
@@ -1658,6 +1662,19 @@ public partial class MainWindow : Window
         EnvironmentList.SelectedIndex = Profile.EnvironmentLounge;
         if (!LightSlider.IsEnabled || !LightColourList.IsEnabled || GlassSlider.IsEnabled || ReadProfile().RoomEnvironment != Profile.EnvironmentLounge)
             throw new Exception("The lounge has the room light and its colour, not glass");
+        foreach (int cinemaEnvironment in new[] { Profile.EnvironmentCyberpunk, Profile.EnvironmentStarship })
+        {
+            EnvironmentList.SelectedIndex = cinemaEnvironment;
+            if (ReadProfile().RoomEnvironment != cinemaEnvironment || SeatRow.Visibility != Visibility.Visible || !Seated || DistanceSlider.IsEnabled || !LightSlider.IsEnabled || GlassSlider.IsEnabled)
+                throw new Exception("The futuristic cinemas must have real seating, seat-based distance and adjustable lighting");
+        }
+        foreach (int themedEnvironment in new[] { Profile.EnvironmentDungeon, Profile.EnvironmentHell })
+        {
+            EnvironmentList.SelectedIndex = themedEnvironment;
+            if (ReadProfile().RoomEnvironment != themedEnvironment || !LightSlider.IsEnabled || GlassSlider.IsEnabled || SeatRow.Visibility != Visibility.Collapsed)
+                throw new Exception("Dungeon and Hell must be selectable with lighting and without cinema seating or glass");
+        }
+        EnvironmentList.SelectedIndex = Profile.EnvironmentLounge;
         FollowCheck.IsChecked = true;
         if (EnvironmentList.IsEnabled || EnvironmentValue.Text != Loc.Get("NeedsFixedScreen") || ReadProfile().RoomEnvironment != Profile.EnvironmentLounge)
             throw new Exception("The environment must rest, keeping its choice, while the screen follows the head");
