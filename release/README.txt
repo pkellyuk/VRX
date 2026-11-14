@@ -82,7 +82,20 @@ screen, a patterned carpet with step lights and sconces - in one of its tiered r
 seats. Its "Seat" (front row, middle, back row) sets how far away the screen is (4.6,
 7.5 or 11.4 m) while the Distance slider rests; Width makes the screen bigger or
 smaller in the same hall. Each is lit by the picture like the room; glass and
-reflections are the room's own.
+reflections are the room's own. Four themed rooms join them: "Dungeon" (stone,
+chains and torches), "Hell" (basalt and lava), and two cinemas with the same seats -
+"Cyberpunk neon cinema" and "Starship cinema" (with ports onto space). Room light
+dims their flames, lava, neon and displays; at zero they switch off.
+
+"Controllers" (off by default) lets you use your VR controllers. Press the
+controller's Menu button to show or hide a VRX settings panel where you are looking;
+point and pull the trigger to select, hold the title bar to move it, and use the
+thumbstick to scroll. "Control screen" turns the controller into a mouse on the main
+screen (trigger: left-click and drag, grip: right-click, right stick: scroll). The
+panel can also open floating windows: a web browser (for guides while you play),
+a keyboard you can tap or swipe across, and snapshots of the screen, saved in the
+VRX images folder. "Arrange windows" lines them up. VR controller input needs the
+headset's VR controller mode and VRX to have input focus.
 
 Options still being tried out are in the Experimental section (Expert mode): extra
 foreground depth passes, keeping thin parts upright, sharpening depth edges with the
@@ -150,7 +163,7 @@ V2 alongside ZipDepth for more detailed layering, moved to the current frame the
 same way; it is best with another GPU chosen as the depth GPU and is limited to
 10 passes per second on one GPU. Both add CPU work to each depth pass; the session
 log reports it. GPUs without a hardware motion estimator play without them.
-No game injection, motion-controller controls, or in-headset UI.
+No game injection. The controllers' settings panel and floating windows are optional.
 SteamVR dashboard dismissal is best-effort. Other games/headsets need validation.
 
 The installer is not code-signed and Windows may display an unknown-publisher
