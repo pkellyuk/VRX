@@ -1,4 +1,4 @@
-VRX 1.8.1 third-party components
+VRX 1.8.2 third-party components
 
 CefSharp.OffScreen.NETCore 156.0.150 (BSD-3-Clause)
 https://github.com/cefsharp/CefSharp

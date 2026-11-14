@@ -129,7 +129,9 @@ be remapped in the runtime. This feature controls VRX's settings; it does not fo
 motion-controller poses to the captured flat game. **Control screen** in the menu
 optionally makes the right beam a mouse on the displayed picture (flat or curved):
 point to move the cursor, press the right trigger to left-click, and hold it to drag.
-Squeeze the right grip for a right-click. Thumbstick clicks retain their normal
+Squeeze the right grip for a right-click. Push the right thumbstick up/down to
+scroll while the beam points at the main screen; pushing farther scrolls faster.
+Thumbstick clicks retain their normal
 menu-toggle bindings on Index/generic controllers.
 **Stop controlling screen** turns this off. Menu controls take priority over screen
 clicks. Losing tracking or XR input focus, leaving the screen, hiding the beams, or
@@ -171,6 +173,8 @@ From using VRX day to day:
   app): set **Screen curve** to 1 % in Expert mode. The screen stays practically flat.
 
 ## Get started
+
+Development version: **1.8.2**.
 
 Download VRX v1.8.1: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.8.1/VRX-Setup-1.8.1.exe)
 or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.8.1/VRX-1.8.1-win-x64.zip)

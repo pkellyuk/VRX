@@ -366,6 +366,22 @@ int main()
             assert(boxes[i][1] <= boxes[j][0] || boxes[j][1] <= boxes[i][0] || boxes[i][3] <= boxes[j][2] || boxes[j][3] <= boxes[i][2]);
     }
     // Mouse mode needs a fresh press and always balances a captured down.
+    ScreenWheel wheel;
+    assert(wheel.Step(true,.2f,.05f)==0);
+    int scrolled=0;
+    for(int i=0;i<90;i++) scrolled+=wheel.Step(true,1,1.0f/90);
+    assert(scrolled>=1080 && scrolled<=1200);
+    wheel.Reset(); int slower=0;
+    for(int i=0;i<90;i++) slower+=wheel.Step(true,.6f,1.0f/90);
+    assert(slower>=480 && slower<=600 && slower<scrolled);
+    wheel.Reset(); int backwards=0;
+    for(int i=0;i<90;i++) backwards+=wheel.Step(true,-1,1.0f/90);
+    assert(backwards==-scrolled);
+    wheel.Reset(); assert(wheel.Step(true,1,.05f)==0);
+    assert(wheel.Step(false,1,.05f)==0 && Near(wheel.remainder,0));
+    assert(wheel.Step(true,1,.05f)==0);
+    assert(wheel.Step(true,-1,.05f)==0 && Near(wheel.remainder,-60));
+    assert(wheel.Step(true,0,.05f)==0 && Near(wheel.remainder,0));
     MouseLatch mouse;
     assert(mouse.Step(true,true) == 0); // enabling while trigger held
     assert(mouse.Step(true,false) == 0);

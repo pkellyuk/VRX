@@ -282,6 +282,24 @@ struct StableClick
     }
 };
 
+// Emit complete Windows wheel notches, preserving fractions between XR frames.
+struct ScreenWheel
+{
+    float remainder=0;
+    void Reset() { remainder=0; }
+    int Step(bool allowed,float stick,float dt)
+    {
+        if(!allowed || !std::isfinite(stick) || !std::isfinite(dt) || std::fabs(stick)<=.2f || dt<=0)
+        { Reset(); return 0; }
+        if(remainder*stick<0) Reset();
+        const float speed=(std::clamp(std::fabs(stick),.2f,1.0f)-.2f)/.8f*(stick>0 ? 1200.0f:-1200.0f);
+        remainder+=speed*std::min(dt,.05f);
+        const int delta=int(remainder/120)*120;
+        remainder-=float(delta);
+        return delta;
+    }
+};
+
 // A thin white compositor quad along the ray, billboarded towards the viewer.
 inline XrPosef Beam(XrPosef ray, float distance, XrVector3f eye)
 {

@@ -41,6 +41,7 @@ class ControllerMenu
     vrxmenu::StableClick stableClick[2],stableScreenClick;
     vrxmenu::MouseLatch mouse;
     vrxmenu::MouseLatch rightMouse;
+    vrxmenu::ScreenWheel screenWheel;
     vrxmenu::MouseLatch panelRight;
     int panelRightTarget = 0;
     float panelRightU = 0, panelRightV = 0;
@@ -228,6 +229,7 @@ class ControllerMenu
     {
         for(int h=0;h<2;h++) { pointerAim[h].Reset(); stableClick[h].Reset(); }
         stableScreenClick.Reset();
+        screenWheel.Reset();
         if (mouse.Step(false,false) < 0)
         { INPUT input{}; input.type = INPUT_MOUSE; input.mi.dwFlags = MOUSEEVENTF_LEFTUP; SendInput(1,&input,sizeof(input)); }
         if (rightMouse.Step(false,false) < 0)
@@ -266,7 +268,7 @@ class ControllerMenu
         if (!input.empty() && SendInput(UINT(input.size()),input.data(),sizeof(INPUT)) != input.size())
             error = "Windows blocked floating keyboard input (the target may be running elevated)";
     }
-    void ScreenMouse(bool allowed, bool down, bool rightDown, float x, float y)
+    void ScreenMouse(bool allowed, bool down, bool rightDown, float x, float y, float stick, float dt)
     {
         allowed = allowed && mouseRect.right > mouseRect.left && mouseRect.bottom > mouseRect.top;
         POINT point{mouseRect.left + LONG(std::clamp(x,0.0f,1.0f)*(mouseRect.right-mouseRect.left-1)),
@@ -277,9 +279,17 @@ class ControllerMenu
             allowed = IsWindow(mouseWindow) && !IsIconic(mouseWindow) &&
                 GetAncestor(WindowFromPoint(point),GA_ROOT) == GetAncestor(mouseWindow,GA_ROOT);
         }
+        int wheel=screenWheel.Step(allowed,stick,dt);
+        if(wheel)
+        {
+            HWND target=GetAncestor(mouseWindow ? mouseWindow:WindowFromPoint(point),GA_ROOT);
+            if(target && GetAncestor(GetForegroundWindow(),GA_ROOT)!=target) SetForegroundWindow(target);
+            if(!target || GetAncestor(GetForegroundWindow(),GA_ROOT)!=target)
+            { wheel=0; screenWheel.Reset(); }
+        }
         const int edge = mouse.Step(allowed,down);
         const int rightEdge = rightMouse.Step(allowed,rightDown);
-        INPUT inputs[3]{}; UINT count = 0;
+        INPUT inputs[4]{}; UINT count = 0;
         if (allowed)
         {
             auto& input = inputs[count++]; input.type = INPUT_MOUSE;
@@ -292,6 +302,8 @@ class ControllerMenu
         { auto& input = inputs[count++]; input.type = INPUT_MOUSE; input.mi.dwFlags = edge > 0 ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP; }
         if (rightEdge)
         { auto& input = inputs[count++]; input.type = INPUT_MOUSE; input.mi.dwFlags = rightEdge > 0 ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP; }
+        if(wheel)
+        { auto& input=inputs[count++]; input.type=INPUT_MOUSE; input.mi.dwFlags=MOUSEEVENTF_WHEEL; input.mi.mouseData=DWORD(wheel); }
         if (allowed && (edge > 0 || rightEdge > 0))
         {
             keyboardWindow = mouseWindow ? mouseWindow : GetAncestor(WindowFromPoint(point),GA_ROOT);
@@ -745,7 +757,7 @@ public:
         const bool screenHit = controlScreen && pointersVisible && tracked[1] && (trackingFlags[1] & mouseTracking) == mouseTracking && targets[1] < 0 && !pressed &&
             vrxmenu::ScreenHit(screenPose,screenSize,screenCylinder,rays[1],su,sv,screenPoint);
         if(screenHit) stableScreenClick.Apply(down[1],su,sv); else stableScreenClick.Reset();
-        ScreenMouse(screenHit,down[1],rightClickDown,su,sv);
+        ScreenMouse(screenHit,down[1],rightClickDown,su,sv,sticks[1],dt);
         const bool contextAllowed = tracked[1] && !pressed && targets[1] > 0 &&
             shared->snapshots[targets[1]-1].kind == vrxmenu::BrowserPanel && (!panelRight.held || targets[1] == panelRightTarget);
         const int contextEdge = panelRight.Step(contextAllowed,rightClickDown);
