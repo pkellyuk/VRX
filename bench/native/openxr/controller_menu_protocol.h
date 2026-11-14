@@ -32,7 +32,9 @@ struct Snapshot
     char16_t path[SnapshotPathChars];
     uint8_t pixels[Width * Height * 4];
 };
-struct KeyboardEvent { uint32_t type, code; }; // 0 UTF-16 character; 1 virtual key (press/release)
+// Low byte: 0 UTF-16, 1 virtual key. Bits 8..11: Ctrl, Alt, Shift, Win.
+// Each event presses and releases its modifiers, so focus loss cannot leave one held.
+struct KeyboardEvent { uint32_t type, code; };
 struct KeyboardState
 {
     uint32_t write, read, focusSerial, flags;

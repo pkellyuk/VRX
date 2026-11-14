@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include "controller_menu_body.h"
 
 // Optional OpenXR actions plus a compositor quad. The desktop owns the settings;
 // this class transports panel bitmaps/pointer events and the opt-in screen mouse.
@@ -80,6 +81,9 @@ class ControllerMenu
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
     bool rgba = false, uploaded = false, textureDirty = false;
     std::vector<uint8_t> pixels;
+    MenuBodyRenderer body;
+    std::array<uint64_t,vrxmenu::MaxSnapshots+1> tileVersions{};
+    std::vector<decltype(tileVersions)> imageVersions;
     std::string error;
 
 #define MENU_FN(n) PFN_##n n##_ = nullptr
@@ -210,6 +214,8 @@ class ControllerMenu
         fenceEvent = CreateEventW(nullptr,FALSE,FALSE,nullptr);
         if (!fenceEvent) { error = "Controller menu fence event failed"; return false; }
         pixels.resize(vrxmenu::AtlasWidth * vrxmenu::AtlasHeight * 4);
+        imageVersions.resize(images.size());
+        if (!body.Init(device,images,DXGI_FORMAT(format))) { error = "Controller menu casing renderer failed"; return false; }
         return true;
     }
 
@@ -241,10 +247,17 @@ class ControllerMenu
         {
             const auto key = state.events[state.read++ % 256];
             INPUT down{}; down.type = INPUT_KEYBOARD;
-            if (key.type == 0) { down.ki.wScan = WORD(key.code); down.ki.dwFlags = KEYEVENTF_UNICODE; }
-            else if (key.type == 1) down.ki.wVk = WORD(key.code);
+            const uint32_t type = key.type & 255, modifiers = key.type >> 8;
+            if (type == 0) { down.ki.wScan = WORD(key.code); down.ki.dwFlags = KEYEVENTF_UNICODE; }
+            else if (type == 1)
+            { down.ki.wVk = WORD(key.code); if ((key.code >= VK_PRIOR && key.code <= VK_DOWN) || key.code == VK_INSERT || key.code == VK_DELETE) down.ki.dwFlags = KEYEVENTF_EXTENDEDKEY; }
             else continue;
+            const WORD modifierKeys[]{VK_CONTROL,VK_MENU,VK_SHIFT,VK_LWIN};
+            for (int m = 0; m < 4; ++m) if (modifiers & (1u << m))
+            { INPUT modifier{}; modifier.type = INPUT_KEYBOARD; modifier.ki.wVk = modifierKeys[m]; input.push_back(modifier); }
             input.push_back(down); down.ki.dwFlags |= KEYEVENTF_KEYUP; input.push_back(down);
+            for (int m = 3; m >= 0; --m) if (modifiers & (1u << m))
+            { INPUT modifier{}; modifier.type = INPUT_KEYBOARD; modifier.ki.wVk = modifierKeys[m]; modifier.ki.dwFlags = KEYEVENTF_KEYUP; input.push_back(modifier); }
         }
         if (!input.empty() && SendInput(UINT(input.size()),input.data(),sizeof(INPUT)) != input.size())
             error = "Windows blocked floating keyboard input (the target may be running elevated)";
@@ -317,16 +330,18 @@ class ControllerMenu
         void* data = nullptr;
         D3D12_RANGE empty{0,0};
         bool copied = SUCCEEDED(upload->Map(0,&empty,&data));
-        int rows = vrxmenu::Height;
-        for (int s = 1; s <= vrxmenu::MaxSnapshots; ++s) if (surfaces[s].visible) rows = (s/vrxmenu::AtlasColumns+1)*vrxmenu::Height;
+        std::vector<int> changed;
+        for (int s = 0; s <= vrxmenu::MaxSnapshots; ++s)
+            if ((s == 0 || surfaces[s].visible) && imageVersions[index][s] != tileVersions[s]) changed.push_back(s);
         if (copied)
         {
-            for (int y = 0; y < rows; ++y)
+            for (int s : changed) for (int row = 0; row < vrxmenu::Height; ++row)
             {
-                auto* dest = static_cast<uint8_t*>(data) + footprint.Offset + y * footprint.Footprint.RowPitch;
-                const auto* src = pixels.data() + y * vrxmenu::AtlasWidth * 4;
-                std::memcpy(dest,src,vrxmenu::AtlasWidth*4);
-                if (rgba) for (int x = 0; x < vrxmenu::AtlasWidth; ++x) std::swap(dest[x*4],dest[x*4+2]);
+                int y = s/vrxmenu::AtlasColumns*vrxmenu::Height+row, x0=s%vrxmenu::AtlasColumns*vrxmenu::Width;
+                auto* dest = static_cast<uint8_t*>(data) + footprint.Offset + y * footprint.Footprint.RowPitch+x0*4;
+                const auto* src = pixels.data() + (size_t(y)*vrxmenu::AtlasWidth+x0)*4;
+                std::memcpy(dest,src,vrxmenu::Width*4);
+                if (rgba) for (int x = 0; x < vrxmenu::Width; ++x) std::swap(dest[x*4],dest[x*4+2]);
             }
             upload->Unmap(0,nullptr);
             copied = SUCCEEDED(allocator->Reset()) && SUCCEEDED(commands->Reset(allocator.Get(),nullptr));
@@ -340,9 +355,14 @@ class ControllerMenu
                 commands->ResourceBarrier(1,&barrier);
                 D3D12_TEXTURE_COPY_LOCATION from{}; from.pResource = upload.Get(); from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; from.PlacedFootprint = footprint;
                 D3D12_TEXTURE_COPY_LOCATION to{}; to.pResource = images[index].texture; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-                D3D12_BOX region{0,0,0,vrxmenu::AtlasWidth,UINT(rows),1};
-                commands->CopyTextureRegion(&to,0,0,0,&from,&region);
+                for (int s : changed)
+                {
+                    UINT x=s%vrxmenu::AtlasColumns*vrxmenu::Width,y=s/vrxmenu::AtlasColumns*vrxmenu::Height;
+                    D3D12_BOX region{x,y,0,x+vrxmenu::Width,y+vrxmenu::Height,1};
+                    commands->CopyTextureRegion(&to,x,y,0,&from,&region);
+                }
                 std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter); commands->ResourceBarrier(1,&barrier);
+                body.Draw(commands.Get(),index,surfaces,swapchain,local);
                 copied = SUCCEEDED(commands->Close());
                 if (copied)
                 {
@@ -355,12 +375,14 @@ class ControllerMenu
         const bool released = XrOk(xrReleaseSwapchainImage_(swapchain,&ri),"Menu release");
         if (!copied) error = "Controller menu GPU upload failed";
         uploaded = copied && released;
+        if (uploaded) for (int s : changed) imageVersions[index][s] = tileVersions[s];
         return uploaded;
     }
 
 public:
     void CopyPanelPixels(int surface, const uint8_t* source)
     {
+        ++tileVersions[surface];
         const int column = surface%vrxmenu::AtlasColumns, row = surface/vrxmenu::AtlasColumns;
         for (int y = 0; y < vrxmenu::Height; ++y)
             memcpy(pixels.data()+(size_t(row*vrxmenu::Height+y)*vrxmenu::AtlasWidth+column*vrxmenu::Width)*4,
@@ -376,6 +398,7 @@ public:
             vrxmenu::ContainPanel(surface.pose,surface.size,sceneRoom,screenPose);
     }
     void Configure(std::wstring mappingName) { name = std::move(mappingName); }
+    void SetViews(const XrView* views) { body.eyes[0] = views[0]; body.eyes[1] = views[1]; body.valid = true; }
     const std::string& Error() const { return error; }
     bool TakeSnapshotRequest()
     {
@@ -753,7 +776,7 @@ public:
                 surfaces[s].frame = snapshot.frame; newFrame = true;
             }
         }
-        textureDirty |= newFrame;
+        textureDirty |= newFrame || (body.valid && (visible || anySnapshot));
         ReleaseMutex(mutex);
         if (textureDirty && fence->GetCompletedValue() >= fenceValue && Upload()) { frame = nextFrame; textureDirty = false; }
         layer.space = local; layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH; layer.pose = pose; layer.size = size;
@@ -791,10 +814,11 @@ public:
             if (surfaces[s].visible && (s != 0 || enabled || surfaces[0].flight.stuck))
                 order.push_back(s);
         std::sort(order.begin(),order.end(),[&](int a, int b) { return surfaces[a].distance > surfaces[b].distance; });
+        if (!order.empty() && body.valid && count < 16) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&body.layer);
         for (int s : order) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&surfaces[s].layer);
-        for (int h = 0; h < 2; ++h) if (beamVisible[h]) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&beams[h]);
-        if (pointerHit) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&cursor);
-        if (screenPointerHit) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&screenCursor);
+        if (pointerHit && count < 16) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&cursor);
+        if (screenPointerHit && count < 16) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&screenCursor);
+        for (int h = 0; h < 2; ++h) if (beamVisible[h] && count < 16) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&beams[h]);
     }
 
     void Recenter() { if (Lock()) { if (visible) { Close(); pendingOpen = true; } ReleaseMutex(mutex); } }

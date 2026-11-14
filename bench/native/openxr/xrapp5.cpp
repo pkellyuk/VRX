@@ -10422,6 +10422,7 @@ static void RunFrameLoop(App& app)
             if (!validTracking) ++invalidTrackingFrames;
             if (validTracking)
             {
+            app.controllerMenu.SetViews(views);
             menuFov = views[0].fov;
             for (int eye = 1; eye < VIEWS; ++eye)
             {

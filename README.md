@@ -88,6 +88,9 @@ Back, forward, reload and the address field are at the top. Click the address fi
 to edit it with the floating keyboard; Enter or Go navigates. Browser links opened
 in a new window create another panel. **Open images folder** opens snapshot saves
 in desktop Explorer.
+Pages show a red scanning activity strip below navigation while loading. Browser
+audio plays through Windows' selected output; off-screen video targets 60 fps.
+All floating panels have a shallow 8 mm casing visible from the side.
 
 **Arrange windows** brings the menu and all open floating panels into your current
 field of view, facing you at a nearby distance. It shuffles their positions in a
@@ -97,7 +100,10 @@ panels are detached and moving panels stop. Press again for a different arrangem
 **Keyboard** opens or recalls a separate floating QWERTY panel. Tap letters or hold
 the trigger while swiping across them, then release to commit the best English
 word suggestion. The other suggestions replace that word. Shift, symbols, space,
-backspace, Enter, Tab and cursor keys are available. Tap completions also work.
+backspace, Enter and Tab are available. The symbols key switches to punctuation;
+Shift selects additional symbols. **PC keys** switches to Esc, Delete, navigation,
+F1–F12 and editing shortcuts. Ctrl, Alt and Win apply to the next key only; choose
+the modifier, return from PC keys, then tap a letter for a chord. Tap completions also work.
 The initial predictor uses a local English vocabulary; explicitly select **Add word**
 to teach it unfamiliar words. Predictions stay local. Type into the last browser
 field you clicked, or enable **Control screen** and click a game/Windows field to

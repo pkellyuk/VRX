@@ -30,6 +30,7 @@ public sealed class ControllerMenu : IDisposable
     private readonly MemoryMappedViewAccessor memory;
     private readonly Mutex mutex;
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(50) };
+    private long nextMenuRender;
     private readonly UserControl surface;
     private readonly ScrollViewer scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden };
     private readonly StackPanel body = new();
@@ -225,7 +226,7 @@ public sealed class ControllerMenu : IDisposable
             int count = edit.Backspaces + edit.Text.Length + (edit.Key != 0 ? 1 : 0);
             if (unchecked(write-read)+count > 256) return false;
             void Add(int type, int code)
-            { long at = KeyboardEventsAt+(write++ % 256)*8; memory.Write(at, type); memory.Write(at+4, code); }
+            { long at = KeyboardEventsAt+(write++ % 256)*8; memory.Write(at, type | ((int)edit.Modifiers << 8)); memory.Write(at+4, code); }
             for (int i = 0; i < edit.Backspaces; i++) Add(1, 8);
             foreach (char c in edit.Text) Add(0, c);
             if (edit.Key != 0) Add(1, edit.Key);
@@ -500,6 +501,7 @@ public sealed class ControllerMenu : IDisposable
             if (slot >= 0 && slot < MaxSnapshots)
                 snapshots[slot]?.Pointer(enabled ? e.Kind % 16 : 4, e.X, e.Y, e.Value);
         }
+        timer.Interval = TimeSpan.FromMilliseconds(snapshots.OfType<FloatingBrowser>().Any(b => !b.Closed) ? 1000.0 / 60 : 50);
         for (int i = 0; i < MaxSnapshots; i++)
         {
             var snapshot = snapshots[i];
@@ -536,6 +538,8 @@ public sealed class ControllerMenu : IDisposable
             if (page != pageGeneration) break; // remaining events describe the old bitmap
         }
         foreach (var update in refresh.ToArray()) update();
+        if (Environment.TickCount64 < nextMenuRender && !events.Any(e => e.Kind < 16)) return;
+        nextMenuRender = Environment.TickCount64 + 50;
         surface.UpdateLayout();
         bitmap.Clear(); bitmap.Render(surface); bitmap.CopyPixels(pixels, PixelWidth * 4, 0);
         // A solid white texel region for the renderer's low-latency beams and pointer.
@@ -623,10 +627,13 @@ public sealed class ControllerMenu : IDisposable
             memory.ReadInt32(KeyboardEventsAt) != 1 || memory.ReadInt32(KeyboardEventsAt+4) != 8 ||
             memory.ReadInt32(KeyboardEventsAt+12) != 'h' || memory.ReadInt32(KeyboardEventsAt+28) != 13)
             throw new Exception("Floating keyboard did not queue Unicode text and editing keys for Windows");
+        if (!SendKeyboardEdit(new KeyboardEdit("", 67, Modifiers: KeyboardModifiers.Control)) || memory.ReadUInt32(KeyboardAt) != 5 ||
+            memory.ReadInt32(KeyboardEventsAt+32) != 257 || memory.ReadInt32(KeyboardEventsAt+36) != 67)
+            throw new Exception("Floating keyboard did not preserve Windows shortcut modifiers through IPC");
         if (!Lock()) throw new Exception("Keyboard test could not lock IPC");
         try { memory.Write(KeyboardAt+12, 0); }
         finally { mutex.ReleaseMutex(); }
-        if (SendKeyboardEdit(new KeyboardEdit("blocked")) || memory.ReadUInt32(KeyboardAt) != 4)
+        if (SendKeyboardEdit(new KeyboardEdit("blocked")) || memory.ReadUInt32(KeyboardAt) != 5)
             throw new Exception("Keyboard must not send text while Windows target is inactive");
         ClickButton(Loc.Get("ControllerMenuStopControlScreen")); Tick();
         if (memory.ReadInt32(36) != 0) throw new Exception("Stop controlling screen did not disable mouse mode");

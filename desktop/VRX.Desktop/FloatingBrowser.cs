@@ -23,6 +23,7 @@ internal static class FloatingBrowserRuntime
             RootCachePath = root, CachePath = Path.Combine(root, "profile"), LogSeverity = LogSeverity.Error,
             LogFile = Path.Combine(root, "browser.log") };
         Directory.CreateDirectory(root);
+        settings.EnableAudio();
         settings.CefCommandLineArgs.Add("disable-background-networking");
         if (!Cef.Initialize(settings)) throw new InvalidOperationException("Chromium could not start");
         started = true;
@@ -60,11 +61,15 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     private int addressCaret;
     private CefSharp.MouseEvent lastMouse;
     private int generation = 1, renderedGeneration, publishedGeneration;
+    private int paintCount;
+    private bool loading, chromeDirty = true;
+    private readonly System.Diagnostics.Stopwatch loadClock = new();
+    private readonly byte[] output = new byte[ControllerMenu.PixelBytes];
     public bool Closed { get; private set; }
-    public bool Dirty => Volatile.Read(ref generation) != publishedGeneration;
+    public bool Dirty => loading || Volatile.Read(ref generation) != publishedGeneration;
     internal string Address => address;
     internal bool CanType => addressFocus || browser.IsBrowserInitialized;
-    private void Changed() => Interlocked.Increment(ref generation);
+    private void Changed(bool chrome = true) { if (chrome) chromeDirty = true; Interlocked.Increment(ref generation); }
     internal FloatingBrowser(Action<FloatingBrowser> focus, Action openKeyboard, Action<string> newWindow, string initialUrl = "https://www.google.com")
     {
         FloatingBrowserRuntime.Ensure(); this.focus = focus; this.openKeyboard = openKeyboard; this.newWindow = newWindow;
@@ -91,12 +96,12 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
         { Size = new System.Drawing.Size(ViewWidth, ViewHeight) };
         browser.RenderHandler = new RenderHandler(browser, this);
         browser.MenuHandler = new MenuHandler(this); browser.LifeSpanHandler = new Popups(this);
-        browser.BrowserInitialized += (_, _) => browser.SetZoomLevel(Math.Log(2) / Math.Log(1.2));
+        browser.BrowserInitialized += (_, _) => { browser.SetZoomLevel(Math.Log(2) / Math.Log(1.2)); browser.GetBrowserHost().SetAudioMuted(false); };
         browser.AddressChanged += (_, e) => surface.Dispatcher.BeginInvoke(() =>
         { if (!Closed && !addressFocus) { address = e.Address; addressText.Text = address; Changed(); } });
         browser.LoadingStateChanged += (_, e) => surface.Dispatcher.BeginInvoke(() =>
-        { if (!Closed) { status.Text = e.IsLoading ? Loc.Get("BrowserLoading") : address; Changed(); } });
-        address = initialUrl; addressText.Text = initialUrl; browser.CreateBrowser(browserSettings: new BrowserSettings { WindowlessFrameRate = 20 });
+        { if (!Closed) { loading = e.IsLoading; if (loading) loadClock.Restart(); status.Text = loading ? Loc.Get("BrowserLoading") : address; Changed(); } });
+        address = initialUrl; addressText.Text = initialUrl; browser.CreateBrowser(browserSettings: new BrowserSettings { WindowlessFrameRate = 60 });
     }
     private Button Button(string text, double width, Action action)
     {
@@ -113,8 +118,14 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     public void Edit(KeyboardEdit edit)
     {
         if (Closed) return;
+        if (edit.Modifiers.HasFlag(KeyboardModifiers.Control) && edit.Key == 76)
+        { addressFocus = addressSelected = true; addressCaret = address.Length; Changed(); return; }
         if (addressFocus)
         {
+            if (edit.Modifiers.HasFlag(KeyboardModifiers.Control) && edit.Key == 65) { addressSelected = true; Changed(); return; }
+            if (edit.Modifiers.HasFlag(KeyboardModifiers.Control) && edit.Key is 67 or 88)
+            { Clipboard.SetText(addressSelected ? address : ""); if (edit.Key == 88 && addressSelected) { address = ""; addressCaret = 0; } Changed(); return; }
+            if (edit.Modifiers.HasFlag(KeyboardModifiers.Control) && edit.Key == 86) edit = new KeyboardEdit(Clipboard.ContainsText() ? Clipboard.GetText() : "");
             if (addressSelected && (edit.Text.Length > 0 || edit.Backspaces > 0 || edit.Key == 8)) { address = ""; addressCaret = 0; addressSelected = false; }
             int remove = Math.Min(addressCaret, edit.Backspaces + (edit.Key == 8 ? 1 : 0));
             address = address.Remove(addressCaret-remove, remove); addressCaret -= remove;
@@ -128,11 +139,15 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
         }
         if (!browser.IsBrowserInitialized) return;
         var host = browser.GetBrowserHost(); host.SendFocusEvent(true);
+        var flags = (edit.Modifiers.HasFlag(KeyboardModifiers.Control) ? CefEventFlags.ControlDown : 0)
+            | (edit.Modifiers.HasFlag(KeyboardModifiers.Alt) ? CefEventFlags.AltDown : 0)
+            | (edit.Modifiers.HasFlag(KeyboardModifiers.Shift) ? CefEventFlags.ShiftDown : 0)
+            | (edit.Modifiers.HasFlag(KeyboardModifiers.Windows) ? CefEventFlags.CommandDown : 0);
         void Key(int code)
         {
-            host.SendKeyEvent(new CefSharp.KeyEvent { WindowsKeyCode = code, NativeKeyCode = code, Type = KeyEventType.RawKeyDown });
-            if (code is 8 or 9 or 13) host.SendKeyEvent(new CefSharp.KeyEvent { WindowsKeyCode = code, Type = KeyEventType.Char });
-            host.SendKeyEvent(new CefSharp.KeyEvent { WindowsKeyCode = code, NativeKeyCode = code, Type = KeyEventType.KeyUp });
+            host.SendKeyEvent(new CefSharp.KeyEvent { WindowsKeyCode = code, NativeKeyCode = code, Modifiers = flags, Type = KeyEventType.RawKeyDown });
+            if (code is 8 or 9 or 13) host.SendKeyEvent(new CefSharp.KeyEvent { WindowsKeyCode = code, Modifiers = flags, Type = KeyEventType.Char });
+            host.SendKeyEvent(new CefSharp.KeyEvent { WindowsKeyCode = code, NativeKeyCode = code, Modifiers = flags, Type = KeyEventType.KeyUp });
         }
         for (int i = 0; i < edit.Backspaces; i++) Key(8);
         foreach (char c in edit.Text) host.SendKeyEvent(new CefSharp.KeyEvent { WindowsKeyCode = c, Type = KeyEventType.Char });
@@ -219,17 +234,27 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     private void Paint(bool isPopup, IntPtr buffer, int width, int height)
     {
         if (Closed) return;
-        var copy = new byte[width * height * 4]; Marshal.Copy(buffer, copy, 0, copy.Length);
         lock (pixelsLock)
         {
-            if (isPopup) { popup = copy; popupWidth = width; popupHeight = height; }
-            else { pixels = copy; pixelsWidth = width; pixelsHeight = height; }
+            ref byte[]? destination = ref (isPopup ? ref popup : ref pixels);
+            if (destination?.Length != width * height * 4) destination = new byte[width * height * 4];
+            Marshal.Copy(buffer, destination!, 0, destination!.Length);
+            if (isPopup) { popupWidth = width; popupHeight = height; }
+            else { pixelsWidth = width; pixelsHeight = height; }
         }
-        Changed();
+        Changed(false);
+        if (!isPopup) Interlocked.Increment(ref paintCount);
     }
     public byte[] Render()
     {
         renderedGeneration = Volatile.Read(ref generation);
+        // Video frames can go straight into the shared panel bitmap. WPF only
+        // redraws the surrounding controls when their appearance changes.
+        if (!chromeDirty && context.Visibility != Visibility.Visible)
+        {
+            CopyPage(); DrawActivity(); return output;
+        }
+        chromeDirty = false;
         lock (pixelsLock) if (pixels != null)
         {
             var combined = (byte[])pixels.Clone();
@@ -245,7 +270,38 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
             viewBitmap.WritePixels(new Int32Rect(0, 0, pixelsWidth, pixelsHeight), combined, pixelsWidth*4, 0);
         }
         surface.Measure(new System.Windows.Size(ControllerMenu.Width, ControllerMenu.Height)); surface.Arrange(new System.Windows.Rect(0, 0, ControllerMenu.Width, ControllerMenu.Height)); surface.UpdateLayout();
-        bitmap.Clear(); bitmap.Render(surface); var output = new byte[ControllerMenu.PixelBytes]; bitmap.CopyPixels(output, ControllerMenu.PixelWidth*4, 0); return output;
+        bitmap.Clear(); bitmap.Render(surface); bitmap.CopyPixels(output, ControllerMenu.PixelWidth*4, 0); DrawActivity(); return output;
+    }
+    private void CopyPage()
+    {
+        lock (pixelsLock)
+        {
+            if (pixels == null || pixelsWidth != ViewWidth || pixelsHeight != ViewHeight) return;
+            for (int y = 0; y < ViewHeight; y++)
+                Buffer.BlockCopy(pixels, y*ViewWidth*4, output, ((y+336)*ControllerMenu.PixelWidth+96)*4, ViewWidth*4);
+            if (popup == null) return;
+            for (int y = 0; y < popupHeight; y++)
+            {
+                int dy = popupRect.Y+y, sx = Math.Max(0,-popupRect.X), dx = Math.Max(0,popupRect.X);
+                int count = Math.Min(popupWidth-sx,ViewWidth-dx);
+                if (dy >= 0 && dy < ViewHeight && count > 0)
+                    Buffer.BlockCopy(popup,(y*popupWidth+sx)*4,output,((dy+336)*ControllerMenu.PixelWidth+96+dx)*4,count*4);
+            }
+        }
+    }
+    private void DrawActivity()
+    {
+        // Reserve the last four logical pixels below navigation for a KITT-like
+        // scanner. It never covers web content or changes its pointer coordinates.
+        double phase = loadClock.Elapsed.TotalSeconds % 1.6 / .8;
+        double center = (phase <= 1 ? phase : 2-phase) * (ViewWidth-180) + 90;
+        for (int y = 328; y < 336; y++) for (int x = 0; x < ViewWidth; x++)
+        {
+            double glow = loading ? Math.Exp(-Math.Pow((x-center)/65,2)) : 0;
+            int p = (y*ControllerMenu.PixelWidth+x+96)*4;
+            output[p] = (byte)(8+20*glow); output[p+1] = (byte)(8+35*glow);
+            output[p+2] = (byte)(loading ? 35+220*glow : 18); output[p+3] = 255;
+        }
     }
     public void Published() => publishedGeneration = renderedGeneration;
     public void Dispose() { if (browser.IsDisposed) return; CancelMouse(); Closed = true; browser.Dispose(); }
@@ -253,7 +309,7 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     {
         public override void OnPaint(PaintElementType type, CefRect dirtyRect, IntPtr buffer, int width, int height) => owner.Paint(type == PaintElementType.Popup, buffer, width, height);
         public override void OnPopupSize(CefRect rect) { lock (owner.pixelsLock) owner.popupRect = rect; }
-        public override void OnPopupShow(bool show) { if (!show) { lock (owner.pixelsLock) owner.popup = null; owner.Changed(); } }
+        public override void OnPopupShow(bool show) { if (!show) { lock (owner.pixelsLock) owner.popup = null; owner.Changed(false); } }
     }
     private sealed class MenuHandler(FloatingBrowser owner) : ContextMenuHandler
     {
@@ -284,6 +340,8 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
         var deadline = DateTime.UtcNow.AddSeconds(20);
         while ((!one.browser.IsBrowserInitialized || !two.browser.IsBrowserInitialized || one.pixels == null || two.pixels == null) && DateTime.UtcNow < deadline) await Task.Delay(50);
         if (one.pixels == null || two.pixels == null) throw new Exception("Offscreen browser did not render");
+        if (!await Cef.UIThreadTaskFactory.StartNew(() => !one.browser.GetBrowserHost().IsAudioMuted && one.browser.GetBrowserHost().WindowlessFrameRate == 60))
+            throw new Exception("Floating browser audio/frame-rate configuration failed");
         JavascriptResponse response;
         do { response = await one.browser.EvaluateScriptAsync("!!document.getElementById('field')"); if (response.Result is true) break; await Task.Delay(50); } while (DateTime.UtcNow < deadline);
         one.Render();
@@ -316,10 +374,29 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
         one.Edit(new KeyboardEdit("p", Backspaces: 2));
         do { response = await one.browser.EvaluateScriptAsync("document.getElementById('field').value"); if (response.Result?.ToString() == "help") break; await Task.Delay(25); } while (DateTime.UtcNow < deadline);
         if (response.Result?.ToString() != "help") throw new Exception("Browser predictive-word replacement deleted the wrong text");
+        one.Edit(new KeyboardEdit("", 65, Modifiers: KeyboardModifiers.Control));
+        one.Edit(new KeyboardEdit("shortcut"));
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        do { response = await one.browser.EvaluateScriptAsync("document.getElementById('field').value"); if (response.Result?.ToString() == "shortcut") break; await Task.Delay(25); } while (DateTime.UtcNow < deadline);
+        if (response.Result?.ToString() != "shortcut") throw new Exception("Browser Ctrl+A shortcut failed");
         response = await two.browser.EvaluateScriptAsync("document.getElementById('field').value");
         if (response.Result?.ToString() != "") throw new Exception("Separate browsers shared document state");
-        one.Render(); var image = new PngBitmapEncoder(); image.Frames.Add(BitmapFrame.Create(one.bitmap));
+        one.loading = true; one.loadClock.Restart();
+        byte[] first = (byte[])one.Render().Clone(); await Task.Delay(200); byte[] second = one.Render();
+        if (first.AsSpan(328*ControllerMenu.PixelWidth*4,8*ControllerMenu.PixelWidth*4).SequenceEqual(second.AsSpan(328*ControllerMenu.PixelWidth*4,8*ControllerMenu.PixelWidth*4)))
+            throw new Exception("Browser loading scanner did not animate");
+        var image = new PngBitmapEncoder(); image.Frames.Add(BitmapFrame.Create(BitmapSource.Create(ControllerMenu.PixelWidth,ControllerMenu.PixelHeight,192,192,PixelFormats.Pbgra32,null,second,ControllerMenu.PixelWidth*4)));
         using (var file = File.Create(Path.Combine(output, "floating-browser.png"))) image.Save(file);
+        one.loading = false; one.Changed(); one.Render();
+        await one.browser.EvaluateScriptAsync("(()=>{let c=document.createElement('canvas');c.id='animation';c.width=200;c.height=100;document.body.append(c);let n=0;window.animateTest=true;function draw(){c.getContext('2d').fillStyle='rgb('+((n++*17)%255)+',30,80)';c.getContext('2d').fillRect(0,0,200,100);if(window.animateTest)requestAnimationFrame(draw);}draw();})()");
+        await Task.Delay(100);
+        int beforePaint = Volatile.Read(ref one.paintCount);
+        var sampleClock = System.Diagnostics.Stopwatch.StartNew();
+        while (sampleClock.ElapsedMilliseconds < 1000) { one.Render(); one.Published(); await Task.Delay(16); }
+        int paints = Volatile.Read(ref one.paintCount)-beforePaint;
+        await one.browser.EvaluateScriptAsync("window.animateTest=false;document.getElementById('animation').remove()");
+        if (paints < 5) throw new Exception("Browser animation did not keep producing video frames");
+        File.WriteAllText(Path.Combine(output,"browser-performance.txt"),$"Offscreen canvas paints: {paints/sampleClock.Elapsed.TotalSeconds:F1} fps; configured limit 60 fps; host audio unmuted. This is a desktop smoke measurement, not headset playback.\n");
         one.Pointer(5, .5f, .4f); one.Pointer(6, .5f, .4f);
         deadline = DateTime.UtcNow.AddSeconds(5);
         while (one.context.Visibility != Visibility.Visible && DateTime.UtcNow < deadline) await Task.Delay(25);

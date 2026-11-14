@@ -22,6 +22,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
     private Button? heldButton;
     private char heldLetter;
     private bool shift, symbols;
+    private KeyboardModifiers modifiers;
     private bool addWordCandidate;
     private string prefix = "", committed = "";
     private string[] suggestions = [];
@@ -60,9 +61,22 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         controls.Children.Add(Button("⌫", 90, Backspace));
         controls.Children.Add(Button(Loc.Get("KeyboardEnter"), 100, () => { if (Send(new KeyboardEdit("", 13))) ClearWord(); }));
         controls.Children.Add(Button("Tab", 64, () => { if (Send(new KeyboardEdit("", 9))) ClearWord(); }));
-        controls.Children.Add(Button("←", 64, () => { if (Send(new KeyboardEdit("", 37))) ClearWord(); }));
-        controls.Children.Add(Button("→", 64, () => { if (Send(new KeyboardEdit("", 39))) ClearWord(); }));
         top.Children.Add(controls);
+        var special = new WrapPanel { Height = 288, Visibility = Visibility.Collapsed };
+        controls.Children.Add(Button("PC keys", 90, () => { bool pc = special.Visibility != Visibility.Visible; special.Visibility = pc ? Visibility.Visible : Visibility.Collapsed; keys.Visibility = pc ? Visibility.Collapsed : Visibility.Visible; ClearWord(); }));
+        foreach (var (label, flag) in new[] { ("Ctrl", KeyboardModifiers.Control), ("Alt", KeyboardModifiers.Alt), ("Win", KeyboardModifiers.Windows) })
+        {
+            Button? toggle = null;
+            toggle = Button(label, 78, () => { modifiers ^= flag; if (modifiers.HasFlag(flag)) toggle!.Background = Brushes.DarkCyan; else toggle!.ClearValue(Control.BackgroundProperty); });
+            special.Children.Add(toggle);
+        }
+        foreach (var (label, key) in new[] { ("Esc",27), ("Del",46), ("Home",36), ("End",35), ("PgUp",33), ("PgDn",34), ("←",37), ("↑",38), ("↓",40), ("→",39) })
+            special.Children.Add(Button(label, 70, () => { Send(new KeyboardEdit("", key)); ClearWord(); }));
+        for (int i = 0; i < 12; i++)
+        { int code = 112+i; special.Children.Add(Button($"F{i+1}", 64, () => { Send(new KeyboardEdit("", code)); ClearWord(); })); }
+        foreach (var (label, key) in new[] { ("Copy",67), ("Paste",86), ("Cut",88), ("Select all",65), ("Undo",90), ("Redo",89) })
+            special.Children.Add(Button(label, 120, () => { Send(new KeyboardEdit("", key, Modifiers: KeyboardModifiers.Control)); ClearWord(); }));
+        top.Children.Add(special);
         top.Children.Add(new TextBlock { Text = Loc.Get("KeyboardHint"), Foreground = Brushes.LightGray, FontSize = 16, Margin = new Thickness(0, 6, 0, 6), TextWrapping = TextWrapping.Wrap });
         top.Children.Add(Button(Loc.Get("SnapshotClose"), 130, () => Closed = true));
         root.Children.Add(top);
@@ -71,14 +85,16 @@ internal sealed class FloatingKeyboard : IFloatingPanel
     }
     private Button Button(string text, double width, Action action)
     {
-        var button = new Button { Content = text, Width = width, Height = 48, FontSize = 21, Margin = new Thickness(0, 0, 6, 4) };
+        var button = new Button { Content = text, Width = width, Height = 48, FontSize = 18, Padding = new Thickness(4), Margin = new Thickness(0, 0, 6, 4) };
         actions[button] = () => { action(); Dirty = true; }; return button;
     }
     internal void SetTarget(string label) { target.Text = label; ClearWord(); Dirty = true; }
     private void DrawKeys()
     {
         letters.Clear(); keys.Children.Clear();
-        string[] rows = [symbols ? ":/-_?=&@.+" : shift ? "!@#$%^&*()" : "1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"];
+        string[] rows = symbols
+            ? shift ? ["~`|•√π÷×¶∆", "€£¥¢^°{}[]", "\\%©®™✓<>;", "_…!?\"'="] : ["1234567890", "@#$%&*()-+", "=/:;!?.,_", "[]{}<>\\"]
+            : [shift ? "!@#$%^&*()" : "1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"];
         for (int row = 0; row < rows.Length; row++) for (int col = 0; col < rows[row].Length; col++)
         {
             double inset = row < 2 ? 0 : row == 2 ? .5 : 1.5;
@@ -94,7 +110,14 @@ internal sealed class FloatingKeyboard : IFloatingPanel
     }
     private bool Send(KeyboardEdit edit)
     {
+        var flags = modifiers | edit.Modifiers | (shift && (edit.Key != 0 || modifiers != KeyboardModifiers.None) ? KeyboardModifiers.Shift : KeyboardModifiers.None);
+        if (flags != KeyboardModifiers.None && edit.Text.Length == 1 && char.IsAsciiLetterOrDigit(edit.Text[0]))
+            edit = edit with { Key = char.ToUpperInvariant(edit.Text[0]), Text = "" };
+        edit = edit with { Modifiers = flags };
         bool sent = emit(edit);
+        modifiers = KeyboardModifiers.None;
+        if (edit.Key != 0 && shift) { shift = false; DrawKeys(); }
+        foreach (var button in actions.Keys.Where(b => b.Content is string s && s is "Ctrl" or "Alt" or "Win")) button.ClearValue(Control.BackgroundProperty);
         if (!sent) target.Text = Loc.Get("KeyboardChooseTarget");
         Dirty = true; return sent;
     }
@@ -122,7 +145,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
     }
     private void Backspace()
     {
-        int remove = committed.Length > 0 ? committed.Length + 1 : 1;
+        int remove = modifiers == KeyboardModifiers.None && committed.Length > 0 ? committed.Length + 1 : 1;
         if (!Send(new KeyboardEdit("", Backspaces: remove))) return;
         committed = ""; if (prefix.Length > 0) prefix = prefix[..^1];
         CompletePrefix();
@@ -132,9 +155,10 @@ internal sealed class FloatingKeyboard : IFloatingPanel
     {
         if (kind == 4) { trace.Clear(); ink.Points.Clear(); heldButton = null; heldLetter = '\0'; Dirty = true; return; }
         var point = new Point(x * ControllerMenu.Width, y * ControllerMenu.Height);
-        var button = actions.Keys.FirstOrDefault(b => b.IsEnabled && new Rect(b.TranslatePoint(new Point(), surface), b.RenderSize).Contains(point));
+        bool Drawn(Button b) { DependencyObject? p = b; while (p != null) { if (p is UIElement e && e.Visibility != Visibility.Visible) return false; p = VisualTreeHelper.GetParent(p); } return true; }
+        var button = actions.Keys.FirstOrDefault(b => b.IsEnabled && Drawn(b) && new Rect(b.TranslatePoint(new Point(), surface), b.RenderSize).Contains(point));
         var local = surface.TranslatePoint(point, keys);
-        var letter = letters.FirstOrDefault(k => k.Box.Contains(local)).Letter;
+        var letter = keys.Visibility == Visibility.Visible ? letters.FirstOrDefault(k => k.Box.Contains(local)).Letter : '\0';
         if (kind == 1)
         {
             heldButton = button; heldLetter = letter; trace.Clear(); ink.Points.Clear();
@@ -154,7 +178,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         {
             double length = 0;
             for (int i = 1; i < trace.Count; i++) length += (trace[i] - trace[i - 1]).Length;
-            if (char.IsLetter(heldLetter) && length > .8 && trace.Count > 2)
+            if (modifiers == KeyboardModifiers.None && char.IsLetter(heldLetter) && length > .8 && trace.Count > 2)
             {
                 suggestions = predictor.Predict(trace);
                 addWordCandidate = false;
@@ -196,6 +220,23 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         if (edits[^1].Text != "world " || edits[^1].Backspaces != 0) throw new Exception("A second swipe must append a new word");
         Point(1, SwipePredictor.KeyPoint('a')); Point(2, SwipePredictor.KeyPoint('a'));
         if (edits[^1].Text != "a") throw new Exception("Floating keyboard tap did not type a letter");
+        void Click(string label)
+        {
+            keyboard.Render(); var button = keyboard.actions.Keys.Single(b => b.Content?.ToString() == label);
+            var p = button.TranslatePoint(new Point(button.ActualWidth/2,button.ActualHeight/2),keyboard.surface);
+            keyboard.Pointer(1,(float)(p.X/ControllerMenu.Width),(float)(p.Y/ControllerMenu.Height));
+            keyboard.Pointer(2,(float)(p.X/ControllerMenu.Width),(float)(p.Y/ControllerMenu.Height));
+        }
+        Click("PC keys"); Click("F12");
+        if (edits[^1].Key != 123) throw new Exception("Keyboard function keys failed");
+        Click("Copy");
+        if (edits[^1].Key != 67 || edits[^1].Modifiers != KeyboardModifiers.Control) throw new Exception("Keyboard Copy shortcut failed");
+        Click("Ctrl"); Click("PC keys");
+        Point(1, SwipePredictor.KeyPoint('c')); Point(2, SwipePredictor.KeyPoint('c'));
+        if (edits[^1].Key != 67 || edits[^1].Text != "" || edits[^1].Modifiers != KeyboardModifiers.Control) throw new Exception("Keyboard Ctrl letter chord failed");
+        Point(1, SwipePredictor.KeyPoint('a')); Point(2, SwipePredictor.KeyPoint('a'));
+        if (edits[^1].Text != "a" || edits[^1].Modifiers != KeyboardModifiers.None) throw new Exception("Keyboard modifier remained held after a chord");
+        Click("PC keys");
         keyboard.Render(); var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(keyboard.bitmap));
         using var file = System.IO.File.Create(System.IO.Path.Combine(output, "floating-keyboard.png")); encoder.Save(file);
     }
