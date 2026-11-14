@@ -34,6 +34,129 @@ wants automatic updates or to support the project.
 
 ## Quick hints
 
+### Optional motion-controller settings
+
+The smaller **Controllers · Off / On** switch to the left of **Easy / Expert** enables
+an in-headset settings panel. It is **off by default**, remembered app-wide, and works
+in either desktop mode. Turning it on during playback opens the panel when VRX has XR
+input focus. The controller's **Menu** button then shows or hides it. White beams from
+either controller point at controls; squeeze the trigger to select or drag. Hold the
+trigger on the title bar to pick up the panel: it hangs from the grabbed point,
+swings under Moon-like gravity (1.62 m/s²) as you move it, and turns when you twist
+your wrist. Release slowly to leave it in place, or throw it to let it coast, with
+no downward acceleration, until inertia fades and it stops. Thrown panels float
+clear of the floor and ceiling. Hitting a room wall sticks the panel there, upright.
+A wall-mounted menu stays visible when Controllers is switched off; **Menu always
+recalls it in front of you** when controllers are enabled. Grab its title bar to
+detach it instead. Its softly glowing edge can be held with the trigger and dragged
+to resize it, including while attached to a wall. The wider frame gives a larger
+grab area. All four corners stay inside the room while moving, rotating or resizing;
+panels cannot be pushed through its walls. Pointing a beam at a panel gently turns
+it to face you, including a wall-mounted panel, while keeping it inside the room.
+Dragging a mounted panel near the wall slides and resticks it; pull it about 14 cm
+clear to detach it. Releasing a panel against any wall attaches it without a throw.
+Open air has no walls to stick to.
+Both sides remain readable. Move
+the pointing controller's thumbstick up/down to scroll (twice the original speed).
+Sections, option lists, a colour keypad and the Apply to all
+confirmation stay inside the panel. Settings use the same profile, validation and live
+updates as the desktop app.
+
+While holding the title bar with the right trigger, thumbstick up pushes it away
+and down pulls it closer. Grab another title-bar point with the left trigger to
+use both hands: move them together to carry it, turn your wrists to rotate it,
+or spread them apart to enlarge it. Release either trigger to continue with one hand.
+
+**Snapshot** captures the game frame currently displayed, at its original resolution,
+and opens it as a separate floating panel. Snapshots have the same title-bar movement,
+throwing, wall attachment and glowing resize edges. They remain visible when the
+settings menu is hidden. Each has **Save**, **Delete** and **Close** along its bottom:
+Save writes a PNG into `images` under the VRX folder (the repository root for a local
+build, or beside the packaged app); Close dismisses the panel and keeps any saved
+image; Delete removes its saved image, if any, and dismisses it. Unsaved snapshots
+are discarded when closed or when VR ends. Up to six extra floating panels can be
+open, shared between snapshots, browsers and the keyboard; close one to make room.
+Panel previews now render at 1920×1536, twice the old resolution in each direction.
+Saved images contain the original picture,
+without the panel border or buttons.
+
+**Browser** opens an independent off-screen Chromium browser in a floating panel;
+press it again, or use **New browser**, to open another. Each keeps its own page
+and navigation history. Use the beam and trigger to click/drag, the right grip to
+right-click, and the thumbstick to scroll. Right-click menus appear inside the panel.
+Back, forward, reload and the address field are at the top. Click the address field
+to edit it with the floating keyboard; Enter or Go navigates. Browser links opened
+in a new window create another panel. **Open images folder** opens snapshot saves
+in desktop Explorer.
+Pages show a red scanning activity strip below navigation while loading. Browser
+audio plays through Windows' selected output; off-screen video targets 60 fps.
+The browser's **− / percentage / +** buttons zoom from 25% to 300%; click the
+percentage to reset to 100%. Controller aim is stabilized against small tremors,
+and a short trigger wobble keeps the click on its original pixel. Deliberate drags
+still move normally.
+All floating panels have a shallow 8 mm casing visible from the side.
+
+**Arrange windows** brings the menu and all open floating panels into your current
+field of view, facing you at a nearby distance. It shuffles their positions in a
+spaced layout and scales them to fit, keeping them inside the room. Wall-mounted
+panels are detached and moving panels stop. Press again for a different arrangement.
+
+**Keyboard** opens or recalls a separate floating QWERTY panel. Tap letters or hold
+the trigger while swiping across them, then release to commit the best English
+word suggestion. The other suggestions replace that word. Shift, symbols, space,
+backspace, Enter and Tab are available. The symbols key switches to punctuation;
+Shift selects additional symbols. **PC keys** switches to Esc, Delete, navigation,
+F1–F12 and editing shortcuts. Ctrl, Alt and Win apply to the next key only; choose
+the modifier, return from PC keys, then tap a letter for a chord. Tap completions also work.
+The initial predictor uses a local English vocabulary; explicitly select **Add word**
+to teach it unfamiliar words. Predictions stay local. Type into the last browser
+field you clicked, or enable **Control screen** and click a game/Windows field to
+type there instead. Clicking the keyboard does not steal the target's desktop focus.
+
+The panel opens 1.2 metres ahead, centred where your headset is looking, including its
+up/down angle. It then stays fixed until you drag it. Opening it again or recentering
+places it in your current gaze direction.
+If the screen follows your head, it stays still while the panel is open so that you can
+look around without moving the game over the settings; following resumes when closed.
+
+Touch-style controllers use left Menu. Steam Frame uses right Menu or left View.
+Index and the generic profile do not expose an application Menu button, so they use
+thumbstick click on either hand; their system/dashboard buttons remain with the runtime.
+These are OpenXR actions: controllers
+must be in **VR controller mode**, and SteamVR's dashboard can temporarily take their
+input focus. After dismissing the dashboard, press Menu again. Controller bindings can
+be remapped in the runtime. This feature controls VRX's settings; it does not forward
+motion-controller poses to the captured flat game. **Control screen** in the menu
+optionally makes the right beam a mouse on the displayed picture (flat or curved):
+point to move the cursor, press the right trigger to left-click, and hold it to drag.
+Squeeze the right grip for a right-click. Push the right thumbstick up/down to
+scroll while the beam points at the main screen; pushing farther scrolls faster.
+Thumbstick clicks retain their normal
+menu-toggle bindings on Index/generic controllers.
+**Stop controlling screen** turns this off. Menu controls take priority over screen
+clicks. Losing tracking or XR input focus, leaving the screen, hiding the beams, or
+turning Controllers off releases the mouse button; release and press the trigger
+again to resume. This uses the Windows mouse on the captured window or display;
+Windows can block input to an application running with higher privileges.
+Steam Input/gamepad mode or a separate gamepad/keyboard/mouse controls other game input.
+
+Turning Controllers off hides an unattached panel, leaves a wall-mounted panel visible,
+cancels any drag and deactivates its actions and screen mouse control.
+Until first enabled, no controller actions, menu texture or desktop menu view are created.
+
+Developer checks: `bench\native\openxr\test-controllers.bat` locates Visual Studio's C++
+tools, tests panel motion/ray picking and the full controller adapter, and verifies
+asynchronous GPU snapshot readback with WARP without a headset. `VRX.Desktop.exe
+--smoke-test` also checks settings persistence, bitmap IPC, slider/checkbox updates,
+snapshot Save/Delete/Close and full-resolution PNG output. It writes panel screenshots
+to `desktop/out`.
+Hardware checks still require a headset: Menu press/hold, either-hand beams, title-bar
+movement, dragging beyond a slider, thumbstick scrolling, focus/tracking loss, reopening/recentering and
+turning the feature on/off during playback. Check both Easy and Expert, flat and curved
+screens, and Steam Frame VR/gamepad mode switching.
+
+### Everyday use
+
 From using VRX day to day:
 
 - **Run the game at 1080p.** It is much more stable, and in the headset you will
@@ -50,6 +173,8 @@ From using VRX day to day:
   app): set **Screen curve** to 1 % in Expert mode. The screen stays practically flat.
 
 ## Get started
+
+Development version: **1.8.2**.
 
 Download VRX v1.8.1: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.8.1/VRX-Setup-1.8.1.exe)
 or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.8.1/VRX-1.8.1-win-x64.zip)
@@ -153,7 +278,10 @@ release workflow is ready to sign once a certificate is available; the
 [code signing policy](https://vrx3d.uk/code-signing.html) describes what would be signed
 and how it is built.
 
-VRX makes no network connections and collects no data: see the
+VRX does not collect telemetry. Its optional embedded browser connects to the sites
+you open and stores its browser profile under `%LOCALAPPDATA%\VRX\browser`.
+Swipe prediction runs locally; explicitly learned words are stored under
+`%LOCALAPPDATA%\VRX\keyboard-words.json`. Capture and depth processing stay local. See the
 [privacy policy](https://vrx3d.uk/privacy.html).
 
 ## License

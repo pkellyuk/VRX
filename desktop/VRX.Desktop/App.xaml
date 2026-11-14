@@ -289,6 +289,12 @@
    </Setter>
   </Style>
 
+  <Style x:Key="ControllerSegment" TargetType="RadioButton" BasedOn="{StaticResource ModeSegment}">
+   <Setter Property="MinWidth" Value="58"/>
+   <Setter Property="FontSize" Value="12"/>
+   <Setter Property="LayoutTransform"><Setter.Value><ScaleTransform ScaleX="0.85" ScaleY="0.85"/></Setter.Value></Setter>
+  </Style>
+
   <!-- A collapsible section: a card whose header row opens and closes it. -->
   <Style x:Key="SectionToggle" TargetType="ToggleButton">
    <Setter Property="Foreground" Value="{StaticResource Ink}"/>

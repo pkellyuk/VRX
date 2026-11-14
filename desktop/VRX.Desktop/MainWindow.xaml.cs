@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private readonly AutoAttachMachine autoMachine = new();
     private readonly System.Diagnostics.Stopwatch autoClock = System.Diagnostics.Stopwatch.StartNew();
     private AppSettings appSettings = new();
+    private ControllerMenu? controllerMenu;
     private AutoAttachOverlay? autoOverlay;
     private ForegroundSnapshot? autoTarget;
     private nint sessionWindow;                    // the window of the running session, for "spent"
@@ -78,6 +79,8 @@ public partial class MainWindow : Window
             LogBox.AppendText(line + Environment.NewLine);
             if (LogBox.Text.Length > 24000) LogBox.Text = LogBox.Text[^16000..];
             LogBox.ScrollToEnd();
+            int controllerErrorAt = line.IndexOf("Controllers: ", StringComparison.Ordinal);
+            if (controllerErrorAt >= 0) Status.Text = Loc.Format("ControllerMenuFailed", line[(controllerErrorAt + 13)..]);
             if (line.Contains("FAIL") || line.Contains("expected one game window") || line.Contains("main: failure"))
                 lastEngineError = line;
             if (EngineSession.ParseSource(line) is { } source && source != shown)
@@ -97,6 +100,7 @@ public partial class MainWindow : Window
         });
         engine.Exited += code => Dispatcher.InvokeAsync(() =>
         {
+            controllerMenu?.Dispose(); controllerMenu = null;
             // No loops: the session's window is not auto-attached again until it has left
             // the foreground and come back.
             autoMachine.MarkSpent(sessionWindow);
@@ -115,7 +119,7 @@ public partial class MainWindow : Window
         appSettings = store.LoadAppSettings();
         PutAppSettings();
         autoTimer.Tick += (_, _) => AutoAttachTick();
-        Closed += (_, _) => { autoTimer.Stop(); autoOverlay?.Close(); autoOverlay = null; };
+        Closed += (_, _) => { controllerMenu?.Dispose(); autoTimer.Stop(); autoOverlay?.Close(); autoOverlay = null; };
         // A remembered place on a monitor that has gone (or changed) is brought back on screen.
         ContentRendered += (_, _) => KeepOnScreenSoon();
         ready = true;
@@ -380,7 +384,7 @@ public partial class MainWindow : Window
         }
         if (SeatRow != null && SeatList != null && SeatValue != null)
         {
-            SeatRow.Visibility = env == Profile.EnvironmentTheatre ? Visibility.Visible : Visibility.Collapsed;
+            SeatRow.Visibility = Profile.HasSeats(env) ? Visibility.Visible : Visibility.Collapsed;
             SeatList.IsEnabled = !follows;
             SeatValue.Text = follows ? Loc.Get("NeedsFixedScreen") : room == 0 ? Loc.Get("NeedsRoom") :
                 Loc.Format("SeatDistance", Profile.SeatDistance(SeatList.SelectedIndex));
@@ -422,7 +426,7 @@ public partial class MainWindow : Window
     // The theatre is in use (it needs the room and the fixed screen): the seat, not the
     // Distance slider, sets the screen's distance.
     private bool Seated => FollowCheck?.IsChecked != true && Math.Round(RoomSlider?.Value ?? 0) > 0 &&
-                           EnvironmentList?.SelectedIndex == Profile.EnvironmentTheatre;
+                           Profile.HasSeats(EnvironmentList?.SelectedIndex ?? Profile.EnvironmentRoom);
 
     // The screen's distance the engine will use: the seat's in the theatre, else the slider's.
     private double ViewDistance() => Seated && SeatList != null
@@ -719,6 +723,7 @@ public partial class MainWindow : Window
             playing = false;
             shown = SourceShown.Game;
             engine.Start(app, window, profile!, store.Root);
+            UpdateControllerMenu();
             sessionWindow = window.Handle; started = true;
             Status.Text = Loc.Format("StatusStarting", app.Name);
         }
@@ -739,6 +744,8 @@ public partial class MainWindow : Window
     {
         System.Diagnostics.Debug.WriteLine($"[AppSettings] PutAppSettings enter: mode {appSettings.Mode}, auto {appSettings.AutoAttach}, {appSettings.AutoAttachSeconds} s");
         autoSettingsLoading = true;
+        ControllersOn.IsChecked = appSettings.MotionControllers;
+        ControllersOff.IsChecked = !appSettings.MotionControllers;
         AutoAttachCheck.IsChecked = appSettings.AutoAttach;
         AutoAttachSlider.Value = AppSettings.ClampSeconds(appSettings.AutoAttachSeconds);
         AutoAttachValue.Text = Loc.Format("ValueSeconds", (int)AutoAttachSlider.Value);
@@ -771,6 +778,31 @@ public partial class MainWindow : Window
         {
             System.Diagnostics.Debug.WriteLine("[AppSettings] save failed: " + ex.Message);
             Status.Text = Loc.Format("StatusAppSettingsFailed", ex.Message);
+        }
+    }
+
+    private void ControllersChecked(object sender, RoutedEventArgs e)
+    {
+        if (!ready || autoSettingsLoading) return;
+        appSettings.MotionControllers = ControllersOn.IsChecked == true;
+        SaveAppSettings();
+        UpdateControllerMenu();
+    }
+
+    private void UpdateControllerMenu()
+    {
+        if (!engine.Running) return;
+        try
+        {
+            if (appSettings.MotionControllers && controllerMenu == null)
+                controllerMenu = new ControllerMenu(engine.ControllerMenuName, SectionList().Select(s => s.Section).ToArray(),
+                    Status, RecenterButton, ApplyAllConfirmed);
+            controllerMenu?.Enable(appSettings.MotionControllers);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            controllerMenu?.Dispose(); controllerMenu = null;
+            Status.Text = Loc.Format("ControllerMenuFailed", ex.Message);
         }
     }
 
@@ -938,10 +970,10 @@ public partial class MainWindow : Window
             button.Measure(unlimited);
             buttons += button.DesiredSize.Width;
         }
-        ModeSwitch.Measure(unlimited);
+        HeaderSwitches.Measure(unlimited);
         double card = GameCard.BorderThickness.Left + GameCard.BorderThickness.Right + GameCard.Padding.Left + GameCard.Padding.Right +
             CardIconWidth + EasyNameMinWidth + CardNameGap + Math.Min(buttons, EasyButtonsMaxWidth);
-        double header = ModeSwitch.DesiredSize.Width + HeaderGap + EasySubtitleMinWidth;
+        double header = HeaderSwitches.DesiredSize.Width + HeaderGap + EasySubtitleMinWidth;
         double content = Math.Max(EasyMinContentWidth, Math.Max(card, header));
         double width = Math.Ceiling(content + EasyMargin.Left + EasyMargin.Right + WindowFrame.BorderThickness.Left + WindowFrame.BorderThickness.Right);
         double screen = SystemParameters.WorkArea.Width;
@@ -1324,6 +1356,13 @@ public partial class MainWindow : Window
         int count = store.SavedProfileFiles().Count;
         var answer = MessageBox.Show(this, ApplyAllQuestion(count), Loc.Get("ApplyAllTitle"), MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
         if (answer != MessageBoxResult.OK) { Status.Text = Loc.Get("StatusApplyAllCancelled"); return; }
+        ApplyAllConfirmed();
+    }
+
+    // Used after either the desktop dialog or the in-headset confirmation.
+    private void ApplyAllConfirmed()
+    {
+        if (profile == null || !SaveAndApply()) return;
         try
         {
             int applied = store.ApplyToAll(profile, out int skipped, out int failed);
@@ -1468,7 +1507,11 @@ public partial class MainWindow : Window
             !new Profile { RoomEnvironment = Profile.EnvironmentTheatre, RoomSeat = Profile.SeatRear }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 4 2") ||
             new Profile { RoomSeat = Profile.SeatCount }.Valid() || new Profile { RoomSeat = -1 }.Valid() || !new Profile { RoomEnvironment = Profile.EnvironmentTheatre }.Valid() ||
             new Profile { RoomEnvironment = Profile.EnvironmentCount }.Valid())
-            throw new Exception("The theatre and its seat: the middle by default and for old profiles, last in the snapshot, the seat 0 to 2 and the environment 0 to 4");
+            throw new Exception("The theatre and its seat: the middle by default and for old profiles, last in the snapshot, the seat 0 to 2 and the environment in range");
+        foreach (int themedEnvironment in new[] { Profile.EnvironmentDungeon, Profile.EnvironmentHell, Profile.EnvironmentCyberpunk, Profile.EnvironmentStarship })
+            if (!new Profile { RoomEnvironment = themedEnvironment }.Valid() ||
+                !new Profile { RoomEnvironment = themedEnvironment }.Control(0,0,false).TrimEnd().EndsWith($" {themedEnvironment} 1"))
+                throw new Exception("Themed rooms must be valid saved profiles and reach the engine through control snapshots");
         if (Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatFront) - 4.56f) > 1e-4f || Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatRear) - 11.4f) > 1e-4f ||
             Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatMiddle) - (4.56f + 3 * 6.84f / 7)) > 1e-4f || Math.Abs(Profile.TheatreDistance(10f, Profile.SeatRear) - 20f) > 1e-4f ||
             Math.Abs(Profile.TheatreDistance(1f, Profile.SeatFront) - 2f) > 1e-4f || Profile.TheatreDistance(0f, Profile.SeatFront) != 0 ||
@@ -1619,6 +1662,19 @@ public partial class MainWindow : Window
         EnvironmentList.SelectedIndex = Profile.EnvironmentLounge;
         if (!LightSlider.IsEnabled || !LightColourList.IsEnabled || GlassSlider.IsEnabled || ReadProfile().RoomEnvironment != Profile.EnvironmentLounge)
             throw new Exception("The lounge has the room light and its colour, not glass");
+        foreach (int cinemaEnvironment in new[] { Profile.EnvironmentCyberpunk, Profile.EnvironmentStarship })
+        {
+            EnvironmentList.SelectedIndex = cinemaEnvironment;
+            if (ReadProfile().RoomEnvironment != cinemaEnvironment || SeatRow.Visibility != Visibility.Visible || !Seated || DistanceSlider.IsEnabled || !LightSlider.IsEnabled || GlassSlider.IsEnabled)
+                throw new Exception("The futuristic cinemas must have real seating, seat-based distance and adjustable lighting");
+        }
+        foreach (int themedEnvironment in new[] { Profile.EnvironmentDungeon, Profile.EnvironmentHell })
+        {
+            EnvironmentList.SelectedIndex = themedEnvironment;
+            if (ReadProfile().RoomEnvironment != themedEnvironment || !LightSlider.IsEnabled || GlassSlider.IsEnabled || SeatRow.Visibility != Visibility.Collapsed)
+                throw new Exception("Dungeon and Hell must be selectable with lighting and without cinema seating or glass");
+        }
+        EnvironmentList.SelectedIndex = Profile.EnvironmentLounge;
         FollowCheck.IsChecked = true;
         if (EnvironmentList.IsEnabled || EnvironmentValue.Text != Loc.Get("NeedsFixedScreen") || ReadProfile().RoomEnvironment != Profile.EnvironmentLounge)
             throw new Exception("The environment must rest, keeping its choice, while the screen follows the head");
@@ -1823,6 +1879,9 @@ public partial class MainWindow : Window
         if (ApplyAllButton == null) throw new Exception("The Apply to all button is missing");
 
         SmokeTestAutoAttach(output, sample, one);
+        using (var menu = new ControllerMenu(@"Local\VRX.Controllers.Test." + Guid.NewGuid().ToString("N"),
+            SectionList().Select(s => s.Section).ToArray(), Status, RecenterButton, ApplyAllConfirmed)) menu.SmokeTest(output);
+        await FloatingBrowser.SmokeTest(output);
         SmokeTestModes(output, sample, one);
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
@@ -2070,7 +2129,7 @@ public partial class MainWindow : Window
             throw new Exception("Easy must size to its content and not be resizable or maximizable");
         if (ActualHeight > 0.6 * ExpertDefaultHeight || ActualWidth >= ExpertMinWidth)
             throw new Exception($"Easy must be compact: {ActualWidth:F0} x {ActualHeight:F0}");
-        CheckNothingClipped("Easy", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
+        CheckNothingClipped("Easy", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, HeaderSwitches, ControllersOn, ControllersOff, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
         double easyWidth = ActualWidth, easyHeight = ActualHeight;
         SetMode(true);
         await Settle();
@@ -2205,11 +2264,13 @@ public partial class MainWindow : Window
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         }
         finally { chooser.Close(); }
-        if (chooser.Place is not { Width: 930, Height: 610, Maximized: false })
-            throw new Exception($"The chooser must report its size when it closes (got {chooser.Place})");
+        // HWND sizes round to physical pixels (for example 930.4 DIPs at 125% DPI).
+        if (chooser.Place is not { Maximized: false } place || Math.Abs(place.Width - 930) > 1 || Math.Abs(place.Height - 610) > 1)
+            throw new Exception($"The chooser must report its size when it closes (got {chooser.Place?.Width:R} x {chooser.Place?.Height:R}, maximized {chooser.Place?.Maximized})");
         var chooserStore = new ProfileStore(Path.Combine(output, "chooser-settings"));
         chooserStore.SaveAppSettings(new AppSettings { ChooserWindow = chooser.Place });
-        if (chooserStore.LoadAppSettings().ChooserWindow is not { Width: 930, Height: 610 } ||
+        if (chooserStore.LoadAppSettings().ChooserWindow is not { } savedChooser ||
+            savedChooser.Width != chooser.Place!.Width || savedChooser.Height != chooser.Place.Height ||
             AppSettings.ValidSize(new WindowPlace { Width = -4, Height = 300 }) != null)
             throw new Exception("The chooser's size must round-trip through app-settings.json, and nonsense sizes be dropped");
         System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestChooser exit: {screens.Count} display(s), {apps.Count} app(s)");
@@ -2352,7 +2413,7 @@ public partial class MainWindow : Window
             Status.Text = Loc.Get("StatusReady");
             await Settle();
             SaveWindowShot(Path.Combine(output, "ui-easy-skin-pseudo.png"));
-            CheckNothingClipped("Easy, pseudo-locale", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
+            CheckNothingClipped("Easy, pseudo-locale", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, HeaderSwitches, ControllersOn, ControllersOff, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
             if (ActualWidth < plainWidth || ActualHeight < plainHeight)
                 throw new Exception($"Easy must grow for longer text: {plainWidth:F0} x {plainHeight:F0} -> {ActualWidth:F0} x {ActualHeight:F0}");
         }
@@ -2488,12 +2549,12 @@ public partial class MainWindow : Window
         var appStore = new ProfileStore(Path.Combine(output, "app-settings"));
         if (Directory.Exists(appStore.Root)) Directory.Delete(appStore.Root, true);
         var defaults = appStore.LoadAppSettings();
-        if (defaults.AutoAttach || defaults.AutoAttachSeconds != 5) throw new Exception("Auto-attach must default off, with a 5 s countdown");
+        if (defaults.AutoAttach || defaults.AutoAttachSeconds != 5 || defaults.MotionControllers) throw new Exception("Auto-attach and motion controllers must default off, with a 5 s countdown");
         if (Path.GetFileName(appStore.AppSettingsFile) != "app-settings.json" || Path.GetDirectoryName(appStore.AppSettingsFile) != appStore.Root)
             throw new Exception("App settings must live in app-settings.json in the store root");
-        appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 12 });
+        appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 12, MotionControllers = true });
         var back = appStore.LoadAppSettings();
-        if (!back.AutoAttach || back.AutoAttachSeconds != 12) throw new Exception("App settings did not round-trip");
+        if (!back.AutoAttach || back.AutoAttachSeconds != 12 || !back.MotionControllers) throw new Exception("App settings did not round-trip");
         appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 99 });
         if (appStore.LoadAppSettings().AutoAttachSeconds != 30) throw new Exception("Saving must clamp the countdown to 30 s");
         File.WriteAllText(appStore.AppSettingsFile, "{\"AutoAttach\":true,\"AutoAttachSeconds\":1}");

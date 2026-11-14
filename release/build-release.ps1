@@ -11,7 +11,7 @@ param(
     [string]$SignedFiles = ''
 )
 $ErrorActionPreference = 'Stop'
-$version = '1.8.1'
+$version = '1.8.2'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 if (!$OutputRoot)
 {
@@ -22,7 +22,7 @@ $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $payload = Join-Path $OutputRoot "VRX-$version-win-x64"
 $nativeOutput = Join-Path $OutputRoot 'native'
 $toSign = Join-Path $OutputRoot 'to-sign'
-# VRX's own programs: the only unsigned files in the payload (the rest are signed by Microsoft or Valve).
+# VRX's own programs; browser and other third-party binaries retain their upstream signatures.
 $ownPrograms = 'VRX.Desktop.exe', 'VRX.Desktop.dll', 'engine\xrplayer.exe'
 Write-Output "build-release: $Stage, version $version, output $OutputRoot"
 

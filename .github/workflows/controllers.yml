@@ -1,0 +1,43 @@
+name: Controller settings checks
+on:
+  push:
+    branches: [xcontrollers]
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'bench/native/openxr/**'
+      - '.github/workflows/controllers.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build desktop
+        run: dotnet build desktop/VRX.Desktop/VRX.Desktop.csproj -c Release
+      - name: Restore native headers and libraries
+        run: dotnet restore release/NativePackages.csproj
+      - name: Build renderer and run controller tests
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%V in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%V\VC\Auxiliary\Build\vcvars64.bat"
+          call bench\native\openxr\test-controllers.bat
+          if errorlevel 1 exit /b 1
+          call bench\native\openxr\build.bat --desktop
+      - name: Exercise desktop settings and off-screen menu
+        run: |
+          $process = Start-Process desktop/VRX.Desktop/bin/Release/net10.0-windows/VRX.Desktop.exe -ArgumentList '--smoke-test' -PassThru
+          if (-not $process.WaitForExit(120000)) { $process.Kill(); throw 'Desktop smoke test timed out' }
+          if ($process.ExitCode -ne 0) { Get-Content desktop/out/smoke-error.txt -ErrorAction SilentlyContinue; throw 'Desktop smoke test failed' }
+          Get-Content desktop/out/smoke-pass.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: controller-settings-checks
+          path: desktop/out/

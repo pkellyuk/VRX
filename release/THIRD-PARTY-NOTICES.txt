@@ -1,4 +1,13 @@
-VRX 1.8.1 third-party components
+VRX 1.8.2 third-party components
+
+CefSharp.OffScreen.NETCore 156.0.150 (BSD-3-Clause)
+https://github.com/cefsharp/CefSharp
+Optional floating browser panels. See licenses/CefSharp-LICENSE.txt.
+
+Chromium Embedded Framework 156.0.15 and Chromium (BSD-style and component licenses)
+https://github.com/chromiumembedded/cef
+See licenses/CEF-LICENSE.txt. Chromium's bundled component notices are available
+from the floating browser's Licenses button (chrome://credits).
 
 Depth Anything V2 Small, ONNX Community export (Apache-2.0)
 https://github.com/DepthAnything/Depth-Anything-V2

@@ -43,6 +43,7 @@ bench/dml_docs.html
 *.user
 Thumbs.db
 desktop.ini
+/images/
 
 # --- Private: never published (VRX is open source) -----------------------
 # Marketing material, ad campaigns and the Steam release files stay on this PC.

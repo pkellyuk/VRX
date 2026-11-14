@@ -142,8 +142,9 @@ static const float kRoomReflFootMax = 0.1f;     // the reflected screen's soft e
 // in the eye pass (RoomEnvSurface), all box-filtered over each pixel's footprint like the
 // finish. The room's Glass and Reflections belong to the room alone; the open air has no
 // room light either.
-static const int kRoomEnvRoom = 0, kRoomEnvCinema = 1, kRoomEnvOpenAir = 2, kRoomEnvLounge = 3, kRoomEnvTheatre = 4, kRoomEnvCount = 5;
-static const char* const kRoomEnvNames[kRoomEnvCount] = { "room", "cinema", "open air", "lounge", "theatre" };
+static const int kRoomEnvRoom = 0, kRoomEnvCinema = 1, kRoomEnvOpenAir = 2, kRoomEnvLounge = 3, kRoomEnvTheatre = 4, kRoomEnvDungeon = 5, kRoomEnvHell = 6, kRoomEnvCyberpunk = 7, kRoomEnvStarship = 8, kRoomEnvCount = 9;
+static const char* const kRoomEnvNames[kRoomEnvCount] = { "room", "cinema", "open air", "lounge", "theatre", "dungeon", "hell", "cyberpunk", "starship" };
+inline bool RoomHasSeats(int environment) { return environment==kRoomEnvTheatre || environment==kRoomEnvCyberpunk || environment==kRoomEnvStarship; }
 // Each face's colour by environment (front, left, right, floor, ceiling, back), linear.
 static const float kRoomEnvTint[kRoomEnvCount][6][3] = {
     { { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 }, { 1, 1, 1 } },
@@ -156,6 +157,14 @@ static const float kRoomEnvTint[kRoomEnvCount][6][3] = {
     // theatre: the cinema's velvet, its patterned carpet (the floor's tint is the carpet's mean,
     // RoomCarpet; tested) and black ceiling
     { { 0.85f, 0.2f, 0.22f }, { 0.85f, 0.2f, 0.22f }, { 0.85f, 0.2f, 0.22f }, { 0.437f, 0.201f, 0.203f }, { 0.16f, 0.16f, 0.18f }, { 0.85f, 0.2f, 0.22f } },
+    // dungeon: weathered grey-green masonry, flagstones and a soot-darkened vault
+    { { .54f,.57f,.48f }, { .64f,.67f,.55f }, { .64f,.67f,.55f }, { .54f,.52f,.44f }, { .29f,.30f,.25f }, { .64f,.67f,.55f } },
+    // hell: red-black basalt with intrinsic lava emission in the material program
+    { { .34f,.13f,.11f }, { .40f,.17f,.13f }, { .40f,.17f,.13f }, { .26f,.16f,.14f }, { .21f,.055f,.045f }, { .40f,.17f,.13f } },
+    // cyberpunk: midnight acoustic panelling, blue-black seating, cyan and pink light
+    { { .16f,.17f,.30f }, { .22f,.25f,.40f }, { .22f,.25f,.40f }, { .16f,.19f,.27f }, { .14f,.17f,.26f }, { .22f,.25f,.40f } },
+    // starship: cool brushed alloy bulkheads, dark technical flooring
+    { { .35f,.43f,.51f }, { .56f,.65f,.73f }, { .56f,.65f,.73f }, { .20f,.26f,.33f }, { .42f,.49f,.58f }, { .56f,.65f,.73f } },
 };
 // THE THEATRE (xenvironments-cinema, XENV.md "Cinema with seats"): the cinema's walls round
 // tiered rows of seats, and you in one of them. Your seat - front, middle or rear - sets the
@@ -439,7 +448,7 @@ inline bool BuildRoom(const RoomInputs& in, Room& out)
     r.zB = ez + std::fmax(1.5f, 0.5f * ez);
     r.env = in.env >= 0 && in.env < kRoomEnvCount ? in.env : kRoomEnvRoom;
     RoomTheatre theatre;
-    if (r.env == kRoomEnvTheatre)
+    if (RoomHasSeats(r.env))
     {
         // The stands round the viewer's seat: the hall's rows (RoomTheatreSeat), placed so that the
         // viewer's row runs through the head (the screen's distance comes from the same
@@ -918,7 +927,7 @@ inline bool BuildRoomEmitters(const Room& r, const Cylinder& cyl, float W, float
 {
     if (!r.valid || l.gridX <= 0 || l.count() > kRoomMaxEmitters) return false;
     if (!(W > 0) || !(H > 0) || !(glowHalfW > 0) || !(glowHalfH > 0)) return false;
-    if (l.coarse != (r.env == kRoomEnvTheatre ? kRoomCoarse : 0)) return false;
+    if (l.coarse != (RoomHasSeats(r.env) ? kRoomCoarse : 0)) return false;
 
     out.assign((size_t)l.total(), RoomEmitter());
     // Patch (i, j) of an nx x ny grid over the screen, flat or on the curve.
@@ -1429,7 +1438,7 @@ inline bool RoomTexel(const Room& r, const RoomShading& sh, const std::vector<Ro
     RoomLightPoint(r, face, i, j, p, n);
     float E[3] = { 0, 0, 0 }, flux[3] = { 0, 0, 0 };
     // The theatre's coarse patches, after the room's emitters, light only its stands.
-    const size_t coarse = r.env == kRoomEnvTheatre ? (size_t)kRoomCoarse : 0;
+    const size_t coarse = RoomHasSeats(r.env) ? (size_t)kRoomCoarse : 0;
     if (emitters.size() < coarse) return false;
     for (size_t m = 0; m < emitters.size() - coarse; m++)
     {
@@ -1538,6 +1547,14 @@ inline bool RoomLookOn(const RoomConstants& rc)
     return (rc.flags & (kRoomFlagLight | kRoomFlagFinish | kRoomFlagReflect)) != 0 || rc.env != (uint32_t)kRoomEnvRoom;
 }
 
+// Decorative fittings follow both Room reflectance and the unsaturated lamp
+// strength. The default room keeps its existing physical lighting path.
+inline float RoomDecorationGain(const RoomConstants& rc)
+{
+    if ((rc.flags & kRoomFlagLight)==0) return 0;
+    return std::clamp(std::max({rc.lightL[0],rc.lightL[1],rc.lightL[2]})/kRoomLightMax,0.0f,1.0f)*std::clamp(rc.rhoWall/kRoomMaxAlbedo,0.0f,1.0f);
+}
+
 inline float RoomBounceScale(const RoomShading& sh)
 {
     return sh.rhoBar < 0.999f ? sh.rhoBar * sh.invArea / (1.0f - sh.rhoBar) : 0.0f;
@@ -1609,7 +1626,7 @@ inline RoomConstants MakeRoomConstants(const Room& r, const RoomShading& sh, con
     }
     if (sh.env == kRoomEnvLounge) { c.rugX0 = r.rugX0; c.rugX1 = r.rugX1; c.rugZ0 = r.rugZ0; c.rugZ1 = r.rugZ1; }
     // Rows 32-34: the theatre's stands and the coarse patches after the room's emitters.
-    if (sh.env == kRoomEnvTheatre && r.standsRows > 0)
+    if (RoomHasSeats(sh.env) && r.standsRows > 0)
     {
         c.standsZ0 = r.standsZ0; c.standsPitch = r.standsPitch; c.standsT0 = r.standsT0; c.standsRiser = r.standsRiser;
         c.seatX0 = r.seatX0; c.seatBlock = r.seatBlock; c.standsZEnd = r.zB;
@@ -1991,7 +2008,9 @@ struct RoomSurfaceInfo
 // lounge's rug, downlights and floorboards' seams; and the fan of a lit light on a wall.
 static const int kRoomPartSky = 1, kRoomPartHills = 2, kRoomPartField = 3, kRoomPartMask = 4, kRoomPartSconce = 5,
                  kRoomPartStep = 6, kRoomPartRug = 7, kRoomPartDownlight = 8, kRoomPartHalo = 9, kRoomPartSeam = 10,
-                 kRoomPartUnderSeat = 11;
+                 kRoomPartUnderSeat = 11, kRoomPartStone = 12, kRoomPartArch = 13, kRoomPartIron = 14,
+                 kRoomPartTorch = 15, kRoomPartLava = 16, kRoomPartRune = 17, kRoomPartMetal = 18,
+                 kRoomPartNeon = 19, kRoomPartDisplay = 20, kRoomPartViewport = 21, kRoomPartCount = 22;
 
 // A face's axis (0 x, 1 y, 2 z) and the sign of its normal into the room along it.
 inline int RoomFaceAxis(int face, float* sgn)
@@ -2398,6 +2417,9 @@ inline bool RoomNightSky(const RoomConstants& rc, const RoomLightmap& light, con
 // cinema and the lounge draw their details, box-filtered over the footprint along the face's
 // two axes; the room light lights the side walls' lights and the lounge's downlights
 // (lightSeen, while flag 64 is on).
+#include "room_themes.h"
+#include "room_future.h"
+
 inline bool RoomEnvSurface(const RoomConstants& rc, int face, float u, float v, const float o[3], const float d[3], const float Dx[3], const float Dy[3],
                            float L[3], RoomSurfaceInfo* info, const RoomLightmap* light)
 {
@@ -2446,6 +2468,20 @@ inline bool RoomEnvSurface(const RoomConstants& rc, int face, float u, float v, 
         fb = RoomFootprintAxis(Px, Py, face == kFaceFloor || face == kFaceCeiling ? 2 : 1);
     }
     const bool lightOn = (rc.flags & kRoomFlagLight) != 0;
+    const float decorationGain=RoomDecorationGain(rc);
+    float fixtureLight[3]{};
+    for(int ch=0;ch<3;ch++) fixtureLight[ch]=rc.lightL[ch]/kRoomLightMax*std::clamp(rc.rhoWall/kRoomMaxAlbedo,0.0f,1.0f);
+    if (env >= kRoomEnvDungeon && env < kRoomEnvCount)
+    {
+        const float a = face == kFaceFront ? s : (face == kFaceLeft || face == kFaceRight ? p[2] : p[0]);
+        const float b = face == kFaceFloor || face == kFaceCeiling ? p[2] : p[1];
+        const bool future=env==kRoomEnvCyberpunk || env==kRoomEnvStarship;
+        const float floorReference=rc.standsRows>0 ? rc.standsT0+float(rc.viewerRow)*rc.standsRiser : rc.yF;
+        const int detail = future ? FutureSurface(env,face,a,b,floorReference,fa,fb,d[0],d[1],d[2],decorationGain,L[0],L[1],L[2])
+            : ThemeSurface(env,face,a,b,rc.yF,fa,fb,decorationGain,L[0],L[1],L[2]);
+        if (info) info->envPart = (future ? kRoomPartMetal : kRoomPartStone) + detail-1;
+        return true;
+    }
     const float* tint = rc.tint[face];
     int part = 0;
     if (env == kRoomEnvCinema || env == kRoomEnvTheatre)
@@ -2471,7 +2507,7 @@ inline bool RoomEnvSurface(const RoomConstants& rc, int face, float u, float v, 
             const float q = z0 / kRoomStepPitch;
             const float dz = (q - std::floor(q + 0.5f)) * kRoomStepPitch, dx = ax - stepX;
             const float pool = kRoomStepPoolGain * std::exp(-0.5f * (dx * dx + dz * dz) / (kRoomStepPool * kRoomStepPool));
-            for (int ch = 0; ch < 3; ch++) L[ch] = (1.0f - cover) * (L[ch] + pool * kRoomStepL[ch] * tint[ch]) + cover * kRoomStepL[ch];
+            for (int ch = 0; ch < 3; ch++) L[ch] = (1.0f - cover) * (L[ch] + pool * kRoomStepL[ch] * tint[ch]*decorationGain) + cover * kRoomStepL[ch]*decorationGain;
             if (cover > 0.5f) part = kRoomPartStep;
         }
         else if (face == kFaceFloor && env == kRoomEnvTheatre)
@@ -2534,7 +2570,7 @@ inline bool RoomEnvSurface(const RoomConstants& rc, int face, float u, float v, 
             const float dx = (qx - std::floor(qx) - 0.5f) * cw, dz = (qz - std::floor(qz) - 0.5f) * cd;
             const float within = RoomPanelCoverage(rc, p[0], p[2], fa, fb);
             const float disc = std::fmin(std::fmax((kRoomDownR - std::sqrt(dx * dx + dz * dz)) / (0.5f * (fa + fb)) + 0.5f, 0.0f), 1.0f) * within;
-            for (int ch = 0; ch < 3; ch++) L[ch] = lightOn ? L[ch] + disc * rc.lightSeen[ch] : L[ch] * (1.0f + disc * (kRoomDownTrim - 1.0f));
+            for (int ch = 0; ch < 3; ch++) L[ch] = lightOn ? L[ch] + disc * fixtureLight[ch] : L[ch] * (1.0f + disc * (kRoomDownTrim - 1.0f));
             if (disc > 0.5f) part = kRoomPartDownlight;
         }
     }
@@ -2547,8 +2583,8 @@ inline bool RoomEnvSurface(const RoomConstants& rc, int face, float u, float v, 
         const float body = RoomSconce(rc, p[2], p[1], fa, fb, &halo);
         for (int ch = 0; ch < 3; ch++)
         {
-            const float lit = lightOn ? L[ch] + rc.haloGain * tint[ch] * halo * rc.lightSeen[ch] : L[ch];
-            L[ch] = (1.0f - body) * lit + body * (lightOn ? rc.lightSeen[ch] : kRoomSconceOff * L[ch]);
+            const float lit = lightOn ? L[ch] + rc.haloGain * tint[ch] * halo * fixtureLight[ch] : L[ch];
+            L[ch] = (1.0f - body) * lit + body * (lightOn ? fixtureLight[ch] : kRoomSconceOff * L[ch]);
         }
         if (body > 0.5f) part = kRoomPartSconce;
         else if (lightOn && rc.haloGain > 0 && halo > 0.3f) part = kRoomPartHalo;
@@ -2578,7 +2614,7 @@ struct RoomStands
 inline RoomStands MakeRoomStands(const Room& r)
 {
     RoomStands s;
-    if (!r.valid || r.env != kRoomEnvTheatre || r.standsRows <= 0) return s;
+    if (!r.valid || !RoomHasSeats(r.env) || r.standsRows <= 0) return s;
     s.rows = r.standsRows; s.viewerRow = r.viewerRow;
     s.z0 = r.standsZ0; s.pitch = r.standsPitch; s.t0 = r.standsT0; s.riser = r.standsRiser;
     s.x0 = r.seatX0; s.block = r.seatBlock; s.zEnd = r.zB;
@@ -3243,6 +3279,9 @@ inline bool RoomStandsColour(const RoomConstants& rc, const RoomEmitter* coarse,
         RoomCarpet(p[0], part == kRoomStandTread ? p[2] : p[1], fu, fv, pattern);
     }
     const float* colour = carpet ? pattern : (part == kRoomStandArm || part == kRoomStandArmTop ? kRoomArmColour : kRoomUpholstery);
+    const bool future=rc.env==kRoomEnvCyberpunk || rc.env==kRoomEnvStarship;
+    const float futureCarpet[]{.14f,.18f,.24f}, cyberSeat[]{.15f,.17f,.29f}, shipSeat[]{.23f,.32f,.40f};
+    if (future) colour=carpet ? futureCarpet : (part==kRoomStandArm || part==kRoomStandArmTop ? kRoomArmColour : (rc.env==kRoomEnvStarship ? shipSeat : cyberSeat));
     float ao = 1.0f, strip = 0.0f;
     if (part == kRoomStandTread)
     {
@@ -3265,7 +3304,8 @@ inline bool RoomStandsColour(const RoomConstants& rc, const RoomEmitter* coarse,
     for (int ch = 0; ch < 3; ch++)
     {
         const float lit = colour[ch] * ((rho / kRoomPi) * (E[ch] + flux[ch] * rc.bounceRgb[ch]) + shade * hemi * (rc.world[ch] + rc.ambient[ch])) * ao * tone * sheen;
-        L[ch] = (1.0f - strip) * lit + strip * kRoomStepL[ch];
+        const float futureStep[]{.025f,.50f,.80f};
+        L[ch] = (1.0f - strip) * lit + strip * (future ? futureStep[ch] : kRoomStepL[ch])*RoomDecorationGain(rc);
     }
     if (info) info->envPart = strip > 0.5f ? kRoomPartStep : (ao < 0.7f ? kRoomPartUnderSeat : 0);
     return true;
@@ -3498,7 +3538,13 @@ inline std::string RoomHlslDefines()
     defUint("ROOM_ENV_CINEMA", (uint32_t)kRoomEnvCinema);
     defUint("ROOM_ENV_OPEN_AIR", (uint32_t)kRoomEnvOpenAir);
     defUint("ROOM_ENV_LOUNGE", (uint32_t)kRoomEnvLounge);
+    defUint("ROOM_ENV_DUNGEON", (uint32_t)kRoomEnvDungeon);
+    defUint("ROOM_ENV_HELL", (uint32_t)kRoomEnvHell);
+    defUint("ROOM_ENV_CYBERPUNK", (uint32_t)kRoomEnvCyberpunk);
+    defUint("ROOM_ENV_STARSHIP", (uint32_t)kRoomEnvStarship);
     defUint("ROOM_ENV_COUNT", (uint32_t)kRoomEnvCount);
+    def("ROOM_LIGHT_MAX", RoomHlslFloat(kRoomLightMax));
+    def("ROOM_MAX_ALBEDO", RoomHlslFloat(kRoomMaxAlbedo));
     def("ROOM_FOLD_PITCH", RoomHlslFloat(kRoomFoldPitch));
     def("ROOM_FOLD_AMP", RoomHlslFloat(kRoomFoldAmp));
     def("ROOM_CURTAIN_PITCH", RoomHlslFloat(kRoomCurtainPitch));

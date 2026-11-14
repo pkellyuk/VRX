@@ -807,7 +807,10 @@ static void TestDesktopControl()
           "v19 front seat");
     Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4", settings), "v19 missing seat rejected");
     Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 3", settings), "v19 unknown seat rejected");
-    Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 5 1", settings), "v19 unknown environment rejected");
+    for (int environment : {5,6,7,8})
+        Check(ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 " + std::to_string(environment) + " 1", settings) && settings.env == environment,
+              "v19 dungeon and hell are transported live");
+    Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 9 1", settings), "v19 unknown environment rejected");
     Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 1 0", settings), "v19 trailing value rejected");
     Check(!ParseDesktopSettings("VRX 20 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 1", settings), "a newer snapshot version is rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
@@ -3241,7 +3244,7 @@ static void TestRoomEnvironments()
     Check(rcLounge.env == (uint32_t)kRoomEnvLounge && std::fabs(rcLounge.sconcePitch - 0.5f * (lounge.zB - lounge.zSide)) < 1e-6f &&
           rcLounge.rugX0 == lounge.rugX0 && rcLounge.rugZ1 == lounge.rugZ1 && sLounge.lightOn, "env: the lounge's two lamps a wall, its rug and its room light");
     RoomLook unknown;
-    unknown.env = 7;
+    unknown.env = kRoomEnvCount;
     Check(MakeRoomShading(lounge, 40, 0, A, unknown).env == kRoomEnvRoom, "env: an unknown environment is the room");
     unknown.env = -1;
     Check(MakeRoomShading(lounge, 40, 0, A, unknown).env == kRoomEnvRoom, "env: a negative environment is the room");
@@ -3427,8 +3430,82 @@ static bool TraceStands(const RoomStands& s, const float o[3], const float d[3],
     return RoomStandsTrace(s, o, d, rcp, tMax, h);
 }
 
+static void TestRoomThemes()
+{
+    RoomInputs lightingInput; lightingInput.W=5.7f; lightingInput.H=3.20625f; lightingInput.eye[2]=3.2f; lightingInput.env=kRoomEnvDungeon;
+    Room lightingRoom; Check(BuildRoom(lightingInput,lightingRoom),"decorative-light test room builds");
+    RoomEmitterLayout lightingLayout; RoomView lightingView; lightingView.W=lightingInput.W; lightingView.H=lightingInput.H;
+    auto gainAt=[&](int roomLevel,int lightLevel) {
+        RoomLook look; look.env=kRoomEnvDungeon; look.light=lightLevel;
+        auto shading=MakeRoomShading(lightingRoom,roomLevel,0,lightingInput.W*lightingInput.H,look);
+        return RoomDecorationGain(MakeRoomConstants(lightingRoom,shading,lightingLayout,lightingView,1920,1080,1));
+    };
+    Check(gainAt(40,0)==0 && gainAt(0,100)==0 && std::fabs(gainAt(40,50)-4*gainAt(40,25))<1e-6f && gainAt(80,50)>gainAt(20,50),
+        "decorative lights turn off and follow both Room and unsaturated Room light levels");
+    for(int env : {kRoomEnvDungeon,kRoomEnvHell,kRoomEnvCyberpunk,kRoomEnvStarship})
+    {
+        float dark[3]{},low[3]{},high[3]{};
+        auto sample=[&](float gain,float* c) {
+            if(env<kRoomEnvCyberpunk) ThemeSurface(env,env==kRoomEnvHell ? kFaceFloor:kFaceLeft,env==kRoomEnvHell ? 1.8f:1.0f,env==kRoomEnvHell ? 0.0f:1.86f,0,.005f,.005f,gain,c[0],c[1],c[2]);
+            else FutureSurface(env,kFaceLeft,env==kRoomEnvCyberpunk ? 0.0f:.84f,env==kRoomEnvCyberpunk ? 1.9f:.91f,0,.005f,.005f,1,.1f,.5f,gain,c[0],c[1],c[2]);
+        };
+        sample(0,dark); sample(.01f,low); sample(.25f,high);
+        std::fprintf(stderr,"theme dimming %d: dark %.8f, low %.8f, high %.8f\n",env,dark[0]+dark[1]+dark[2],low[0]+low[1]+low[2],high[0]+high[1]+high[2]);
+        Check(dark[0]==0 && dark[1]==0 && dark[2]==0 && high[0]+high[1]+high[2]>low[0]+low[1]+low[2],
+            "theme fittings have no fixed brightness floor and respond to dimming");
+    }
+    for (int environment : { kRoomEnvDungeon, kRoomEnvHell })
+    {
+        RoomInputs input; input.W=5.7f; input.H=3.20625f; input.eye[2]=3.2f; input.env=environment;
+        Room room; Check(BuildRoom(input,room) && room.env==environment,"themed room preserves its environment and builds room bounds");
+        RoomLook look; look.env=environment; look.glass=100; look.reflect=100; look.light=35;
+        const auto shading=MakeRoomShading(room,40,0,input.W*input.H,look);
+        Check(shading.env==environment && !shading.finish && shading.glass==0 && shading.reflect==0 && shading.lightOn,
+            "themed rooms have their own materials and retain adjustable lighting");
+        int details[7]{};
+        bool finite=true;
+        for (int face=0;face<6;face++) for (int y=0;y<64;y++) for (int x=0;x<96;x++)
+        {
+            float r=.1f,g=.09f,b=.08f;
+            const float across=-4.8f+.1f*float(x), along=(face==3 || face==4 ? 0.0f:room.yF)+.07f*float(y);
+            const int detail=ThemeSurface(environment,face,across,along,room.yF,.006f,.006f,1,r,g,b);
+            finite=finite && std::isfinite(r) && std::isfinite(g) && std::isfinite(b) && r>=0 && g>=0 && b>=0;
+            if (detail>=1 && detail<=6) ++details[detail];
+        }
+        Check(finite && details[1]>0 && details[2]>0,"theme materials remain finite and draw masonry and arches across all faces");
+        Check(environment==kRoomEnvDungeon ? details[3]>0 && details[4]>0 : details[5]>0 && details[6]>0,
+            "dungeon draws iron and flames; hell draws lava and inscriptions");
+        for (float footprint : {.001f,.1f,2.0f})
+        {
+            float r=0,g=0,b=0;
+            ThemeSurface(environment,kFaceFloor,0,2.8f,room.yF,footprint,footprint,0,r,g,b);
+            Check(std::isfinite(r) && std::isfinite(g) && std::isfinite(b),"theme detail remains finite at the seal centre and large footprints");
+        }
+    }
+}
+
 static void TestRoomTheatre()
 {
+    for (int environment : {kRoomEnvCyberpunk,kRoomEnvStarship})
+    {
+        RoomInputs input; input.W=5.7f; input.H=3.20625f; input.eye[2]=7.5f; input.env=environment;
+        Room room; Check(BuildRoom(input,room) && RoomHasSeats(environment) && room.standsRows>0 && MakeRoomStands(room).rows==room.standsRows,
+            "future cinemas build actual tiered seats");
+        bool finite=true; int details[5]{};
+        for(int face=0;face<6;face++) for(int y=0;y<70;y++) for(int x=0;x<80;x++)
+        {
+            float r=.1f,g=.1f,b=.1f;
+            int part=FutureSurface(environment,face,-4.0f+float(x)*.1f,float(y)*.06f,0,.005f,.005f,1,.1f,.5f,1,r,g,b);
+            finite=finite && std::isfinite(r) && std::isfinite(g) && std::isfinite(b) && r>=0 && g>=0 && b>=0;
+            if(part>0 && part<5) ++details[part];
+        }
+        Check(finite && details[1]>0 && details[2]>0 && (environment==kRoomEnvCyberpunk ? details[3]>0 : details[4]>0),
+            "future cinema materials draw finite panels, neon, city displays or space viewports");
+    }
+    float r1=0,g1=0,b1=0,r2=0,g2=0,b2=0;
+    FutureSurface(kRoomEnvStarship,kFaceLeft,0,1.95f,0,.005f,.005f,1,.1f,.5f,1,r1,g1,b1);
+    FutureSurface(kRoomEnvStarship,kFaceLeft,.1f,1.95f,0,.005f,.005f,1,.1f,.5f,1,r2,g2,b2);
+    Check(r1==r2 && g1==g2 && b1==b2,"space beyond the viewport follows ray direction rather than the surface point");
     // ---- the layout: rows a metre apart from 0.8 to 2 screen widths, the seat's distance
     {
         RoomTheatre front, middle, rear, tiny, big, odd;
@@ -3639,7 +3716,10 @@ static void TestRoomTheatre()
         const float oStrip[3] = { 0.5f * (room.seatBlock + 0.5f * kRoomSeatPitch + kRoomArm[0] + room.X), viewerTread + 0.3f,
                                   room.standsZ0 + ((float)room.viewerRow - 0.5f) * room.standsPitch + 0.5f * kRoomNosingW };
         Check(RoomStandsColour(rc, coarse, lamp, kRoomStandTread, 2, oStrip, dn, 0.3f, Dx, Dy, strip, &info) && info.envPart == kRoomPartStep &&
-              std::fabs(strip[0] - kRoomStepL[0]) < 1e-3f, "theatre: a step light on the front edge of each tread in the aisles");
+              std::fabs(strip[0] - kRoomStepL[0]*RoomDecorationGain(rc)) < 1e-3f, "theatre: aisle step lights follow the lighting controls");
+        RoomConstants unlit=rc; unlit.flags&=~kRoomFlagLight;
+        Check(RoomStandsColour(unlit,coarse,nullptr,kRoomStandTread,2,oStrip,dn,.3f,Dx,Dy,strip,nullptr) && std::fabs(strip[0])<1e-6f,
+            "theatre: switching room light off switches aisle fittings off");
     }
 }
 
@@ -3673,6 +3753,7 @@ int main(int argc, char** argv)
     TestScreenCurve();
     TestRoom();
     TestRoomEnvironments();
+    TestRoomThemes();
     TestRoomTheatre();
     std::puts("PASS: room geometry, rays and light, room environments, curved screen geometry, ambilight constants, game/terminal capture selection, stationary screen/recenter/stereo calibration, tracking validity, swapchain failures, depth fallback/recovery, D3D11 resize pixels and bars, window client-area crop, capture downscale, depth GPU choice");
 }

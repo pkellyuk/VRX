@@ -1,6 +1,6 @@
-VRX 1.8.1 - Windows x64
+VRX 1.8.2 - Windows x64
 
-Install with VRX-Setup-1.8.1.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.8.2.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -165,7 +165,7 @@ never the older ones Windows keeps in System32.
 
 VRX itself is free software under the GNU General Public License v3.0: see
 LICENSE. Source: https://github.com/pkellyuk/VRX
-Source for this build: https://github.com/pkellyuk/VRX/tree/v1.8.1 (the exact
+Source for this build: https://github.com/pkellyuk/VRX/tree/v1.8.2 (the exact
 commit is in BUILD.txt).
 Third-party components keep their own licenses; notices and license texts are in
 THIRD-PARTY-NOTICES.txt and the licenses folder.

@@ -154,6 +154,8 @@ using Microsoft::WRL::ComPtr;
 #include "capture_scaler.h"
 #include "xr_frame_guard.h"
 #include "screen_anchor.h"
+#include "controller_menu.h"
+#include "snapshot_capture.h"
 #include "capture_window.h"
 #include "desktop_control.h"
 #include "foreground_refinement.h"
@@ -296,6 +298,7 @@ struct Options
     bool freezePose = false;
     bool headLocked = false;           // default: fixed screen; '=' recenters
     bool keepDashboard = false;
+    std::wstring controllerMenuName;
     bool depthLie = false;
     double abSeconds = 0.0;
     int testDepthFailures = 0;          // diagnostic: inject initial inference failures
@@ -435,14 +438,14 @@ struct Capture
     HWND hwnd = nullptr;                // window capture only; frames are cropped to its client area
     HANDLE process = nullptr;           // the captured window's process (SYNCHRONIZE): Closed is not always raised when a game exits
     DWORD pid = 0;                      // that process's id (the game's other windows count as the game being in front)
-    bool showingDesktop = false;        // --desktop-when-away: capturing the game's display instead of its window
+    std::atomic<bool> showingDesktop{false}; // also read by the controller mouse target mapping
     bool gameGone = false;              // --desktop-when-away: the game has closed; its display carries on until Stop VR
     bool dirtyRegions = false;          // Windows reports which parts of each frame changed (Windows 11 24H2+)
     double changedTotal = 0;            // running total of the changed share of the picture (SourceFrames::Frame)
-    HMONITOR monitor = nullptr;         // --desktop-when-away: the display the game was last on
+    std::atomic<HMONITOR> monitor{nullptr}; // the display the game was last on
     int frameW = 0, frameH = 0;         // captured frame (pool) size - the whole window; srcW/srcH may be smaller
     RECT crop{};                        // last client crop applied (for change logging)
-    bool cropping = false;
+    std::atomic<bool> cropping{false};
 };
 
 // The theatre's stands rasterized (RecordStandsRaster): an id buffer and its depth, one slice
@@ -458,6 +461,12 @@ struct StandsTarget
 struct App
 {
     Options opt;
+    ControllerMenu controllerMenu;
+    ScreenSnapshotCapture snapshotCapture;
+    SourceRef snapshotFrameHold;
+    std::wstring snapshotCompletionPath;
+    bool snapshotCompletionPending = false;
+    bool frameControllerProfile = false, genericControllerProfile = false;
 
     // OpenXR
     XrInstance instance = XR_NULL_HANDLE;
@@ -1002,7 +1011,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
                 if (!_stricmp(name, kRoomEnvNames[k])) env = k;
             if (!_stricmp(name, "openair") || !_stricmp(name, "open-air")) env = kRoomEnvOpenAir;
             if (env < 0 && name[0] >= '0' && name[0] <= '9' && name[1] == 0) env = name[0] - '0';
-            if (env < 0 || env >= kRoomEnvCount) { Log("ParseArgs: --room-env takes room, cinema, open-air, lounge or theatre (or 0-4): %s", a); return false; }
+            if (env < 0 || env >= kRoomEnvCount) { Log("ParseArgs: --room-env takes room, cinema, open-air, lounge, theatre, dungeon, hell, cyberpunk or starship (or 0-8): %s", a); return false; }
             opt->roomEnv = env;
             continue;
         }
@@ -1095,6 +1104,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--freeze-pose")) { opt->freezePose = true; continue; }
         if (!strcmp(a, "--head-locked")) { opt->headLocked = true; continue; }
         if (!strcmp(a, "--keep-dashboard")) { opt->keepDashboard = true; continue; }
+        if (!strncmp(a, "--controller-menu=", 18)) { opt->controllerMenuName = std::wstring(winrt::to_hstring(a + 18)); continue; }
         if (!strcmp(a, "--depth-lie")) { opt->depthLie = true; continue; }
         if (!strncmp(a, "--ab=", 5)) { opt->abSeconds = atof(a + 5); continue; }
         if (a[0] == '-') { Log("ParseArgs: unknown option %s", a); return false; }
@@ -1134,7 +1144,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
     if (opt->roomEnv != kRoomEnvRoom)
         Log("ParseArgs: room environment %s%s%s", kRoomEnvNames[opt->roomEnv], opt->room > 0 ? "" : " (it needs the room: --room above 0)",
             opt->roomGlass > 0 || opt->roomReflect > 0 ? " - glass and reflections are the room's own, so they rest" : "");
-    if (opt->roomEnv == kRoomEnvTheatre)
+    if (RoomHasSeats(opt->roomEnv))
         Log("ParseArgs: theatre seat %s (it sets the screen's distance)", opt->roomSeat == kRoomSeatFront ? "front" : (opt->roomSeat == kRoomSeatRear ? "rear" : "middle"));
 
     Log("ParseArgs: source %s (monitor %d, window '%ls', image '%ls') seconds %.0f",
@@ -1168,12 +1178,30 @@ static bool InitXrInstance(App& app)
     xrCreateInstance_ = (PFN_xrCreateInstance)GetProcAddress(loader, "xrCreateInstance");
     if (!g_getProc || !xrCreateInstance_) { Log("InitXrInstance: FAIL loader exports missing"); return false; }
 
-    const char* wantExt[] = { "XR_KHR_D3D12_enable", "XR_KHR_composition_layer_depth" };
+    std::vector<const char*> wantExt{ "XR_KHR_D3D12_enable", "XR_KHR_composition_layer_depth" };
+    // Optional profiles must be requested when the instance is made, even if the
+    // user switches controllers on later. Actions and UI resources stay lazy.
+    if (!app.opt.controllerMenuName.empty() && xrEnumExt_)
+    {
+        uint32_t count = 0;
+        if (XR_SUCCEEDED(xrEnumExt_(nullptr, 0, &count, nullptr)))
+        {
+            std::vector<XrExtensionProperties> extensions(count, {XR_TYPE_EXTENSION_PROPERTIES});
+            if (XR_SUCCEEDED(xrEnumExt_(nullptr, count, &count, extensions.data())))
+                for (const auto& ext : extensions)
+                {
+                    if (!strcmp(ext.extensionName, "XR_VALVE_frame_controller_interaction"))
+                    { wantExt.push_back("XR_VALVE_frame_controller_interaction"); app.frameControllerProfile = true; }
+                    if (!strcmp(ext.extensionName, "XR_KHR_generic_controller"))
+                    { wantExt.push_back("XR_KHR_generic_controller"); app.genericControllerProfile = true; }
+                }
+        }
+    }
     XrInstanceCreateInfo ci{ XR_TYPE_INSTANCE_CREATE_INFO };
     ci.applicationInfo.apiVersion = XR_API_VERSION_1_0;
     strcpy_s(ci.applicationInfo.applicationName, "VRX xrapp5");
-    ci.enabledExtensionCount = 2;
-    ci.enabledExtensionNames = wantExt;
+    ci.enabledExtensionCount = uint32_t(wantExt.size());
+    ci.enabledExtensionNames = wantExt.data();
 
     XrResult r = xrCreateInstance_(&ci, &app.instance);
     if (XR_FAILED(r)) { Log("InitXrInstance: FAIL xrCreateInstance %s (is SteamVR running?)", XRStr(r)); return false; }
@@ -1574,6 +1602,7 @@ static bool SelectCaptureItem(App& app)
             mon = me.list[app.opt.monitorIndex];
         }
         Log("InitCaptureItem: monitor %d%s", app.opt.monitorIndex, app.opt.monitorIndex < 0 ? " (primary)" : "");
+        c.monitor = mon;
         hr = interop->CreateForMonitor(mon, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(c.item));
     }
     if (FAILED(hr) || !c.item) { Log("InitCaptureItem: FAIL create capture item 0x%08X", (unsigned)hr); return false; }
@@ -2286,7 +2315,7 @@ void main(uint3 id : SV_DispatchThreadID)
             else
             {
                 c0 = scene.SampleLevel(samp, float2(((float)j0 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
-                c1 = scene.SampleLevel(samp, float2(((float)j1 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
+)HLSL" R"HLSL(                c1 = scene.SampleLevel(samp, float2(((float)j1 + 0.5) / (float)CW, ((float)y + 0.5) / (float)CH), 0);
             }
             float4 own = c0 + f * (c1 - c0);
             float4 layer = BackAt(p, (int)y);
@@ -3581,7 +3610,7 @@ void StandsSamplesH(uint e, uint2 xy, out float4 T, out int4 K)
             // The objects seen round the pixel, each once, from the lowest.
             float best = 3.0e38;
             int part = -1, normal = -1, last = -1;
-            [loop] for (int m = 0; m < 9; m++)
+)HLSL" R"HLSL(            [loop] for (int m = 0; m < 9; m++)
             {
                 int next = 0x7fffffff;
                 [unroll] for (int c = 0; c < 9; c++)
@@ -4065,15 +4094,20 @@ float3 NightSkyH(float3 o, float3 d, float3 Dx, float3 Dy)
 
 // room.h RoomEnvSurface: an environment's surface - the lightmap's light L at a sample on
 // `face` (chart uv, ray o, d) as the eye sees it, before the glow on the front.
+/*VRX_THEME_SURFACE*/
+float DecorationGainH()
+{
+    return (flags & ROOM_FLAG_LIGHT) != 0 ? saturate(max(lightL.r,max(lightL.g,lightL.b))/ROOM_LIGHT_MAX)*saturate(rhoWall/ROOM_MAX_ALBEDO) : 0.0;
+}
 float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx, float3 Dy)
 {
 #if ROOM_STANDS
     // The stands' variant serves the theatre alone: the cinema's walls, no other environment.
-    if (roomEnv != ROOM_ENV_THEATRE) return L;
+    if (roomEnv != ROOM_ENV_THEATRE && roomEnv != ROOM_ENV_CYBERPUNK && roomEnv != ROOM_ENV_STARSHIP) return L;
 #else
     if (roomEnv == ROOM_ENV_OPEN_AIR) return NightSkyH(o, d, Dx, Dy);
 #endif
-    if (roomEnv != ROOM_ENV_CINEMA && roomEnv != ROOM_ENV_LOUNGE && roomEnv != ROOM_ENV_THEATRE) return L;
+    if (roomEnv != ROOM_ENV_CINEMA && roomEnv != ROOM_ENV_LOUNGE && roomEnv != ROOM_ENV_THEATRE && roomEnv != ROOM_ENV_DUNGEON && roomEnv != ROOM_ENV_HELL && roomEnv != ROOM_ENV_CYBERPUNK && roomEnv != ROOM_ENV_STARSHIP) return L;
     float3 p, n = float3(0, 0, 0), Px, Py;
     float fa, fb, s = 0.0;
     if (face == ROOM_FACE_FRONT)
@@ -4105,6 +4139,18 @@ float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx,
         fb = (face == ROOM_FACE_FLOOR || face == ROOM_FACE_CEILING) ? FootAxisH(Px.z, Py.z) : FootAxisH(Px.y, Py.y);
     }
     bool lightOn = (flags & ROOM_FLAG_LIGHT) != 0;
+    float decorationGain=DecorationGainH();
+    float3 fixtureLight=lightL.rgb/ROOM_LIGHT_MAX*saturate(rhoWall/ROOM_MAX_ALBEDO);
+    if (roomEnv >= ROOM_ENV_DUNGEON && roomEnv < ROOM_ENV_COUNT)
+    {
+        float a = face == ROOM_FACE_FRONT ? s : (face == ROOM_FACE_LEFT || face == ROOM_FACE_RIGHT ? p.z : p.x);
+        float b = face == ROOM_FACE_FLOOR || face == ROOM_FACE_CEILING ? p.z : p.y;
+        float r=L.r, g=L.g, blue=L.b;
+        if(roomEnv == ROOM_ENV_CYBERPUNK || roomEnv == ROOM_ENV_STARSHIP)
+            FutureSurface((int)roomEnv,face,a,b,standsRows>0 ? standsT0+float(viewerRow)*standsRiser : yF,fa,fb,d.x,d.y,d.z,decorationGain,r,g,blue);
+        else ThemeSurface((int)roomEnv,face,a,b,yF,fa,fb,decorationGain,r,g,blue);
+        return float3(r,g,blue);
+    }
     float3 tint = roomTint[face].rgb;
     if (roomEnv == ROOM_ENV_CINEMA || roomEnv == ROOM_ENV_THEATRE)
     {
@@ -4124,7 +4170,7 @@ float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx,
             float q = z0 / ROOM_STEP_PITCH;
             float dz = (q - floor(q + 0.5)) * ROOM_STEP_PITCH, dx = ax - stepX;
             float pool = ROOM_STEP_POOL_GAIN * exp(-0.5 * (dx * dx + dz * dz) / (ROOM_STEP_POOL * ROOM_STEP_POOL));
-            L = (1.0 - cover) * (L + pool * ROOM_STEP_L * tint) + cover * ROOM_STEP_L;
+            L = (1.0 - cover) * (L + pool * ROOM_STEP_L * tint*decorationGain) + cover * ROOM_STEP_L*decorationGain;
         }
         else if (face == ROOM_FACE_FLOOR && roomEnv == ROOM_ENV_THEATRE)
         {
@@ -4175,7 +4221,7 @@ float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx,
             float dx = (qx - floor(qx) - 0.5) * cw, dz = (qz - floor(qz) - 0.5) * cd;
             float within = BarH(p.x, 0.5 * (lightX0 + lightX1), lightX1 - lightX0, fa) * BarH(p.z, 0.5 * (lightZ0 + lightZ1), lightZ1 - lightZ0, fb);
             float disc = min(max((ROOM_DOWN_R - sqrt(dx * dx + dz * dz)) / (0.5 * (fa + fb)) + 0.5, 0.0), 1.0) * within;
-            L = lightOn ? L + disc * lightSeen.rgb : L * (1.0 + disc * (ROOM_DOWN_TRIM - 1.0));
+)HLSL" R"HLSL(            L = lightOn ? L + disc * fixtureLight : L * (1.0 + disc * (ROOM_DOWN_TRIM - 1.0));
         }
     }
 #endif
@@ -4183,8 +4229,8 @@ float3 EnvSurfaceH(int face, float3 L, float2 uv, float3 o, float3 d, float3 Dx,
     {
         float halo;
         float body = SconceH(p.z, p.y, fa, fb, halo);
-        float3 lit = lightOn ? L + haloGain * tint * halo * lightSeen.rgb : L;
-        L = (1.0 - body) * lit + body * (lightOn ? lightSeen.rgb : ROOM_SCONCE_OFF * L);
+        float3 lit = lightOn ? L + haloGain * tint * halo * fixtureLight : L;
+        L = (1.0 - body) * lit + body * (lightOn ? fixtureLight : ROOM_SCONCE_OFF * L);
     }
     return L;
 }
@@ -4375,6 +4421,8 @@ float3 StandsColourH(int kind, float t, float3 o, float3 d, float3 Dx, float3 Dy
         pattern = CarpetH(p.x, part == ROOM_STAND_TREAD ? p.z : p.y, fu, fv);
     }
     float3 colour = carpet ? pattern : (part == ROOM_STAND_ARM || part == ROOM_STAND_ARM_TOP ? ROOM_ARM_COLOUR : ROOM_UPHOLSTERY);
+    bool future=roomEnv==ROOM_ENV_CYBERPUNK || roomEnv==ROOM_ENV_STARSHIP;
+    if(future) colour=carpet ? float3(.14,.18,.24) : (part==ROOM_STAND_ARM || part==ROOM_STAND_ARM_TOP ? ROOM_ARM_COLOUR : (roomEnv==ROOM_ENV_STARSHIP ? float3(.23,.32,.40) : float3(.15,.17,.29)));
     float ao = 1.0, strip = 0.0;
     if (part == ROOM_STAND_TREAD)
     {
@@ -4392,7 +4440,7 @@ float3 StandsColourH(int kind, float t, float3 o, float3 d, float3 Dx, float3 Dy
             strip = BarH(abs(p.x), 0.5 * (edge + X), X - edge - 0.3, fa) * BarH(p.z, zc - 0.5 * standsPitch + 0.5 * ROOM_NOSING_W, ROOM_NOSING_W, fb);
     }
     float3 lit = colour * ((rho / PI) * (E + flux * bounceRgb.rgb) + shade * hemi * (roomWorld.rgb + envAmbient.rgb)) * ao * tone * sheen;
-    return (1.0 - strip) * lit + strip * ROOM_STEP_L;
+    return (1.0 - strip) * lit + strip * (future ? float3(.025,.50,.80) : ROOM_STEP_L)*DecorationGainH();
 }
 #endif
 #endif
@@ -4431,7 +4479,7 @@ float3 LookColour(int kind, float2 uv, float2 guv, uint e, float3 o, float3 d, f
         return Enc(max(Le, 0.0));
     }
 #if ROOM_STANDS
-    // The stands' variant serves the theatre alone, which has no glass or reflections.
+)HLSL" R"HLSL(    // The stands' variant serves the theatre alone, which has no glass or reflections.
     return RoomColour(kind, uv, guv, e);
 #else
     if (kind == 1 + ROOM_FACE_FRONT) return RoomColour(kind, uv, guv, e);
@@ -5187,9 +5235,14 @@ static bool BuildRoomShaderTexts(RoomShaderTexts& out)
     out.defineBytes = roomDefines.size();
     const std::string eyeHead = std::string("#define ROOM_REGISTER b1\n") + roomDefines + curveText.substr(0, curveMain) +
                                 kRoomCbufferHlsl + kRoomGeomHlsl;
-    out.eye = std::string("#define ROOM_LOOK 0\n#define ROOM_STANDS 0\n") + eyeHead + kCurveRoomHlsl;
-    out.eyeLook = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 0\n") + eyeHead + kCurveRoomHlsl;
-    out.eyeStands = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 1\n") + eyeHead + kCurveRoomHlsl;
+    std::string eyeBody(kCurveRoomHlsl);
+    const std::string themeMarker = "/*VRX_THEME_SURFACE*/";
+    const size_t themeAt = eyeBody.find(themeMarker);
+    if (themeAt == std::string::npos) return false;
+    eyeBody.replace(themeAt,themeMarker.size(),RoomThemeHlsl()+RoomFutureHlsl()+"\n");
+    out.eye = std::string("#define ROOM_LOOK 0\n#define ROOM_STANDS 0\n") + eyeHead + eyeBody;
+    out.eyeLook = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 0\n") + eyeHead + eyeBody;
+    out.eyeStands = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 1\n") + eyeHead + eyeBody;
     out.light = std::string("#define ROOM_REGISTER b0\n") + roomDefines + kRoomCbufferHlsl + kRoomGeomHlsl + kRoomHlsl;
     out.emit = std::string("#define ROOM_EMIT 1\n") + out.light;
     out.mirror = std::string("#define ROOM_MIRROR 1\n") + out.light;
@@ -8571,12 +8624,12 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
     // tiles, glass, the reflections and the mirror picture). Then {flat, curved} x {cinema,
     // open air, lounge} (XENV.md), each with the room light at 50% (which the open air has
     // not), in two dispatches that between them see each environment's details.
-    for (int ci = 0; ci < 14; ci++)
+    for (int ci = 0; ci < 22; ci++)
     {
-        const int envIdx = ci >= 12 ? kRoomEnvTheatre : (ci >= 6 ? (ci - 6) % 3 + 1 : kRoomEnvRoom);
-        const bool envCase = envIdx != kRoomEnvRoom, theatreCase = envIdx == kRoomEnvTheatre;
-        const bool curvedCase = theatreCase ? ci == 13 : (envCase ? ci >= 9 : ci >= 3), lightCase = !envCase && ci % 3 == 1, lookCase = !envCase && ci % 3 == 2;
-        const bool envLight = envIdx == kRoomEnvCinema || envIdx == kRoomEnvLounge || theatreCase;
+        const int envIdx = ci >= 18 ? kRoomEnvCyberpunk+(ci-18)/2 : (ci >= 14 ? (ci < 16 ? kRoomEnvDungeon : kRoomEnvHell) : (ci >= 12 ? kRoomEnvTheatre : (ci >= 6 ? (ci - 6) % 3 + 1 : kRoomEnvRoom)));
+        const bool envCase = envIdx != kRoomEnvRoom, theatreCase = RoomHasSeats(envIdx);
+        const bool curvedCase = ci >= 14 ? (ci%2 == 1) : (theatreCase ? ci == 13 : (envCase ? ci >= 9 : ci >= 3)), lightCase = !envCase && ci % 3 == 1, lookCase = !envCase && ci % 3 == 2;
+        const bool envLight = envCase && envIdx != kRoomEnvOpenAir;
         char name[32];
         if (envCase) snprintf(name, sizeof(name), "%s-%s", curvedCase ? "curved" : "flat", envIdx == kRoomEnvOpenAir ? "openair" : kRoomEnvNames[envIdx]);
         else snprintf(name, sizeof(name), "%s%s", curvedCase ? "curved" : "flat", lightCase ? "-light" : (lookCase ? "-look" : ""));
@@ -8593,7 +8646,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         // The curved case uses 16-texel glow blocks, the path 4:3 and taller pictures take.
         RoomEmitterLayout layout = RoomLayout(width, height, app.ambiW, app.ambiH, curvedCase ? 16 : kRoomGlowBlock);
         if (layout.count() == 0) { Log("SelfTestRoom[%s]: SKIPPED - no emitter layout fits a %dx%d glow", name, app.ambiW, app.ambiH); continue; }
-        layout.coarse = room.env == kRoomEnvTheatre ? kRoomCoarse : 0;
+        layout.coarse = RoomHasSeats(room.env) ? kRoomCoarse : 0;
         std::vector<RoomEmitter> em;
         if (!BuildRoomEmitters(room, cyl, width, height, 0.5f * width + margin, 0.5f * height + margin, layout, em)) { Log("SelfTestRoom[%s]: FAIL emitters", name); return false; }
         // The theatre's stands, drawn into the self-test's id buffer before each eye pass.
@@ -8788,7 +8841,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         CurveConstants cc;
         std::vector<std::vector<unsigned char>> got;
         size_t bad = 0, kinds[kRoomKinds] = {}, eyeKinds[VIEWS][kRoomKinds] = {}, panelPx = 0, leftWingPx = 0, reflPx[VIEWS] = {};
-        size_t parts[12] = {}, starPx = 0;      // what the environment drew (kRoomPart*), and pixels with a star above 0.02
+        size_t parts[kRoomPartCount] = {}, starPx = 0;      // environment detail coverage and pixels with a star above 0.02
         int worst = 0;
         bool lookCovered = true;
         RgbaImage glowImg{ glowPx[0].data(), app.ambiW, app.ambiH, app.ambiW * 4 };
@@ -8815,11 +8868,16 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
             if (envCase)
             {
                 // {eye 0 yaw, pitch, eye 1 yaw, pitch} for dispatches A and B (see above).
-                static const float kEnvViews[4][2][4] = {
+                static const float kEnvViews[][2][4] = {
                     { { 0, 0, 75, -10 }, { -60, -40, 180, 0 } },
                     { { 0, 8, 110, -12 }, { 180, 45, -90, 2 } },
                     { { 0, -35, -75, 0 }, { 180, 60, 90, -25 } },
+                    { { 0, -15, 75, -35 }, { 180, -15, -70, -50 } },
+                    { { 0, -15, 85, -10 }, { 180, 45, -85, -40 } },
+                    { { 0, -15, 85, -10 }, { 180, 45, -85, -40 } },
+                    { { 0, -15, 75, -35 }, { 180, -15, -70, -50 } },
                     { { 0, -15, 75, -35 }, { 180, -15, -70, -50 } } };
+                static_assert(std::size(kEnvViews)==kRoomEnvCount-1,"Every environment needs explicit render-test viewpoints");
                 const float* v = kEnvViews[envIdx - 1][di];
                 eyes[0] = XrPosef{ YawPitch(v[0], v[1]), { 0, 1.55f, 0 } };
                 eyes[1] = XrPosef{ YawPitch(v[2], v[3]), { 0.064f, 1.55f, 0 } };
@@ -8866,7 +8924,7 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
                         skyPx += info.env == 1;
                         horizonPx += info.env == 2;
                         if (di == 0) reflPx[e] += info.kappaS > 0 && info.fresnel > 0;
-                        if (info.envPart > 0 && info.envPart < 12) parts[info.envPart]++;
+                        if (info.envPart > 0 && info.envPart < kRoomPartCount) parts[info.envPart]++;
                         starPx += info.star > 0.02f;
                         float o[3], d[3], u, v, gu, gv;
                         CurveRay(cc, (int)e, x + 0.5f, y + 0.5f, o, d);
@@ -8920,7 +8978,15 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         {
             // Each environment's details, from the CPU reference over both dispatches.
             const size_t few = total / 2000;
-            if (theatreCase)
+            if (envIdx==kRoomEnvCyberpunk || envIdx==kRoomEnvStarship)
+            {
+                size_t seats=0; for(int n=0;n<6;n++) seats+=kinds[kRoomKindStands+kRoomStandBack*6+n];
+                framed=seats>few && parts[kRoomPartMetal]>few && parts[kRoomPartNeon]>0 &&
+                    (envIdx==kRoomEnvCyberpunk ? parts[kRoomPartDisplay]>few : parts[kRoomPartViewport]>few);
+                Log("SelfTestRoom[%s]: future cinema %s - seats %zu, metal %zu, neon %zu, displays %zu, space viewports %zu",name,framed ? "covered":"FAIL",
+                    seats,parts[kRoomPartMetal],parts[kRoomPartNeon],parts[kRoomPartDisplay],parts[kRoomPartViewport]);
+            }
+            else if (theatreCase)
             {
                 // The stands: each part's pixels over its six faces.
                 size_t stand[kRoomStandParts] = {};
@@ -8937,6 +9003,13 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
                 framed = parts[kRoomPartMask] > onePercent && parts[kRoomPartSconce] > 0 && parts[kRoomPartHalo] > few && parts[kRoomPartStep] > 0;
             else if (envIdx == kRoomEnvOpenAir)
                 framed = parts[kRoomPartSky] > onePercent && parts[kRoomPartHills] > few && parts[kRoomPartField] > onePercent && starPx > 0;
+            else if (envIdx == kRoomEnvDungeon || envIdx == kRoomEnvHell)
+            {
+                framed = parts[kRoomPartStone] > few && parts[kRoomPartArch] > few &&
+                    (envIdx == kRoomEnvDungeon ? parts[kRoomPartTorch] > 0 && parts[kRoomPartIron] > 0 : parts[kRoomPartLava] > few && parts[kRoomPartRune] > 0);
+                Log("SelfTestRoom[%s]: theme details %s - stone %zu, arches %zu, iron %zu, torches %zu, lava %zu, runes %zu", name,framed ? "covered":"FAIL",
+                    parts[kRoomPartStone],parts[kRoomPartArch],parts[kRoomPartIron],parts[kRoomPartTorch],parts[kRoomPartLava],parts[kRoomPartRune]);
+            }
             else
                 framed = parts[kRoomPartRug] > onePercent && parts[kRoomPartSeam] > few && parts[kRoomPartDownlight] > 0 && parts[kRoomPartSconce] > 0 &&
                          parts[kRoomPartHalo] > few;
@@ -10082,6 +10155,8 @@ static bool BenchRoom(App& app)
 // -------------------------------------------------------------- frame loop
 static void RunFrameLoop(App& app)
 {
+    app.controllerMenu.Configure(app.opt.controllerMenuName);
+    std::string controllerError;
     Log("RunFrameLoop: enter (%.0fs)%s%s", app.opt.runSeconds, app.opt.doWarp ? "" : " [warp disabled]",
         app.opt.paired ? " [paired colour+depth]" : " [latest colour + latest completed depth]");
 
@@ -10165,7 +10240,7 @@ static void RunFrameLoop(App& app)
                     next.horizontal != desktop.horizontal || next.strength != desktop.strength || next.follow != desktop.follow || next.stereo != desktop.stereo)
                     Log("Desktop settings applied: width %.2f distance %.2f height %.2f horizontal %.2f strength %.2f follow %d stereo %d",
                         next.width, next.distance, next.height, next.horizontal, next.strength, next.follow, next.stereo);
-                if (next.recenter != lastRecenter) screen.pending = true;
+                if (next.recenter != lastRecenter) { screen.pending = true; app.controllerMenu.Recenter(); }
                 if (next.menu != lastMenu) dashboardCloseRequested = true;
                 if (recenterKey != next.recenterKey) screen.keyWasDown = (GetAsyncKeyState(next.recenterKey) & 0x8000) != 0;
                 if (menuKey != next.menuKey) dashboardKeyWasDown = (GetAsyncKeyState(next.menuKey) & 0x8000) != 0;
@@ -10356,7 +10431,9 @@ static void RunFrameLoop(App& app)
         if (XR_FAILED(xrBeginFrame_(app.session, nullptr))) { Log("RunFrameLoop: xrBeginFrame failed"); app.stop = true; break; }
         frames++; repFrames++;
 
-        const XrCompositionLayerBaseHeader* layers[VIEWS + 2] = {};
+        const XrCompositionLayerBaseHeader* layers[16] = {}; // scene, menu, six snapshots, beams and pointers (within core OpenXR limits)
+        SourceRef snapshotFramePresented;
+        XrFovf menuFov{-.7f,.7f,.65f,-.65f};
         uint32_t layerCount = 0;
         XrCompositionLayerProjection worldProj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
         XrCompositionLayerProjectionView worldViews[VIEWS];
@@ -10389,6 +10466,15 @@ static void RunFrameLoop(App& app)
             if (!validTracking) ++invalidTrackingFrames;
             if (validTracking)
             {
+            app.controllerMenu.SetViews(views);
+            menuFov = views[0].fov;
+            for (int eye = 1; eye < VIEWS; ++eye)
+            {
+                menuFov.angleLeft = std::max(menuFov.angleLeft,views[eye].fov.angleLeft);
+                menuFov.angleRight = std::min(menuFov.angleRight,views[eye].fov.angleRight);
+                menuFov.angleUp = std::min(menuFov.angleUp,views[eye].fov.angleUp);
+                menuFov.angleDown = std::max(menuFov.angleDown,views[eye].fov.angleDown);
+            }
 
             float ex = views[1].pose.position.x - views[0].pose.position.x;
             float ey = views[1].pose.position.y - views[0].pose.position.y;
@@ -10417,8 +10503,11 @@ static void RunFrameLoop(App& app)
             else sharedRot = q0;
 
             // The room needs the screen fixed in the room, and keeps it level.
-            const bool followsHead = !app.opt.controlPath.empty() && desktop.follow;
-            const bool roomWanted = app.opt.room > 0 && !app.opt.headLocked && !followsHead;
+            const bool followRequested = !app.opt.controlPath.empty() && desktop.follow;
+            // Let the player look down at a stationary console without the game
+            // following their gaze over it. Normal head-follow resumes on closing.
+            const bool followsHead = followRequested && !app.controllerMenu.IsVisible();
+            const bool roomWanted = app.opt.room > 0 && !app.opt.headLocked && !followRequested;
             screen.level = roomWanted;
             // The screen's distance: the desktop's (or the default), or in the theatre your
             // seat's in the hall (room.h RoomTheatreSeat; the screen's width does not move it).
@@ -10426,7 +10515,7 @@ static void RunFrameLoop(App& app)
             const float viewWidth = controlled ? desktop.width : 2.0f * ScreenAnchor::distance * tanHalfX;
             float viewDistance = controlled ? desktop.distance : ScreenAnchor::distance;
             RoomTheatre theatre;
-            const bool seated = roomWanted && app.opt.roomEnv == kRoomEnvTheatre && RoomTheatreSeat(app.opt.roomSeat, theatre);
+            const bool seated = roomWanted && RoomHasSeats(app.opt.roomEnv) && RoomTheatreSeat(app.opt.roomSeat, theatre);
             if (seated) viewDistance = theatre.distance;
             if (seated && std::fabs(seatedLogged - viewDistance) > 1e-3f)
             {
@@ -10440,6 +10529,7 @@ static void RunFrameLoop(App& app)
             {
                 if (followsHead) screen.pending = true;
                 const bool placed = screen.Place(views[0].pose, views[1].pose, sharedRot, tanHalfX, float(target.ch) / target.cw);
+                if (placed && !followsHead) app.controllerMenu.Recenter();
                 if (placed && !desktop.follow)
                     Log("RunFrameLoop: screen recentered using the current headset direction");
                 if (placed) stageLocated = false;
@@ -10523,7 +10613,7 @@ static void RunFrameLoop(App& app)
                     else
                     {
                         roomLayout = RoomLayout(in.W, in.H, app.ambiW, app.ambiH);
-                        roomLayout.coarse = room.env == kRoomEnvTheatre && roomLayout.count() > 0 ? kRoomCoarse : 0;
+                        roomLayout.coarse = RoomHasSeats(room.env) && roomLayout.count() > 0 ? kRoomCoarse : 0;
                         if (roomLayout.count() == 0 ||
                             !BuildRoomEmitters(room, cylinder, in.W, in.H, 0.5f * in.W + margin, 0.5f * in.H + margin, roomLayout, roomGeometry))
                         {
@@ -10536,7 +10626,7 @@ static void RunFrameLoop(App& app)
                             roomRejected = false;
                             roomFailedLogged = false;
                             roomGeometryDirty = true;
-                            standsVerts = room.env == kRoomEnvTheatre ? UploadStandsMesh(app, room, 0) : 0;
+                            standsVerts = RoomHasSeats(room.env) ? UploadStandsMesh(app, room, 0) : 0;
                             // Say which floor won: SteamVR's (or the seated guess), or the screen's
                             // bottom edge when the screen reaches below it.
                             char floorWhy[128];
@@ -10723,6 +10813,7 @@ static void RunFrameLoop(App& app)
 
                 if (source)
                 {
+                    snapshotFramePresented = source;
                     // a captured frame comes from another device: make the gfx queue
                     // wait for it on the GPU timeline (no CPU stall)
                     if (SourceFence(app) != app.fence.Get())
@@ -11003,6 +11094,52 @@ static void RunFrameLoop(App& app)
             } // valid tracking; otherwise xrEndFrame below submits zero layers
         }
 
+        RECT mouseTarget{};
+        HWND mouseWindow = nullptr;
+        if (app.opt.source == SourceKind::Capture)
+        {
+            if (app.cap.hwnd && !app.cap.showingDesktop)
+            {
+                mouseWindow = app.cap.hwnd;
+                if (IsWindow(mouseWindow) && !IsIconic(mouseWindow))
+                {
+                    if (app.cap.cropping)
+                    {
+                        RECT client{}; POINT origin{};
+                        if (GetClientRect(mouseWindow,&client) && ClientToScreen(mouseWindow,&origin))
+                            mouseTarget = {origin.x,origin.y,origin.x+client.right,origin.y+client.bottom};
+                    }
+                    else DwmGetWindowAttribute(mouseWindow,DWMWA_EXTENDED_FRAME_BOUNDS,&mouseTarget,sizeof(mouseTarget));
+                }
+            }
+            else
+            {
+                MONITORINFO info{sizeof(info)};
+                if (GetMonitorInfoW(app.cap.monitor,&info)) mouseTarget = info.rcMonitor;
+            }
+        }
+        app.controllerMenu.SetScene(room,screen.pose,app.opt.headLocked ? XrExtent2Df{} : screen.size,cylinder,mouseTarget,mouseWindow,menuFov);
+        app.controllerMenu.Update(g_getProc, app.instance, app.session, app.space, app.device.Get(), app.gfxQueue.Get(),
+            state == XR_SESSION_STATE_FOCUSED, fs.shouldRender && trackingWasValid, fs.predictedDisplayTime,
+            app.frameControllerProfile, app.genericControllerProfile);
+        std::wstring capturedPath;
+        if (app.snapshotCapture.Poll(capturedPath))
+        { app.snapshotFrameHold.reset(); app.snapshotCompletionPath = std::move(capturedPath); app.snapshotCompletionPending = true; }
+        if (app.snapshotCompletionPending && app.controllerMenu.CompleteSnapshot(app.snapshotCompletionPath))
+        { app.snapshotCompletionPending = false; app.snapshotCompletionPath.clear(); }
+        if (!app.snapshotCompletionPending && !app.snapshotCapture.Busy() && app.controllerMenu.TakeSnapshotRequest())
+        {
+            if (snapshotFramePresented && app.snapshotCapture.Start(app.device.Get(),app.gfxQueue.Get(),app.srcTex[snapshotFramePresented->index].Get()))
+                app.snapshotFrameHold = snapshotFramePresented;
+            else { app.snapshotCompletionPending = true; app.snapshotCompletionPath.clear(); }
+        }
+        if (fs.shouldRender && trackingWasValid)
+            app.controllerMenu.Append(layers, layerCount);
+        if (app.controllerMenu.Error() != controllerError)
+        {
+            controllerError = app.controllerMenu.Error();
+            if (!controllerError.empty()) Log("Controllers: %s", controllerError.c_str());
+        }
         XrFrameEndInfo fei{ XR_TYPE_FRAME_END_INFO };
         fei.displayTime = fs.predictedDisplayTime;
         fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -11407,6 +11544,9 @@ static void Shutdown(App& app)
     DumpDebugMessages(app);
 
     if (ort) ReleaseModel(app);
+    app.snapshotCapture.Discard(); app.snapshotFrameHold.reset();
+    if (!app.snapshotCompletionPath.empty()) DeleteFileW(app.snapshotCompletionPath.c_str());
+    app.controllerMenu.Shutdown();
     if (app.colorSc) xrDestroySwapchain_(app.colorSc);
     if (app.eyeSc) xrDestroySwapchain_(app.eyeSc);
     if (app.worldSc) xrDestroySwapchain_(app.worldSc);

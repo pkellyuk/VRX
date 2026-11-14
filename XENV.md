@@ -11,6 +11,28 @@ Room section dresses the same room three more ways:
 | **Cinema** | Burgundy velvet hanging in folds on every wall, tighter curtains either side of the screen with black masking round it, a dark carpet with amber step lights along both aisles (each with a small pool of light), a black ceiling, and a sconce in every bay of the side walls throwing a fan of warm light up the velvet. |
 | **Open air at night** | A screen standing in a field under a night sky full of stars, with a line of low hills along the horizon. The screen lights the ground in front of it; the field fades into the hills with distance. |
 | **Lounge** | A home theatre: an oak floor of boards with a rug under and in front of you, panelled walls (a dado rail, grooved panels below it, a skirting board) with two lamps on each side wall, six downlights in the ceiling, and timber slats on the dark wall behind the screen. |
+| **Dungeon** | Weathered, staggered stone blocks with bevelled joints and damp staining, barred arched alcoves, piers, hanging iron chains, flagstones with drainage grates, ceiling ribs and torch fittings with warm flame and wall halos. |
+| **Hell** | Red-black basalt, warped glowing fissures, lava channels in the floor, dark furnace arches with iron bars, massive wall ribs, glowing inscriptions and a hot cracked ceiling. |
+| **Cyberpunk neon cinema** | Tiered blue-black seats, graphite acoustic fins, cyan upright lights, magenta rails and ceiling strips, illuminated city displays, control panels and blue aisle lighting. |
+| **Starship cinema** | Tiered slate-blue seats inside brushed-alloy bulkheads, illuminated structural ribs, technical panels, ceiling vents, hazard markings and framed space-view ports showing stars, nebula haze and a blue planet. |
+
+Dungeon (5) and Hell (6) use the same convex room bounds as Room, including curved
+fronts and floating-window wall constraints. Their architectural relief and fittings
+are procedural surface detail, rather than separate collision meshes. Room and Room
+light dim decorative emission, including flames, lava, neon, displays and aisle lights.
+Room light at zero switches these fittings off; the picture still lights the surfaces.
+Materials have no baked-in brightness floor. Sconces and lounge downlights also follow
+the unsaturated lamp strength, so they continue to dim across the control's range.
+`room_themes.h` shares the material program between C++ and HLSL so the GPU self-test
+compares the same materials in both eyes. Details filter over pixel footprints.
+The desktop's v19 control snapshot accepts environment values 0–8; older versions
+keep their original ranges. `--room-env=dungeon` and `--room-env=hell` also work.
+
+The futuristic cinemas (7 and 8) use the theatre's actual seat mesh, row layout and
+front/middle/back seat selection, with their own upholstery, technical flooring and
+cyan step lights. `room_future.h` shares their materials between C++ and HLSL.
+The starfield is sampled from the view ray, so it stays distant behind the viewports
+as the head moves. Use `--room-env=cyberpunk` or `--room-env=starship` from the command line.
 
 Each is lit by the picture and the ambilight exactly as the room is: the same emitters, the
 same lightmap, the same eye pass. The Room slider still sets how much the surfaces reflect

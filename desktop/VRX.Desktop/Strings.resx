@@ -127,12 +127,16 @@
 
   <!-- 4 Room -->
   <data name="Environment" xml:space="preserve"><value>Environment</value></data>
-  <data name="EnvironmentTip" xml:space="preserve"><value>Where the screen is. Room (default): the plain room, clean and calm, with glass walls, reflections and a light to choose below. Open air: a screen standing in a field at night under the stars, with low hills on the horizon; the screen lights the ground in front of it. Lounge: a home theatre - an oak floor with a rug, panelled walls with two lamps each side, downlights in the ceiling (both lit by the room light) and timber slats behind the screen. Cinema with seats: a movie theatre with tiered rows of seats round you - velvet curtains, black masking round the screen, a patterned carpet with step lights along the aisles, and sconces on the walls lit by the room light; pick your seat below, which sets how far away the screen is. Each is lit by the picture like the room, and the Room slider sets how much its surfaces reflect. Picking one while the room is off turns the room on. Not with 'Screen follows my head'. Applies live; saved per game.</value></data>
+  <data name="EnvironmentTip" xml:space="preserve"><value>Where the screen is. Room (default): the plain room, clean and calm, with glass walls, reflections and a light to choose below. Open air: a screen standing in a field at night under the stars, with low hills on the horizon; the screen lights the ground in front of it. Lounge: a home theatre - an oak floor with a rug, panelled walls with two lamps each side, downlights in the ceiling (both lit by the room light) and timber slats behind the screen. Cinema with seats: a movie theatre with tiered rows of seats round you - velvet curtains, black masking round the screen, a patterned carpet with step lights along the aisles, and sconces on the walls lit by the room light; pick your seat below, which sets how far away the screen is. Dungeon: weathered stone, barred arches, chains, floor grates and torchlight. Hell: dark basalt, furnace arches, glowing inscriptions and lava fissures. Cyberpunk neon cinema: tiered seats, cyan and magenta lighting, acoustic panels and city displays. Starship cinema: tiered seats in metal bulkheads, illuminated ribs and viewports onto stars and a blue planet. Each is lit by the picture like the room, and the Room slider sets how much its surfaces reflect. Picking one while the room is off turns the room on. Not with 'Screen follows my head'. Applies live; saved per game.</value></data>
   <data name="EnvironmentRoom" xml:space="preserve"><value>Room (default)</value></data>
   <data name="EnvironmentCinema" xml:space="preserve"><value>Cinema</value></data>
   <data name="EnvironmentOpenAir" xml:space="preserve"><value>Open air at night</value></data>
   <data name="EnvironmentLounge" xml:space="preserve"><value>Lounge</value></data>
   <data name="EnvironmentTheatre" xml:space="preserve"><value>Cinema with seats</value></data>
+  <data name="EnvironmentDungeon" xml:space="preserve"><value>Dungeon</value></data>
+  <data name="EnvironmentHell" xml:space="preserve"><value>Hell</value></data>
+  <data name="EnvironmentCyberpunk" xml:space="preserve"><value>Cyberpunk neon cinema</value></data>
+  <data name="EnvironmentStarship" xml:space="preserve"><value>Starship cinema</value></data>
   <data name="Seat" xml:space="preserve"><value>Seat</value></data>
   <data name="SeatTip" xml:space="preserve"><value>Where you sit in the cinema with seats. It sets how far away the screen is: the front row 4.6 m away, the middle 7.5 m and the back row 11.4 m. The hall stays the same whatever the screen's width, so Width makes the screen look bigger or smaller from your seat, as a bigger or smaller screen in the same cinema would (at the default 5.7 m the rows are about 0.8, 1.3 and 2 screen widths away). The rows rise behind you, so you look over the seats in front. A seat further back also shows the picture's depth more gently. While you are seated the Distance slider rests and keeps its value. Applies live; saved per game.</value></data>
   <data name="SeatFront" xml:space="preserve"><value>Front row</value></data>
@@ -149,7 +153,7 @@
   <data name="Reflections" xml:space="preserve"><value>Reflections</value></data>
   <data name="ReflectTip" xml:space="preserve"><value>How much the glass, the walls and a polished floor reflect: the screen, its glow and the room light appear mirrored, which shows how big the screen is and how far away. Reflections are stronger at a glancing angle. 0 is none. Only in the Room environment. Applies live; saved per game.</value></data>
   <data name="RoomLight" xml:space="preserve"><value>Room light</value></data>
-  <data name="RoomLightTip" xml:space="preserve"><value>A soft light panel in the ceiling just above and behind you, so the room stays visible when the picture is dark. How much the walls pick it up depends on how pale they are (the Room slider). In the cinema it lights the wall sconces, in the lounge the downlights and the wall lamps; the open air has none. 0 is off. Applies live; saved per game.</value></data>
+  <data name="RoomLightTip" xml:space="preserve"><value>A soft light panel in the ceiling just above and behind you, so the room stays visible when the picture is dark. How much the walls pick it up depends on how pale they are (the Room slider). In the cinema it controls the wall sconces and aisle lights; in the lounge, the downlights and wall lamps. In the themed rooms it also dims flames, lava, neon and displays. These decorative lights also respond to the Room slider. The open air has no room light. 0 is off. Applies live; saved per game.</value></data>
   <data name="LightColour" xml:space="preserve"><value>Light colour</value></data>
   <data name="LightColourTip" xml:space="preserve"><value>The room light's colour, from warm (2700 K, like a table lamp) to daylight (6500 K). Applies live; saved per game.</value></data>
   <data name="LightWarm" xml:space="preserve"><value>Warm (2700 K)</value></data>
@@ -317,4 +321,54 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorRendererMissing" xml:space="preserve"><value>VRX renderer is missing. Reinstall VRX or build the project.</value></data>
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
   <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
+  <data name="Controllers" xml:space="preserve"><value>Controllers</value></data>
+  <data name="ControllersOff" xml:space="preserve"><value>Off</value></data>
+  <data name="ControllersOn" xml:space="preserve"><value>On</value></data>
+  <data name="ControllersTip" xml:space="preserve"><value>Optional motion-controller settings. Press the controller Menu button to show or hide the panel where you are looking. Point and squeeze the trigger to select or drag the title bar; use the thumbstick to scroll. Index/generic controllers use thumbstick click. Requires VR controller mode and XR input focus.</value></data>
+  <data name="ControllerMenuTitle" xml:space="preserve"><value>VRX settings</value></data>
+  <data name="ControllerMenuHint" xml:space="preserve"><value>Menu: show or hide · Point + trigger: select · Thumbstick: scroll</value></data>
+  <data name="ControllerMenuDrag" xml:space="preserve"><value>Hold trigger here to move</value></data>
+  <data name="ControllerMenuBack" xml:space="preserve"><value>Back / sections</value></data>
+  <data name="ControllerMenuControlScreen" xml:space="preserve"><value>Control screen</value></data>
+  <data name="ControllerMenuStopControlScreen" xml:space="preserve"><value>Stop controlling screen</value></data>
+  <data name="ControllerMenuScreenHint" xml:space="preserve"><value>Right trigger: left-click / drag · Right grip: right-click · Menu: hide settings</value></data>
+  <data name="SnapshotTake" xml:space="preserve"><value>Snapshot</value></data>
+  <data name="SnapshotOpenFolder" xml:space="preserve"><value>Open images folder</value></data>
+  <data name="SnapshotTitle" xml:space="preserve"><value>Snapshot · hold title to move</value></data>
+  <data name="SnapshotSave" xml:space="preserve"><value>Save</value></data>
+  <data name="SnapshotDelete" xml:space="preserve"><value>Delete</value></data>
+  <data name="SnapshotClose" xml:space="preserve"><value>Close</value></data>
+  <data name="SnapshotSaved" xml:space="preserve"><value>Saved in VRX / images</value></data>
+  <data name="SnapshotLimit" xml:space="preserve"><value>Close a floating window to make room for another.</value></data>
+  <data name="BrowserOpen" xml:space="preserve"><value>Browser</value></data>
+  <data name="BrowserTitle" xml:space="preserve"><value>Browser · hold title to move</value></data>
+  <data name="BrowserGo" xml:space="preserve"><value>Go</value></data>
+  <data name="BrowserNew" xml:space="preserve"><value>New browser</value></data>
+  <data name="BrowserLicenses" xml:space="preserve"><value>Licenses</value></data>
+  <data name="BrowserBack" xml:space="preserve"><value>Back</value></data>
+  <data name="BrowserReload" xml:space="preserve"><value>Reload</value></data>
+  <data name="BrowserLoading" xml:space="preserve"><value>Loading…</value></data>
+  <data name="BrowserOpenLink" xml:space="preserve"><value>Open link in new window</value></data>
+  <data name="BrowserCopyLink" xml:space="preserve"><value>Copy link</value></data>
+  <data name="BrowserCopy" xml:space="preserve"><value>Copy</value></data>
+  <data name="BrowserPaste" xml:space="preserve"><value>Paste</value></data>
+  <data name="KeyboardOpen" xml:space="preserve"><value>Keyboard</value></data>
+  <data name="ArrangeWindows" xml:space="preserve"><value>Arrange windows</value></data>
+  <data name="KeyboardTitle" xml:space="preserve"><value>Keyboard · hold title to move</value></data>
+  <data name="KeyboardShift" xml:space="preserve"><value>Shift</value></data>
+  <data name="KeyboardSpace" xml:space="preserve"><value>Space</value></data>
+  <data name="KeyboardEnter" xml:space="preserve"><value>Enter</value></data>
+  <data name="KeyboardHint" xml:space="preserve"><value>Tap keys, or hold the trigger and swipe across letters. Release to type; choose another suggestion to replace the word.</value></data>
+  <data name="KeyboardChooseTarget" xml:space="preserve"><value>Select a browser field, or enable Control screen and click a game/Windows field.</value></data>
+  <data name="KeyboardBrowserTarget" xml:space="preserve"><value>Typing into browser: {0}</value></data>
+  <data name="KeyboardWindowsTarget" xml:space="preserve"><value>Typing into the selected game/Windows window</value></data>
+  <data name="KeyboardAddWord" xml:space="preserve"><value>Add word: {0}</value></data>
+  <data name="SnapshotFailed" xml:space="preserve"><value>Snapshot could not be captured. Try again.</value></data>
+  <data name="SnapshotFileError" xml:space="preserve"><value>Image: {0}</value></data>
+  <data name="ControllerMenuSelect" xml:space="preserve"><value>Select an option</value></data>
+  <data name="ControllerMenuDelete" xml:space="preserve"><value>Delete digit</value></data>
+  <data name="ControllerMenuApply" xml:space="preserve"><value>Apply</value></data>
+  <data name="ControllerMenuCancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="ControllerMenuApplyAllQuestion" xml:space="preserve"><value>Replace settings in every saved game profile with the current settings? Each game's path and window are kept.</value></data>
+  <data name="ControllerMenuFailed" xml:space="preserve"><value>Controller settings menu unavailable: {0}</value></data>
 </root>

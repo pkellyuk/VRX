@@ -17,7 +17,17 @@
     <StackPanel x:Name="NameRow" Orientation="Horizontal"><TextBlock Text="{l:Tr AppName}" FontSize="32" FontWeight="Bold"/><TextBlock x:Name="VersionText" FontSize="15" Foreground="{StaticResource Accent}" VerticalAlignment="Bottom" Margin="10,0,0,6"/></StackPanel>
     <TextBlock x:Name="Subtitle" Foreground="{StaticResource Soft}" TextWrapping="Wrap" Margin="0,2,0,0"/>
    </StackPanel>
-   <Border Grid.Column="1" x:Name="ModeSwitch" Background="{StaticResource ChromeBar}" BorderBrush="{StaticResource WindowEdge}" BorderThickness="1" CornerRadius="24" Padding="4" VerticalAlignment="Center">
+   <StackPanel Grid.Column="1" x:Name="HeaderSwitches" Orientation="Horizontal" VerticalAlignment="Center">
+   <Border Background="{StaticResource ChromeBar}" BorderBrush="{StaticResource WindowEdge}" BorderThickness="1" CornerRadius="18" Padding="3" Margin="0,0,12,0" VerticalAlignment="Center" ToolTip="{l:Tr ControllersTip}">
+    <StackPanel>
+     <TextBlock Text="{l:Tr Controllers}" FontSize="11" HorizontalAlignment="Center" Margin="0,0,0,2"/>
+     <StackPanel Orientation="Horizontal">
+      <RadioButton x:Name="ControllersOff" GroupName="Controllers" Style="{StaticResource ControllerSegment}" Content="{l:Tr ControllersOff}" IsChecked="True" Checked="ControllersChecked"/>
+      <RadioButton x:Name="ControllersOn" GroupName="Controllers" Style="{StaticResource ControllerSegment}" Content="{l:Tr ControllersOn}" Checked="ControllersChecked"/>
+     </StackPanel>
+    </StackPanel>
+   </Border>
+   <Border x:Name="ModeSwitch" Background="{StaticResource ChromeBar}" BorderBrush="{StaticResource WindowEdge}" BorderThickness="1" CornerRadius="24" Padding="4" VerticalAlignment="Center">
     <StackPanel Orientation="Horizontal">
      <RadioButton x:Name="EasyMode" GroupName="Mode" Style="{StaticResource ModeSegment}" Checked="ModeChecked" ToolTip="{l:Tr ModeEasyTip}">
       <StackPanel><TextBlock Text="{l:Tr ModeEasy}" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center"/><TextBlock Text="{l:Tr ModeEasyCaption}" FontSize="11" HorizontalAlignment="Center" Opacity="0.8"/></StackPanel>
@@ -27,6 +37,7 @@
      </RadioButton>
     </StackPanel>
    </Border>
+   </StackPanel>
   </Grid>
 
   <!-- Always visible: the game card with Attach / Play and Stop VR (Easy adds Recenter) -->
@@ -167,6 +178,10 @@
         <ComboBoxItem Content="{l:Tr EnvironmentOpenAir}"/>
         <ComboBoxItem Content="{l:Tr EnvironmentLounge}"/>
         <ComboBoxItem Content="{l:Tr EnvironmentTheatre}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentDungeon}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentHell}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentCyberpunk}"/>
+        <ComboBoxItem Content="{l:Tr EnvironmentStarship}"/>
        </ComboBox>
       </DockPanel>
       <DockPanel x:Name="SeatRow" Margin="0,0,0,10" Visibility="Collapsed">
