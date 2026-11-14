@@ -131,7 +131,7 @@ int main()
     PanelDrag depth; depth.distance = 1;
     depth.PushPull(.15f,.05f); assert(Near(depth.distance,1));
     for (int i = 0; i < 90; ++i) depth.PushPull(1,1.0f/90);
-    assert(Near(depth.distance,2));
+    assert(Near(depth.distance,3));
     for (int i = 0; i < 90; ++i) depth.PushPull(-1,1.0f/90);
     assert(Near(depth.distance,1));
     depth.distance = 6; depth.PushPull(1,.05f); assert(Near(depth.distance,6));
@@ -237,6 +237,18 @@ int main()
     const float fixedLeft = resizePose.position.x - resizeSize.width*.5f;
     resizeRay.position.x += .2f; assert(edge.Move(resizePose,resizeSize,resizeRay));
     assert(resizeSize.width > menuSize.width && Near(resizePose.position.x-resizeSize.width*.5f,fixedLeft));
+    resizeRay.position.x += 10; assert(edge.Move(resizePose,resizeSize,resizeRay));
+    assert(Near(resizeSize.width,3) && Near(resizeSize.height,3*menuSize.height/menuSize.width));
+    assert(Near(resizePose.position.x-resizeSize.width*.5f,fixedLeft));
+    XrPosef largePose{{0,0,0,1},{0,0,-1.2f}}, largeLeft{{0,0,0,1},{-.2f,0,0}}, largeRight{{0,0,0,1},{.2f,0,0}};
+    XrExtent2Df largeSize = menuSize;
+    PanelDrag largeFirst, largeSecond;
+    largeFirst.Begin(largePose,largeSize,largeLeft,.5f-.2f/menuSize.width,.5f);
+    largeSecond.Begin(largePose,largeSize,largeRight,.5f+.2f/menuSize.width,.5f);
+    TwoHandDrag largeBoth; largeBoth.Begin(largePose,largeSize,largeFirst,largeSecond,largeLeft,largeRight);
+    largeLeft.position.x = -10; largeRight.position.x = 10;
+    assert(largeBoth.Move(largePose,largeSize,largeFirst,largeSecond,largeLeft,largeRight,1.0f/90));
+    assert(Near(largeSize.width,3) && Near(largeSize.height,3*menuSize.height/menuSize.width));
     assert(BuildCylinder(4,2,3,.8f,roomInput.cyl) && BuildRoom(roomInput,room));
     PanelFlight curveFlight; curveFlight.flying = true; curveFlight.velocity = {0,0,-30};
     sheet = {{0,0,0,1},{.5f,0,3}};

@@ -44,6 +44,7 @@ inline XrPosef Place(XrPosef eye)
 }
 
 constexpr float ResizeBorderU = 40.0f/960, ResizeBorderV = 40.0f/768;
+constexpr float MaxPanelWidth = 3.0f; // Metres; shared by edge and two-handed resizing.
 inline bool EdgeHit(float u, float v)
 {
     return u >= 0 && u <= 1 && v >= 0 && v <= 1 &&
@@ -73,7 +74,7 @@ struct PanelResize
         const float t = -origin.z/direction.z;
         if (!std::isfinite(t) || t <= 0) return false;
         const auto delta = Sub(Add(origin,Scale(direction,t)),anchorLocal);
-        const float scale = std::clamp(Dot(delta,initialDelta)/std::max(.0001f,Dot(initialDelta,initialDelta)),.35f/original.width,2.0f/original.width);
+        const float scale = std::clamp(Dot(delta,initialDelta)/std::max(.0001f,Dot(initialDelta,initialDelta)),.35f/original.width,MaxPanelWidth/original.width);
         size = {original.width*scale,original.height*scale};
         pose.position = Sub(anchor,Rotate(plane.orientation,Scale(anchorLocal,scale)));
         return true;
@@ -91,7 +92,7 @@ struct PanelDrag
     void PushPull(float stick, float dt)
     {
         if (std::fabs(stick) <= .2f) return;
-        const float speed = (std::fabs(stick)-.2f)/.8f * (stick > 0 ? 1.0f : -1.0f);
+        const float speed = (std::fabs(stick)-.2f)/.8f * (stick > 0 ? 2.0f : -2.0f);
         distance = std::clamp(distance + speed*std::clamp(dt,0.0f,.05f),.15f,6.0f);
     }
     void Begin(XrPosef panel, XrExtent2Df size, XrPosef ray, float u, float v)
@@ -186,7 +187,7 @@ struct TwoHandDrag
         const auto span = Sub(b,a);
         const float length = std::sqrt(Dot(span,span)), original = std::sqrt(Dot(initialSpan,initialSpan));
         if (length < .03f || original < .03f) return false;
-        const float scale = std::clamp(length/original,.35f/initialSize.width,2.0f/initialSize.width);
+        const float scale = std::clamp(length/original,.35f/initialSize.width,MaxPanelWidth/initialSize.width);
         const auto swing = RotationBetween(initialSpan,span);
         const auto firstTurn = Multiply(firstRay.orientation,Inverse(initialHands[0]));
         auto secondTurn = Multiply(secondRay.orientation,Inverse(initialHands[1]));
