@@ -5,6 +5,8 @@
 
 namespace vrxmenu
 {
+constexpr float MenuGravity = 1.62f; // Moon-like gravity, metres per second squared.
+constexpr float MenuAngularDamping = 1.0f;
 // A held button must not retrigger or become a new press after focus/enable changes.
 struct PressLatch
 {
@@ -49,6 +51,12 @@ struct PanelDrag
     XrQuaternionf handOffset{0,0,0,1};
     XrVector3f Point(XrPosef ray) const
     { return Add(ray.position,Rotate(ray.orientation,{0,0,-distance})); }
+    void PushPull(float stick, float dt)
+    {
+        if (std::fabs(stick) <= .2f) return;
+        const float speed = (std::fabs(stick)-.2f)/.8f * (stick > 0 ? 1.0f : -1.0f);
+        distance = std::clamp(distance + speed*std::clamp(dt,0.0f,.05f),.15f,6.0f);
+    }
     void Begin(XrPosef panel, XrExtent2Df size, XrPosef ray, float u, float v)
     {
         grabU = u; grabV = v;
@@ -74,7 +82,7 @@ struct PanelDrag
             const float a = std::sqrt(Dot(acceleration,acceleration));
             if (a > 40) acceleration = Scale(acceleration,40/a);
             pivotVelocity = velocity;
-            const auto gravity = Sub({0,-9.81f,0},acceleration);
+            const auto gravity = Sub({0,-MenuGravity,0},acceleration);
             const auto target = Multiply(ray.orientation,handOffset);
             // Small fixed substeps keep the swing stable at different headset rates.
             const int steps = int(std::ceil(dt*240));
@@ -88,7 +96,7 @@ struct PanelDrag
                 // Fingers can turn the sheet around the vertical axis, while
                 // gravity controls pitch and roll instead of locking the old tilt.
                 torque.y += 20*twist.y;
-                angularVelocity = Scale(Add(angularVelocity,Scale(torque,step)),std::exp(-2.5f*step));
+                angularVelocity = Scale(Add(angularVelocity,Scale(torque,step)),std::exp(-MenuAngularDamping*step));
                 float speed = std::sqrt(Dot(angularVelocity,angularVelocity));
                 if (speed > 8) { angularVelocity = Scale(angularVelocity,8/speed); speed = 8; }
                 if (speed > 1e-6f)
@@ -103,6 +111,73 @@ struct PanelDrag
         previousPivot = pivot;
         // Exact pivot constraint: the pinched pixel never slides away from the ray.
         panel.position = Sub(pivot,Rotate(panel.orientation,grab));
+    }
+};
+
+inline XrQuaternionf RotationBetween(XrVector3f from, XrVector3f to)
+{
+    from = Normalize(from); to = Normalize(to);
+    const float dot = std::clamp(Dot(from,to),-1.0f,1.0f);
+    if (dot < -.9999f)
+    {
+        auto axis = Normalize(Cross(from,std::fabs(from.y) < .9f ? XrVector3f{0,1,0} : XrVector3f{1,0,0}));
+        return {axis.x,axis.y,axis.z,0};
+    }
+    const auto axis = Cross(from,to);
+    const float n = std::sqrt(2*(1+dot));
+    return {axis.x/n,axis.y/n,axis.z/n,(1+dot)/n};
+}
+
+struct TwoHandDrag
+{
+    XrVector3f initialSpan{}, localMidpoint{}, previousCentre{};
+    XrQuaternionf initialOrientation{0,0,0,1}, previousOrientation{0,0,0,1};
+    XrQuaternionf initialHands[2]{};
+    XrExtent2Df initialSize{};
+    void Begin(XrPosef panel, XrExtent2Df size, const PanelDrag& first, const PanelDrag& second, XrPosef firstRay, XrPosef secondRay)
+    {
+        initialOrientation = previousOrientation = panel.orientation;
+        initialSize = size; previousCentre = panel.position;
+        initialSpan = Rotate(panel.orientation,Sub(second.grab,first.grab));
+        localMidpoint = Scale(Add(first.grab,second.grab),.5f);
+        initialHands[0] = firstRay.orientation; initialHands[1] = secondRay.orientation;
+    }
+    bool Move(XrPosef& panel, XrExtent2Df& size, PanelDrag& first, PanelDrag& second,
+        XrPosef firstRay, XrPosef secondRay, float dt)
+    {
+        const auto a = first.Point(firstRay), b = second.Point(secondRay);
+        const auto span = Sub(b,a);
+        const float length = std::sqrt(Dot(span,span)), original = std::sqrt(Dot(initialSpan,initialSpan));
+        if (length < .03f || original < .03f) return false;
+        const float scale = std::clamp(length/original,.35f/initialSize.width,2.0f/initialSize.width);
+        const auto swing = RotationBetween(initialSpan,span);
+        const auto firstTurn = Multiply(firstRay.orientation,Inverse(initialHands[0]));
+        auto secondTurn = Multiply(secondRay.orientation,Inverse(initialHands[1]));
+        if (firstTurn.x*secondTurn.x+firstTurn.y*secondTurn.y+firstTurn.z*secondTurn.z+firstTurn.w*secondTurn.w < 0)
+            secondTurn = {-secondTurn.x,-secondTurn.y,-secondTurn.z,-secondTurn.w};
+        auto handTurn = XrQuaternionf{firstTurn.x+secondTurn.x,firstTurn.y+secondTurn.y,firstTurn.z+secondTurn.z,firstTurn.w+secondTurn.w};
+        const float hn = std::sqrt(handTurn.x*handTurn.x+handTurn.y*handTurn.y+handTurn.z*handTurn.z+handTurn.w*handTurn.w);
+        handTurn = {handTurn.x/hn,handTurn.y/hn,handTurn.z/hn,handTurn.w/hn};
+        const auto relative = Multiply(handTurn,Inverse(swing));
+        const auto axis = Normalize(span);
+        const float projection = Dot({relative.x,relative.y,relative.z},axis);
+        const float tn = std::sqrt(projection*projection+relative.w*relative.w);
+        const auto twist = tn > 1e-5f ? XrQuaternionf{axis.x*projection/tn,axis.y*projection/tn,axis.z*projection/tn,relative.w/tn} : XrQuaternionf{0,0,0,1};
+        panel.orientation = Multiply(Multiply(twist,swing),initialOrientation);
+        size = {initialSize.width*scale,initialSize.height*scale};
+        panel.position = Sub(Scale(Add(a,b),.5f),Rotate(panel.orientation,Scale(localMidpoint,scale)));
+        if (dt > 0)
+        {
+            auto q = Multiply(panel.orientation,Inverse(previousOrientation));
+            if (q.w < 0) q = {-q.x,-q.y,-q.z,-q.w};
+            const auto omega = Scale({q.x,q.y,q.z},2/dt);
+            const auto centreVelocity = Scale(Sub(panel.position,previousCentre),1/dt);
+            // Preserve the centre's release velocity when both triggers let go.
+            first.angularVelocity = omega;
+            first.pivotVelocity = Sub(centreVelocity,Cross(omega,Rotate(panel.orientation,Scale(first.grab,-1))));
+        }
+        previousCentre = panel.position; previousOrientation = panel.orientation;
+        return true;
     }
 };
 

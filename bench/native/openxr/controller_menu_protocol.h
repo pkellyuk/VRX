@@ -17,7 +17,7 @@ struct Header
 {
     uint32_t magic, version, enabled, visible, frame;
     float pointerX, pointerY;
-    uint32_t write, read, reserved;
+    uint32_t write, read, controlScreen;
     uint64_t heartbeat;
     uint64_t padding[2];
 };

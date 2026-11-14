@@ -325,6 +325,9 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ControllerMenuHint" xml:space="preserve"><value>Menu: show or hide · Point + trigger: select · Thumbstick: scroll</value></data>
   <data name="ControllerMenuDrag" xml:space="preserve"><value>Hold trigger here to move</value></data>
   <data name="ControllerMenuBack" xml:space="preserve"><value>Back / sections</value></data>
+  <data name="ControllerMenuControlScreen" xml:space="preserve"><value>Control screen</value></data>
+  <data name="ControllerMenuStopControlScreen" xml:space="preserve"><value>Stop controlling screen</value></data>
+  <data name="ControllerMenuScreenHint" xml:space="preserve"><value>Right trigger: left-click / drag · Right stick click: right-click · Menu: hide settings</value></data>
   <data name="ControllerMenuSelect" xml:space="preserve"><value>Select an option</value></data>
   <data name="ControllerMenuDelete" xml:space="preserve"><value>Delete digit</value></data>
   <data name="ControllerMenuApply" xml:space="preserve"><value>Apply</value></data>

@@ -437,14 +437,14 @@ struct Capture
     HWND hwnd = nullptr;                // window capture only; frames are cropped to its client area
     HANDLE process = nullptr;           // the captured window's process (SYNCHRONIZE): Closed is not always raised when a game exits
     DWORD pid = 0;                      // that process's id (the game's other windows count as the game being in front)
-    bool showingDesktop = false;        // --desktop-when-away: capturing the game's display instead of its window
+    std::atomic<bool> showingDesktop{false}; // also read by the controller mouse target mapping
     bool gameGone = false;              // --desktop-when-away: the game has closed; its display carries on until Stop VR
     bool dirtyRegions = false;          // Windows reports which parts of each frame changed (Windows 11 24H2+)
     double changedTotal = 0;            // running total of the changed share of the picture (SourceFrames::Frame)
-    HMONITOR monitor = nullptr;         // --desktop-when-away: the display the game was last on
+    std::atomic<HMONITOR> monitor{nullptr}; // the display the game was last on
     int frameW = 0, frameH = 0;         // captured frame (pool) size - the whole window; srcW/srcH may be smaller
     RECT crop{};                        // last client crop applied (for change logging)
-    bool cropping = false;
+    std::atomic<bool> cropping{false};
 };
 
 // The theatre's stands rasterized (RecordStandsRaster): an id buffer and its depth, one slice
@@ -1597,6 +1597,7 @@ static bool SelectCaptureItem(App& app)
             mon = me.list[app.opt.monitorIndex];
         }
         Log("InitCaptureItem: monitor %d%s", app.opt.monitorIndex, app.opt.monitorIndex < 0 ? " (primary)" : "");
+        c.monitor = mon;
         hr = interop->CreateForMonitor(mon, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(c.item));
     }
     if (FAILED(hr) || !c.item) { Log("InitCaptureItem: FAIL create capture item 0x%08X", (unsigned)hr); return false; }
@@ -10381,7 +10382,7 @@ static void RunFrameLoop(App& app)
         if (XR_FAILED(xrBeginFrame_(app.session, nullptr))) { Log("RunFrameLoop: xrBeginFrame failed"); app.stop = true; break; }
         frames++; repFrames++;
 
-        const XrCompositionLayerBaseHeader* layers[VIEWS + 7] = {}; // screen/room, two-sided menu, two beams and pointer
+        const XrCompositionLayerBaseHeader* layers[VIEWS + 8] = {}; // screen/room, two-sided menu, beams, menu and screen pointers
         uint32_t layerCount = 0;
         XrCompositionLayerProjection worldProj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
         XrCompositionLayerProjectionView worldViews[VIEWS];
@@ -11032,10 +11033,35 @@ static void RunFrameLoop(App& app)
             } // valid tracking; otherwise xrEndFrame below submits zero layers
         }
 
+        RECT mouseTarget{};
+        HWND mouseWindow = nullptr;
+        if (app.opt.source == SourceKind::Capture)
+        {
+            if (app.cap.hwnd && !app.cap.showingDesktop)
+            {
+                mouseWindow = app.cap.hwnd;
+                if (IsWindow(mouseWindow) && !IsIconic(mouseWindow))
+                {
+                    if (app.cap.cropping)
+                    {
+                        RECT client{}; POINT origin{};
+                        if (GetClientRect(mouseWindow,&client) && ClientToScreen(mouseWindow,&origin))
+                            mouseTarget = {origin.x,origin.y,origin.x+client.right,origin.y+client.bottom};
+                    }
+                    else DwmGetWindowAttribute(mouseWindow,DWMWA_EXTENDED_FRAME_BOUNDS,&mouseTarget,sizeof(mouseTarget));
+                }
+            }
+            else
+            {
+                MONITORINFO info{sizeof(info)};
+                if (GetMonitorInfoW(app.cap.monitor,&info)) mouseTarget = info.rcMonitor;
+            }
+        }
+        app.controllerMenu.SetScene(room,screen.pose,app.opt.headLocked ? XrExtent2Df{} : screen.size,cylinder,mouseTarget,mouseWindow);
         app.controllerMenu.Update(g_getProc, app.instance, app.session, app.space, app.device.Get(), app.gfxQueue.Get(),
             state == XR_SESSION_STATE_FOCUSED, fs.shouldRender && trackingWasValid, fs.predictedDisplayTime,
             app.frameControllerProfile, app.genericControllerProfile);
-        if (state == XR_SESSION_STATE_FOCUSED && fs.shouldRender && trackingWasValid)
+        if (fs.shouldRender && trackingWasValid)
             app.controllerMenu.Append(layers, layerCount);
         if (app.controllerMenu.Error() != controllerError)
         {

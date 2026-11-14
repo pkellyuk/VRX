@@ -42,12 +42,23 @@ in either desktop mode. Turning it on during playback opens the panel when VRX h
 input focus. The controller's **Menu** button then shows or hides it. White beams from
 either controller point at controls; squeeze the trigger to select or drag. Hold the
 trigger on the title bar to pick up the panel: it hangs from the grabbed point,
-swings under gravity as you move it, and turns when you twist your wrist. Release
-to leave it at its current position and angle. Both sides remain readable. Move
+swings under Moon-like gravity (1.62 m/s²) as you move it, and turns when you twist
+your wrist. Release slowly to leave it in place, or throw it at a room wall to stick
+it there, upright.
+A wall-mounted panel stays visible when Menu hides the beams, and also when
+Controllers is switched off. Grab its title bar again to detach it; recentering
+brings it back in front of you. Only wall attachment has this visibility exception:
+floor/ceiling hits and panels placed in mid-air still hide normally. Open air has
+no walls; a missed throw returns after eight seconds. Both sides remain readable. Move
 the pointing controller's thumbstick up/down to scroll (twice the original speed).
 Sections, option lists, a colour keypad and the Apply to all
 confirmation stay inside the panel. Settings use the same profile, validation and live
 updates as the desktop app.
+
+While holding the title bar with the right trigger, thumbstick up pushes it away
+and down pulls it closer. Grab another title-bar point with the left trigger to
+use both hands: move them together to carry it, turn your wrists to rotate it,
+or spread them apart to enlarge it. Release either trigger to continue with one hand.
 
 The panel opens 1.2 metres ahead, centred where your headset is looking, including its
 up/down angle. It then stays fixed until you drag it. Opening it again or recentering
@@ -62,10 +73,20 @@ These are OpenXR actions: controllers
 must be in **VR controller mode**, and SteamVR's dashboard can temporarily take their
 input focus. After dismissing the dashboard, press Menu again. Controller bindings can
 be remapped in the runtime. This feature controls VRX's settings; it does not forward
-motion-controller input to the captured flat game. Steam Input/gamepad mode or a
-separate gamepad/keyboard/mouse still controls the game.
+motion-controller poses to the captured flat game. **Control screen** in the menu
+optionally makes the right beam a mouse on the displayed picture (flat or curved):
+point to move the cursor, press the right trigger to left-click, and hold it to drag.
+Click the right thumbstick for a right-click. In this mode, the right stick click
+does not toggle the menu on Index/generic controllers; the left stick click still does.
+**Stop controlling screen** turns this off. Menu controls take priority over screen
+clicks. Losing tracking or XR input focus, leaving the screen, hiding the beams, or
+turning Controllers off releases the mouse button; release and press the trigger
+again to resume. This uses the Windows mouse on the captured window or display;
+Windows can block input to an application running with higher privileges.
+Steam Input/gamepad mode or a separate gamepad/keyboard/mouse controls other game input.
 
-Turning Controllers off hides the panel, cancels any drag and deactivates its actions.
+Turning Controllers off hides an unattached panel, leaves a wall-mounted panel visible,
+cancels any drag and deactivates its actions and screen mouse control.
 Until first enabled, no controller actions, menu texture or desktop menu view are created.
 
 Developer checks: `bench\native\openxr\test-controllers.bat` locates Visual Studio's C++

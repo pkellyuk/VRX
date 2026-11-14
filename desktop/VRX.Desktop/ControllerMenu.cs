@@ -30,6 +30,7 @@ public sealed class ControllerMenu : IDisposable
     private readonly ScrollViewer scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden };
     private readonly StackPanel body = new();
     private readonly TextBlock heading = new() { FontSize = 26, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock interactionHint = new() { FontSize = 16, Margin = new(0, 0, 0, 10), TextWrapping = TextWrapping.Wrap };
     private readonly Border titleBar = new() { Height = TitleHeight, Background = new SolidColorBrush(Color.FromRgb(37, 50, 72)),
         CornerRadius = new(8), Padding = new(12, 0, 12, 0), Margin = new(0, 0, 0, 8) };
     private readonly TextBlock status = new() { FontSize = 16, TextWrapping = TextWrapping.Wrap, MaxHeight = 56 };
@@ -41,6 +42,8 @@ public sealed class ControllerMenu : IDisposable
     private readonly byte[] pixels = new byte[Width * Height * 4];
     private FrameworkElement? held;
     private bool enabled, disposed;
+    private bool controlScreen;
+    private Button controlScreenButton = null!;
     private int generation;
     private int pageGeneration;
     private Action? back;
@@ -70,13 +73,20 @@ public sealed class ControllerMenu : IDisposable
             VerticalAlignment = VerticalAlignment.Center, Margin = new(12, 0, 0, 0) };
         DockPanel.SetDock(dragHint, Dock.Right); title.Children.Add(dragHint); title.Children.Add(heading);
         titleBar.Child = title; top.Children.Add(titleBar);
-        top.Children.Add(new TextBlock { Text = Loc.Get("ControllerMenuHint"), FontSize = 16, Margin = new(0, 0, 0, 10) });
+        interactionHint.Text = Loc.Get("ControllerMenuHint"); top.Children.Add(interactionHint);
         var toolbar = new WrapPanel();
         top.Children.Add(toolbar);
         toolbar.Children.Add(ActionButton(Loc.Get("ControllerMenuBack"), () => { if (back != null) back(); else Home(); }));
         var recenterCopy = ActionButton(Loc.Get("RecenterNow"), () => recenter.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
         Bind(recenterCopy, UIElement.IsEnabledProperty, recenter, nameof(recenter.IsEnabled));
         toolbar.Children.Add(recenterCopy);
+        controlScreenButton = ActionButton(Loc.Get("ControllerMenuControlScreen"), () =>
+        {
+            controlScreen = !controlScreen;
+            controlScreenButton.Content = Loc.Get(controlScreen ? "ControllerMenuStopControlScreen" : "ControllerMenuControlScreen");
+            interactionHint.Text = Loc.Get(controlScreen ? "ControllerMenuScreenHint" : "ControllerMenuHint");
+        });
+        toolbar.Children.Add(controlScreenButton);
         root.Children.Add(top);
         DockPanel.SetDock(status, Dock.Bottom);
         Bind(status, TextBlock.TextProperty, desktopStatus, nameof(TextBlock.Text));
@@ -97,9 +107,15 @@ public sealed class ControllerMenu : IDisposable
     public void Enable(bool value)
     {
         enabled = value;
+        if (!value)
+        {
+            controlScreen = false;
+            controlScreenButton.Content = Loc.Get("ControllerMenuControlScreen");
+            interactionHint.Text = Loc.Get("ControllerMenuHint");
+        }
         held = null;
         if (!Lock()) return; // Tick retries; a busy renderer must not block WPF.
-        try { memory.Write(8, value ? 1 : 0); if (!value) memory.Write(12, 0); }
+        try { memory.Write(8, value ? 1 : 0); memory.Write(36, controlScreen ? 1 : 0); }
         finally { mutex.ReleaseMutex(); }
     }
 
@@ -319,6 +335,7 @@ public sealed class ControllerMenu : IDisposable
         try
         {
             memory.Write(8, enabled ? 1 : 0);
+            memory.Write(36, enabled && controlScreen ? 1 : 0);
             memory.Write(40, unchecked((ulong)Environment.TickCount64));
             visible = enabled && memory.ReadInt32(12) != 0;
             uint write = memory.ReadUInt32(28), read = memory.ReadUInt32(32);
@@ -373,6 +390,15 @@ public sealed class ControllerMenu : IDisposable
         if (bar.X != TitleLeft || bar.Y != TitleTop || titleBar.ActualHeight != TitleHeight || titleBar.ActualWidth != TitleRight - TitleLeft)
             throw new Exception("The visible title bar must match the renderer's drag region");
         if (pixels.Take(4).Any(b => b != 255)) throw new Exception("Controller beams must use solid white texels");
+        ClickButton(Loc.Get("ControllerMenuControlScreen")); Tick();
+        if (memory.ReadInt32(36) != 1) throw new Exception("Control screen button did not enable mouse mode through IPC");
+        ClickButton(Loc.Get("ControllerMenuStopControlScreen")); Tick();
+        if (memory.ReadInt32(36) != 0) throw new Exception("Stop controlling screen did not disable mouse mode");
+        ClickButton(Loc.Get("ControllerMenuControlScreen")); Tick();
+        Enable(false); Tick();
+        if (memory.ReadInt32(36) != 0) throw new Exception("Controllers off must disable mouse mode");
+        if (memory.ReadInt32(12) != 1) throw new Exception("Desktop must leave wall-menu visibility to the renderer");
+        Enable(true); Tick();
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using (var file = File.Create(System.IO.Path.Combine(output, "controller-menu-sections.png"))) encoder.Save(file);
 
@@ -461,7 +487,8 @@ public sealed class ControllerMenu : IDisposable
         ClickButton(Loc.Get("ControllerMenuCancel"));
         if (heading.Text != Loc.Get("ControllerMenuTitle")) throw new Exception("Cancelling Apply to all must return to the menu");
         Enable(false); Tick();
-        if (memory.ReadInt32(8) != 0 || memory.ReadInt32(12) != 0) throw new Exception("Disabling controllers must hide the panel and stop input");
+        if (memory.ReadInt32(8) != 0 || memory.ReadInt32(36) != 0 || held != null)
+            throw new Exception("Disabling controllers must stop menu and mouse input; the renderer owns wall visibility");
     }
 }
 
