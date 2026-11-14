@@ -20,6 +20,8 @@ public sealed class AppSettings
     // Auto-attach: count down, then attach to the game in front. Off by default (Easy mode
     // turns it on).
     public bool AutoAttach { get; set; }
+    // Opt-in, app-wide. Old settings files and new installs leave motion input off.
+    public bool MotionControllers { get; set; }
     public int AutoAttachSeconds { get; set; } = DefaultSeconds;
 
     // "Easy" or "Expert". Null in files written before the modes existed; ProfileStore

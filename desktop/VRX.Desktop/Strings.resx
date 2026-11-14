@@ -317,4 +317,17 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ErrorRendererMissing" xml:space="preserve"><value>VRX renderer is missing. Reinstall VRX or build the project.</value></data>
   <data name="ErrorBuildRenderer" xml:space="preserve"><value>Build the desktop renderer first using bench/native/openxr/build.bat --desktop.</value></data>
   <data name="LogStopTimeout" xml:space="preserve"><value>VRX did not stop in time; terminating its renderer. The game is unaffected.</value></data>
+  <data name="Controllers" xml:space="preserve"><value>Controllers</value></data>
+  <data name="ControllersOff" xml:space="preserve"><value>Off</value></data>
+  <data name="ControllersOn" xml:space="preserve"><value>On</value></data>
+  <data name="ControllersTip" xml:space="preserve"><value>Optional motion-controller settings. Press X or A to show or hide the panel below the screen. Point and squeeze the trigger to select; use the thumbstick to scroll. Requires VR controller mode and XR input focus.</value></data>
+  <data name="ControllerMenuTitle" xml:space="preserve"><value>VRX settings</value></data>
+  <data name="ControllerMenuHint" xml:space="preserve"><value>X / A: show or hide · Point + trigger: select · Thumbstick: scroll</value></data>
+  <data name="ControllerMenuBack" xml:space="preserve"><value>Back / sections</value></data>
+  <data name="ControllerMenuSelect" xml:space="preserve"><value>Select an option</value></data>
+  <data name="ControllerMenuDelete" xml:space="preserve"><value>Delete digit</value></data>
+  <data name="ControllerMenuApply" xml:space="preserve"><value>Apply</value></data>
+  <data name="ControllerMenuCancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="ControllerMenuApplyAllQuestion" xml:space="preserve"><value>Replace settings in every saved game profile with the current settings? Each game's path and window are kept.</value></data>
+  <data name="ControllerMenuFailed" xml:space="preserve"><value>Controller settings menu unavailable: {0}</value></data>
 </root>

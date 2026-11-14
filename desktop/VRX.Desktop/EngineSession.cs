@@ -28,6 +28,7 @@ public sealed class EngineSession
     private string control = "";
     private uint recenter, menu;
     public bool Running => process != null;
+    public string ControllerMenuName { get; private set; } = "";
     public event Action<string>? Log;
     public event Action<int>? Exited;
     public static string RepositoryRoot()
@@ -74,12 +75,14 @@ public sealed class EngineSession
         string root = RepositoryRoot();
         string engine = EnginePath();
         string sessionRoot = Path.Combine(dataRoot, "sessions", Guid.NewGuid().ToString("N"));
+        ControllerMenuName = @"Local\VRX.Controllers." + Guid.NewGuid().ToString("N");
         control = Path.Combine(sessionRoot, "control.txt"); recenter = menu = 0;
         Update(profile);
         var start = new ProcessStartInfo(engine) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8 };
         foreach (string arg in Arguments(app, window, profile, control)) start.ArgumentList.Add(arg);
+        start.ArgumentList.Add("--controller-menu=" + ControllerMenuName);
         var child = new Process { StartInfo = start };
         Debug.WriteLine($"[Engine] start {engine} for {(screen ? "display " + window.Monitor : app.FullPath)} pid {app.Pid}: {string.Join(' ', start.ArgumentList)}");
         try

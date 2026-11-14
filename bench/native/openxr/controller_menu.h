@@ -1,0 +1,413 @@
+#pragma once
+#include "controller_menu_protocol.h"
+#include "controller_menu_math.h"
+#include "screen_anchor.h"
+#include <string>
+#include <vector>
+#include <cstring>
+
+// Optional OpenXR actions plus a compositor quad. The desktop owns the settings;
+// this class only transports a bitmap and pointer events. It never emulates a
+// gamepad, changes Windows focus, or requests SteamVR dashboard focus.
+class ControllerMenu
+{
+    template<class T> using Ptr = Microsoft::WRL::ComPtr<T>;
+    std::wstring name;
+    HANDLE mapping = nullptr, mutex = nullptr, fenceEvent = nullptr;
+    vrxmenu::Shared* shared = nullptr;
+    ULONGLONG nextOpen = 0;
+    bool enabled = false, visible = false, attempted = false, ready = false;
+    bool pendingOpen = false, clickArmed = false, pressed = false;
+    vrxmenu::PressLatch toggleLatch[2];
+    bool wasFocused = false;
+    bool needsDeactivate = false;
+    XrTime lastTime = 0;
+    int activeHand = -1;
+    uint32_t frame = 0;
+    uint64_t fenceValue = 0;
+    float u = -1, v = -1;
+    bool pointerHit = false;
+    XrInstance instance = XR_NULL_HANDLE;
+    XrSession session = XR_NULL_HANDLE;
+    XrSpace local = XR_NULL_HANDLE, head = XR_NULL_HANDLE, hands[2]{};
+    XrPath handPaths[2]{};
+    XrActionSet toggleSet = XR_NULL_HANDLE, uiSet = XR_NULL_HANDLE;
+    XrAction toggle = XR_NULL_HANDLE, aim = XR_NULL_HANDLE, select = XR_NULL_HANDLE, scroll = XR_NULL_HANDLE;
+    XrSwapchain swapchain = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageD3D12KHR> images;
+    XrPosef pose{{0,0,0,1},{0,0,0}};
+    XrVector3f anchorEye{};
+    XrQuaternionf anchorYaw{0,0,0,1};
+    XrExtent2Df size{.85f,.68f};
+    XrCompositionLayerQuad layer{XR_TYPE_COMPOSITION_LAYER_QUAD}, cursor{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    Ptr<ID3D12CommandAllocator> allocator;
+    Ptr<ID3D12GraphicsCommandList> commands;
+    Ptr<ID3D12Resource> upload;
+    Ptr<ID3D12Fence> fence;
+    ID3D12CommandQueue* queue = nullptr;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    bool rgba = false, uploaded = false;
+    std::vector<uint8_t> pixels;
+    std::string error;
+
+#define MENU_FN(n) PFN_##n n##_ = nullptr
+    MENU_FN(xrCreateActionSet); MENU_FN(xrDestroyActionSet); MENU_FN(xrCreateAction);
+    MENU_FN(xrStringToPath); MENU_FN(xrSuggestInteractionProfileBindings); MENU_FN(xrAttachSessionActionSets);
+    MENU_FN(xrCreateActionSpace); MENU_FN(xrCreateReferenceSpace); MENU_FN(xrDestroySpace); MENU_FN(xrLocateSpace);
+    MENU_FN(xrSyncActions); MENU_FN(xrGetActionStateBoolean); MENU_FN(xrGetActionStateFloat);
+    MENU_FN(xrGetActionStateVector2f); MENU_FN(xrGetActionStatePose);
+    MENU_FN(xrEnumerateSwapchainFormats); MENU_FN(xrCreateSwapchain); MENU_FN(xrDestroySwapchain);
+    MENU_FN(xrEnumerateSwapchainImages); MENU_FN(xrAcquireSwapchainImage); MENU_FN(xrWaitSwapchainImage); MENU_FN(xrReleaseSwapchainImage);
+#undef MENU_FN
+
+    bool Lock()
+    {
+        if (!mutex) return false;
+        DWORD result = WaitForSingleObject(mutex,0);
+        return result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
+    }
+    bool XrOk(XrResult result, const char* operation)
+    {
+        if (XR_SUCCEEDED(result)) return true;
+        error = std::string(operation) + " failed (" + std::to_string(int(result)) + "); controller menu disabled, playback continues";
+        return false;
+    }
+    XrPath Path(const char* text)
+    {
+        XrPath result = XR_NULL_PATH;
+        xrStringToPath_(instance,text,&result);
+        return result;
+    }
+    bool Action(XrActionSet set, XrAction& action, const char* name, const char* label, XrActionType type)
+    {
+        XrActionCreateInfo ci{XR_TYPE_ACTION_CREATE_INFO};
+        strcpy_s(ci.actionName,name); strcpy_s(ci.localizedActionName,label);
+        ci.actionType = type; ci.countSubactionPaths = 2; ci.subactionPaths = handPaths;
+        return XrOk(xrCreateAction_(set,&ci,&action),"xrCreateAction");
+    }
+    void Bindings(const char* profile, const char* leftToggle, const char* rightToggle, bool rightX = false)
+    {
+        std::vector<XrActionSuggestedBinding> bindings;
+        for (int h = 0; h < 2; ++h)
+        {
+            const std::string base = h ? "/user/hand/right/input/" : "/user/hand/left/input/";
+            bindings.push_back({toggle,Path((base+(h ? rightToggle : leftToggle)).c_str())});
+            bindings.push_back({aim,Path((base+"aim/pose").c_str())});
+            bindings.push_back({select,Path((base+"trigger/value").c_str())});
+            bindings.push_back({scroll,Path((base+"thumbstick").c_str())});
+        }
+        if (rightX) bindings.push_back({toggle,Path("/user/hand/right/input/x/click")});
+        XrInteractionProfileSuggestedBinding info{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        info.interactionProfile = Path(profile); info.countSuggestedBindings = uint32_t(bindings.size()); info.suggestedBindings = bindings.data();
+        // An unsupported optional profile is normal. Other profiles can still bind.
+        xrSuggestInteractionProfileBindings_(instance,&info);
+    }
+    bool Init(PFN_xrGetInstanceProcAddr getProc, ID3D12Device* device, ID3D12CommandQueue* gfxQueue, bool frameProfile, bool genericProfile)
+    {
+#define LOAD_MENU(n) if (XR_FAILED(getProc(instance,#n,reinterpret_cast<PFN_xrVoidFunction*>(&n##_))) || !n##_) { error = "Missing OpenXR function " #n; return false; }
+        LOAD_MENU(xrCreateActionSet); LOAD_MENU(xrDestroyActionSet); LOAD_MENU(xrCreateAction);
+        LOAD_MENU(xrStringToPath); LOAD_MENU(xrSuggestInteractionProfileBindings); LOAD_MENU(xrAttachSessionActionSets);
+        LOAD_MENU(xrCreateActionSpace); LOAD_MENU(xrCreateReferenceSpace); LOAD_MENU(xrDestroySpace); LOAD_MENU(xrLocateSpace);
+        LOAD_MENU(xrSyncActions); LOAD_MENU(xrGetActionStateBoolean); LOAD_MENU(xrGetActionStateFloat);
+        LOAD_MENU(xrGetActionStateVector2f); LOAD_MENU(xrGetActionStatePose);
+        LOAD_MENU(xrEnumerateSwapchainFormats); LOAD_MENU(xrCreateSwapchain); LOAD_MENU(xrDestroySwapchain);
+        LOAD_MENU(xrEnumerateSwapchainImages); LOAD_MENU(xrAcquireSwapchainImage); LOAD_MENU(xrWaitSwapchainImage); LOAD_MENU(xrReleaseSwapchainImage);
+#undef LOAD_MENU
+        handPaths[0] = Path("/user/hand/left"); handPaths[1] = Path("/user/hand/right");
+        XrActionSetCreateInfo si{XR_TYPE_ACTION_SET_CREATE_INFO};
+        strcpy_s(si.actionSetName,"vrx_menu_toggle"); strcpy_s(si.localizedActionSetName,"VRX settings menu");
+        if (!XrOk(xrCreateActionSet_(instance,&si,&toggleSet),"xrCreateActionSet")) return false;
+        strcpy_s(si.actionSetName,"vrx_menu_ui"); strcpy_s(si.localizedActionSetName,"VRX settings pointer");
+        if (!XrOk(xrCreateActionSet_(instance,&si,&uiSet),"xrCreateActionSet")) return false;
+        if (!Action(toggleSet,toggle,"menu","Show or hide settings (X / A)",XR_ACTION_TYPE_BOOLEAN_INPUT) ||
+            !Action(uiSet,aim,"aim","Point at settings",XR_ACTION_TYPE_POSE_INPUT) ||
+            !Action(uiSet,select,"select","Select or drag setting",XR_ACTION_TYPE_FLOAT_INPUT) ||
+            !Action(uiSet,scroll,"scroll","Scroll settings",XR_ACTION_TYPE_VECTOR2F_INPUT)) return false;
+        Bindings("/interaction_profiles/oculus/touch_controller","x/click","a/click");
+        Bindings("/interaction_profiles/valve/index_controller","a/click","a/click");
+        if (frameProfile) Bindings("/interaction_profiles/valve/frame_controller_valve","dpad_down/click","a/click",true);
+        if (genericProfile) Bindings("/interaction_profiles/khr/generic_controller","primary/click","primary/click");
+        XrActionSet sets[]{toggleSet,uiSet};
+        XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+        attach.countActionSets = 2; attach.actionSets = sets;
+        if (!XrOk(xrAttachSessionActionSets_(session,&attach),"xrAttachSessionActionSets")) return false;
+        for (int h = 0; h < 2; ++h)
+        {
+            XrActionSpaceCreateInfo ci{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+            ci.action = aim; ci.subactionPath = handPaths[h]; ci.poseInActionSpace.orientation.w = 1;
+            if (!XrOk(xrCreateActionSpace_(session,&ci,&hands[h]),"xrCreateActionSpace")) return false;
+        }
+        XrReferenceSpaceCreateInfo hi{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+        hi.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW; hi.poseInReferenceSpace.orientation.w = 1;
+        if (!XrOk(xrCreateReferenceSpace_(session,&hi,&head),"xrCreateReferenceSpace")) return false;
+
+        uint32_t count = 0;
+        if (!XrOk(xrEnumerateSwapchainFormats_(session,0,&count,nullptr),"xrEnumerateSwapchainFormats")) return false;
+        std::vector<int64_t> formats(count);
+        if (!XrOk(xrEnumerateSwapchainFormats_(session,count,&count,formats.data()),"xrEnumerateSwapchainFormats")) return false;
+        int64_t format = 0;
+        for (auto candidate : {DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_FORMAT_R8G8B8A8_UNORM})
+            if (std::find(formats.begin(),formats.end(),int64_t(candidate)) != formats.end()) { format = candidate; break; }
+        if (!format) { error = "No RGBA/BGRA controller menu swapchain format"; return false; }
+        rgba = format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        ci.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+        ci.format = format; ci.sampleCount = 1; ci.width = vrxmenu::Width; ci.height = vrxmenu::Height;
+        ci.faceCount = ci.arraySize = ci.mipCount = 1;
+        if (!XrOk(xrCreateSwapchain_(session,&ci,&swapchain),"xrCreateSwapchain")) return false;
+        if (!XrOk(xrEnumerateSwapchainImages_(swapchain,0,&count,nullptr),"xrEnumerateSwapchainImages")) return false;
+        images.assign(count,{XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
+        if (!count || !XrOk(xrEnumerateSwapchainImages_(swapchain,count,&count,reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data())),"xrEnumerateSwapchainImages")) return false;
+
+        queue = gfxQueue;
+        auto desc = images[0].texture->GetDesc();
+        UINT64 bytes = 0;
+        device->GetCopyableFootprints(&desc,0,1,0,&footprint,nullptr,nullptr,&bytes);
+        D3D12_HEAP_PROPERTIES heap{}; heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC buffer{}; buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; buffer.Width = bytes;
+        buffer.Height = 1; buffer.DepthOrArraySize = buffer.MipLevels = 1; buffer.SampleDesc.Count = 1; buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&buffer,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&upload))) ||
+            FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator))) ||
+            FAILED(device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator.Get(),nullptr,IID_PPV_ARGS(&commands))) ||
+            FAILED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)))) { error = "Controller menu GPU allocation failed"; return false; }
+        commands->Close();
+        fenceEvent = CreateEventW(nullptr,FALSE,FALSE,nullptr);
+        if (!fenceEvent) { error = "Controller menu fence event failed"; return false; }
+        pixels.resize(vrxmenu::Width * vrxmenu::Height * 4);
+        return true;
+    }
+
+    void Event(vrxmenu::EventKind kind, float x = -1, float y = -1, float value = 0)
+    { if (shared) vrxmenu::Push(*shared,{kind,x,y,value}); }
+    void ResetToggle() { for (auto& latch : toggleLatch) latch.Reset(); }
+    void Close()
+    {
+        if (visible || pressed) Event(vrxmenu::Cancel);
+        visible = false; pressed = false; activeHand = -1; pointerHit = false; clickArmed = false;
+        if (shared) shared->header.visible = 0;
+    }
+    bool Locate(XrSpace space, XrTime time, XrPosef& result)
+    {
+        XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
+        constexpr auto valid = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+        if (XR_FAILED(xrLocateSpace_(space,local,time,&location)) || (location.locationFlags & valid) != valid) return false;
+        result = location.pose; return true;
+    }
+    bool Upload()
+    {
+        // Keep the previous texture if its upload is still in flight; never stall the headset.
+        if (fence->GetCompletedValue() < fenceValue) return uploaded;
+        uint32_t index = 0;
+        XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        if (!XrOk(xrAcquireSwapchainImage_(swapchain,&ai,&index),"Menu acquire")) return false;
+        XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO}; wi.timeout = XR_INFINITE_DURATION;
+        if (!XrOk(xrWaitSwapchainImage_(swapchain,&wi),"Menu wait")) return false;
+        void* data = nullptr;
+        D3D12_RANGE empty{0,0};
+        bool copied = SUCCEEDED(upload->Map(0,&empty,&data));
+        if (copied)
+        {
+            for (int y = 0; y < vrxmenu::Height; ++y)
+            {
+                auto* dest = static_cast<uint8_t*>(data) + footprint.Offset + y * footprint.Footprint.RowPitch;
+                const auto* src = pixels.data() + y * vrxmenu::Width * 4;
+                std::memcpy(dest,src,vrxmenu::Width*4);
+                if (rgba) for (int x = 0; x < vrxmenu::Width; ++x) std::swap(dest[x*4],dest[x*4+2]);
+            }
+            upload->Unmap(0,nullptr);
+            copied = SUCCEEDED(allocator->Reset()) && SUCCEEDED(commands->Reset(allocator.Get(),nullptr));
+            if (copied)
+            {
+                D3D12_RESOURCE_BARRIER barrier{}; barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                barrier.Transition.pResource = images[index].texture; barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON; barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+                commands->ResourceBarrier(1,&barrier);
+                D3D12_TEXTURE_COPY_LOCATION from{}; from.pResource = upload.Get(); from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; from.PlacedFootprint = footprint;
+                D3D12_TEXTURE_COPY_LOCATION to{}; to.pResource = images[index].texture; to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                commands->CopyTextureRegion(&to,0,0,0,&from,nullptr);
+                std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter); commands->ResourceBarrier(1,&barrier);
+                copied = SUCCEEDED(commands->Close());
+                if (copied)
+                {
+                    ID3D12CommandList* lists[]{commands.Get()}; queue->ExecuteCommandLists(1,lists);
+                    copied = SUCCEEDED(queue->Signal(fence.Get(),++fenceValue));
+                }
+            }
+        }
+        XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        const bool released = XrOk(xrReleaseSwapchainImage_(swapchain,&ri),"Menu release");
+        if (!copied) error = "Controller menu GPU upload failed";
+        uploaded = copied && released;
+        return uploaded;
+    }
+
+public:
+    void Configure(std::wstring mappingName) { name = std::move(mappingName); }
+    const std::string& Error() const { return error; }
+
+    void Update(PFN_xrGetInstanceProcAddr getProc, XrInstance xrInstance, XrSession xrSession, XrSpace space,
+        ID3D12Device* device, ID3D12CommandQueue* gfxQueue, bool focused, bool shouldRender, XrTime time,
+        const ScreenAnchor& screen, bool frameProfile, bool genericProfile)
+    {
+        pointerHit = false;
+        const float dt = lastTime ? std::clamp(float(time-lastTime)*1e-9f,0.0f,.05f) : 1.0f/90;
+        lastTime = time;
+        if (name.empty()) return;
+        if (!shared)
+        {
+            const auto now = GetTickCount64(); if (now < nextOpen) return; nextOpen = now + 500;
+            mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS,FALSE,name.c_str());
+            if (!mapping) return; // Off by default: no mapping, no actions, no GPU resources.
+            shared = static_cast<vrxmenu::Shared*>(MapViewOfFile(mapping,FILE_MAP_ALL_ACCESS,0,0,sizeof(vrxmenu::Shared)));
+            mutex = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE,FALSE,(name+L".Lock").c_str());
+            if (!shared || !mutex) { Shutdown(); return; }
+        }
+        if (!Lock()) return;
+        if (shared->header.magic != vrxmenu::Magic || shared->header.version != vrxmenu::Version)
+        { ReleaseMutex(mutex); return; }
+        const bool wanted = shared->header.enabled && GetTickCount64()-shared->header.heartbeat < 2000;
+        const bool becameEnabled = wanted && !enabled;
+        if (!wanted)
+        {
+            Close();
+            if (enabled && ready) needsDeactivate = true;
+            if (needsDeactivate && ready && focused)
+            {
+                XrActionsSyncInfo clear{XR_TYPE_ACTIONS_SYNC_INFO};
+                if (xrSyncActions_(session,&clear) == XR_SUCCESS) needsDeactivate = false;
+            }
+            enabled = false; pendingOpen = false; ResetToggle();
+            ReleaseMutex(mutex); return;
+        }
+        enabled = true;
+        if (becameEnabled) { pendingOpen = true; ResetToggle(); }
+        if (!attempted)
+        {
+            instance = xrInstance; session = xrSession; local = space;
+            attempted = true;
+            // Drop the IPC lock during allocation and runtime calls.
+            ReleaseMutex(mutex);
+            ready = Init(getProc,device,gfxQueue,frameProfile,genericProfile);
+            if (!Lock()) return;
+        }
+        if (!ready) { Close(); ReleaseMutex(mutex); return; }
+        if (!focused || !shouldRender)
+        {
+            Close(); ResetToggle(); wasFocused = false;
+            ReleaseMutex(mutex); return;
+        }
+        if (!wasFocused) { ResetToggle(); clickArmed = false; }
+        wasFocused = true;
+        const bool uiWasActive = visible;
+        XrActiveActionSet sets[]{{toggleSet,XR_NULL_PATH},{uiSet,XR_NULL_PATH}};
+        XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO}; sync.countActiveActionSets = uiWasActive ? 2 : 1; sync.activeActionSets = sets;
+        XrResult result = xrSyncActions_(session,&sync);
+        if (result != XR_SUCCESS) { Close(); ResetToggle(); ReleaseMutex(mutex); return; }
+        bool togglePressed = false;
+        for (int h = 0; h < 2; ++h)
+        {
+            XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO}; gi.action = toggle; gi.subactionPath = handPaths[h];
+            XrActionStateBoolean value{XR_TYPE_ACTION_STATE_BOOLEAN};
+            if (XR_SUCCEEDED(xrGetActionStateBoolean_(session,&gi,&value)) && value.isActive)
+                togglePressed |= toggleLatch[h].Press(value.currentState != 0);
+            else toggleLatch[h].Reset();
+        }
+        if (visible && togglePressed) { pendingOpen = false; Close(); ReleaseMutex(mutex); return; }
+        if (!visible && (pendingOpen || togglePressed))
+        {
+            XrPosef eye;
+            if (Locate(head,time,eye))
+            {
+                anchorEye = eye.position; anchorYaw = YawOnly(eye.orientation);
+                visible = true; shared->header.visible = 1; pendingOpen = false; clickArmed = false;
+                Event(vrxmenu::Cancel);
+            }
+        }
+        if (!visible) { ReleaseMutex(mutex); return; }
+
+        // Screen sliders may move/enlarge the game while the menu is open. Clear
+        // its lower edge from the saved anchor, without following today's head tilt.
+        float bottom = 0;
+        for (float x : {-.5f,0.0f,.5f}) for (float y : {-.5f,0.0f,.5f})
+        {
+            auto corner = vrxmenu::Add(screen.pose.position,vrxmenu::Rotate(screen.pose.orientation,{x*screen.size.width,y*screen.size.height,0}));
+            auto relative = vrxmenu::Rotate(vrxmenu::Inverse(anchorYaw),vrxmenu::Sub(corner,anchorEye));
+            if (relative.z < -.1f) bottom = std::max(bottom,std::atan2(-relative.y,-relative.z));
+        }
+        pose = vrxmenu::Place(anchorEye,anchorYaw,bottom,size);
+
+        bool hit[2]{}, down[2]{}, tracked[2]{}, selectActive = false; float us[2]{}, vs[2]{}, sticks[2]{};
+        for (int h = 0; h < 2; ++h)
+        {
+            XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO}; gi.subactionPath = handPaths[h]; gi.action = select;
+            XrActionStateFloat value{XR_TYPE_ACTION_STATE_FLOAT};
+            if (XR_SUCCEEDED(xrGetActionStateFloat_(session,&gi,&value)))
+            { down[h] = value.isActive && value.currentState > .55f; selectActive |= value.isActive != 0; }
+            gi.action = scroll; XrActionStateVector2f stick{XR_TYPE_ACTION_STATE_VECTOR2F};
+            if (XR_SUCCEEDED(xrGetActionStateVector2f_(session,&gi,&stick)) && stick.isActive) sticks[h] = stick.currentState.y;
+            gi.action = aim; XrActionStatePose state{XR_TYPE_ACTION_STATE_POSE};
+            XrPosef ray;
+            tracked[h] = XR_SUCCEEDED(xrGetActionStatePose_(session,&gi,&state)) && state.isActive && Locate(hands[h],time,ray);
+            if (tracked[h]) hit[h] = vrxmenu::Hit(pose,size,ray,us[h],vs[h],!(pressed && activeHand == h));
+        }
+        if (uiWasActive && selectActive && !down[0] && !down[1]) clickArmed = true;
+        const int hand = pressed ? activeHand : (hit[1] && down[1] ? 1 : (hit[0] && down[0] ? 0 : (hit[1] ? 1 : (hit[0] ? 0 : -1))));
+        if (pressed && (hand < 0 || !tracked[hand] || !hit[hand])) { Event(vrxmenu::Cancel); pressed = false; activeHand = -1; clickArmed = false; }
+        else if (hand >= 0)
+        {
+            u = us[hand]; v = vs[hand]; pointerHit = u>=0 && u<=1 && v>=0 && v<=1;
+            Event(vrxmenu::Move,u,v);
+            if (down[hand] && !pressed && clickArmed)
+            { pressed = true; activeHand = hand; clickArmed = false; Event(vrxmenu::Down,u,v); }
+            if (!down[hand] && pressed)
+            { Event(vrxmenu::Up,u,v); pressed = false; activeHand = -1; }
+            if (!pressed && std::fabs(sticks[hand]) > .2f) Event(vrxmenu::Scroll,u,v,sticks[hand]*800*dt);
+        }
+        if (!pressed && (down[0] || down[1])) clickArmed = false;
+        shared->header.pointerX = pointerHit ? u : -1; shared->header.pointerY = pointerHit ? v : -1;
+        const uint32_t nextFrame = shared->header.frame;
+        const bool newFrame = nextFrame != 0 && nextFrame != frame;
+        if (newFrame) std::memcpy(pixels.data(),shared->pixels,pixels.size());
+        ReleaseMutex(mutex);
+        if (newFrame && fence->GetCompletedValue() >= fenceValue && Upload()) frame = nextFrame;
+        layer.space = local; layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH; layer.pose = pose; layer.size = size;
+        layer.subImage = {swapchain,{{0,0},{vrxmenu::Width,vrxmenu::Height}},0};
+        cursor = layer;
+        cursor.pose.position = vrxmenu::Add(pose.position,vrxmenu::Rotate(pose.orientation,{(u-.5f)*size.width,(.5f-v)*size.height,.003f}));
+        cursor.size = {.012f,.012f}; cursor.subImage.imageRect = {{0,0},{8,8}};
+    }
+
+    void Append(const XrCompositionLayerBaseHeader** layers, uint32_t& count) const
+    {
+        if (!enabled || !visible || !uploaded) return;
+        layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
+        if (pointerHit) layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&cursor);
+    }
+
+    void Recenter() { if (Lock()) { if (visible) { Close(); pendingOpen = true; } ReleaseMutex(mutex); } }
+    bool IsVisible() const { return enabled && visible; }
+
+    void Shutdown()
+    {
+        if (fence && fence->GetCompletedValue() < fenceValue && fenceEvent &&
+            SUCCEEDED(fence->SetEventOnCompletion(fenceValue,fenceEvent))) WaitForSingleObject(fenceEvent,2000);
+        if (Lock()) { Close(); ReleaseMutex(mutex); }
+        if (head && xrDestroySpace_) xrDestroySpace_(head);
+        for (auto hand : hands) if (hand && xrDestroySpace_) xrDestroySpace_(hand);
+        if (swapchain && xrDestroySwapchain_) xrDestroySwapchain_(swapchain);
+        if (toggleSet && xrDestroyActionSet_) xrDestroyActionSet_(toggleSet);
+        if (uiSet && xrDestroyActionSet_) xrDestroyActionSet_(uiSet);
+        head = XR_NULL_HANDLE; hands[0] = hands[1] = XR_NULL_HANDLE;
+        swapchain = XR_NULL_HANDLE; toggleSet = uiSet = XR_NULL_HANDLE;
+        upload.Reset(); commands.Reset(); allocator.Reset(); fence.Reset();
+        if (fenceEvent) CloseHandle(fenceEvent);
+        fenceEvent = nullptr;
+        if (shared) UnmapViewOfFile(shared);
+        shared = nullptr;
+        if (mapping) CloseHandle(mapping);
+        mapping = nullptr;
+        if (mutex) CloseHandle(mutex);
+        mutex = nullptr;
+    }
+    ~ControllerMenu() { Shutdown(); }
+};

@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private readonly AutoAttachMachine autoMachine = new();
     private readonly System.Diagnostics.Stopwatch autoClock = System.Diagnostics.Stopwatch.StartNew();
     private AppSettings appSettings = new();
+    private ControllerMenu? controllerMenu;
     private AutoAttachOverlay? autoOverlay;
     private ForegroundSnapshot? autoTarget;
     private nint sessionWindow;                    // the window of the running session, for "spent"
@@ -78,6 +79,8 @@ public partial class MainWindow : Window
             LogBox.AppendText(line + Environment.NewLine);
             if (LogBox.Text.Length > 24000) LogBox.Text = LogBox.Text[^16000..];
             LogBox.ScrollToEnd();
+            int controllerErrorAt = line.IndexOf("Controllers: ", StringComparison.Ordinal);
+            if (controllerErrorAt >= 0) Status.Text = Loc.Format("ControllerMenuFailed", line[(controllerErrorAt + 13)..]);
             if (line.Contains("FAIL") || line.Contains("expected one game window") || line.Contains("main: failure"))
                 lastEngineError = line;
             if (EngineSession.ParseSource(line) is { } source && source != shown)
@@ -97,6 +100,7 @@ public partial class MainWindow : Window
         });
         engine.Exited += code => Dispatcher.InvokeAsync(() =>
         {
+            controllerMenu?.Dispose(); controllerMenu = null;
             // No loops: the session's window is not auto-attached again until it has left
             // the foreground and come back.
             autoMachine.MarkSpent(sessionWindow);
@@ -115,7 +119,7 @@ public partial class MainWindow : Window
         appSettings = store.LoadAppSettings();
         PutAppSettings();
         autoTimer.Tick += (_, _) => AutoAttachTick();
-        Closed += (_, _) => { autoTimer.Stop(); autoOverlay?.Close(); autoOverlay = null; };
+        Closed += (_, _) => { controllerMenu?.Dispose(); autoTimer.Stop(); autoOverlay?.Close(); autoOverlay = null; };
         // A remembered place on a monitor that has gone (or changed) is brought back on screen.
         ContentRendered += (_, _) => KeepOnScreenSoon();
         ready = true;
@@ -719,6 +723,7 @@ public partial class MainWindow : Window
             playing = false;
             shown = SourceShown.Game;
             engine.Start(app, window, profile!, store.Root);
+            UpdateControllerMenu();
             sessionWindow = window.Handle; started = true;
             Status.Text = Loc.Format("StatusStarting", app.Name);
         }
@@ -739,6 +744,8 @@ public partial class MainWindow : Window
     {
         System.Diagnostics.Debug.WriteLine($"[AppSettings] PutAppSettings enter: mode {appSettings.Mode}, auto {appSettings.AutoAttach}, {appSettings.AutoAttachSeconds} s");
         autoSettingsLoading = true;
+        ControllersOn.IsChecked = appSettings.MotionControllers;
+        ControllersOff.IsChecked = !appSettings.MotionControllers;
         AutoAttachCheck.IsChecked = appSettings.AutoAttach;
         AutoAttachSlider.Value = AppSettings.ClampSeconds(appSettings.AutoAttachSeconds);
         AutoAttachValue.Text = Loc.Format("ValueSeconds", (int)AutoAttachSlider.Value);
@@ -771,6 +778,31 @@ public partial class MainWindow : Window
         {
             System.Diagnostics.Debug.WriteLine("[AppSettings] save failed: " + ex.Message);
             Status.Text = Loc.Format("StatusAppSettingsFailed", ex.Message);
+        }
+    }
+
+    private void ControllersChecked(object sender, RoutedEventArgs e)
+    {
+        if (!ready || autoSettingsLoading) return;
+        appSettings.MotionControllers = ControllersOn.IsChecked == true;
+        SaveAppSettings();
+        UpdateControllerMenu();
+    }
+
+    private void UpdateControllerMenu()
+    {
+        if (!engine.Running) return;
+        try
+        {
+            if (appSettings.MotionControllers && controllerMenu == null)
+                controllerMenu = new ControllerMenu(engine.ControllerMenuName, SectionList().Select(s => s.Section).ToArray(),
+                    Status, RecenterButton, ApplyAllConfirmed);
+            controllerMenu?.Enable(appSettings.MotionControllers);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            controllerMenu?.Dispose(); controllerMenu = null;
+            Status.Text = Loc.Format("ControllerMenuFailed", ex.Message);
         }
     }
 
@@ -938,10 +970,10 @@ public partial class MainWindow : Window
             button.Measure(unlimited);
             buttons += button.DesiredSize.Width;
         }
-        ModeSwitch.Measure(unlimited);
+        HeaderSwitches.Measure(unlimited);
         double card = GameCard.BorderThickness.Left + GameCard.BorderThickness.Right + GameCard.Padding.Left + GameCard.Padding.Right +
             CardIconWidth + EasyNameMinWidth + CardNameGap + Math.Min(buttons, EasyButtonsMaxWidth);
-        double header = ModeSwitch.DesiredSize.Width + HeaderGap + EasySubtitleMinWidth;
+        double header = HeaderSwitches.DesiredSize.Width + HeaderGap + EasySubtitleMinWidth;
         double content = Math.Max(EasyMinContentWidth, Math.Max(card, header));
         double width = Math.Ceiling(content + EasyMargin.Left + EasyMargin.Right + WindowFrame.BorderThickness.Left + WindowFrame.BorderThickness.Right);
         double screen = SystemParameters.WorkArea.Width;
@@ -1324,6 +1356,13 @@ public partial class MainWindow : Window
         int count = store.SavedProfileFiles().Count;
         var answer = MessageBox.Show(this, ApplyAllQuestion(count), Loc.Get("ApplyAllTitle"), MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
         if (answer != MessageBoxResult.OK) { Status.Text = Loc.Get("StatusApplyAllCancelled"); return; }
+        ApplyAllConfirmed();
+    }
+
+    // Used after either the desktop dialog or the in-headset confirmation.
+    private void ApplyAllConfirmed()
+    {
+        if (profile == null || !SaveAndApply()) return;
         try
         {
             int applied = store.ApplyToAll(profile, out int skipped, out int failed);
@@ -1823,6 +1862,8 @@ public partial class MainWindow : Window
         if (ApplyAllButton == null) throw new Exception("The Apply to all button is missing");
 
         SmokeTestAutoAttach(output, sample, one);
+        using (var menu = new ControllerMenu(@"Local\VRX.Controllers.Test." + Guid.NewGuid().ToString("N"),
+            SectionList().Select(s => s.Section).ToArray(), Status, RecenterButton, ApplyAllConfirmed)) menu.SmokeTest(output);
         SmokeTestModes(output, sample, one);
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
@@ -2070,7 +2111,7 @@ public partial class MainWindow : Window
             throw new Exception("Easy must size to its content and not be resizable or maximizable");
         if (ActualHeight > 0.6 * ExpertDefaultHeight || ActualWidth >= ExpertMinWidth)
             throw new Exception($"Easy must be compact: {ActualWidth:F0} x {ActualHeight:F0}");
-        CheckNothingClipped("Easy", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
+        CheckNothingClipped("Easy", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, HeaderSwitches, ControllersOn, ControllersOff, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
         double easyWidth = ActualWidth, easyHeight = ActualHeight;
         SetMode(true);
         await Settle();
@@ -2352,7 +2393,7 @@ public partial class MainWindow : Window
             Status.Text = Loc.Get("StatusReady");
             await Settle();
             SaveWindowShot(Path.Combine(output, "ui-easy-skin-pseudo.png"));
-            CheckNothingClipped("Easy, pseudo-locale", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
+            CheckNothingClipped("Easy, pseudo-locale", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, HeaderSwitches, ControllersOn, ControllersOff, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
             if (ActualWidth < plainWidth || ActualHeight < plainHeight)
                 throw new Exception($"Easy must grow for longer text: {plainWidth:F0} x {plainHeight:F0} -> {ActualWidth:F0} x {ActualHeight:F0}");
         }
@@ -2488,12 +2529,12 @@ public partial class MainWindow : Window
         var appStore = new ProfileStore(Path.Combine(output, "app-settings"));
         if (Directory.Exists(appStore.Root)) Directory.Delete(appStore.Root, true);
         var defaults = appStore.LoadAppSettings();
-        if (defaults.AutoAttach || defaults.AutoAttachSeconds != 5) throw new Exception("Auto-attach must default off, with a 5 s countdown");
+        if (defaults.AutoAttach || defaults.AutoAttachSeconds != 5 || defaults.MotionControllers) throw new Exception("Auto-attach and motion controllers must default off, with a 5 s countdown");
         if (Path.GetFileName(appStore.AppSettingsFile) != "app-settings.json" || Path.GetDirectoryName(appStore.AppSettingsFile) != appStore.Root)
             throw new Exception("App settings must live in app-settings.json in the store root");
-        appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 12 });
+        appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 12, MotionControllers = true });
         var back = appStore.LoadAppSettings();
-        if (!back.AutoAttach || back.AutoAttachSeconds != 12) throw new Exception("App settings did not round-trip");
+        if (!back.AutoAttach || back.AutoAttachSeconds != 12 || !back.MotionControllers) throw new Exception("App settings did not round-trip");
         appStore.SaveAppSettings(new AppSettings { AutoAttach = true, AutoAttachSeconds = 99 });
         if (appStore.LoadAppSettings().AutoAttachSeconds != 30) throw new Exception("Saving must clamp the countdown to 30 s");
         File.WriteAllText(appStore.AppSettingsFile, "{\"AutoAttach\":true,\"AutoAttachSeconds\":1}");

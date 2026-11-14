@@ -284,6 +284,7 @@ public sealed class ProfileStore(string root)
         var copy = new AppSettings
         {
             AutoAttach = settings.AutoAttach,
+            MotionControllers = settings.MotionControllers,
             AutoAttachSeconds = AppSettings.ClampSeconds(settings.AutoAttachSeconds),
             Mode = AppSettings.ValidMode(settings.Mode) ? settings.Mode : null,
             Sections = settings.Sections == null ? null : new Dictionary<string, bool>(settings.Sections, StringComparer.Ordinal),

@@ -34,6 +34,46 @@ wants automatic updates or to support the project.
 
 ## Quick hints
 
+### Optional motion-controller settings
+
+The smaller **Controllers · Off / On** switch to the left of **Easy / Expert** enables
+an in-headset settings panel. It is **off by default**, remembered app-wide, and works
+in either desktop mode. Turning it on during playback opens the panel when VRX has XR
+input focus. **X or A** then shows or hides it. Point either controller at a control
+and squeeze its trigger to select or drag; move the pointing controller's thumbstick
+up/down to scroll. Sections, option lists, a colour keypad and the Apply to all
+confirmation stay inside the panel. Settings use the same profile, validation and live
+updates as the desktop app.
+
+The panel is a stationary, tilted console below the game screen, positioned from your
+headset's heading when opened. Look down to read it; looking down does not move it away.
+Opening it again or recentering places it for your current position. With unusually
+large/low screens, reduce the screen size or raise it if there is not enough space below.
+If the screen follows your head, it stays still while the panel is open so that you can
+look down without bringing the game over the settings; following resumes when closed.
+
+Touch-style controllers use left X / right A; Index uses A on either hand. Steam Frame
+uses right X / A (left D-pad down is also bound). These are OpenXR actions: controllers
+must be in **VR controller mode**, and SteamVR's dashboard can temporarily take their
+input focus. After dismissing the dashboard, press X/A again. Controller bindings can
+be remapped in the runtime. This feature controls VRX's settings; it does not forward
+motion-controller input to the captured flat game. Steam Input/gamepad mode or a
+separate gamepad/keyboard/mouse still controls the game.
+
+Turning Controllers off hides the panel, cancels any drag and deactivates its actions.
+Until first enabled, no controller actions, menu texture or desktop menu view are created.
+
+Developer checks: `bench\native\openxr\test-controllers.bat` in a Visual Studio developer
+prompt tests placement/ray picking and compiles the full controller adapter without a
+headset. `VRX.Desktop.exe --smoke-test` also checks settings persistence, bitmap IPC and
+two-way slider/checkbox updates and writes controller-menu screenshots to `desktop/out`.
+Hardware checks still require a headset: X/A press/hold, either-hand pointing, dragging
+beyond a slider, thumbstick scrolling, focus/tracking loss, reopening/recentering and
+turning the feature on/off during playback. Check both Easy and Expert, flat and curved
+screens, and Steam Frame VR/gamepad mode switching.
+
+### Everyday use
+
 From using VRX day to day:
 
 - **Run the game at 1080p.** It is much more stable, and in the headset you will

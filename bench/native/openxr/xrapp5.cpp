@@ -154,6 +154,7 @@ using Microsoft::WRL::ComPtr;
 #include "capture_scaler.h"
 #include "xr_frame_guard.h"
 #include "screen_anchor.h"
+#include "controller_menu.h"
 #include "capture_window.h"
 #include "desktop_control.h"
 #include "foreground_refinement.h"
@@ -296,6 +297,7 @@ struct Options
     bool freezePose = false;
     bool headLocked = false;           // default: fixed screen; '=' recenters
     bool keepDashboard = false;
+    std::wstring controllerMenuName;
     bool depthLie = false;
     double abSeconds = 0.0;
     int testDepthFailures = 0;          // diagnostic: inject initial inference failures
@@ -458,6 +460,8 @@ struct StandsTarget
 struct App
 {
     Options opt;
+    ControllerMenu controllerMenu;
+    bool frameControllerProfile = false, genericControllerProfile = false;
 
     // OpenXR
     XrInstance instance = XR_NULL_HANDLE;
@@ -1095,6 +1099,7 @@ static bool ParseArgs(int argc, char** argv, Options* opt)
         if (!strcmp(a, "--freeze-pose")) { opt->freezePose = true; continue; }
         if (!strcmp(a, "--head-locked")) { opt->headLocked = true; continue; }
         if (!strcmp(a, "--keep-dashboard")) { opt->keepDashboard = true; continue; }
+        if (!strncmp(a, "--controller-menu=", 18)) { opt->controllerMenuName = std::wstring(winrt::to_hstring(a + 18)); continue; }
         if (!strcmp(a, "--depth-lie")) { opt->depthLie = true; continue; }
         if (!strncmp(a, "--ab=", 5)) { opt->abSeconds = atof(a + 5); continue; }
         if (a[0] == '-') { Log("ParseArgs: unknown option %s", a); return false; }
@@ -1168,12 +1173,30 @@ static bool InitXrInstance(App& app)
     xrCreateInstance_ = (PFN_xrCreateInstance)GetProcAddress(loader, "xrCreateInstance");
     if (!g_getProc || !xrCreateInstance_) { Log("InitXrInstance: FAIL loader exports missing"); return false; }
 
-    const char* wantExt[] = { "XR_KHR_D3D12_enable", "XR_KHR_composition_layer_depth" };
+    std::vector<const char*> wantExt{ "XR_KHR_D3D12_enable", "XR_KHR_composition_layer_depth" };
+    // Optional profiles must be requested when the instance is made, even if the
+    // user switches controllers on later. Actions and UI resources stay lazy.
+    if (!app.opt.controllerMenuName.empty() && xrEnumExt_)
+    {
+        uint32_t count = 0;
+        if (XR_SUCCEEDED(xrEnumExt_(nullptr, 0, &count, nullptr)))
+        {
+            std::vector<XrExtensionProperties> extensions(count, {XR_TYPE_EXTENSION_PROPERTIES});
+            if (XR_SUCCEEDED(xrEnumExt_(nullptr, count, &count, extensions.data())))
+                for (const auto& ext : extensions)
+                {
+                    if (!strcmp(ext.extensionName, "XR_VALVE_frame_controller_interaction"))
+                    { wantExt.push_back("XR_VALVE_frame_controller_interaction"); app.frameControllerProfile = true; }
+                    if (!strcmp(ext.extensionName, "XR_KHR_generic_controller"))
+                    { wantExt.push_back("XR_KHR_generic_controller"); app.genericControllerProfile = true; }
+                }
+        }
+    }
     XrInstanceCreateInfo ci{ XR_TYPE_INSTANCE_CREATE_INFO };
     ci.applicationInfo.apiVersion = XR_API_VERSION_1_0;
     strcpy_s(ci.applicationInfo.applicationName, "VRX xrapp5");
-    ci.enabledExtensionCount = 2;
-    ci.enabledExtensionNames = wantExt;
+    ci.enabledExtensionCount = uint32_t(wantExt.size());
+    ci.enabledExtensionNames = wantExt.data();
 
     XrResult r = xrCreateInstance_(&ci, &app.instance);
     if (XR_FAILED(r)) { Log("InitXrInstance: FAIL xrCreateInstance %s (is SteamVR running?)", XRStr(r)); return false; }
@@ -10082,6 +10105,8 @@ static bool BenchRoom(App& app)
 // -------------------------------------------------------------- frame loop
 static void RunFrameLoop(App& app)
 {
+    app.controllerMenu.Configure(app.opt.controllerMenuName);
+    std::string controllerError;
     Log("RunFrameLoop: enter (%.0fs)%s%s", app.opt.runSeconds, app.opt.doWarp ? "" : " [warp disabled]",
         app.opt.paired ? " [paired colour+depth]" : " [latest colour + latest completed depth]");
 
@@ -10165,7 +10190,7 @@ static void RunFrameLoop(App& app)
                     next.horizontal != desktop.horizontal || next.strength != desktop.strength || next.follow != desktop.follow || next.stereo != desktop.stereo)
                     Log("Desktop settings applied: width %.2f distance %.2f height %.2f horizontal %.2f strength %.2f follow %d stereo %d",
                         next.width, next.distance, next.height, next.horizontal, next.strength, next.follow, next.stereo);
-                if (next.recenter != lastRecenter) screen.pending = true;
+                if (next.recenter != lastRecenter) { screen.pending = true; app.controllerMenu.Recenter(); }
                 if (next.menu != lastMenu) dashboardCloseRequested = true;
                 if (recenterKey != next.recenterKey) screen.keyWasDown = (GetAsyncKeyState(next.recenterKey) & 0x8000) != 0;
                 if (menuKey != next.menuKey) dashboardKeyWasDown = (GetAsyncKeyState(next.menuKey) & 0x8000) != 0;
@@ -10356,7 +10381,7 @@ static void RunFrameLoop(App& app)
         if (XR_FAILED(xrBeginFrame_(app.session, nullptr))) { Log("RunFrameLoop: xrBeginFrame failed"); app.stop = true; break; }
         frames++; repFrames++;
 
-        const XrCompositionLayerBaseHeader* layers[VIEWS + 2] = {};
+        const XrCompositionLayerBaseHeader* layers[VIEWS + 4] = {};
         uint32_t layerCount = 0;
         XrCompositionLayerProjection worldProj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
         XrCompositionLayerProjectionView worldViews[VIEWS];
@@ -10417,8 +10442,11 @@ static void RunFrameLoop(App& app)
             else sharedRot = q0;
 
             // The room needs the screen fixed in the room, and keeps it level.
-            const bool followsHead = !app.opt.controlPath.empty() && desktop.follow;
-            const bool roomWanted = app.opt.room > 0 && !app.opt.headLocked && !followsHead;
+            const bool followRequested = !app.opt.controlPath.empty() && desktop.follow;
+            // Let the player look down at a stationary console without the game
+            // following their gaze over it. Normal head-follow resumes on closing.
+            const bool followsHead = followRequested && !app.controllerMenu.IsVisible();
+            const bool roomWanted = app.opt.room > 0 && !app.opt.headLocked && !followRequested;
             screen.level = roomWanted;
             // The screen's distance: the desktop's (or the default), or in the theatre your
             // seat's in the hall (room.h RoomTheatreSeat; the screen's width does not move it).
@@ -10440,6 +10468,7 @@ static void RunFrameLoop(App& app)
             {
                 if (followsHead) screen.pending = true;
                 const bool placed = screen.Place(views[0].pose, views[1].pose, sharedRot, tanHalfX, float(target.ch) / target.cw);
+                if (placed && !followsHead) app.controllerMenu.Recenter();
                 if (placed && !desktop.follow)
                     Log("RunFrameLoop: screen recentered using the current headset direction");
                 if (placed) stageLocated = false;
@@ -11003,6 +11032,16 @@ static void RunFrameLoop(App& app)
             } // valid tracking; otherwise xrEndFrame below submits zero layers
         }
 
+        app.controllerMenu.Update(g_getProc, app.instance, app.session, app.space, app.device.Get(), app.gfxQueue.Get(),
+            state == XR_SESSION_STATE_FOCUSED, fs.shouldRender && trackingWasValid, fs.predictedDisplayTime, screen,
+            app.frameControllerProfile, app.genericControllerProfile);
+        if (state == XR_SESSION_STATE_FOCUSED && fs.shouldRender && trackingWasValid)
+            app.controllerMenu.Append(layers, layerCount);
+        if (app.controllerMenu.Error() != controllerError)
+        {
+            controllerError = app.controllerMenu.Error();
+            if (!controllerError.empty()) Log("Controllers: %s", controllerError.c_str());
+        }
         XrFrameEndInfo fei{ XR_TYPE_FRAME_END_INFO };
         fei.displayTime = fs.predictedDisplayTime;
         fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -11407,6 +11446,7 @@ static void Shutdown(App& app)
     DumpDebugMessages(app);
 
     if (ort) ReleaseModel(app);
+    app.controllerMenu.Shutdown();
     if (app.colorSc) xrDestroySwapchain_(app.colorSc);
     if (app.eyeSc) xrDestroySwapchain_(app.eyeSc);
     if (app.worldSc) xrDestroySwapchain_(app.worldSc);
