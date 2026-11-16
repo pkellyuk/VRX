@@ -1,6 +1,6 @@
-VRX 1.8.3 - Windows x64
+VRX 1.8.4 - Windows x64
 
-Install with VRX-Setup-1.8.3.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.8.4.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -97,6 +97,28 @@ a keyboard you can tap or swipe across, and snapshots of the screen, saved in th
 VRX images folder. "Arrange windows" lines them up. VR controller input needs the
 headset's VR controller mode and VRX to have input focus.
 
+"Room life & music" (Expert: Room section, and the controller panel's Room pages;
+everything off by default, per game, applies live; needs the room and the fixed
+screen) brings the room to life. "Listen to playback audio" hears Windows' default
+playback output, including other apps playing on it, so the room can react to music; it
+never opens a microphone, records or sends anything. Choose any of 12 wall and
+ceiling music animations (layered with checkboxes, with a music-reactivity slider),
+up to 24 animated creatures in eight kinds (sharks, fish, robots, jellyfish, mantas,
+fireflies, turtles and drones), colourful 3D dust, moving disco spotlights and
+traced shadows. Creatures react to your controller beams. "Vrex" adds a jetpack
+robot companion that follows your beam; point near him for a few chat choices.
+
+The floating keyboard has voice input, using Windows speech recognition on this PC
+(it needs a Windows speech recognition language installed, ideally your display
+language) and the microphone you choose. The floating panels have nine themes and a
+background transparency setting.
+
+"Help with this game" (floating browser, optional) sends one picture of the current
+VRX screen and a question to the service you choose - Google AI Mode (default), Google
+Lens, Microsoft Copilot or Google Gemini - and shows the answer in the browser.
+Nothing is shared until you allow it for that service, and you can stop sharing at
+any time. That service's own sign-in, consent, limits and privacy terms apply.
+
 Options still being tried out are in the Experimental section (Expert mode): extra
 foreground depth passes, keeping thin parts upright, sharpening depth edges with the
 picture, filling behind objects from a background layer, showing the depth map
@@ -178,7 +200,7 @@ never the older ones Windows keeps in System32.
 
 VRX itself is free software under the GNU General Public License v3.0: see
 LICENSE. Source: https://github.com/pkellyuk/VRX
-Source for this build: https://github.com/pkellyuk/VRX/tree/v1.8.3 (the exact
+Source for this build: https://github.com/pkellyuk/VRX/tree/v1.8.4 (the exact
 commit is in BUILD.txt).
 Third-party components keep their own licenses; notices and license texts are in
 THIRD-PARTY-NOTICES.txt and the licenses folder.
