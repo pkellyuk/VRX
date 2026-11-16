@@ -14,17 +14,24 @@ namespace VRX.Desktop;
 internal static class FloatingBrowserRuntime
 {
     private static bool started;
+    internal static BrowserPermissionStore Permissions { get; private set; } = null!;
     internal static void Ensure()
     {
         if (started) return;
         string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX", "browser");
+        if (Environment.GetCommandLineArgs().Contains("--smoke-test"))
+            root = Path.Combine(Path.GetTempPath(), "VRX-SmokeBrowser", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Cef.EnableWaitForBrowsersToClose();
         var settings = new CefSettings { WindowlessRenderingEnabled = true, MultiThreadedMessageLoop = true,
             RootCachePath = root, CachePath = Path.Combine(root, "profile"), LogSeverity = LogSeverity.Error,
             LogFile = Path.Combine(root, "browser.log") };
         Directory.CreateDirectory(root);
+        Permissions = new BrowserPermissionStore(Path.Combine(root, "site-permissions.json"));
         settings.EnableAudio();
         settings.CefCommandLineArgs.Add("disable-background-networking");
+        // Exercise real Chromium permission callbacks without opening real devices.
+        // Deliberately do not enable fake UI or auto-grant media access.
+        if (Environment.GetCommandLineArgs().Contains("--smoke-test")) settings.CefCommandLineArgs.Add("use-fake-device-for-media-stream");
         if (!Cef.Initialize(settings)) throw new InvalidOperationException("Chromium could not start");
         started = true;
     }
@@ -35,7 +42,7 @@ internal static class FloatingBrowserRuntime
     }
 }
 
-internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
+internal sealed partial class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
 {
     private const int ViewWidth = 1728, ViewHeight = 944;
     private readonly ChromiumWebBrowser browser;
@@ -58,6 +65,9 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     private readonly Action openKeyboard;
     private readonly Action<string> newWindow;
     private Button? held;
+    private long clickFlashUntil;
+    private Point clickFlashPoint;
+    private bool clickFlashDirty;
     private bool leftHeld, rightHeld, addressFocus, addressSelected;
     private string address = "";
     private int addressCaret;
@@ -68,7 +78,8 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     private readonly System.Diagnostics.Stopwatch loadClock = new();
     private readonly byte[] output = new byte[ControllerMenu.PixelBytes];
     public bool Closed { get; private set; }
-    public bool Dirty => loading || Volatile.Read(ref generation) != publishedGeneration;
+    private int appearanceRevision = -1;
+    public bool Dirty => clickFlashDirty || appearanceRevision != Appearance.Revision || loading || Volatile.Read(ref generation) != publishedGeneration;
     internal string Address => address;
     internal bool CanType => addressFocus || browser.IsBrowserInitialized;
     private void Changed(bool chrome = true) { if (chrome) chromeDirty = true; Interlocked.Increment(ref generation); }
@@ -79,12 +90,21 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
         foreach (double height in new[] { 56.0, 64.0, 472.0, 24.0, 56.0 }) root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(height) });
         void Add(UIElement item, int row) { Grid.SetRow(item, row); root.Children.Add(item); }
         Add(new Border { Height = 56, CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromRgb(37, 50, 72)),
-            Child = new TextBlock { Text = Loc.Get("BrowserTitle"), Foreground = Brushes.White, FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center } }, 0);
+            Child = FloatingPanelChrome.Title(new TextBlock { Text = Loc.Get("BrowserTitle"), Foreground = Brushes.White, FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }, Button(Loc.Get("SnapshotClose"), 80, () => Closed = true)) }, 0);
         var nav = new DockPanel { Margin = new Thickness(0, 8, 0, 8) };
         nav.Children.Add(Button("←", 52, () => { if (browser is { IsBrowserInitialized: true }) browser.Back(); }));
         nav.Children.Add(Button("→", 52, () => { if (browser is { IsBrowserInitialized: true }) browser.Forward(); }));
         nav.Children.Add(Button("↻", 52, () => { if (browser is { IsBrowserInitialized: true }) browser.Reload(); }));
         var go = Button(Loc.Get("BrowserGo"), 68, Navigate); DockPanel.SetDock(go, Dock.Right); nav.Children.Add(go);
+        var clearAddress = Button("×", 48, () =>
+        {
+            address = ""; addressCaret = 0; addressSelected = false; addressFocus = true; addressText.Text = "";
+            focus(this); openKeyboard(); Changed();
+        });
+        clearAddress.ToolTip = Loc.Get("BrowserClearAddress");
+        System.Windows.Automation.AutomationProperties.SetName(clearAddress, Loc.Get("BrowserClearAddress"));
+        DockPanel.SetDock(clearAddress, Dock.Right); nav.Children.Add(clearAddress);
+        AddGameHelpControls(nav);
         var field = Button("", double.NaN, () => { addressFocus = addressSelected = true; addressCaret = address.Length; focus(this); openKeyboard(); Changed(); });
         field.HorizontalContentAlignment = HorizontalAlignment.Left; field.Content = addressText; nav.Children.Add(field); Add(nav, 1);
         viewport.Children.Add(picture); viewport.Children.Add(context); Add(viewport, 2); Add(status, 3);
@@ -95,12 +115,17 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
         bottom.Children.Add(Button("−",48,()=>SetZoom(zoom-.1)));
         zoomReset=Button("100%",80,()=>SetZoom(1)); bottom.Children.Add(zoomReset);
         bottom.Children.Add(Button("+",48,()=>SetZoom(zoom+.1)));
-        bottom.Children.Add(Button(Loc.Get("SnapshotClose"), 130, () => Closed = true)); Add(bottom, 4);
+        bottom.Children.Add(Button(Loc.Get("BrowserSiteAccess"),160,ShowSitePermissions));
+        Add(bottom, 4);
         surface = new UserControl { Width = ControllerMenu.Width, Height = ControllerMenu.Height, FontFamily = new FontFamily("Segoe UI"), Content = FloatingPanelChrome.Wrap(root) };
+        InitializePermissions();
         browser = new ChromiumWebBrowser(initialUrl, automaticallyCreateBrowser: false, useLegacyRenderHandler: false)
         { Size = new System.Drawing.Size(ViewWidth, ViewHeight) };
         browser.RenderHandler = new RenderHandler(browser, this);
         browser.MenuHandler = new MenuHandler(this); browser.LifeSpanHandler = new Popups(this);
+        browser.PermissionHandler = new SitePermissionHandler(this);
+        browser.DialogHandler = new GameHelpFileDialogs(this);
+        browser.FrameLoadStart += (_, e) => { if (e.Frame.IsMain) PermissionsNavigating(); };
         browser.BrowserInitialized += (_, _) => { browser.SetZoomLevel(Math.Log(2*Volatile.Read(ref zoom)) / Math.Log(1.2)); browser.GetBrowserHost().SetAudioMuted(false); };
         browser.AddressChanged += (_, e) => surface.Dispatcher.BeginInvoke(() =>
         { if (!Closed && !addressFocus) { address = e.Address; addressText.Text = address; SetZoom(zoom); Changed(); } });
@@ -130,6 +155,7 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     public void Edit(KeyboardEdit edit)
     {
         if (Closed) return;
+        if (permissionOverlay.Visibility == Visibility.Visible) return;
         if (edit.Modifiers.HasFlag(KeyboardModifiers.Control) && edit.Key == 76)
         { addressFocus = addressSelected = true; addressCaret = address.Length; Changed(); return; }
         if (addressFocus)
@@ -191,16 +217,24 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     public void Pointer(int kind, float x, float y, float value = 0)
     {
         if (Closed) return;
-        if (kind == 4) { held = null; CancelMouse(); return; }
+        if (kind == 4) { PanelFeedback.Cancel(held, () => Changed()); held = null; CancelMouse(); return; }
         var point = new System.Windows.Point(x * ControllerMenu.Width, y * ControllerMenu.Height);
         var button = actions.Keys.LastOrDefault(b => IsDrawn(b) && b.IsEnabled && new System.Windows.Rect(b.TranslatePoint(new System.Windows.Point(), surface), b.RenderSize).Contains(point));
-        if (kind == 1) { held = button; focus(this); }
+        bool permissionModal = permissionOverlay.Visibility == Visibility.Visible;
+        if (permissionModal && button != null && !IsPermissionButton(button) && button.ToolTip?.ToString() != Loc.Get("SnapshotClose")) button = null;
+        if (kind == 1) { held = button; PanelFeedback.Down(held, () => Changed()); focus(this); }
         if (kind == 2 && held != null)
-        { var down = held; held = null; if (down == button) actions[down](); return; }
+        { var down = held; held = null; if (down == button) { PanelFeedback.Up(down, () => Changed()); actions[down](); } else PanelFeedback.Cancel(down, () => Changed()); return; }
+        if (permissionModal)
+        {
+            if (kind == 3) { permissionScroll.ScrollToVerticalOffset(permissionScroll.VerticalOffset - value); Changed(); }
+            return;
+        }
         var local = surface.TranslatePoint(point, viewport);
         bool inside = local.X >= 0 && local.Y >= 0 && local.X < 864 && local.Y < 472;
         if (button != null || !inside) { if (kind == 2) CancelMouse(); return; }
         if (!browser.IsBrowserInitialized) return;
+        if (kind == 1) { clickFlashPoint = point; clickFlashUntil = Environment.TickCount64 + 160; clickFlashDirty = true; Changed(false); }
         if (kind == 1 || kind == 5)
         {
             addressFocus = addressSelected = false; focus(this);
@@ -259,10 +293,12 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     }
     public byte[] Render()
     {
+        if (appearanceRevision != Appearance.Revision) { chromeDirty = true; appearanceRevision = Appearance.Revision; }
         renderedGeneration = Volatile.Read(ref generation);
+        if (!chromeDirty && permissionOverlay.Visibility == Visibility.Visible) { DrawActivity(); return output; }
         // Video frames can go straight into the shared panel bitmap. WPF only
         // redraws the surrounding controls when their appearance changes.
-        if (!chromeDirty && context.Visibility != Visibility.Visible)
+        if (!chromeDirty && context.Visibility != Visibility.Visible && permissionOverlay.Visibility != Visibility.Visible)
         {
             CopyPage(); DrawActivity(); return output;
         }
@@ -314,9 +350,21 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
             output[p] = (byte)(8+20*glow); output[p+1] = (byte)(8+35*glow);
             output[p+2] = (byte)(loading ? 35+220*glow : 18); output[p+3] = 255;
         }
+        if (Environment.TickCount64 < clickFlashUntil)
+        {
+            int cx=(int)(clickFlashPoint.X*2),cy=(int)(clickFlashPoint.Y*2);
+            for(int y=cy-18;y<=cy+18;y++) for(int x=cx-18;x<=cx+18;x++)
+            {
+                float distance=MathF.Sqrt((x-cx)*(x-cx)+(y-cy)*(y-cy));
+                if(distance<12 || distance>17 || x<96 || x>=96+ViewWidth || y<336 || y>=336+ViewHeight) continue;
+                int at=(y*ControllerMenu.PixelWidth+x)*4;
+                output[at]=220;output[at+1]=245;output[at+2]=105;output[at+3]=255;
+            }
+        }
+        else clickFlashDirty=false;
     }
     public void Published() => publishedGeneration = renderedGeneration;
-    public void Dispose() { if (browser.IsDisposed) return; CancelMouse(); Closed = true; browser.Dispose(); }
+    public void Dispose() { if (browser.IsDisposed) return; CancelMouse(); Closed = true; StopGameHelp(); CancelPermissions(); browser.Dispose(); }
     private sealed class RenderHandler(ChromiumWebBrowser browser, FloatingBrowser owner) : DefaultRenderHandler(browser)
     {
         public override void OnPaint(PaintElementType type, CefRect dirtyRect, IntPtr buffer, int width, int height) => owner.Paint(type == PaintElementType.Popup, buffer, width, height);
@@ -344,6 +392,7 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
     }
     internal static async Task SmokeTest(string output)
     {
+        BrowserPermissionStore.SmokeTest(output);
         string html = "<html><body style='background:#152236;color:white;font:24px sans-serif'><h1>VRX browser test</h1><input id='field' style='font:24px sans-serif;display:block'><button id='clicker' onclick='window.clicks=(window.clicks||0)+1' style='font:24px sans-serif;margin-top:12px'>Click test</button><p>Independent floating browser</p></body></html>";
         string url = "data:text/html;base64," + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(html));
         int keyboardOpens = 0; var openedWindows = new List<string>();
@@ -366,6 +415,13 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
         ClickControl(one.actions.Keys.Single(b => b.Content?.ToString() == Loc.Get("KeyboardOpen")));
         ClickControl(one.actions.Keys.Single(b => b.Content?.ToString() == Loc.Get("BrowserNew")));
         if (keyboardOpens != 1 || openedWindows.Count != 1) throw new Exception("Offscreen browser toolbar buttons did not receive clicks");
+        string loadedAddress = one.browser.Address;
+        ClickControl(one.actions.Keys.Single(b => b.ToolTip?.ToString() == Loc.Get("BrowserClearAddress")));
+        if (one.Address != "" || !one.addressFocus || one.addressCaret != 0 || one.browser.Address != loadedAddress)
+            throw new Exception("Clear address must empty and focus the panel URL without navigating the page");
+        one.Edit(new KeyboardEdit("example.com"));
+        if (one.Address != "example.com") throw new Exception("Cleared panel URL must accept keyboard or dictated text");
+        one.address = loadedAddress; one.addressText.Text = loadedAddress; one.addressFocus = false; one.Changed();
         var initialWidth=await one.browser.EvaluateScriptAsync("window.innerWidth");
         ClickControl(one.actions.Keys.Single(b=>b.Content?.ToString()=="+"));
         deadline=DateTime.UtcNow.AddSeconds(5);
@@ -443,5 +499,7 @@ internal sealed class FloatingBrowser : IFloatingPanel, IFloatingTextTarget
             var details = await one.browser.EvaluateScriptAsync("JSON.stringify({href:location.href,title:document.title,text:document.body.innerText.slice(0,150)})");
             throw new Exception("Chromium component notices are not accessible: " + details.Result);
         }
+        await PermissionsSmokeTest(output);
+        await GameHelpSmokeTest(output);
     }
 }

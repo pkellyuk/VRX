@@ -812,7 +812,15 @@ static void TestDesktopControl()
               "v19 dungeon and hell are transported live");
     Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 9 1", settings), "v19 unknown environment rejected");
     Check(!ParseDesktopSettings("VRX 19 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 1 0", settings), "v19 trailing value rejected");
-    Check(!ParseDesktopSettings("VRX 20 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 1", settings), "a newer snapshot version is rejected");
+    const std::string lifePrefix="VRX 20 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 1 ";
+    Check(ParseDesktopSettings(lifePrefix+"63 11 165 24 175 90",settings) && settings.lifeFlags==63 && settings.lifePreset==11 && settings.lifeSpecies==165 && settings.lifeCount==24 && settings.lifeGain==175 && settings.lifeDensity==90,"v20 all room life values");
+    for(const char* bad : {"64 0 255 12 100 40", "0 12 255 12 100 40", "0 0 256 12 100 40", "0 0 255 25 100 40", "0 0 255 12 201 40", "0 0 255 12 100 101", "0 0 255 12 100", "0 0 255 12 100 40 1"})
+        Check(!ParseDesktopSettings(lifePrefix+bad,settings),"invalid or incomplete v20 snapshot rejected");
+    std::string layersPrefix=lifePrefix;layersPrefix.replace(0,6,"VRX 21");
+    Check(ParseDesktopSettings(layersPrefix+"63 11 165 24 175 90 4095 275 1 1",settings) && settings.lifeLayers==4095 && settings.lifeReactivity==275 && settings.beamReactions==1 && settings.vrex==1,"v21 layers, reactivity, beam reactions and Vrex");
+    for(const char* bad : {"4096 100 1 0", "1 301 1 0", "1 100 2 0", "1 100 1 2", "1 100 1", "1 100 1 0 1"})
+        Check(!ParseDesktopSettings(layersPrefix+"0 0 255 12 100 40 "+bad,settings),"invalid v21 settings rejected");
+    Check(!ParseDesktopSettings("VRX 20 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0 1 1 0 1 1 0 0 85 0 40 60 25 50 16765347 4 1 12 100 1 1 1 1 4 1", settings), "v20 missing room life values rejected");
     Check(!ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 2", settings), "invalid matching flag rejected");
     Check(ParseDesktopSettings("VRX 3 6.25 3.5 0 0 1 0 1 1 187 120 4 7 0 1 0", settings) && settings.paired == 0, "v3 disables matching");
     Check(!ParseDesktopSettings("VRX 1 6.25 0 0 0 1 0 1 1 187 120 0 0 0", settings), "zero distance rejected");
@@ -2781,9 +2789,9 @@ static void TestRoom()
         for (int ch = 0; ch < 3; ch++) rest = rest && rc.bounceRgb[ch] == rc.bounceScale;
         rest = rest && rc.bounceRgb[3] == 0;
         for (size_t i = offsetof(RoomConstants, sconcePitch); i < sizeof(RoomConstants); i++) rest = rest && bytes[i] == 0;
-        Check(sizeof(RoomConstants) == 768 && offsetof(RoomConstants, glass) == 176 && rest,
-            "RoomConstants is 768 bytes; rows 11 and 16 and the padding of row 20 are zero with the controls at 0, the room's rows 21-31 white, its bounce and zero, "
-            "and rows 32-47 (the theatre and padding) zero");
+        Check(sizeof(RoomConstants) == 2560 && offsetof(RoomConstants, glass) == 176 && rest,
+            "RoomConstants is 2560 bytes; rows 11 and 16 and the padding of row 20 are zero with the controls at 0, the room's rows 21-31 white, its bounce and zero, "
+            "and the theatre, room life and padding zero");
         Check(rc.pitchSide == room.pitchSide && rc.pitchBack == room.pitchBack && rc.transomY == room.transomY && !RoomLookOn(rc),
             "row 12 carries the frames' bays and crossbar; with the controls at 0 flags 16 and 64 are clear (the plain eye pass)");
         Check(rc.X == room.X && rc.zSide == room.zSide && rc.glowBlock == (uint32_t)layout.block && rc.emitters == (uint32_t)layout.count() &&
@@ -3738,7 +3746,7 @@ int main(int argc, char** argv)
         const std::string path(argv[1]); DesktopSettings settings;
         Check(ReadDesktopSettings(std::wstring(path.begin(), path.end()), settings), "read C# emitted snapshot");
         Check(settings.width == 6.25f && settings.recenter == 4 && settings.menu == 7 && settings.menuKey == 120 && settings.foreground == 1 && settings.paired == 1 &&
-            settings.version == 19 && settings.env == 0 && settings.seat == 1 && settings.layer == 0 && settings.showDepthMap == 0 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
+            settings.version == 21 && settings.env == 0 && settings.seat == 1 && settings.layer == 0 && settings.showDepthMap == 0 && settings.roomLightColor == 0xFFB46B && settings.roomGlass == 0,
             "C# to native control contract");
     }
     TestCaptureSelection();

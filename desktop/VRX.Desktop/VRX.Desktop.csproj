@@ -19,6 +19,8 @@
     <NeutralLanguage>en</NeutralLanguage>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="System.Speech" Version="10.0.7" />
+    <PackageReference Include="NAudio.WinMM" Version="2.3.0" />
     <PackageReference Include="CefSharp.OffScreen.NETCore" Version="156.0.150" />
     <!-- Also embedded as a resource so the window and taskbar use it. Regenerate
          with desktop\assets\make_icon.py. -->

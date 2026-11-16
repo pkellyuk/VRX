@@ -14,7 +14,7 @@ namespace VRX.Desktop;
 // An off-screen WPF view, not a second desktop window. Every editable control refers to
 // the real settings control, so its existing validation, profile save and live update
 // handlers remain authoritative. No mouse/keyboard injection or foreground changes.
-public sealed class ControllerMenu : IDisposable
+public sealed partial class ControllerMenu : IDisposable
 {
     // Versioned, same-user, session-specific IPC; see controller_menu_protocol.h.
     public const int Width = 960, Height = 768, HeaderBytes = 64, EventCount = 64;
@@ -29,8 +29,12 @@ public sealed class ControllerMenu : IDisposable
     private readonly MemoryMappedFile map;
     private readonly MemoryMappedViewAccessor memory;
     private readonly Mutex mutex;
-    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(50) };
+    private readonly DispatcherTimer timer = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(50) };
     private long nextMenuRender;
+    private readonly PanelScrollMotion scrolling = new();
+    private long lastScrollTick = Environment.TickCount64, dragSampleTime;
+    private bool contentDragCandidate, contentDragging;
+    private double contentDragY, contentDragOffset, dragLastY, dragSpeed;
     private readonly UserControl surface;
     private readonly ScrollViewer scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden };
     private readonly StackPanel body = new();
@@ -44,14 +48,21 @@ public sealed class ControllerMenu : IDisposable
     private readonly IReadOnlyList<Expander> sections;
     private readonly Action applyAll;
     private readonly RenderTargetBitmap bitmap = new(PixelWidth, PixelHeight, 192, 192, PixelFormats.Pbgra32);
+    private readonly RenderTargetBitmap motionBitmap = new(Width, Height, 96, 96, PixelFormats.Pbgra32);
+    private readonly byte[] motionPixels = new byte[Width * Height * 4];
     private readonly byte[] pixels = new byte[PixelBytes];
     private FrameworkElement? held;
     private bool enabled, disposed;
     private bool controlScreen;
     private Button controlScreenButton = null!;
+    private Button backButton = null!;
+    private Button rollupButton = null!;
+    private readonly UniformGrid toolbar = new() { Columns = 3, Margin = new Thickness(0, 0, 0, 8) };
     private int generation;
     private int pageGeneration;
     private Action? back;
+    private Action? currentPage;
+    private string breadcrumb = "";
     private readonly IFloatingPanel?[] snapshots = new IFloatingPanel?[MaxSnapshots];
     private readonly int[] snapshotFrames = new int[MaxSnapshots];
     private readonly int[] pendingPanelKinds = Enumerable.Repeat(-1, MaxSnapshots).ToArray();
@@ -63,7 +74,7 @@ public sealed class ControllerMenu : IDisposable
     private uint pendingArrange;
 
     public ControllerMenu(string name, IReadOnlyList<Expander> sections, TextBlock desktopStatus,
-        Button recenter, Action applyAll)
+        Button recenter, Action applyAll, CheckBox? stereo = null)
     {
         this.sections = sections;
         this.applyAll = applyAll;
@@ -83,14 +94,47 @@ public sealed class ControllerMenu : IDisposable
         var top = new StackPanel();
         DockPanel.SetDock(top, Dock.Top);
         var title = new DockPanel();
+        backButton = ActionButton(Loc.Get("ControllerMenuBack"), () => back?.Invoke());
+        backButton.ToolTip = Loc.Get("ControllerMenuBack");
+        System.Windows.Automation.AutomationProperties.SetName(backButton, Loc.Get("ControllerMenuBack"));
+        backButton.Content = "‹"; backButton.Tag = ""; backButton.Width = 56; backButton.Height = 48;
+        backButton.FontSize = 30; backButton.Padding = new Thickness(0); backButton.Margin = new Thickness(4);
+        backButton.HorizontalContentAlignment = HorizontalAlignment.Center;
+        DockPanel.SetDock(backButton, Dock.Left); title.Children.Add(backButton);
         var dragHint = new TextBlock { Text = Loc.Get("ControllerMenuDrag"), FontSize = 16,
             VerticalAlignment = VerticalAlignment.Center, Margin = new(12, 0, 0, 0) };
         DockPanel.SetDock(dragHint, Dock.Right); title.Children.Add(dragHint); title.Children.Add(heading);
-        titleBar.Child = title; top.Children.Add(titleBar);
-        interactionHint.Text = Loc.Get("ControllerMenuHint"); top.Children.Add(interactionHint);
-        var toolbar = new WrapPanel();
+        titleBar.Child = FloatingPanelChrome.Title(title, ActionButton(Loc.Get("SnapshotClose"), () =>
+        {
+            if (!Lock()) return;
+            try { memory.Write(12, 0); } finally { mutex.ReleaseMutex(); }
+        })); top.Children.Add(titleBar);
+        interactionHint.ToolTip = Loc.Get("ControllerMenuHint");
+        var breadcrumbRow = new DockPanel();
+        rollupButton = ActionButton(Loc.Get("ControllerMenuCollapse"), () =>
+        {
+            bool collapse = toolbar.Visibility == Visibility.Visible;
+            toolbar.Visibility = collapse ? Visibility.Collapsed : Visibility.Visible;
+            rollupButton.Content = collapse ? "⌄" : "⌃";
+            rollupButton.ToolTip = Loc.Get(collapse ? "ControllerMenuExpand" : "ControllerMenuCollapse");
+            System.Windows.Automation.AutomationProperties.SetName(rollupButton, rollupButton.ToolTip.ToString());
+            restoreOffset = scroll.VerticalOffset;
+        });
+        rollupButton.Content = "⌃"; rollupButton.Tag = ""; rollupButton.ToolTip = Loc.Get("ControllerMenuCollapse");
+        rollupButton.Width = 56; rollupButton.MinHeight = 36; rollupButton.Padding = new Thickness(0); rollupButton.FontSize = 26;
+        rollupButton.HorizontalContentAlignment = HorizontalAlignment.Center; rollupButton.Margin = new Thickness(4, 0, 4, 4);
+        DockPanel.SetDock(rollupButton, Dock.Right); breadcrumbRow.Children.Add(rollupButton); breadcrumbRow.Children.Add(interactionHint);
+        top.Children.Add(breadcrumbRow);
         top.Children.Add(toolbar);
-        toolbar.Children.Add(ActionButton(Loc.Get("ControllerMenuBack"), () => { if (back != null) back(); else Home(); }));
+        stereo ??= Window.GetWindow(sections.FirstOrDefault())?.FindName("StereoCheck") as CheckBox;
+        if (stereo != null)
+        {
+            var quick3d = new CheckBox { Content = Loc.Get("Quick3D"), FontSize = 23, MinHeight = 46, Margin = new(4, 4, 22, 4) };
+            Bind(quick3d, ToggleButton.IsCheckedProperty, stereo, nameof(stereo.IsChecked), BindingMode.TwoWay);
+            Bind(quick3d, UIElement.IsEnabledProperty, stereo, nameof(stereo.IsEnabled));
+            targets[quick3d] = (_, down) => { if (!down) quick3d.SetCurrentValue(ToggleButton.IsCheckedProperty, quick3d.IsChecked != true); };
+            toolbar.Children.Add(quick3d);
+        }
         var recenterCopy = ActionButton(Loc.Get("RecenterNow"), () => recenter.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
         Bind(recenterCopy, UIElement.IsEnabledProperty, recenter, nameof(recenter.IsEnabled));
         toolbar.Children.Add(recenterCopy);
@@ -98,9 +142,10 @@ public sealed class ControllerMenu : IDisposable
         {
             controlScreen = !controlScreen;
             controlScreenButton.Content = Loc.Get(controlScreen ? "ControllerMenuStopControlScreen" : "ControllerMenuControlScreen");
-            interactionHint.Text = Loc.Get(controlScreen ? "ControllerMenuScreenHint" : "ControllerMenuHint");
+            interactionHint.Text = breadcrumb;
             if (controlScreen) { textTarget = null; SetKeyboardTarget(); }
         });
+        controlScreenButton.ToolTip = Loc.Get("ControllerMenuScreenHint");
         toolbar.Children.Add(controlScreenButton);
         toolbar.Children.Add(ActionButton(Loc.Get("SnapshotTake"), () =>
         {
@@ -126,12 +171,24 @@ public sealed class ControllerMenu : IDisposable
         toolbar.Children.Add(ActionButton(Loc.Get("BrowserOpen"), () => OpenBrowser("https://www.google.com")));
         toolbar.Children.Add(ActionButton(Loc.Get("KeyboardOpen"), OpenKeyboard));
         toolbar.Children.Add(ActionButton(Loc.Get("ArrangeWindows"), () => pendingArrange++));
+        toolbar.Children.Add(ActionButton(Loc.Get("GameHelpStart"), BeginGameHelp));
+        var text = new FrameworkElementFactory(typeof(TextBlock));
+        text.SetBinding(TextBlock.TextProperty, new Binding());
+        text.SetValue(TextBlock.TextWrappingProperty, TextWrapping.Wrap);
+        var toolbarLabel = new DataTemplate { VisualTree = text };
+        foreach (Control control in toolbar.Children)
+        {
+            control.MinHeight = 68; control.Margin = new Thickness(4);
+            control.FontSize = 18; control.Padding = new Thickness(12, 8, 12, 8);
+            control.HorizontalAlignment = HorizontalAlignment.Stretch;
+            if (control is Button button) button.ContentTemplate = toolbarLabel;
+        }
         root.Children.Add(top);
         DockPanel.SetDock(status, Dock.Bottom);
         Bind(status, TextBlock.TextProperty, desktopStatus, nameof(TextBlock.Text));
         root.Children.Add(status);
         scroll.Content = body;
-        root.Children.Add(scroll);
+        root.Children.Add(FloatingPanelChrome.Scrollable(scroll));
         surface = new UserControl
         {
             Width = Width, Height = Height, FontSize = 21, FontFamily = new FontFamily("Segoe UI"),
@@ -148,9 +205,10 @@ public sealed class ControllerMenu : IDisposable
         enabled = value;
         if (!value)
         {
+            foreach (var keyboard in snapshots.OfType<FloatingKeyboard>()) keyboard.StopVoice();
             controlScreen = false;
             controlScreenButton.Content = Loc.Get("ControllerMenuControlScreen");
-            interactionHint.Text = Loc.Get("ControllerMenuHint");
+            interactionHint.Text = breadcrumb;
         }
         held = null;
         if (!value) foreach (var snapshot in snapshots) snapshot?.Pointer(4, -1, -1);
@@ -235,27 +293,65 @@ public sealed class ControllerMenu : IDisposable
         finally { mutex.ReleaseMutex(); }
     }
 
-    private void Page(string title, Action? parent)
+    private readonly Dictionary<string, double> pageOffsets = new();
+    private string pageKey = "";
+    private double? restoreOffset;
+    private void Page(string title, Action? parent, string? navigationKey = null, string? trail = null)
     {
+        if (pageKey.Length > 0) pageOffsets[pageKey] = scroll.VerticalOffset;
+        pageKey = navigationKey ?? title;
+        restoreOffset = pageOffsets.GetValueOrDefault(pageKey);
         pageGeneration++;
-        held = null; refresh.Clear();
+        held = null; contentDragCandidate = contentDragging = false; refresh.Clear();
         // Keep toolbar targets; detached page targets must never receive late releases.
         foreach (var key in targets.Keys.Where(k => IsUnder(k, body)).ToArray()) targets.Remove(key);
         body.Children.Clear();
-        heading.Text = title; back = parent; scroll.ScrollToTop();
+        heading.Text = title; back = parent;
+        backButton.IsEnabled = parent != null;
+        breadcrumb = trail ?? (parent == null ? title : Loc.Get("ControllerMenuTitle") + " › " + title);
+        interactionHint.Text = breadcrumb;
     }
 
     private void Home()
     {
         Page(Loc.Get("ControllerMenuTitle"), null);
+        currentPage = Home;
+        var cards = new UniformGrid { Columns = 2 };
         foreach (var section in sections)
-            body.Children.Add(ActionButton(section.Header?.ToString() ?? "", () => Section(section)));
+        {
+            var card = ActionButton(section.Header?.ToString() ?? "", () => Section(section));
+            card.Tag = Appearance.Icon(section.Name); card.MinHeight = 82;
+            cards.Children.Add(card);
+        }
+        body.Children.Add(cards);
+        body.Children.Add(ActionButton(Loc.Get("GameHelpSettings"), ShowGameHelpSettings));
     }
 
     private void Section(Expander section)
     {
-        Page(section.Header?.ToString() ?? "", Home);
+        Page(section.Header?.ToString() ?? "", Home, "section:" + section.Name);
+        currentPage = () => Section(section);
+        if (section.Name == "RoomSection" && section.Content is DependencyObject room)
+        {
+            var cards = new UniformGrid { Columns = 2 };
+            foreach (var category in Categories(room)) if (Project(category) is { } card) cards.Children.Add(card);
+            body.Children.Add(cards); return;
+        }
         if (section.Content is FrameworkElement content && Project(content) is { } copy) body.Children.Add(copy);
+    }
+
+    private static IEnumerable<Expander> Categories(DependencyObject owner)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(owner).OfType<DependencyObject>())
+            if (child is Expander category) yield return category;
+            else foreach (var nested in Categories(child)) yield return nested;
+    }
+
+    private void Category(Expander category, Action parent, string parentTrail)
+    {
+        Page(category.Header?.ToString() ?? "", parent, "category:" + category.Name, parentTrail + " › " + category.Header);
+        currentPage = () => Category(category, parent, parentTrail);
+        if (category.Content is FrameworkElement content && Project(content) is { } copy) body.Children.Add(copy);
     }
 
     private static void Bind(DependencyObject target, DependencyProperty property, object source, string path,
@@ -267,6 +363,12 @@ public sealed class ControllerMenu : IDisposable
         FrameworkElement? copy;
         switch (source)
         {
+            case Expander category:
+                Action parent = currentPage ?? Home;
+                string trail = breadcrumb;
+                var card = ActionButton(category.Header?.ToString() ?? "", () => Category(category, parent, trail));
+                card.Tag = Appearance.Icon(category.Name); card.MinHeight = 88;
+                copy = card; break;
             case Canvas: return null; // The desktop's mouse-drag preview is replaced by the screen sliders.
             case TextBlock text:
                 var label = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 19, Margin = new(0, 7, 0, 5) };
@@ -318,6 +420,11 @@ public sealed class ControllerMenu : IDisposable
                         gridCopy.Children.Add(item);
                     }
                 copy = gridCopy; break;
+            case UniformGrid uniform:
+                var uniformCopy = new UniformGrid { Columns = uniform.Columns, Rows = uniform.Rows, FirstColumn = uniform.FirstColumn };
+                foreach (UIElement child in uniform.Children)
+                    if (child is FrameworkElement element && Project(element) is { } item) uniformCopy.Children.Add(item);
+                copy = uniformCopy; break;
             case WrapPanel wrap:
                 var wrapCopy = new WrapPanel { Orientation = wrap.Orientation };
                 foreach (UIElement child in wrap.Children)
@@ -345,10 +452,9 @@ public sealed class ControllerMenu : IDisposable
 
     private void Choices(Selector source)
     {
-        string title = heading.Text;
-        // Reconstruct the owning section on return, rather than reparenting live controls.
-        Action parent = () => { var section = sections.FirstOrDefault(s => s.Header?.ToString() == title); if (section != null) Section(section); else Home(); };
-        Page(Loc.Get("ControllerMenuSelect"), parent);
+        // Reconstruct the owning page, including nested Room categories.
+        Action parent = currentPage ?? Home;
+        Page(Loc.Get("ControllerMenuSelect"), parent, "choices:" + source.Name, breadcrumb + " › " + Loc.Get("ControllerMenuSelect"));
         foreach (object item in source.Items)
         {
             if (item is FrameworkElement element && (element.Visibility != Visibility.Visible || !element.IsEnabled)) continue;
@@ -363,7 +469,8 @@ public sealed class ControllerMenu : IDisposable
     private void HexEditor(TextBox source)
     {
         string value = source.Text.TrimStart('#');
-        Page(Loc.Get("WorldHexTip"), Home);
+        Action parent = currentPage ?? Home;
+        Page(Loc.Get("WorldHexTip"), parent, "hex:" + source.Name, breadcrumb + " › " + Loc.Get("WorldHexTip"));
         var display = new TextBlock { FontSize = 32, Text = "#" + value, Margin = new(0, 12, 0, 12) };
         body.Children.Add(display);
         var keys = new WrapPanel(); body.Children.Add(keys);
@@ -378,7 +485,7 @@ public sealed class ControllerMenu : IDisposable
             if (value.Length != 6) return;
             source.SetCurrentValue(TextBox.TextProperty, "#" + value);
             source.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
-            Home();
+            parent();
         }));
     }
 
@@ -392,7 +499,7 @@ public sealed class ControllerMenu : IDisposable
 
     private Button ActionButton(string label, Action action)
     {
-        var button = new Button { Content = label, FontSize = 21, MinHeight = 48, Margin = new(0, 4, 8, 4),
+        var button = new Button { Content = label, Tag = Appearance.ActionIcon(label), FontSize = 21, MinHeight = 48, Margin = new(0, 4, 8, 4),
             HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new(16, 8, 16, 8) };
         targets[button] = (_, down) => { if (!down) action(); };
         return button;
@@ -417,21 +524,55 @@ public sealed class ControllerMenu : IDisposable
         return null;
     }
 
+    private bool InScrollViewport(Point point)
+    {
+        var top = scroll.TranslatePoint(new Point(), surface);
+        return point.X >= top.X && point.X <= top.X + scroll.ActualWidth && point.Y >= top.Y && point.Y <= top.Y + scroll.ActualHeight;
+    }
     private void Pointer(int kind, float x, float y, float value)
     {
-        if (kind == 4) { held = null; return; }
+        if (kind == 4)
+        { PanelFeedback.Cancel(held, () => nextMenuRender = 0); held = null; contentDragCandidate = contentDragging = false; scrolling.Jump(scroll.VerticalOffset); return; }
         if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(value)) return;
         var point = new Point(x * Width, y * Height);
-        if (kind == 3) { scroll.ScrollToVerticalOffset(scroll.VerticalOffset - Math.Clamp(value, -1000, 1000)); return; }
+        if (!scrolling.Active && !contentDragging) scrolling.Jump(scroll.VerticalOffset);
+        if (kind == 3) { scrolling.Add(-Math.Clamp(value, -1000, 1000), scroll.ScrollableHeight); return; }
         if (kind == 1)
         {
             held = Hit(point);
+            PanelFeedback.Down(held, () => nextMenuRender = 0);
+            contentDragCandidate = held is not Slider && InScrollViewport(point) && scroll.ScrollableHeight > 0;
+            contentDragging = false; contentDragY = dragLastY = point.Y; contentDragOffset = scroll.VerticalOffset;
+            dragSampleTime = Environment.TickCount64; dragSpeed = 0; scrolling.Jump(scroll.VerticalOffset);
             if (held != null) targets[held](surface.TranslatePoint(point, held), true);
         }
-        else if (kind == 0 && held is Slider) targets[held](surface.TranslatePoint(point, held), true);
+        else if (kind == 0)
+        {
+            if (held is Slider) targets[held](surface.TranslatePoint(point, held), true);
+            else if (contentDragCandidate)
+            {
+                if (Math.Abs(point.Y - contentDragY) > 7) { contentDragging = true; PanelFeedback.Cancel(held, () => nextMenuRender = 0); held = null; }
+                if (contentDragging)
+                {
+                    long now = Environment.TickCount64;
+                    double dt = Math.Max(.005, (now - dragSampleTime) / 1000.0);
+                    double speed = Math.Clamp((dragLastY - point.Y) / dt, -6500, 6500);
+                    dragSpeed = dragSpeed * .45 + speed * .55;
+                    dragLastY = point.Y; dragSampleTime = now;
+                    scrolling.Drag(contentDragOffset + contentDragY - point.Y, scroll.ScrollableHeight);
+                }
+            }
+        }
         else if (kind == 2)
         {
+            if (contentDragging)
+            {
+                scrolling.Release(Environment.TickCount64 - dragSampleTime < 100 ? dragSpeed : 0);
+                contentDragCandidate = contentDragging = false; held = null; return;
+            }
+            contentDragCandidate = false;
             var target = held; held = null;
+            if (target != null && (target is Slider || Hit(point) == target)) PanelFeedback.Up(target, () => nextMenuRender = 0); else PanelFeedback.Cancel(target, () => nextMenuRender = 0);
             if (target != null && target.IsEnabled && targets.TryGetValue(target, out var action) &&
                 (target is Slider || Hit(point) == target)) action(surface.TranslatePoint(point, target), false);
         }
@@ -441,7 +582,7 @@ public sealed class ControllerMenu : IDisposable
     {
         if (disposed || !Lock()) return;
         var events = new List<(int Kind, float X, float Y, float Value)>();
-        var ready = new List<(int Slot, string Path)>();
+        var ready = new List<(int Slot, string Path, uint Serial)>();
         bool visible;
         bool windowsFocus = false;
         try
@@ -460,7 +601,7 @@ public sealed class ControllerMenu : IDisposable
                 {
                     var path = new byte[SnapshotPathChars * 2];
                     memory.ReadArray(SnapshotsAt + i * SnapshotBytes + 32, path, 0, path.Length);
-                    ready.Add((i, System.Text.Encoding.Unicode.GetString(path).Split('\0')[0]));
+                    ready.Add((i, System.Text.Encoding.Unicode.GetString(path).Split('\0')[0], memory.ReadUInt32(SnapshotsAt + i * SnapshotBytes + 20)));
                 }
             uint write = memory.ReadUInt32(28), read = memory.ReadUInt32(32);
             // A producer overflow cancels a drag; never turn a dropped release into a stuck slider.
@@ -476,6 +617,7 @@ public sealed class ControllerMenu : IDisposable
         }
         finally { mutex.ReleaseMutex(); }
         if (windowsFocus) { textTarget = null; SetKeyboardTarget(); }
+        CheckGameHelpCapture();
         foreach (var item in ready)
         {
             try
@@ -483,10 +625,22 @@ public sealed class ControllerMenu : IDisposable
                 var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad;
                 using (var stream = File.OpenRead(item.Path)) { image.StreamSource = stream; image.EndInit(); }
                 image.Freeze();
-                snapshots[item.Slot] = new FloatingSnapshot(image, imagesFolder);
+                if (gameHelpCaptureProvider != null && item.Serial == gameHelpCaptureSerial)
+                {
+                    var provider = gameHelpCaptureProvider; gameHelpCaptureProvider = null;
+                    var attachment = GameHelpImage.Capture(image, provider);
+                    try
+                    {
+                        var helper = new FloatingBrowser(FocusBrowser, OpenKeyboard, OpenBrowser, provider.Url);
+                        snapshots[item.Slot] = helper; pendingPanelKinds[item.Slot] = 1;
+                        helper.StartGameHelp(attachment); FocusBrowser(helper);
+                    }
+                    catch { attachment.Dispose(); throw; }
+                }
+                else snapshots[item.Slot] = new FloatingSnapshot(image, imagesFolder);
                 snapshotFrames[item.Slot] = 0;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or System.IO.FileFormatException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or System.IO.FileFormatException or InvalidOperationException)
             { interactionHint.Text = Loc.Format("SnapshotFileError", ex.Message); }
             finally
             {
@@ -501,7 +655,8 @@ public sealed class ControllerMenu : IDisposable
             if (slot >= 0 && slot < MaxSnapshots)
                 snapshots[slot]?.Pointer(enabled ? e.Kind % 16 : 4, e.X, e.Y, e.Value);
         }
-        timer.Interval = TimeSpan.FromMilliseconds(snapshots.OfType<FloatingBrowser>().Any(b => !b.Closed) ? 1000.0 / 60 : 50);
+        timer.Interval = TimeSpan.FromMilliseconds(visible || snapshots.Any(p => p is { Closed: false }) ? 1000.0 / 90 : 50);
+        RenderSettings(events, visible);
         for (int i = 0; i < MaxSnapshots; i++)
         {
             var snapshot = snapshots[i];
@@ -522,15 +677,20 @@ public sealed class ControllerMenu : IDisposable
                 {
                     if (pendingPanelKinds[i] >= 0)
                     { memory.Write(at, unchecked(memory.ReadUInt32(at)+1)); memory.Write(at+16, pendingPanelKinds[i]); pendingPanelKinds[i] = -1; }
-                    memory.WriteArray(at + SnapshotMetaBytes, rendered, 0, rendered.Length);
+                    PublishPixels(at + SnapshotMetaBytes, rendered);
                     memory.Write(at + 4, ++snapshotFrames[i]); memory.Write(at + 8, 1); memory.Write(at + 12, 2);
                     snapshot.Published();
                 }
             }
             finally { mutex.ReleaseMutex(); }
         }
-        if (!visible) { held = null; return; }
+    }
+
+    private void RenderSettings(IReadOnlyList<(int Kind, float X, float Y, float Value)> events, bool visible)
+    {
+        if (!visible) { PanelFeedback.Cancel(held, () => nextMenuRender = 0); held = null; contentDragCandidate = contentDragging = false; scrolling.Jump(scroll.VerticalOffset); return; }
         surface.Measure(new Size(Width, Height)); surface.Arrange(new Rect(0, 0, Width, Height)); surface.UpdateLayout();
+        if (restoreOffset is double savedOffset) { scroll.ScrollToVerticalOffset(savedOffset); surface.UpdateLayout(); scrolling.Jump(scroll.VerticalOffset); restoreOffset = null; }
         int page = pageGeneration;
         foreach (var e in events.Where(e => e.Kind < 16))
         {
@@ -538,16 +698,52 @@ public sealed class ControllerMenu : IDisposable
             if (page != pageGeneration) break; // remaining events describe the old bitmap
         }
         foreach (var update in refresh.ToArray()) update();
-        if (Environment.TickCount64 < nextMenuRender && !events.Any(e => e.Kind < 16)) return;
-        nextMenuRender = Environment.TickCount64 + 50;
+        long scrollNow = Environment.TickCount64;
+        double scrollDt = Math.Clamp((scrollNow - lastScrollTick) / 1000.0, .001, .05); lastScrollTick = scrollNow;
+        bool scrollChanged = scrolling.Step(scrollDt, scroll.ScrollableHeight, contentDragging);
+        if (scrollChanged) scroll.ScrollToVerticalOffset(scrolling.Position);
+        if (scrollNow < nextMenuRender && !scrollChanged && !events.Any(e => e.Kind > 0 && e.Kind < 16)) return;
+        nextMenuRender = scrollNow + (scrollChanged || contentDragging || held is Slider ? 11 : 50);
         surface.UpdateLayout();
-        bitmap.Clear(); bitmap.Render(surface); bitmap.CopyPixels(pixels, PixelWidth * 4, 0);
+        if (restoreOffset is double pendingOffset) { scroll.ScrollToVerticalOffset(pendingOffset); surface.UpdateLayout(); scrolling.Jump(scroll.VerticalOffset); restoreOffset = null; }
+        if (scrolling.Active || contentDragging || held is Slider)
+        {
+            // Rasterize at panel resolution while moving. Expand into the unchanged
+            // IPC texture, then restore supersampled text once movement settles.
+            motionBitmap.Clear(); motionBitmap.Render(surface); motionBitmap.CopyPixels(motionPixels, Width * 4, 0);
+            var source = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(motionPixels.AsSpan());
+            var destination = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(pixels.AsSpan());
+            for (int y = 0; y < Height; y++)
+            {
+                int row = y * 2 * PixelWidth;
+                for (int x = 0; x < Width; x++)
+                { uint colour = source[y * Width + x]; destination[row + x * 2] = colour; destination[row + x * 2 + 1] = colour; }
+                destination.Slice(row, PixelWidth).CopyTo(destination.Slice(row + PixelWidth, PixelWidth));
+            }
+        }
+        else { bitmap.Clear(); bitmap.Render(surface); bitmap.CopyPixels(pixels, PixelWidth * 4, 0); }
         // A solid white texel region for the renderer's low-latency beams and pointer.
         for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++)
         { int p = (y * PixelWidth + x) * 4; pixels[p] = pixels[p + 1] = pixels[p + 2] = pixels[p + 3] = 255; }
         if (!Lock()) return;
-        try { memory.WriteArray(PixelsAt, pixels, 0, pixels.Length); memory.Write(16, ++generation); }
+        try { PublishPixels(PixelsAt, pixels); memory.Write(16, ++generation); }
         finally { mutex.ReleaseMutex(); }
+    }
+
+    private void PublishPixels(long offset, byte[] frame)
+    {
+        // Accessor.WriteArray marshals each byte; bulk-copy the released frame while
+        // retaining the view handle and the existing IPC mutex for its entire write.
+        if (offset < 0 || offset > memory.Capacity - frame.Length) throw new ArgumentOutOfRangeException(nameof(offset));
+        var handle = memory.SafeMemoryMappedViewHandle;
+        bool retained = false;
+        try
+        {
+            handle.DangerousAddRef(ref retained);
+            var destination = IntPtr.Add(handle.DangerousGetHandle(), checked((int)(memory.PointerOffset + offset)));
+            System.Runtime.InteropServices.Marshal.Copy(frame, 0, destination, frame.Length);
+        }
+        finally { if (retained) handle.DangerousRelease(); }
     }
 
     public void Dispose()
@@ -564,6 +760,32 @@ public sealed class ControllerMenu : IDisposable
     internal void SmokeTest(string output)
     {
         Enable(true);
+        Home(); Tick();
+        if (backButton.IsEnabled || interactionHint.Text != Loc.Get("ControllerMenuTitle")) throw new Exception("Root menu must show its breadcrumb and disable Back");
+        if (!Lock()) throw new Exception("Menu test could not show the panel");
+        try { memory.Write(12, 1); } finally { mutex.ReleaseMutex(); }
+        Tick();
+        double expandedViewport = scroll.ViewportHeight;
+        ClickButton(Loc.Get("ControllerMenuCollapse")); Tick();
+        if (toolbar.Visibility != Visibility.Collapsed || scroll.ViewportHeight < expandedViewport + 100)
+            throw new Exception("Rolling up quick controls must give their space to the scrolling content");
+        ClickButton(Loc.Get("ControllerMenuExpand")); Tick();
+        if (toolbar.Visibility != Visibility.Visible) throw new Exception("Quick controls must expand again through the roll-up icon");
+        var helpPreferences = GameHelpPreferences.Current;
+        helpPreferences.Permit(helpPreferences.Selected, false);
+        uint oldCaptureRequests = memory.ReadUInt32(48);
+        BeginGameHelp();
+        if (memory.ReadUInt32(48) != oldCaptureRequests || gameHelpCaptureProvider != null || heading.Text != Loc.Get("GameHelpSettings"))
+            throw new Exception("Game help must ask for screenshot consent before requesting a capture");
+        if (GameHelpPreferences.Providers.Any(p => !targets.Keys.OfType<Button>().Any(b => b.Content?.ToString() == p.Name)))
+            throw new Exception("Game help must expose its major-provider choices");
+        helpPreferences.Permit(helpPreferences.Selected, true); BeginGameHelp();
+        if (gameHelpCaptureProvider?.Id != helpPreferences.Selected.Id || gameHelpCaptureSerial != unchecked(oldCaptureRequests + 1) || memory.ReadUInt32(48) != gameHelpCaptureSerial)
+            throw new Exception("Consented game help must correlate a fresh native capture with the selected provider");
+        gameHelpCaptureProvider = null;
+        if (!Lock()) throw new Exception("Game-help test could not clear its synthetic capture request");
+        try { memory.Write(48, oldCaptureRequests); } finally { mutex.ReleaseMutex(); }
+        helpPreferences.Permit(helpPreferences.Selected, false); Home(); Tick();
         imagesFolder = Path.Combine(output, "snapshot-ipc-images");
         FloatingSnapshot.SmokeTest(output);
         FloatingKeyboard.SmokeTest(output);
@@ -646,6 +868,7 @@ public sealed class ControllerMenu : IDisposable
         using (var file = File.Create(System.IO.Path.Combine(output, "controller-menu-sections.png"))) encoder.Save(file);
 
         Section(sections[1]); Tick(); // Screen controls, including an editable slider.
+        if (!backButton.IsEnabled || !interactionHint.Text.Contains(" › ")) throw new Exception("A section must enable Back and show its breadcrumb");
         var track = targets.Keys.OfType<Slider>().First();
         var source = (Slider)BindingOperations.GetBinding(track, RangeBase.ValueProperty)!.Source;
         double before = source.Value;
@@ -677,8 +900,58 @@ public sealed class ControllerMenu : IDisposable
         Pointer(2, (float)(point.X / Width), (float)(point.Y / Height), 0);
         if (original.IsChecked == old) throw new Exception("Controller checkbox did not update the desktop setting");
         original.IsChecked = old;
+        var panelFrameTimes = new List<double>();
+        for (int sample = 0; sample < 30; sample++)
+        {
+            scrolling.Add(sample % 2 == 0 ? 80 : -80, scroll.ScrollableHeight);
+            var clock = System.Diagnostics.Stopwatch.StartNew(); nextMenuRender = 0; Tick();
+            panelFrameTimes.Add(clock.Elapsed.TotalMilliseconds);
+        }
+        File.WriteAllText(Path.Combine(output, "floating-panel-performance.txt"),
+            $"Settings scroll layout/render/IPC: average {panelFrameTimes.Average():F1} ms; worst {panelFrameTimes.Max():F1} ms. Desktop smoke measurement, without headset contention.\n");
         Pointer(1, x, y, 0); Pointer(4, -1, -1, 0);
         if (held != null) throw new Exception("Focus loss must cancel a controller drag");
+
+        // Room life controls use the same bound controls, including all preset choices.
+        Section(sections.Single(s => s.Name == "RoomSection")); Tick();
+        nextMenuRender = 0; Tick();
+        var roomShot = new PngBitmapEncoder(); roomShot.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var file = File.Create(Path.Combine(output, "controller-room-categories.png"))) roomShot.Save(file);
+        var roomWindow = Window.GetWindow(sections.Single(s => s.Name == "RoomSection"));
+        var roomSlider = (Slider)roomWindow.FindName("RoomSlider");
+        double oldRoom = roomSlider.Value; roomSlider.Value = 60;
+        if (Categories((DependencyObject)sections.Single(s => s.Name == "RoomSection").Content).Count() != 6)
+            throw new Exception("Room settings must expose six organized category pages");
+        ClickButton(Loc.Get("RoomCategoryCreatures")); Tick();
+        var lifeBox = targets.Keys.OfType<CheckBox>().Single(b =>
+            BindingOperations.GetBinding(b, ToggleButton.IsCheckedProperty)?.Source is CheckBox source && source.Name == "CreaturesCheck");
+        var lifeSource = (CheckBox)BindingOperations.GetBinding(lifeBox, ToggleButton.IsCheckedProperty)!.Source;
+        bool? lifeBefore = lifeSource.IsChecked;
+        targets[lifeBox](new Point(), false);
+        if (lifeSource.IsChecked == lifeBefore) throw new Exception("VR creature toggle must update the desktop");
+        lifeSource.IsChecked = lifeBefore;
+        ClickButton(Loc.Get("ControllerMenuBack")); ClickButton(Loc.Get("RoomCategoryMusic")); Tick();
+        var visualBoxes = targets.Keys.OfType<CheckBox>().Where(b =>
+            BindingOperations.GetBinding(b, ToggleButton.IsCheckedProperty)?.Source is CheckBox source && source.Name.StartsWith("Visual", StringComparison.Ordinal)).ToArray();
+        if (visualBoxes.Length != 12) throw new Exception("VR must expose all twelve visualizer layer checkboxes");
+        var visualSources = visualBoxes.Select(b => (CheckBox)BindingOperations.GetBinding(b, ToggleButton.IsCheckedProperty)!.Source).ToArray();
+        var visualBefore = visualSources.Select(b => b.IsChecked).ToArray();
+        for (int i = 0; i < 2; i++) { visualSources[i].IsChecked = false; targets[visualBoxes[i]](new Point(), false); }
+        if (visualSources.Take(2).Any(b => b.IsChecked != true)) throw new Exception("VR visualizer layers must be independently selectable");
+        for (int i = 0; i < visualSources.Length; i++) visualSources[i].IsChecked = visualBefore[i];
+        scroll.ScrollToVerticalOffset(800); Tick();
+        double roomOffset = scroll.VerticalOffset;
+        var environmentSource = (Selector)roomWindow.FindName("EnvironmentList");
+        object currentEnvironment = environmentSource.SelectedItem;
+        Choices(environmentSource); Tick();
+        var sameChoice = targets.Keys.OfType<Button>().Single(b => b.Content?.ToString() == ItemLabel(environmentSource, currentEnvironment));
+        targets[sameChoice](new Point(), false); Tick();
+        if (roomOffset < 100 || Math.Abs(scroll.VerticalOffset - roomOffset) > 2) throw new Exception("Returning from a selector must preserve the Room page's scroll position");
+        if (!breadcrumb.Contains(Loc.Get("RoomCategoryMusic"))) throw new Exception("Returning from a selector must retain its Room category breadcrumb");
+        Section(sections.Single(s => s.Name == "RoomSection")); Tick();
+        foreach (var category in Categories((DependencyObject)sections.Single(s => s.Name == "RoomSection").Content))
+        { Category(category, () => Section(sections.Single(s => s.Name == "RoomSection")), Loc.Get("SectionRoom")); Tick(); }
+        roomSlider.Value = oldRoom;
 
         // Render every settings section so missing widgets/resources fail the smoke test.
         for (int i = 0; i < sections.Count; i++)
@@ -695,11 +968,34 @@ public sealed class ControllerMenu : IDisposable
         void ClickButton(string label)
         {
             Tick();
-            var button = targets.Keys.OfType<Button>().Single(b => b.Content?.ToString() == label);
+            var button = targets.Keys.OfType<Button>().Single(b => b.Content?.ToString() == label || b.ToolTip?.ToString() == label);
             var p = button.TranslatePoint(new Point(button.ActualWidth / 2, button.ActualHeight / 2), surface);
             Pointer(1, (float)(p.X / Width), (float)(p.Y / Height), 0);
             Pointer(2, (float)(p.X / Width), (float)(p.Y / Height), 0);
         }
+
+        // Themes and background transparency apply only to floating chrome.
+        Home(); Tick();
+        byte opaqueAlpha = 0, clearAlpha = 255;
+        for (int theme = 0; theme < Appearance.Themes.Length; theme++)
+        {
+            Appearance.Configure(theme, 100, 0); nextMenuRender = 0; Tick();
+            opaqueAlpha = pixels[(60 * PixelWidth + 1000) * 4 + 3];
+            var themed = new PngBitmapEncoder(); themed.Frames.Add(BitmapFrame.Create(bitmap));
+            using (var themedFile = File.Create(System.IO.Path.Combine(output, $"controller-theme-{theme}.png"))) themed.Save(themedFile);
+            Appearance.Configure(theme, 0, 0); nextMenuRender = 0; Tick();
+            clearAlpha = pixels[(60 * PixelWidth + 1000) * 4 + 3];
+            if (opaqueAlpha < 220 || clearAlpha > 80) throw new Exception("Floating background opacity must preserve alpha in every theme");
+        }
+        Appearance.Configure(0, 95, 0);
+
+        var motionTest = new PanelScrollMotion();
+        for (int packet = 0; packet < 4; packet++) motionTest.Add(100, 2000);
+        if (motionTest.Target != 400) throw new Exception("Scroll packets in one UI frame must accumulate");
+        motionTest.Step(.01, 2000);
+        if (motionTest.Position <= 0 || motionTest.Position >= 400) throw new Exception("Scrolling must animate between offsets");
+        for (int tick = 0; tick < 80; tick++) motionTest.Step(.01, 2000);
+        if (Math.Abs(motionTest.Position - 400) > 1) throw new Exception("Smooth scrolling must reach the requested offset");
 
         // Exercise the nested pages through real hit testing. Isolated source controls
         // let us check validation/events without changing the user's active profile.
@@ -710,9 +1006,15 @@ public sealed class ControllerMenu : IDisposable
         Choices(choices); Tick();
         if (targets.Keys.OfType<Button>().Any(b => b.Content?.ToString() == "Hidden option"))
             throw new Exception("Hidden desktop options must stay hidden in the controller menu");
+        var dragChoice = targets.Keys.OfType<Button>().Single(b => b.Content?.ToString() == "Option 1");
+        var dragPoint = dragChoice.TranslatePoint(new Point(dragChoice.ActualWidth / 2, dragChoice.ActualHeight / 2), surface);
+        float dragX = (float)(dragPoint.X / Width), dragY = (float)(dragPoint.Y / Height);
+        Pointer(1, dragX, dragY, 0); Pointer(0, dragX, dragY - .12f, 0); Pointer(2, dragX, dragY - .12f, 0); Tick();
+        if (choices.SelectedIndex != 0 || scrolling.Target <= 0) throw new Exception("Dragging panel content must scroll without clicking a choice");
+        Pointer(4, 0, 0, 0);
         Pointer(3, .5f, .5f, -1000); Tick();
         if (scroll.VerticalOffset <= 0) throw new Exception("Thumbstick input did not scroll the option list");
-        scroll.ScrollToTop(); Tick();
+        scrolling.Jump(0); scroll.ScrollToTop(); Tick();
         ClickButton("Option 1");
         if (choices.SelectedIndex != 1) throw new Exception("Controller option selection did not update its desktop source");
 
@@ -742,5 +1044,29 @@ public static class ControllerMenuInput
         double value = minimum + Math.Clamp((x - 12) / Math.Max(1, width - 24), 0, 1) * (maximum - minimum);
         if (tick > 0) value = minimum + Math.Round((value - minimum) / tick) * tick;
         return Math.Clamp(value, minimum, maximum);
+    }
+}
+
+// Accumulate input independently of WPF's deferred layout. Multiple XR events in
+// one UI tick must add together rather than overwrite the same old scroll offset.
+internal sealed class PanelScrollMotion
+{
+    public double Position { get; private set; }
+    public double Target { get; private set; }
+    private double velocity;
+    public bool Active => Math.Abs(Target - Position) > .1 || Math.Abs(velocity) > 5;
+    public void Jump(double offset) { Position = Target = offset; velocity = 0; }
+    public void Add(double delta, double maximum) { Target = Math.Clamp(Target + delta, 0, maximum); velocity = 0; }
+    public void Drag(double offset, double maximum) { Target = Math.Clamp(offset, 0, maximum); velocity = 0; }
+    public void Release(double speed) { velocity = Math.Clamp(speed, -6500, 6500); }
+    public bool Step(double dt, double maximum, bool dragging = false)
+    {
+        double previous = Position;
+        Target = Math.Clamp(Target + velocity * dt, 0, maximum);
+        velocity *= Math.Exp(-8 * dt);
+        if (Target <= 0 || Target >= maximum) velocity = 0;
+        Position += (Target - Position) * (1 - Math.Exp(-dt / (dragging ? .018 : .055)));
+        if (!Active) Position = Target;
+        return Math.Abs(Position - previous) > .01;
     }
 }

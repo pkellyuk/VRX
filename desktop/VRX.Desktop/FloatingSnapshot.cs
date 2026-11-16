@@ -2,24 +2,69 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 
 namespace VRX.Desktop;
 
 internal static class FloatingPanelChrome
 {
+    internal static Grid Scrollable(ScrollViewer scroll)
+    {
+        var grid = new Grid();
+        scroll.Margin = new Thickness(0, 0, 18, 0); grid.Children.Add(scroll);
+        var track = new Canvas { Width = 12, HorizontalAlignment = HorizontalAlignment.Right, IsHitTestVisible = false, ClipToBounds = true };
+        var thumb = new Border { Tag = "ScrollPosition", Width = 4, CornerRadius = new CornerRadius(2), Opacity = .7 };
+        thumb.SetResourceReference(Border.BackgroundProperty, "Accent");
+        var up = new TextBlock { Text = "⌃", FontSize = 16, Opacity = .7 };
+        var down = new TextBlock { Text = "⌄", FontSize = 16, Opacity = .7 };
+        up.SetResourceReference(TextBlock.ForegroundProperty, "Accent"); down.SetResourceReference(TextBlock.ForegroundProperty, "Accent");
+        track.Children.Add(thumb); track.Children.Add(up); track.Children.Add(down); grid.Children.Add(track);
+        void Update()
+        {
+            track.Visibility = scroll.ScrollableHeight > 1 ? Visibility.Visible : Visibility.Hidden;
+            double length = Math.Max(0, scroll.ActualHeight - 40);
+            thumb.Height = Math.Min(length, Math.Max(24, length * scroll.ViewportHeight / Math.Max(1, scroll.ExtentHeight)));
+            Canvas.SetTop(thumb, 20 + Math.Max(0, length - thumb.Height) * scroll.VerticalOffset / Math.Max(1, scroll.ScrollableHeight));
+            Canvas.SetLeft(thumb, 4); Canvas.SetTop(up, 0); Canvas.SetTop(down, Math.Max(0, scroll.ActualHeight - 20));
+            up.Visibility = scroll.VerticalOffset > 1 ? Visibility.Visible : Visibility.Hidden;
+            down.Visibility = scroll.VerticalOffset < scroll.ScrollableHeight - 1 ? Visibility.Visible : Visibility.Hidden;
+        }
+        scroll.ScrollChanged += (_, _) => Update(); scroll.SizeChanged += (_, _) => Update();
+        return grid;
+    }
+    internal static UIElement Title(UIElement heading, Button close)
+    {
+        var label = close.Content?.ToString() ?? Loc.Get("SnapshotClose");
+        close.ToolTip = label; System.Windows.Automation.AutomationProperties.SetName(close, label);
+        close.Content = "×"; close.Tag = ""; close.FontSize = 28; close.Padding = new Thickness(0);
+        close.HorizontalContentAlignment = HorizontalAlignment.Center;
+        close.Width = 80; close.Height = 48; close.Margin = new Thickness(4);
+        var row = new DockPanel(); DockPanel.SetDock(close, Dock.Right);
+        row.Children.Add(close); row.Children.Add(heading);
+        return row;
+    }
     internal static Grid Wrap(UIElement content)
     {
         var grid = new Grid();
+        foreach (double margin in new[] { 12.0, 14.0 })
+            grid.Children.Add(new Border { Tag = "GlassGlow", Margin = new Thickness(margin), CornerRadius = new CornerRadius(18),
+                BorderThickness = new Thickness(2), BorderBrush = new SolidColorBrush(Color.FromArgb(30, 100, 211, 224)), IsHitTestVisible = false });
         grid.Children.Add(new Border
         {
-            Margin = new Thickness(16), CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(6),
+            Margin = new Thickness(16), CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1.5),
+            Tag = "GlassFrame",
             BorderBrush = new SolidColorBrush(Color.FromRgb(68, 132, 145)),
-            Background = new SolidColorBrush(Color.FromRgb(16, 24, 40)),
-            Effect = new DropShadowEffect { Color = Color.FromRgb(100, 211, 224), BlurRadius = 10, ShadowDepth = 0, Opacity = .22 }
+            Background = new SolidColorBrush(Color.FromRgb(16, 24, 40))
         });
+        var decoration = new Canvas { IsHitTestVisible = false, ClipToBounds = true };
+        foreach (var at in new[] { new Point(764, 570), new Point(30, 640) })
+        {
+            var glyph = new TextBlock { Tag = "ThemeDecoration", FontFamily = new FontFamily("Segoe UI Emoji"), FontSize = 88 };
+            Canvas.SetLeft(glyph, at.X); Canvas.SetTop(glyph, at.Y); decoration.Children.Add(glyph);
+        }
+        grid.Children.Add(decoration);
         grid.Children.Add(content);
+        Appearance.Register(grid);
         return grid;
     }
 }
@@ -35,22 +80,28 @@ internal sealed class FloatingSnapshot : IFloatingPanel
     private Button? held;
     internal string? SavedPath { get; private set; }
     public bool Closed { get; private set; }
-    public bool Dirty { get; private set; } = true;
+    private int appearanceRevision = -1;
+    private bool dirty = true;
+    public bool Dirty { get => dirty || appearanceRevision != Appearance.Revision; private set => dirty = value; }
     internal FloatingSnapshot(BitmapSource image, string imagesFolder)
     {
         original = image; this.imagesFolder = imagesFolder;
         var root = new DockPanel { Margin = new Thickness(48) };
         var title = new Border { Height = 56, CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromRgb(37, 50, 72)),
-            Child = new TextBlock { Text = Loc.Get("SnapshotTitle"), Foreground = Brushes.White, FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center } };
+            Child = FloatingPanelChrome.Title(new TextBlock { Text = Loc.Get("SnapshotTitle"), Foreground = Brushes.White, FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }, CloseButton()) };
         DockPanel.SetDock(title, Dock.Top); root.Children.Add(title);
         var bottom = new StackPanel { Orientation = Orientation.Horizontal, Height = 56, Margin = new Thickness(0, 8, 0, 0) };
         DockPanel.SetDock(bottom, Dock.Bottom); root.Children.Add(bottom);
         AddButton(bottom, Loc.Get("SnapshotSave"), Save);
         AddButton(bottom, Loc.Get("SnapshotDelete"), Delete);
-        AddButton(bottom, Loc.Get("SnapshotClose"), () => Closed = true);
         bottom.Children.Add(status);
         root.Children.Add(new Image { Source = original, Stretch = Stretch.Uniform, Margin = new Thickness(0, 8, 0, 0) });
         surface = new UserControl { Width = ControllerMenu.Width, Height = ControllerMenu.Height, Content = FloatingPanelChrome.Wrap(root), FontFamily = new FontFamily("Segoe UI") };
+    }
+    private Button CloseButton()
+    {
+        var button = new Button { Content = Loc.Get("SnapshotClose"), FontSize = 20 };
+        actions[button] = () => Closed = true; return button;
     }
     private void AddButton(Panel panel, string label, Action action)
     {
@@ -89,14 +140,14 @@ internal sealed class FloatingSnapshot : IFloatingPanel
     }
     public void Pointer(int kind, float x, float y, float value = 0)
     {
-        if (kind == 4) { held = null; return; }
+        if (kind == 4) { PanelFeedback.Cancel(held, () => Dirty = true); held = null; return; }
         var point = new Point(x * ControllerMenu.Width, y * ControllerMenu.Height);
         var hit = actions.Keys.FirstOrDefault(b => b.IsEnabled && new Rect(b.TranslatePoint(new Point(), surface), b.RenderSize).Contains(point));
-        if (kind == 1) held = hit;
+        if (kind == 1) { held = hit; PanelFeedback.Down(held, () => Dirty = true); }
         if (kind == 2)
         {
             var pressed = held; held = null;
-            if (pressed != null && pressed == hit) actions[pressed]();
+            if (pressed != null && pressed == hit) { PanelFeedback.Up(pressed, () => Dirty = true); actions[pressed](); } else PanelFeedback.Cancel(pressed, () => Dirty = true);
         }
     }
     public byte[] Render()
@@ -108,7 +159,7 @@ internal sealed class FloatingSnapshot : IFloatingPanel
         bitmap.CopyPixels(pixels, ControllerMenu.PixelWidth * 4, 0);
         return pixels;
     }
-    public void Published() => Dirty = false;
+    public void Published() { Dirty = false; appearanceRevision = Appearance.Revision; }
     public void Dispose() { held = null; }
     internal static void SmokeTest(string folder)
     {
@@ -118,7 +169,7 @@ internal sealed class FloatingSnapshot : IFloatingPanel
         void Click(FloatingSnapshot panel, string label)
         {
             panel.Render();
-            var button = panel.actions.Keys.Single(b => b.Content?.ToString() == label);
+            var button = panel.actions.Keys.Single(b => b.Content?.ToString() == label || b.ToolTip?.ToString() == label);
             var point = button.TranslatePoint(new Point(button.ActualWidth / 2, button.ActualHeight / 2), panel.surface);
             panel.Pointer(1, (float)(point.X / ControllerMenu.Width), (float)(point.Y / ControllerMenu.Height));
             panel.Pointer(2, (float)(point.X / ControllerMenu.Width), (float)(point.Y / ControllerMenu.Height));

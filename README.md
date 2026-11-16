@@ -155,6 +155,38 @@ movement, dragging beyond a slider, thumbstick scrolling, focus/tracking loss, r
 turning the feature on/off during playback. Check both Easy and Expert, flat and curved
 screens, and Steam Frame VR/gamepad mode switching.
 
+### Room life and music
+
+In **Expert > Room > Room life & music**, enable playback listening, choose one of
+12 wall/ceiling visualizers, add eight kinds of animated creatures, float colourful
+3D dust, or turn on moving disco spotlights and traced shadows. Each feature has its
+own switch, with species selection, population, brightness and particle density.
+The controller menu's **Room** page has the same settings. Visualizers can now be
+layered with checkboxes, with an independent music-reactivity slider. Creatures respond
+to tracked controller beams, and **Vrex** adds a teal PersonaBot-style jetpack companion
+that follows the closest beam with inertia and short chat bubbles. **Themes** contains nine
+floating-panel themes, background transparency and a separate subtle desktop palette.
+The menu remembers its page position, scrolls smoothly and supports trigger-drag scrolling.
+Floating controls show press feedback. The keyboard includes Windows dictation with
+live microphone selection, and 3D has a quick toggle at the top of settings. Use a fixed screen with
+the room enabled; everything is off by default and saved per game.
+
+Room settings have six category pages in VR and matching collapsible groups on desktop.
+Point the free controller near Vrex to open **Hello** and **What are you doing?**;
+trigger-click a choice for a preset reply and gesture. He also waves, winks, shrugs,
+points along travel and occasionally spins. Screen-aware AI help remains a later stage.
+
+**Help with this game** now prototypes browser-based screenshot help using Google AI
+Mode (default), Google Lens, Microsoft Copilot or Google Gemini. Enable sharing for
+the chosen provider once; subsequent clicks capture the current VRX screen and hand
+over the image and question automatically. Google AI Mode and Lens were verified with
+a synthetic image; Copilot/Gemini account flows still need in-account testing. Provider
+sign-in, consent and usage limits apply. No local vision model or paid API is added.
+
+Listening uses the default Windows playback mix, including other audible apps.
+Creature collisions use VRX's virtual walls, seating, platforms and screen.
+See [XCREATURES.md](XCREATURES.md) for presets, relationships, implementation and checks.
+
 ### Everyday use
 
 From using VRX day to day:
