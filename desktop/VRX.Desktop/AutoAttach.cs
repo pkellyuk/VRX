@@ -22,6 +22,9 @@ public sealed class AppSettings
     public bool AutoAttach { get; set; }
     // Opt-in, app-wide. Old settings files and new installs leave motion input off.
     public bool MotionControllers { get; set; }
+    public int FloatingTheme { get; set; }
+    public int FloatingOpacity { get; set; } = 95;
+    public int DesktopTheme { get; set; }
     public int AutoAttachSeconds { get; set; } = DefaultSeconds;
 
     // "Easy" or "Expert". Null in files written before the modes existed; ProfileStore
@@ -35,11 +38,11 @@ public sealed class AppSettings
 
     // Expert's collapsible sections: name -> open. Sections not listed use DefaultSections.
     public const string SectionGame = "Game", SectionScreen = "Screen", SectionAround = "Around", SectionRoom = "Room",
-        SectionDepth = "Depth", SectionExperimental = "Experimental", SectionSteamVr = "SteamVr", SectionProfile = "Profile", SectionSession = "Session";
+        SectionDepth = "Depth", SectionExperimental = "Experimental", SectionThemes = "Themes", SectionSteamVr = "SteamVr", SectionProfile = "Profile", SectionSession = "Session";
     public static readonly IReadOnlyDictionary<string, bool> DefaultSections = new Dictionary<string, bool>(StringComparer.Ordinal)
     {
         [SectionGame] = false, [SectionScreen] = true, [SectionAround] = true, [SectionRoom] = true,
-        [SectionDepth] = false, [SectionExperimental] = false, [SectionSteamVr] = false, [SectionProfile] = false, [SectionSession] = false,
+        [SectionDepth] = false, [SectionExperimental] = false, [SectionThemes] = false, [SectionSteamVr] = false, [SectionProfile] = false, [SectionSession] = false,
     };
     public Dictionary<string, bool>? Sections { get; set; }
 

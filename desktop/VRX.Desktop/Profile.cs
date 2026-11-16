@@ -144,6 +144,26 @@ public sealed class Profile
     public const int SeatFront = 0, SeatMiddle = 1, SeatRear = 2, SeatCount = 3;
     public int RoomSeat { get; set; } = SeatMiddle;
 
+    // Room life, v20: every subsystem is opt-in. Species bits follow LifeKind.
+    public bool ListenAudio { get; set; }
+    public bool MusicVisuals { get; set; }
+    public bool Creatures { get; set; }
+    public bool RoomParticles { get; set; }
+    public bool DiscoLights { get; set; }
+    public bool TracedShadows { get; set; }
+    public int VisualPreset { get; set; } // Legacy single-preset migration.
+    public int VisualLayers { get; set; } = -1;
+    public int EffectiveVisualLayers => VisualLayers < 0 ? 1 << VisualPreset : VisualLayers;
+    public int MusicReactivity { get; set; } = 100;
+    public bool BeamReactions { get; set; } = true;
+    public bool Vrex { get; set; }
+    public int CreatureSpecies { get; set; } = 255;
+    public int CreatureCount { get; set; } = 12;
+    public int EffectsBrightness { get; set; } = 100;
+    public int ParticleDensity { get; set; } = 40;
+    public int LifeFlags => (ListenAudio ? 1 : 0) | (MusicVisuals ? 2 : 0) | (Creatures ? 4 : 0) |
+        (RoomParticles ? 8 : 0) | (DiscoLights ? 16 : 0) | (TracedShadows ? 32 : 0);
+
     // room.h RoomTheatreLayout, in the same float arithmetic: the rows a metre apart (0.95 at
     // least, four at least) from 0.8 screen widths (2 m at least) to 2; front is the first
     // row, rear the last, middle the row nearest 1.3 widths. The screen's distance from the
@@ -189,11 +209,12 @@ public sealed class Profile
         Range(Height, -2, 2) && Range(Horizontal, -3, 3) && Range(Strength, 0, 2) &&
         ScreenCurve is >= 0 and <= 100 && EdgeFlatten is >= 0 and <= 15 && EdgeStepMin is >= 5 and <= 60 && WidenNear is >= 0 and <= 300 && AmbilightStrength is >= 0 and <= 100 && TryParseColor(WorldColor, out _) && Room is >= 0 and <= 100 &&
         RoomGlass is >= 0 and <= 100 && RoomReflections is >= 0 and <= 100 && RoomLight is >= 0 and <= 100 && TryParseColor(RoomLightColor, out _) &&
-        RoomEnvironment is >= 0 and < EnvironmentCount && RoomSeat is >= SeatFront and < SeatCount &&
+        VisualPreset is >= 0 and < 12 && VisualLayers is >= -1 and <= 4095 && MusicReactivity is >= 0 and <= 300 && CreatureSpecies is >= 0 and <= 255 && CreatureCount is >= 0 and <= 24 &&
+        EffectsBrightness is >= 0 and <= 200 && ParticleDensity is >= 0 and <= 100 && RoomEnvironment is >= 0 and < EnvironmentCount && RoomSeat is >= SeatFront and < SeatCount &&
         RecenterKey is > 0 and < 255 && MenuKey is > 0 and < 255 && RecenterKey != MenuKey && Gpus.ValidId(DepthGpu);
     private static bool Range(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
     public string Control(uint recenter, uint menu, bool stop) => FormattableString.Invariant(
-        $"VRX 19 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear} {(ThinParts ? 1 : 0)} {(SharpenEdges ? 1 : 0)} {(ShowDepthMap ? 1 : 0)} {(BackLayer ? 1 : 0)} {RoomEnvironment} {RoomSeat}\n");
+        $"VRX 21 {Width:F3} {Distance:F3} {Height:F3} {Horizontal:F3} {Strength:F3} {(Follow ? 1 : 0)} {(Stereo ? 1 : 0)} {(AutoDismiss ? 1 : 0)} {RecenterKey} {MenuKey} {recenter} {menu} {(stop ? 1 : 0)} {(ForegroundRefinement ? 1 : 0)} {(MatchFrameToDepth ? 1 : 0)} {(FastDepthModel ? 1 : 0)} {(SteadyDepth ? 1 : 0)} {(FuseModels ? 1 : 0)} {(DelayToDepth && !MatchFrameToDepth ? 1 : 0)} {(SubpixelWarp ? 1 : 0)} {ScreenCurve} {(Ambilight ? 1 : 0)} {AmbilightStrength} {(TryParseColor(WorldColor, out int world) ? world : 0)} {Room} {RoomGlass} {RoomReflections} {RoomLight} {(TryParseColor(RoomLightColor, out int light) ? light : 0xFFB46B)} {EdgeFlatten} {(EdgeSteps ? 1 : 0)} {EdgeStepMin} {WidenNear} {(ThinParts ? 1 : 0)} {(SharpenEdges ? 1 : 0)} {(ShowDepthMap ? 1 : 0)} {(BackLayer ? 1 : 0)} {RoomEnvironment} {RoomSeat} {LifeFlags} {VisualPreset} {CreatureSpecies} {CreatureCount} {EffectsBrightness} {ParticleDensity} {EffectiveVisualLayers} {MusicReactivity} {(BeamReactions ? 1 : 0)} {(Vrex ? 1 : 0)}\n");
 }
 
 public sealed class ProfileStore(string root)
@@ -246,6 +267,9 @@ public sealed class ProfileStore(string root)
         try
         {
             loaded = File.Exists(AppSettingsFile) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(AppSettingsFile)) ?? new AppSettings() : new AppSettings();
+            loaded.FloatingTheme = Math.Clamp(loaded.FloatingTheme, 0, Appearance.Themes.Length - 1);
+            loaded.DesktopTheme = Math.Clamp(loaded.DesktopTheme, 0, Appearance.Themes.Length - 1);
+            loaded.FloatingOpacity = Math.Clamp(loaded.FloatingOpacity, 0, 100);
             loaded.AutoAttachSeconds = AppSettings.ClampSeconds(loaded.AutoAttachSeconds);
             loaded.ExpertWindow = AppSettings.ValidBounds(loaded.ExpertWindow);
             loaded.EasyWindow = AppSettings.ValidPosition(loaded.EasyWindow);
@@ -288,6 +312,9 @@ public sealed class ProfileStore(string root)
         {
             AutoAttach = settings.AutoAttach,
             MotionControllers = settings.MotionControllers,
+            FloatingTheme = Math.Clamp(settings.FloatingTheme, 0, Appearance.Themes.Length - 1),
+            DesktopTheme = Math.Clamp(settings.DesktopTheme, 0, Appearance.Themes.Length - 1),
+            FloatingOpacity = Math.Clamp(settings.FloatingOpacity, 0, 100),
             AutoAttachSeconds = AppSettings.ClampSeconds(settings.AutoAttachSeconds),
             Mode = AppSettings.ValidMode(settings.Mode) ? settings.Mode : null,
             Sections = settings.Sections == null ? null : new Dictionary<string, bool>(settings.Sections, StringComparer.Ordinal),

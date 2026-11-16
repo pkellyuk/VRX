@@ -1492,7 +1492,7 @@ static const uint32_t kRoomFlagLight = 64;      // the room light is on: its pan
 // reciprocals and screen bounds (rows 17-20). The environments (XENV.md) take row 16's third
 // value and rows 21-31: the faces' colours, the bounce per channel, the side walls' lights,
 // the lounge's rug and the open air's night.
-// kRoomCbufferHlsl declares all 32 rows.
+// kRoomCbufferHlsl declares this same layout, including the room-life rows.
 struct RoomConstants                            // must match kRoomCbufferHlsl
 {
     float X = 0, yF = 0, yC = 0, zB = 0;                            // row 0
@@ -1526,9 +1526,20 @@ struct RoomConstants                            // must match kRoomCbufferHlsl
     float seatX0 = 0, seatBlock = 0, standsZEnd = 0, rpad9 = 0;         // 33: its seats, and where the last row ends (the back wall)
     uint32_t standsRows = 0, viewerRow = 0, coarseFirst = 0, coarseCount = 0;   // 34: rows (0: no stands), the viewer's, the coarse patches
     int32_t seatJMin = 0; uint32_t seatCols = 0; float rpad10 = 0, rpad11 = 0;  // 35: the seats' columns (Room::seatJMin, seatCols)
-    float pad6[48] = {};                                                // 36-47: a 768-byte buffer keeps the ring's CBVs 256-aligned
+    float lifeTime = 0, audioBass = 0, audioMid = 0, audioHigh = 0;
+    float lifeBeat = 0, audioLevel = 0, lifeGain = 0, particleDensity = 0;
+    uint32_t lifePreset = 0, lifeSpecies = 0, lifeCount = 0, lifeFlags = 0;
+    float lifeSpectrum[16] = {};
+    // Each instance: centre/radius, heading/kind, colour/phase, gait clock/attention/state.
+    float lifeObjects[25][16] = {};
+    float lifeWaveform[48] = {};
+    float visualReactivity=0; uint32_t visualLayers=0; float vrexChat=0, vrexState=0;
+    float lifePadding[16] = {};                                                // 2560 bytes, keeping every ring CBV 256-aligned
 };
-static_assert(sizeof(RoomConstants) == 768, "RoomConstants is one 768-byte constant buffer (three 256-byte steps)");
+static_assert(offsetof(RoomConstants,lifeTime)==576 && offsetof(RoomConstants,lifeSpectrum)==624 &&
+              offsetof(RoomConstants,lifeObjects)==688 && offsetof(RoomConstants,lifeWaveform)==2288,
+              "room life rows match the HLSL constant buffer");
+static_assert(sizeof(RoomConstants) == 2560, "RoomConstants is ten 256-byte steps");
 static_assert(offsetof(RoomConstants, standsZ0) == 512 && offsetof(RoomConstants, seatX0) == 528 && offsetof(RoomConstants, standsRows) == 544 &&
               offsetof(RoomConstants, seatJMin) == 560, "rows 32-35: the theatre (XENV.md)");
 static_assert(offsetof(RoomConstants, glowH) == 160 && offsetof(RoomConstants, glass) == 176, "rows 0-10 are v10's; row 11 starts at 176");
@@ -1544,7 +1555,7 @@ static_assert(offsetof(RoomConstants, bounceRgb) == 432 && offsetof(RoomConstant
 // the reflections - or an environment other than the room.
 inline bool RoomLookOn(const RoomConstants& rc)
 {
-    return (rc.flags & (kRoomFlagLight | kRoomFlagFinish | kRoomFlagReflect)) != 0 || rc.env != (uint32_t)kRoomEnvRoom;
+    return (rc.lifeFlags & 190) != 0 || (rc.flags & (kRoomFlagLight | kRoomFlagFinish | kRoomFlagReflect)) != 0 || rc.env != (uint32_t)kRoomEnvRoom;
 }
 
 // Decorative fittings follow both Room reflectance and the unsaturated lamp

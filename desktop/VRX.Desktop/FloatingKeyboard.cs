@@ -11,7 +11,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
     private readonly SwipePredictor predictor;
     private readonly Func<KeyboardEdit, bool> emit;
     private readonly UserControl surface;
-    private readonly Canvas keys = new() { Width = 864, Height = 288 };
+    private readonly Canvas keys = new() { Width = 864, Height = 232 };
     private readonly TextBlock target = new() { Foreground = Brushes.LightCyan, FontSize = 17, Height = 28, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly Dictionary<Button, Action> actions = new();
     private readonly List<(Rect Box, char Letter)> letters = new();
@@ -19,6 +19,17 @@ internal sealed class FloatingKeyboard : IFloatingPanel
     private readonly Button[] candidates = new Button[3];
     private readonly Polyline ink = new() { Stroke = Brushes.LightCyan, StrokeThickness = 4, IsHitTestVisible = false };
     private readonly RenderTargetBitmap bitmap = new(ControllerMenu.PixelWidth, ControllerMenu.PixelHeight, 192, 192, PixelFormats.Pbgra32);
+    private readonly KeyboardDictation dictation = new();
+    private readonly Button voiceButton;
+    private readonly Button microphoneButton;
+    private readonly TextBlock voiceStatus = new() { FontSize = 14, Height = 24, TextTrimming = TextTrimming.CharacterEllipsis };
+    private readonly Border microphonePopup = new() { Visibility = Visibility.Collapsed, Width = 760, Padding = new Thickness(12), CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(2), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(48, 142, 0, 0) };
+    private readonly StackPanel microphoneChoices = new();
+    private readonly ScrollViewer microphoneScroll = new() { MaxHeight = 250, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+    private readonly HashSet<Button> microphoneButtons = new();
+    private KeyboardDictation.Microphone selectedMicrophone = new(-1, Loc.Get("DictationDefaultMic"));
+    private bool changingVoice;
+    private int voiceGeneration;
     private Button? heldButton;
     private char heldLetter;
     private bool shift, symbols;
@@ -27,17 +38,25 @@ internal sealed class FloatingKeyboard : IFloatingPanel
     private string prefix = "", committed = "";
     private string[] suggestions = [];
     public bool Closed { get; private set; }
-    public bool Dirty { get; private set; } = true;
+    private int appearanceRevision = -1;
+    private bool dirty = true;
+    public bool Dirty { get => dirty || appearanceRevision != Appearance.Revision; private set => dirty = value; }
     internal FloatingKeyboard(SwipePredictor predictor, Func<KeyboardEdit, bool> emit)
     {
         this.predictor = predictor; this.emit = emit;
         var root = new DockPanel { Margin = new Thickness(48) };
         var title = new Border { Height = 56, CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromRgb(37, 50, 72)),
-            Child = new TextBlock { Text = Loc.Get("KeyboardTitle"), Foreground = Brushes.White, FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center } };
+            Child = FloatingPanelChrome.Title(new TextBlock { Text = Loc.Get("KeyboardTitle"), Foreground = Brushes.White, FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }, Button(Loc.Get("SnapshotClose"), 80, () => { StopVoice(); Closed = true; })) };
         DockPanel.SetDock(title, Dock.Top); root.Children.Add(title);
         var top = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
         top.Children.Add(target);
-        var choices = new StackPanel { Orientation = Orientation.Horizontal, Height = 52 };
+        var voiceBar = new StackPanel { Orientation = Orientation.Horizontal, Height = 44 };
+        voiceButton = Button(Loc.Get("DictationStart"), 180, () => _ = ToggleVoice()); voiceButton.Height = 40;
+        microphoneButton = Button(Loc.Format("DictationMicrophone", selectedMicrophone.Name), 670, OpenMicrophones); microphoneButton.Height = 40;
+        voiceBar.Children.Add(voiceButton); voiceBar.Children.Add(microphoneButton);
+        top.Children.Add(voiceBar); top.Children.Add(voiceStatus);
+        voiceStatus.Text = Loc.Get("DictationOff");
+        var choices = new StackPanel { Orientation = Orientation.Horizontal, Height = 44 };
         for (int i = 0; i < candidates.Length; i++)
         {
             int choice = i;
@@ -47,23 +66,27 @@ internal sealed class FloatingKeyboard : IFloatingPanel
                 if (addWordCandidate) { predictor.Learn(suggestions[choice]); addWordCandidate = false; }
                 Commit(suggestions[choice]);
             });
-            choices.Children.Add(candidates[i]);
+            candidates[i].Height = 40; choices.Children.Add(candidates[i]);
         }
         top.Children.Add(choices); top.Children.Add(keys);
-        var controls = new WrapPanel { Height = 60 };
+        var controls = new WrapPanel { Height = 50 };
         controls.Children.Add(Button(Loc.Get("KeyboardShift"), 72, () => { shift = !shift; DrawKeys(); }));
         controls.Children.Add(Button("123/#+=", 88, () => { symbols = !symbols; DrawKeys(); }));
-        controls.Children.Add(Button(Loc.Get("KeyboardSpace"), 220, () =>
+        controls.Children.Add(Button(Loc.Get("KeyboardSpace"), 410, () =>
         {
             if (committed.Length > 0) { ClearWord(); return; }
             if (Send(new KeyboardEdit(" "))) { if (predictor.IsKnown(prefix)) predictor.Learn(prefix); ClearWord(); }
         }));
-        controls.Children.Add(Button("⌫", 90, Backspace));
-        controls.Children.Add(Button(Loc.Get("KeyboardEnter"), 100, () => { if (Send(new KeyboardEdit("", 13))) ClearWord(); }));
-        controls.Children.Add(Button("Tab", 64, () => { if (Send(new KeyboardEdit("", 9))) ClearWord(); }));
+        controls.Children.Add(Button("⌫", 130, Backspace));
+
         top.Children.Add(controls);
-        var special = new WrapPanel { Height = 288, Visibility = Visibility.Collapsed };
-        controls.Children.Add(Button("PC keys", 90, () => { bool pc = special.Visibility != Visibility.Visible; special.Visibility = pc ? Visibility.Visible : Visibility.Collapsed; keys.Visibility = pc ? Visibility.Collapsed : Visibility.Visible; ClearWord(); }));
+        var special = new WrapPanel { Height = 232, Visibility = Visibility.Collapsed };
+        var actionRow = new DockPanel { Height = 56 };
+        var enter = Button(Loc.Get("KeyboardEnter"), 400, () => { if (Send(new KeyboardEdit("", 13))) ClearWord(); });
+        enter.Height = 52; DockPanel.SetDock(enter, Dock.Right); actionRow.Children.Add(enter);
+        var leftActions = new StackPanel { Orientation = Orientation.Horizontal };
+        leftActions.Children.Add(Button("Tab", 80, () => { if (Send(new KeyboardEdit("", 9))) ClearWord(); }));
+        leftActions.Children.Add(Button("PC keys", 110, () => { bool pc = special.Visibility != Visibility.Visible; special.Visibility = pc ? Visibility.Visible : Visibility.Collapsed; keys.Visibility = pc ? Visibility.Collapsed : Visibility.Visible; ClearWord(); }));
         foreach (var (label, flag) in new[] { ("Ctrl", KeyboardModifiers.Control), ("Alt", KeyboardModifiers.Alt), ("Win", KeyboardModifiers.Windows) })
         {
             Button? toggle = null;
@@ -77,10 +100,35 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         foreach (var (label, key) in new[] { ("Copy",67), ("Paste",86), ("Cut",88), ("Select all",65), ("Undo",90), ("Redo",89) })
             special.Children.Add(Button(label, 120, () => { Send(new KeyboardEdit("", key, Modifiers: KeyboardModifiers.Control)); ClearWord(); }));
         top.Children.Add(special);
+        actionRow.Children.Add(leftActions); top.Children.Add(actionRow);
         top.Children.Add(new TextBlock { Text = Loc.Get("KeyboardHint"), Foreground = Brushes.LightGray, FontSize = 16, Margin = new Thickness(0, 6, 0, 6), TextWrapping = TextWrapping.Wrap });
-        top.Children.Add(Button(Loc.Get("SnapshotClose"), 130, () => Closed = true));
         root.Children.Add(top);
-        surface = new UserControl { Width = ControllerMenu.Width, Height = ControllerMenu.Height, FontFamily = new FontFamily("Segoe UI"), Content = FloatingPanelChrome.Wrap(root) };
+        var chrome = FloatingPanelChrome.Wrap(root);
+        microphonePopup.SetResourceReference(Border.BackgroundProperty, "Card"); microphonePopup.SetResourceReference(Border.BorderBrushProperty, "Accent");
+        microphoneScroll.Content = microphoneChoices; microphonePopup.Child = microphoneScroll; chrome.Children.Add(microphonePopup);
+        surface = new UserControl { Width = ControllerMenu.Width, Height = ControllerMenu.Height, FontFamily = new FontFamily("Segoe UI"), Content = chrome };
+        dictation.Recognized += text =>
+        {
+            int epoch = System.Threading.Volatile.Read(ref voiceGeneration);
+            surface.Dispatcher.BeginInvoke(() =>
+            {
+                if (Closed || epoch != voiceGeneration || !dictation.Listening || changingVoice) return;
+                modifiers = KeyboardModifiers.None; shift = false;
+                if (Send(new KeyboardEdit(text + " "))) { ClearWord(); voiceStatus.Text = Loc.Format("DictationHeard", text); }
+                else { StopVoice(); voiceStatus.Text = Loc.Get("KeyboardChooseTarget"); }
+                Dirty = true;
+            });
+        };
+        dictation.Hypothesized += text =>
+        {
+            int epoch = System.Threading.Volatile.Read(ref voiceGeneration);
+            surface.Dispatcher.BeginInvoke(() => { if (!Closed && epoch == voiceGeneration && dictation.Listening && !changingVoice) { voiceStatus.Text = Loc.Format("DictationHearing", text); Dirty = true; } });
+        };
+        dictation.Failed += message =>
+        {
+            int epoch = System.Threading.Volatile.Read(ref voiceGeneration);
+            surface.Dispatcher.BeginInvoke(() => { if (!Closed && epoch == voiceGeneration && dictation.Listening) { StopVoice(); voiceStatus.Text = Loc.Format("DictationError", message); Dirty = true; } });
+        };
         DrawKeys(); SetTarget(Loc.Get("KeyboardChooseTarget"));
     }
     private Button Button(string text, double width, Action action)
@@ -88,7 +136,53 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         var button = new Button { Content = text, Width = width, Height = 48, FontSize = 18, Padding = new Thickness(4), Margin = new Thickness(0, 0, 6, 4) };
         actions[button] = () => { action(); Dirty = true; }; return button;
     }
-    internal void SetTarget(string label) { target.Text = label; ClearWord(); Dirty = true; }
+    internal void SetTarget(string label) { if (target.Text != label) StopVoice(); target.Text = label; ClearWord(); Dirty = true; }
+    private async Task ToggleVoice()
+    {
+        if (changingVoice) return;
+        if (dictation.Listening) { StopVoice(); return; }
+        changingVoice = true; int epoch = ++voiceGeneration;
+        voiceButton.IsEnabled = microphoneButton.IsEnabled = false;
+        voiceStatus.Text = Loc.Get("DictationStarting"); Dirty = true;
+        try
+        {
+            string language = await Task.Run(() => dictation.Start(selectedMicrophone));
+            if (Closed || epoch != voiceGeneration) { dictation.Stop(); return; }
+            voiceButton.Content = Loc.Get("DictationStop"); voiceStatus.Text = Loc.Format("DictationListening", language);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException or NAudio.MmException or UnauthorizedAccessException or ArgumentException or PlatformNotSupportedException)
+        { voiceStatus.Text = Loc.Format("DictationError", ex.Message); }
+        finally { changingVoice = false; voiceButton.IsEnabled = microphoneButton.IsEnabled = true; Dirty = true; }
+    }
+    internal void StopVoice()
+    {
+        voiceGeneration++; dictation.Stop();
+        voiceButton.Content = Loc.Get("DictationStart"); voiceStatus.Text = Loc.Get("DictationOff"); Dirty = true;
+    }
+    private void OpenMicrophones()
+    {
+        if (microphonePopup.Visibility == Visibility.Visible) { microphonePopup.Visibility = Visibility.Collapsed; Dirty = true; return; }
+        foreach (var button in microphoneButtons) actions.Remove(button);
+        microphoneButtons.Clear(); microphoneChoices.Children.Clear();
+        try
+        {
+            foreach (var microphone in KeyboardDictation.Microphones())
+            {
+                var pick = Button(microphone.Name, 710, () => _ = SelectMicrophone(microphone)); pick.Height = 44;
+                microphoneButtons.Add(pick); microphoneChoices.Children.Add(pick);
+            }
+            microphonePopup.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) when (ex is NAudio.MmException or InvalidOperationException) { voiceStatus.Text = Loc.Format("DictationError", ex.Message); }
+        Dirty = true;
+    }
+    private async Task SelectMicrophone(KeyboardDictation.Microphone microphone)
+    {
+        bool resume = dictation.Listening; StopVoice();
+        selectedMicrophone = microphone; microphonePopup.Visibility = Visibility.Collapsed;
+        microphoneButton.Content = Loc.Format("DictationMicrophone", microphone.Name); Dirty = true;
+        if (resume) await ToggleVoice();
+    }
     private void DrawKeys()
     {
         letters.Clear(); keys.Children.Clear();
@@ -98,9 +192,9 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         for (int row = 0; row < rows.Length; row++) for (int col = 0; col < rows[row].Length; col++)
         {
             double inset = row < 2 ? 0 : row == 2 ? .5 : 1.5;
-            var box = new Rect((col + inset) * 86.4 + 3, row * 72 + 3, 80.4, 64);
+            var box = new Rect((col + inset) * 86.4 + 3, row * 58 + 3, 80.4, 51);
             char letter = rows[row][col];
-            var key = new Border { Width = box.Width, Height = box.Height, CornerRadius = new CornerRadius(7),
+            var key = new Border { Tag = letter, Width = box.Width, Height = box.Height, CornerRadius = new CornerRadius(7),
                 Background = new SolidColorBrush(Color.FromRgb(40, 56, 78)), BorderBrush = new SolidColorBrush(Color.FromRgb(68, 94, 120)), BorderThickness = new Thickness(1),
                 Child = new TextBlock { Text = (shift && char.IsLetter(letter) ? char.ToUpperInvariant(letter) : letter).ToString(), FontSize = 29,
                     Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
@@ -150,20 +244,27 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         committed = ""; if (prefix.Length > 0) prefix = prefix[..^1];
         CompletePrefix();
     }
-    private Point Normalized(Point point) => new(point.X / 86.4 - .5, (point.Y - 108) / 86.4);
+    private Point Normalized(Point point) => new(point.X / 86.4 - .5, (point.Y - 86.5) / 69.6);
     public void Pointer(int kind, float x, float y, float value = 0)
     {
-        if (kind == 4) { trace.Clear(); ink.Points.Clear(); heldButton = null; heldLetter = '\0'; Dirty = true; return; }
+        if (kind == 4)
+        {
+            PanelFeedback.Cancel(heldButton, () => Dirty = true);
+            PanelFeedback.Cancel(keys.Children.OfType<Border>().FirstOrDefault(b => b.Tag is char c && c == heldLetter), () => Dirty = true);
+            trace.Clear(); ink.Points.Clear(); heldButton = null; heldLetter = '\0'; Dirty = true; return;
+        }
         var point = new Point(x * ControllerMenu.Width, y * ControllerMenu.Height);
         bool Drawn(Button b) { DependencyObject? p = b; while (p != null) { if (p is UIElement e && e.Visibility != Visibility.Visible) return false; p = VisualTreeHelper.GetParent(p); } return true; }
-        var button = actions.Keys.FirstOrDefault(b => b.IsEnabled && Drawn(b) && new Rect(b.TranslatePoint(new Point(), surface), b.RenderSize).Contains(point));
+        if (kind == 3 && microphonePopup.Visibility == Visibility.Visible) { microphoneScroll.ScrollToVerticalOffset(microphoneScroll.VerticalOffset - value); Dirty = true; return; }
+        var possibleButtons = microphonePopup.Visibility == Visibility.Visible ? microphoneButtons.Prepend(microphoneButton) : actions.Keys.Where(b => !microphoneButtons.Contains(b));
+        var button = possibleButtons.FirstOrDefault(b => b.IsEnabled && Drawn(b) && new Rect(b.TranslatePoint(new Point(), surface), b.RenderSize).Contains(point));
         var local = surface.TranslatePoint(point, keys);
-        var letter = keys.Visibility == Visibility.Visible ? letters.FirstOrDefault(k => k.Box.Contains(local)).Letter : '\0';
+        var letter = microphonePopup.Visibility != Visibility.Visible && keys.Visibility == Visibility.Visible ? letters.FirstOrDefault(k => k.Box.Contains(local)).Letter : '\0';
         if (kind == 1)
         {
-            heldButton = button; heldLetter = letter; trace.Clear(); ink.Points.Clear();
+            heldButton = button; PanelFeedback.Down(heldButton, () => Dirty = true); heldLetter = letter; trace.Clear(); ink.Points.Clear();
             if (letter != '\0') committed = ""; // A new gesture starts a new word; candidate clicks replace the previous one.
-            if (letter != '\0') { trace.Add(Normalized(local)); ink.Points.Add(local); }
+            if (letter != '\0') { PanelFeedback.Down(keys.Children.OfType<Border>().FirstOrDefault(b => b.Tag is char c && c == letter), () => Dirty = true); trace.Add(Normalized(local)); ink.Points.Add(local); }
         }
         if (kind == 0 && heldLetter != '\0')
         {
@@ -173,7 +274,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         }
         if (kind != 2) return;
         var pressed = heldButton; heldButton = null;
-        if (pressed != null && pressed == button) actions[pressed]();
+        if (pressed != null && pressed == button) { PanelFeedback.Up(pressed, () => Dirty = true); actions[pressed](); } else PanelFeedback.Cancel(pressed, () => Dirty = true);
         if (heldLetter != '\0')
         {
             double length = 0;
@@ -195,6 +296,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
                 }
             }
         }
+        if (heldLetter != '\0') PanelFeedback.Up(keys.Children.OfType<Border>().FirstOrDefault(b => b.Tag is char c && c == heldLetter), () => Dirty = true);
         trace.Clear(); ink.Points.Clear(); heldLetter = '\0'; Dirty = true;
     }
     public byte[] Render()
@@ -202,16 +304,17 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         surface.Measure(new Size(ControllerMenu.Width, ControllerMenu.Height)); surface.Arrange(new Rect(0, 0, ControllerMenu.Width, ControllerMenu.Height)); surface.UpdateLayout();
         bitmap.Clear(); bitmap.Render(surface); var pixels = new byte[ControllerMenu.PixelBytes]; bitmap.CopyPixels(pixels, ControllerMenu.PixelWidth * 4, 0); return pixels;
     }
-    public void Published() => Dirty = false;
-    public void Dispose() { trace.Clear(); heldButton = null; }
+    public void Published() { Dirty = false; appearanceRevision = Appearance.Revision; }
+    public void Dispose() { Closed = true; voiceGeneration++; dictation.Dispose(); trace.Clear(); heldButton = null; }
     internal static void SmokeTest(string output)
     {
+        KeyboardDictation.SmokeTest(output);
         SwipePredictor.SmokeTest();
         var edits = new List<KeyboardEdit>();
         var keyboard = new FloatingKeyboard(new SwipePredictor(), edit => { edits.Add(edit); return true; }); keyboard.Render();
         void Point(int kind, Point key)
         {
-            var p = keyboard.keys.TranslatePoint(new Point((key.X + .5) * 86.4, key.Y * 86.4 + 108), keyboard.surface);
+            var p = keyboard.keys.TranslatePoint(new Point((key.X + .5) * 86.4, key.Y * 69.6 + 86.5), keyboard.surface);
             keyboard.Pointer(kind, (float)(p.X / ControllerMenu.Width), (float)(p.Y / ControllerMenu.Height));
         }
         var shape = SwipePredictor.Shape("hello"); Point(1, shape[0]); foreach (var p in shape) Point(0, p); Point(2, shape[^1]);
@@ -227,6 +330,15 @@ internal sealed class FloatingKeyboard : IFloatingPanel
             keyboard.Pointer(1,(float)(p.X/ControllerMenu.Width),(float)(p.Y/ControllerMenu.Height));
             keyboard.Pointer(2,(float)(p.X/ControllerMenu.Width),(float)(p.Y/ControllerMenu.Height));
         }
+        keyboard.Render();
+        var enter = keyboard.actions.Keys.Single(b => b.Content?.ToString() == Loc.Get("KeyboardEnter"));
+        var tab = keyboard.actions.Keys.Single(b => b.Content?.ToString() == "Tab");
+        var pc = keyboard.actions.Keys.Single(b => b.Content?.ToString() == "PC keys");
+        if (enter.Width != 400 || tab.TranslatePoint(new Point(), keyboard.surface).X >= pc.TranslatePoint(new Point(), keyboard.surface).X || pc.TranslatePoint(new Point(), keyboard.surface).X >= enter.TranslatePoint(new Point(), keyboard.surface).X)
+            throw new Exception("Keyboard must put Tab and PC keys on the left and a four-width Enter on the right");
+        keyboard.OpenMicrophones(); keyboard.Render();
+        if (keyboard.microphoneButtons.Count == 0) throw new Exception("Keyboard microphone picker is empty");
+        keyboard.microphonePopup.Visibility = Visibility.Collapsed;
         Click("PC keys"); Click("F12");
         if (edits[^1].Key != 123) throw new Exception("Keyboard function keys failed");
         Click("Copy");

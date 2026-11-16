@@ -41,6 +41,8 @@ struct DesktopSettings
     int layer = 0;          // v17: what near objects uncover shows the background layer (back_layer.h), live
     int env = 0;            // v18: room/cinema/open air/lounge; v19 also theatre/dungeon/hell/cyberpunk/starship (room.h kRoomEnv*), live;
                             // v19 adds 4, the theatre (cinema with seats)
+    int lifeLayers=-1, lifeReactivity=100, beamReactions=1, vrex=0;
+    int lifeFlags=0, lifePreset=0, lifeSpecies=255, lifeCount=12, lifeGain=100, lifeDensity=40;
     int seat = 1;           // v19: the theatre's seat, 0 front, 1 middle, 2 rear (room.h kRoomSeat*), live; v1-v18 the middle
 };
 
@@ -69,10 +71,14 @@ inline bool ParseDesktopSettings(const std::string& text, DesktopSettings& resul
     if (version >= 17 && !(input >> s.layer)) return false;
     if (version >= 18 && !(input >> s.env)) return false;
     if (version >= 19 && !(input >> s.seat)) return false;
+    if (version >= 20 && !(input >> s.lifeFlags >> s.lifePreset >> s.lifeSpecies >> s.lifeCount >> s.lifeGain >> s.lifeDensity)) return false;
+    if(s.lifeFlags<0 || s.lifeFlags>63 || s.lifePreset<0 || s.lifePreset>11 || s.lifeSpecies<0 || s.lifeSpecies>255 || s.lifeCount<0 || s.lifeCount>24 || s.lifeGain<0 || s.lifeGain>200 || s.lifeDensity<0 || s.lifeDensity>100) return false;
+    if(version>=21 && !(input >> s.lifeLayers >> s.lifeReactivity >> s.beamReactions >> s.vrex)) return false;
+    if(version>=21 && (s.lifeLayers<0 || s.lifeLayers>4095 || s.lifeReactivity<0 || s.lifeReactivity>300 || s.beamReactions<0 || s.beamReactions>1 || s.vrex<0 || s.vrex>1)) return false;
     s.version = version;
     if (input >> tail) return false;
     auto between = [](float v, float lo, float hi) { return std::isfinite(v) && v >= lo && v <= hi; };
-    if (magic != "VRX" || version < 1 || version > 19 || s.env < 0 || s.env > (version >= 19 ? 8 : 3) || s.seat < 0 || s.seat > 2 || s.layer < 0 || s.layer > 1 || s.showDepthMap < 0 || s.showDepthMap > 1 || s.refine < 0 || s.refine > 1 || s.thin < 0 || s.thin > 1 || s.edge < 0 || s.edge > 15 || s.edgeSteps < 0 || s.edgeSteps > 1 || s.edgeStepMin < 5 || s.edgeStepMin > 60 || s.widen < 0 || s.widen > 300 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
+    if (magic != "VRX" || version < 1 || version > 21 || s.env < 0 || s.env > (version >= 19 ? 8 : 3) || s.seat < 0 || s.seat > 2 || s.layer < 0 || s.layer > 1 || s.showDepthMap < 0 || s.showDepthMap > 1 || s.refine < 0 || s.refine > 1 || s.thin < 0 || s.thin > 1 || s.edge < 0 || s.edge > 15 || s.edgeSteps < 0 || s.edgeSteps > 1 || s.edgeStepMin < 5 || s.edgeStepMin > 60 || s.widen < 0 || s.widen > 300 || s.steady < 0 || s.steady > 1 || s.fuse < 0 || s.fuse > 1 || s.delayed < 0 || s.delayed > 1 ||
         s.subpixel < 0 || s.subpixel > 1 || s.curve < 0 || s.curve > 100 || s.ambilight < 0 || s.ambilight > 1 ||
         s.ambiStrength < 0 || s.ambiStrength > 100 || s.worldColor < 0 || s.worldColor > 0xFFFFFF || s.room < 0 || s.room > 100 ||
         s.roomGlass < 0 || s.roomGlass > 100 || s.roomReflect < 0 || s.roomReflect > 100 || s.roomLight < 0 || s.roomLight > 100 ||

@@ -13,7 +13,7 @@ constexpr int AtlasColumns = 2, AtlasWidth = Width * AtlasColumns;
 constexpr int AtlasHeight = Height * ((MaxSnapshots + 1 + AtlasColumns - 1) / AtlasColumns);
 constexpr int TitleLeft = 96, TitleTop = 96, TitleHeight = 112, TitleRight = Width-96;
 inline bool TitleHit(float u, float v)
-{ return u*Width >= TitleLeft && u*Width <= TitleRight && v*Height >= TitleTop && v*Height <= TitleTop+TitleHeight; }
+{ return u*Width >= TitleLeft+128 && u*Width < TitleRight-176 && v*Height >= TitleTop && v*Height <= TitleTop+TitleHeight; }
 enum EventKind : int32_t { Move, Down, Up, Scroll, Cancel, RightDown, RightUp };
 enum PanelKind : uint32_t { SnapshotPanel, BrowserPanel, KeyboardPanel };
 struct Event { int32_t kind; float x, y, value; };

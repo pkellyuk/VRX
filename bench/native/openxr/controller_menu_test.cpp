@@ -103,6 +103,7 @@ int main()
         assert(Near(end.x,expected.x) && Near(end.y,expected.y) && Near(end.z,expected.z));
     }
     assert(TitleHit(.5f,float(TitleTop+2)/Height));
+    assert(!TitleHit(float(TitleRight-40)/Width,float(TitleTop+TitleHeight/2)/Height)); // Close button receives clicks, not panel drags.
     assert(!TitleHit(.5f,float(TitleTop+TitleHeight+10)/Height) && !TitleHit(.01f,float(TitleTop+2)/Height));
     const auto straightBeam = Beam({{0,0,0,1},{0,0,0}},2,{0,0,0});
     assert(std::isfinite(straightBeam.orientation.w)); // viewer exactly along ray

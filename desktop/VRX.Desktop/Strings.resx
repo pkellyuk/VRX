@@ -371,4 +371,127 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ControllerMenuCancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="ControllerMenuApplyAllQuestion" xml:space="preserve"><value>Replace settings in every saved game profile with the current settings? Each game's path and window are kept.</value></data>
   <data name="ControllerMenuFailed" xml:space="preserve"><value>Controller settings menu unavailable: {0}</value></data>
+
+  <data name="RoomLife" xml:space="preserve"><value>Room life &amp; music</value></data>
+  <data name="RoomLifeHint" xml:space="preserve"><value>Needs a fixed screen and room. Listen captures the Windows playback mix, including other apps on the default playback output; no microphone or recording. All effects apply live and save per game. Shadows trace creature and seating geometry; this is not hardware DXR.</value></data>
+  <data name="ListenAudio" xml:space="preserve"><value>Listen to playback audio</value></data>
+  <data name="MusicVisuals" xml:space="preserve"><value>Wall &amp; ceiling music animations</value></data>
+  <data name="Creatures" xml:space="preserve"><value>Animated creatures</value></data>
+  <data name="RoomParticles" xml:space="preserve"><value>Colourful 3D dust</value></data>
+  <data name="DiscoLights" xml:space="preserve"><value>Moving disco spotlights</value></data>
+  <data name="TracedShadows" xml:space="preserve"><value>Ray-traced shadows (extra GPU cost)</value></data>
+  <data name="CreatureCount" xml:space="preserve"><value>Creature population (up to 24)</value></data>
+  <data name="EffectsBrightness" xml:space="preserve"><value>Effects brightness (%)</value></data>
+  <data name="ParticleDensity" xml:space="preserve"><value>Dust particles (up to 100)</value></data>
+  <data name="CreatureShark" xml:space="preserve"><value>Holographic sharks</value></data>
+  <data name="CreatureFish" xml:space="preserve"><value>Small fish</value></data>
+  <data name="CreatureRobot" xml:space="preserve"><value>Walking robots</value></data>
+  <data name="CreatureJelly" xml:space="preserve"><value>Jellyfish</value></data>
+  <data name="CreatureManta" xml:space="preserve"><value>Manta rays</value></data>
+  <data name="CreatureFirefly" xml:space="preserve"><value>Fireflies</value></data>
+  <data name="CreatureTurtle" xml:space="preserve"><value>Turtles</value></data>
+  <data name="CreatureDrone" xml:space="preserve"><value>Survey drones</value></data>
+  <data name="VisualSpectrum" xml:space="preserve"><value>Spectrum</value></data>
+  <data name="VisualOscilloscope" xml:space="preserve"><value>Oscilloscope</value></data>
+  <data name="VisualPlasma" xml:space="preserve"><value>Plasma</value></data>
+  <data name="VisualRipples" xml:space="preserve"><value>Ripples</value></data>
+  <data name="VisualKaleidoscope" xml:space="preserve"><value>Kaleidoscope</value></data>
+  <data name="VisualNeonGrid" xml:space="preserve"><value>Neon grid</value></data>
+  <data name="VisualAurora" xml:space="preserve"><value>Aurora</value></data>
+  <data name="VisualVortex" xml:space="preserve"><value>Vortex</value></data>
+  <data name="VisualLava" xml:space="preserve"><value>Lava</value></data>
+  <data name="VisualStars" xml:space="preserve"><value>Stars</value></data>
+  <data name="VisualRibbons" xml:space="preserve"><value>Ribbons</value></data>
+  <data name="VisualLissajous" xml:space="preserve"><value>Lissajous</value></data>
+  <data name="AudioOff" xml:space="preserve"><value>Playback listening is off.</value></data>
+  <data name="AudioReady" xml:space="preserve"><value>Playback listening starts with VR.</value></data>
+  <data name="AudioConnecting" xml:space="preserve"><value>Connecting to the Windows playback output...</value></data>
+  <data name="AudioListening" xml:space="preserve"><value>Listening to the Windows playback mix.</value></data>
+  <data name="AudioUnavailable" xml:space="preserve"><value>Playback capture unavailable. Check the default Windows output device; VRX will retry.</value></data>
+  <data name="VisualLayers" xml:space="preserve"><value>Visualizer layers — combine any</value></data>
+  <data name="MusicReactivity" xml:space="preserve"><value>Music reactivity</value></data>
+  <data name="BeamReactions" xml:space="preserve"><value>Creatures react to controller beams</value></data>
+  <data name="Vrex" xml:space="preserve"><value>Vrex — jetpack robot companion</value></data>
+  <data name="ThemeDefault" xml:space="preserve"><value>Default</value></data>
+  <data name="ThemeRobots" xml:space="preserve"><value>Robots</value></data>
+  <data name="ThemeDinosaurs" xml:space="preserve"><value>Dinosaurs</value></data>
+  <data name="ThemeAquarium" xml:space="preserve"><value>Fish tank</value></data>
+  <data name="ThemeHell" xml:space="preserve"><value>Hell</value></data>
+  <data name="ThemeHeaven" xml:space="preserve"><value>Heaven</value></data>
+  <data name="ThemeDark" xml:space="preserve"><value>Dark</value></data>
+  <data name="ThemeLight" xml:space="preserve"><value>Light</value></data>
+  <data name="ThemeGrape" xml:space="preserve"><value>Grape</value></data>
+  <data name="AppearanceTitle" xml:space="preserve"><value>Themes</value></data>
+  <data name="FloatingThemeLabel" xml:space="preserve"><value>Floating panel theme</value></data>
+  <data name="FloatingOpacityLabel" xml:space="preserve"><value>Floating panel background opacity</value></data>
+  <data name="DesktopThemeLabel" xml:space="preserve"><value>Desktop theme</value></data>
+  <data name="AppearanceHint" xml:space="preserve"><value>Panel themes and transparency apply to the VR settings, keyboard, browser chrome and snapshots. Desktop colours are separate. Content stays readable.</value></data>
+  <data name="Quick3D" xml:space="preserve"><value>3D</value></data>
+  <data name="Quick3DTip" xml:space="preserve"><value>Switch stereo 3D on or off. Applies immediately.</value></data>
+  <data name="DictationDefaultMic" xml:space="preserve"><value>Windows default microphone</value></data>
+  <data name="DictationStart" xml:space="preserve"><value>Voice input</value></data>
+  <data name="DictationStop" xml:space="preserve"><value>Stop listening</value></data>
+  <data name="DictationMicrophone" xml:space="preserve"><value>Microphone: {0} ▾</value></data>
+  <data name="DictationOff" xml:space="preserve"><value>Voice input is off.</value></data>
+  <data name="DictationStarting" xml:space="preserve"><value>Starting Windows speech recognition…</value></data>
+  <data name="DictationListening" xml:space="preserve"><value>Listening — {0}. Speak into the selected microphone.</value></data>
+  <data name="DictationHearing" xml:space="preserve"><value>Hearing: {0}</value></data>
+  <data name="DictationHeard" xml:space="preserve"><value>Inserted: {0}</value></data>
+  <data name="DictationError" xml:space="preserve"><value>Voice input: {0}</value></data>
+  <data name="DictationNoRecognizer" xml:space="preserve"><value>No Windows desktop speech recognizer is installed. Add a Windows speech language pack to use voice input.</value></data>
+  <data name="DictationOverrun" xml:space="preserve"><value>Audio capture could not keep up. Stop and restart voice input.</value></data>
+  <data name="DictationNoMicrophones" xml:space="preserve"><value>No microphone is available. Connect a microphone and check Windows microphone access.</value></data>
+  <data name="DictationMicRemoved" xml:space="preserve"><value>The selected microphone is no longer available. Choose another microphone.</value></data>
+  <data name="ControllerMenuCollapse" xml:space="preserve"><value>Collapse quick controls</value></data>
+  <data name="ControllerMenuExpand" xml:space="preserve"><value>Show quick controls</value></data>
+  <data name="BrowserClearAddress" xml:space="preserve"><value>Clear address</value></data>
+  <data name="RoomCategoryEnvironment" xml:space="preserve"><value>Environment &amp; seating</value></data>
+  <data name="RoomCategorySurfaces" xml:space="preserve"><value>Surfaces &amp; lighting</value></data>
+  <data name="RoomCategoryMusic" xml:space="preserve"><value>Music visualizations</value></data>
+  <data name="RoomCategoryCreatures" xml:space="preserve"><value>Creatures</value></data>
+  <data name="RoomCategoryAtmosphere" xml:space="preserve"><value>Atmosphere effects</value></data>
+  <data name="RoomCategoryVrex" xml:space="preserve"><value>Vrex</value></data>
+  <data name="BrowserSiteAccess" xml:space="preserve"><value>Site access</value></data>
+  <data name="BrowserPermissionTitle" xml:space="preserve"><value>Permission request</value></data>
+  <data name="BrowserPermissionOrigin" xml:space="preserve"><value>{0} wants access to:</value></data>
+  <data name="BrowserPermissionEmbedded" xml:space="preserve"><value>{0} wants access while you are on {1}:</value></data>
+  <data name="BrowserPermissionRemember" xml:space="preserve"><value>Your Allow or Deny choice is remembered for this site. Review or reset it using Site access.</value></data>
+  <data name="BrowserPermissionAllow" xml:space="preserve"><value>Allow</value></data>
+  <data name="BrowserPermissionDeny" xml:space="preserve"><value>Deny</value></data>
+  <data name="BrowserPermissionMicrophone" xml:space="preserve"><value>Microphone</value></data>
+  <data name="BrowserPermissionCamera" xml:space="preserve"><value>Camera</value></data>
+  <data name="BrowserPermissionDesktopAudio" xml:space="preserve"><value>Screen audio capture</value></data>
+  <data name="BrowserPermissionDesktopVideo" xml:space="preserve"><value>Screen capture</value></data>
+  <data name="BrowserPermissionLocation" xml:space="preserve"><value>Location</value></data>
+  <data name="BrowserPermissionNotifications" xml:space="preserve"><value>Notifications</value></data>
+  <data name="BrowserPermissionClipboard" xml:space="preserve"><value>Clipboard</value></data>
+  <data name="BrowserPermissionOther" xml:space="preserve"><value>{0}</value></data>
+  <data name="BrowserPermissionSaveFailed" xml:space="preserve"><value>The choice applies now, but could not be saved for next time.</value></data>
+  <data name="BrowserPermissionNoSite" xml:space="preserve"><value>No website is loaded.</value></data>
+  <data name="BrowserPermissionNoSaved" xml:space="preserve"><value>No saved permission choices for this site.</value></data>
+  <data name="BrowserPermissionSaved" xml:space="preserve"><value>{0}: {1} — {2}</value></data>
+  <data name="BrowserPermissionReset" xml:space="preserve"><value>Reset and reload</value></data>
+  <data name="BrowserPermissionResetFailed" xml:space="preserve"><value>The saved site permissions could not be reset.</value></data>
+  <data name="GameHelpStart" xml:space="preserve"><value>Help with this game</value></data>
+  <data name="GameHelpSettings" xml:space="preserve"><value>Game help settings</value></data>
+  <data name="GameHelpSharingHint" xml:space="preserve"><value>Choose a service. Helping with the current screen sends one VRX screen image and a question to that service. Nothing is shared until you allow it.</value></data>
+  <data name="GameHelpSharingWith" xml:space="preserve"><value>Screenshot sharing with {0} is remembered separately from microphone or camera permissions.</value></data>
+  <data name="GameHelpStopSharing" xml:space="preserve"><value>Stop sharing screenshots</value></data>
+  <data name="GameHelpAllowAndStart" xml:space="preserve"><value>Allow screenshots and get help</value></data>
+  <data name="GameHelpSaveFailed" xml:space="preserve"><value>Screenshot-sharing preferences could not be saved.</value></data>
+  <data name="GameHelpNeedsSession" xml:space="preserve"><value>Start a VRX session and enable controllers to capture the current screen.</value></data>
+  <data name="GameHelpCapturing" xml:space="preserve"><value>Capturing the current VRX screen for game help…</value></data>
+  <data name="GameHelpCaptureFailed" xml:space="preserve"><value>The screen capture did not complete. Please try game help again.</value></data>
+  <data name="GameHelpImageTooLarge" xml:space="preserve"><value>The game-help image is too large to upload.</value></data>
+  <data name="GameHelpRetry" xml:space="preserve"><value>Retry help</value></data>
+  <data name="GameHelpProgress" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="GameHelpOpening" xml:space="preserve"><value>Opening the help service…</value></data>
+  <data name="GameHelpUploading" xml:space="preserve"><value>Attaching the current screen…</value></data>
+  <data name="GameHelpPreparingQuestion" xml:space="preserve"><value>Preparing the game-help question…</value></data>
+  <data name="GameHelpSearching" xml:space="preserve"><value>Question submitted. You can ask follow-up questions here.</value></data>
+  <data name="GameHelpNeedsSetup" xml:space="preserve"><value>Finish the site’s consent or sign-in prompt; help will continue automatically.</value></data>
+  <data name="GameHelpNoConsent" xml:space="preserve"><value>Screenshot sharing is off. Enable it in Game help settings.</value></data>
+  <data name="GameHelpExistingDraft" xml:space="preserve"><value>The site already has a draft. Clear it, then choose Retry help.</value></data>
+  <data name="GameHelpRetryNeeded" xml:space="preserve"><value>The site is not ready. Finish any site prompts, then choose Retry help.</value></data>
+  <data name="GameHelpPrompt" xml:space="preserve"><value>Identify the game and the exact scene in this screenshot. Give me a useful hint for what to do next, avoiding major spoilers, and include links to relevant walkthroughs or guides. If you cannot identify it confidently, ask me a question rather than guessing.</value></data>
 </root>

@@ -77,6 +77,8 @@ public partial class MainWindow : Window
         engine.Log += line => Dispatcher.InvokeAsync(() =>
         {
             LogBox.AppendText(line + Environment.NewLine);
+            if (line.StartsWith("Room audio: ", StringComparison.Ordinal))
+                AudioStatusText.Text = line[12..].Trim() switch { "listening" => Loc.Get("AudioListening"), "connecting" => Loc.Get("AudioConnecting"), "unavailable" => Loc.Get("AudioUnavailable"), _ => Loc.Get("AudioOff") };
             if (LogBox.Text.Length > 24000) LogBox.Text = LogBox.Text[^16000..];
             LogBox.ScrollToEnd();
             int controllerErrorAt = line.IndexOf("Controllers: ", StringComparison.Ordinal);
@@ -117,6 +119,7 @@ public partial class MainWindow : Window
         try { string last = Path.Combine(store.Root, "last-game.txt"); if (File.Exists(last)) lastExecutable = File.ReadAllText(last); }
         catch (IOException) { }
         appSettings = store.LoadAppSettings();
+        PutAppearance();
         PutAppSettings();
         autoTimer.Tick += (_, _) => AutoAttachTick();
         Closed += (_, _) => { controllerMenu?.Dispose(); autoTimer.Stop(); autoOverlay?.Close(); autoOverlay = null; };
@@ -239,6 +242,34 @@ public partial class MainWindow : Window
         SetGpuLines(lines);
     }
 
+    private bool appearanceLoading;
+    private void PutAppearance()
+    {
+        appearanceLoading = true;
+        FloatingThemeList.Items.Clear(); DesktopThemeList.Items.Clear();
+        foreach (var theme in Appearance.Themes)
+        {
+            var floatingItem = new ComboBoxItem(); var desktopItem = new ComboBoxItem();
+            floatingItem.SetBinding(ContentControl.ContentProperty, new System.Windows.Data.Binding($"[{theme.Key}]") { Source = Loc.Instance });
+            desktopItem.SetBinding(ContentControl.ContentProperty, new System.Windows.Data.Binding($"[{theme.Key}]") { Source = Loc.Instance });
+            FloatingThemeList.Items.Add(floatingItem); DesktopThemeList.Items.Add(desktopItem);
+        }
+        FloatingThemeList.SelectedIndex = Math.Clamp(appSettings.FloatingTheme, 0, Appearance.Themes.Length - 1);
+        DesktopThemeList.SelectedIndex = Math.Clamp(appSettings.DesktopTheme, 0, Appearance.Themes.Length - 1);
+        FloatingOpacitySlider.Value = Math.Clamp(appSettings.FloatingOpacity, 0, 100);
+        Appearance.Configure(FloatingThemeList.SelectedIndex, (int)FloatingOpacitySlider.Value, DesktopThemeList.SelectedIndex);
+        appearanceLoading = false;
+    }
+    private void AppearanceChanged(object sender, RoutedEventArgs e)
+    {
+        if (!ready || appearanceLoading || FloatingThemeList.SelectedIndex < 0 || DesktopThemeList.SelectedIndex < 0) return;
+        appSettings.FloatingTheme = FloatingThemeList.SelectedIndex;
+        appSettings.DesktopTheme = DesktopThemeList.SelectedIndex;
+        appSettings.FloatingOpacity = (int)Math.Round(FloatingOpacitySlider.Value);
+        Appearance.Configure(appSettings.FloatingTheme, appSettings.FloatingOpacity, appSettings.DesktopTheme);
+        SaveAppSettings();
+    }
+
     private void PutProfile(Profile p)
     {
         loading = true;
@@ -267,6 +298,38 @@ public partial class MainWindow : Window
         FillLightColourList(p.RoomLightColor);
         EnvironmentList.SelectedIndex = Profile.ShownEnvironment(p.RoomEnvironment);
         SeatList.SelectedIndex = Math.Clamp(p.RoomSeat, Profile.SeatFront, Profile.SeatCount - 1);
+        ListenAudioCheck.IsChecked = p.ListenAudio;
+        MusicVisualsCheck.IsChecked = p.MusicVisuals;
+        CreaturesCheck.IsChecked = p.Creatures;
+        RoomParticlesCheck.IsChecked = p.RoomParticles;
+        DiscoLightsCheck.IsChecked = p.DiscoLights;
+        TracedShadowsCheck.IsChecked = p.TracedShadows;
+        VisualSpectrumCheck.IsChecked = (p.EffectiveVisualLayers & 1) != 0;
+        VisualOscilloscopeCheck.IsChecked = (p.EffectiveVisualLayers & 2) != 0;
+        VisualPlasmaCheck.IsChecked = (p.EffectiveVisualLayers & 4) != 0;
+        VisualRipplesCheck.IsChecked = (p.EffectiveVisualLayers & 8) != 0;
+        VisualKaleidoscopeCheck.IsChecked = (p.EffectiveVisualLayers & 16) != 0;
+        VisualNeonGridCheck.IsChecked = (p.EffectiveVisualLayers & 32) != 0;
+        VisualAuroraCheck.IsChecked = (p.EffectiveVisualLayers & 64) != 0;
+        VisualVortexCheck.IsChecked = (p.EffectiveVisualLayers & 128) != 0;
+        VisualLavaCheck.IsChecked = (p.EffectiveVisualLayers & 256) != 0;
+        VisualStarsCheck.IsChecked = (p.EffectiveVisualLayers & 512) != 0;
+        VisualRibbonsCheck.IsChecked = (p.EffectiveVisualLayers & 1024) != 0;
+        VisualLissajousCheck.IsChecked = (p.EffectiveVisualLayers & 2048) != 0;
+        MusicReactivitySlider.Value = p.MusicReactivity;
+        BeamReactionsCheck.IsChecked = p.BeamReactions;
+        VrexCheck.IsChecked = p.Vrex;
+        SharkCheck.IsChecked = (p.CreatureSpecies & 1) != 0;
+        FishCheck.IsChecked = (p.CreatureSpecies & 2) != 0;
+        RobotCheck.IsChecked = (p.CreatureSpecies & 4) != 0;
+        JellyCheck.IsChecked = (p.CreatureSpecies & 8) != 0;
+        MantaCheck.IsChecked = (p.CreatureSpecies & 16) != 0;
+        FireflyCheck.IsChecked = (p.CreatureSpecies & 32) != 0;
+        TurtleCheck.IsChecked = (p.CreatureSpecies & 64) != 0;
+        DroneCheck.IsChecked = (p.CreatureSpecies & 128) != 0;
+        CreatureCountSlider.Value = p.CreatureCount;
+        EffectsBrightnessSlider.Value = p.EffectsBrightness;
+        ParticleDensitySlider.Value = p.ParticleDensity;
         WorldHex.Text = p.WorldColor;
         SteadyCheck.IsChecked = p.SteadyDepth;
         FuseCheck.IsChecked = p.FuseModels;
@@ -305,6 +368,21 @@ public partial class MainWindow : Window
             RoomLightColor = SelectedLightColour(),
             RoomEnvironment = Math.Clamp(EnvironmentList.SelectedIndex, 0, Profile.EnvironmentCount - 1),
             RoomSeat = Math.Clamp(SeatList.SelectedIndex, Profile.SeatFront, Profile.SeatCount - 1),
+            ListenAudio = ListenAudioCheck.IsChecked == true,
+            MusicVisuals = MusicVisualsCheck.IsChecked == true,
+            Creatures = CreaturesCheck.IsChecked == true,
+            RoomParticles = RoomParticlesCheck.IsChecked == true,
+            DiscoLights = DiscoLightsCheck.IsChecked == true,
+            TracedShadows = TracedShadowsCheck.IsChecked == true,
+            VisualPreset = profile.VisualPreset,
+            VisualLayers = (VisualSpectrumCheck.IsChecked == true ? 1 : 0) | (VisualOscilloscopeCheck.IsChecked == true ? 2 : 0) | (VisualPlasmaCheck.IsChecked == true ? 4 : 0) | (VisualRipplesCheck.IsChecked == true ? 8 : 0) | (VisualKaleidoscopeCheck.IsChecked == true ? 16 : 0) | (VisualNeonGridCheck.IsChecked == true ? 32 : 0) | (VisualAuroraCheck.IsChecked == true ? 64 : 0) | (VisualVortexCheck.IsChecked == true ? 128 : 0) | (VisualLavaCheck.IsChecked == true ? 256 : 0) | (VisualStarsCheck.IsChecked == true ? 512 : 0) | (VisualRibbonsCheck.IsChecked == true ? 1024 : 0) | (VisualLissajousCheck.IsChecked == true ? 2048 : 0),
+            MusicReactivity = (int)Math.Round(MusicReactivitySlider.Value),
+            BeamReactions = BeamReactionsCheck.IsChecked == true,
+            Vrex = VrexCheck.IsChecked == true,
+            CreatureSpecies = (SharkCheck.IsChecked == true ? 1 : 0) | (FishCheck.IsChecked == true ? 2 : 0) | (RobotCheck.IsChecked == true ? 4 : 0) | (JellyCheck.IsChecked == true ? 8 : 0) | (MantaCheck.IsChecked == true ? 16 : 0) | (FireflyCheck.IsChecked == true ? 32 : 0) | (TurtleCheck.IsChecked == true ? 64 : 0) | (DroneCheck.IsChecked == true ? 128 : 0),
+            CreatureCount = (int)Math.Round(CreatureCountSlider.Value),
+            EffectsBrightness = (int)Math.Round(EffectsBrightnessSlider.Value),
+            ParticleDensity = (int)Math.Round(ParticleDensitySlider.Value),
             WorldColor = Profile.TryParseColor(WorldHex.Text, out int world) ? Profile.FormatColor(world) :
                 throw new InvalidDataException(Loc.Get("ErrorWorldColour")),
             SteadyDepth = SteadyCheck.IsChecked == true,
@@ -375,6 +453,9 @@ public partial class MainWindow : Window
         if (GlassSlider == null || GlassValue == null || ReflectSlider == null || ReflectValue == null ||
             LightSlider == null || LightValue == null || LightColourList == null) return;
         bool withRoom = !follows && room > 0;
+        if (LifeContent != null) LifeContent.IsEnabled = withRoom;
+        if (AudioStatusText != null && (!engine.Running || ListenAudioCheck.IsChecked != true || !withRoom))
+            AudioStatusText.Text = Loc.Get(ListenAudioCheck.IsChecked == true && withRoom ? "AudioReady" : "AudioOff");
         string resting = Loc.Get(follows ? "NeedsFixedScreen" : "NeedsRoom");
         int env = EnvironmentList == null ? Profile.EnvironmentRoom : Math.Clamp(EnvironmentList.SelectedIndex, 0, Profile.EnvironmentCount - 1);
         if (EnvironmentList != null && EnvironmentValue != null)
@@ -796,7 +877,7 @@ public partial class MainWindow : Window
         {
             if (appSettings.MotionControllers && controllerMenu == null)
                 controllerMenu = new ControllerMenu(engine.ControllerMenuName, SectionList().Select(s => s.Section).ToArray(),
-                    Status, RecenterButton, ApplyAllConfirmed);
+                    Status, RecenterButton, ApplyAllConfirmed, StereoCheck);
             controllerMenu?.Enable(appSettings.MotionControllers);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -1088,7 +1169,7 @@ public partial class MainWindow : Window
     [
         (AppSettings.SectionGame, GameSection), (AppSettings.SectionScreen, ScreenSection), (AppSettings.SectionAround, AroundSection),
         (AppSettings.SectionRoom, RoomSection), (AppSettings.SectionDepth, DepthSection), (AppSettings.SectionExperimental, ExperimentalSection),
-        (AppSettings.SectionSteamVr, SteamVrSection),
+        (AppSettings.SectionThemes, ThemesSection), (AppSettings.SectionSteamVr, SteamVrSection),
         (AppSettings.SectionProfile, ProfileSection), (AppSettings.SectionSession, SessionDetails),
     ];
 
@@ -1163,7 +1244,13 @@ public partial class MainWindow : Window
         UpdateRoomControls();
         UpdateGameCard();
         UpdateCaptionButtons();
-        if (placedMode == 0) FitEasyWidth();
+        if (placedMode == 0)
+        {
+            FitEasyWidth();
+            // Resource bindings (including the quick 3D switch) update after this
+            // callback. Measure again once their translated text has settled.
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => { if (placedMode == 0) FitEasyWidth(); });
+        }
         System.Diagnostics.Debug.WriteLine("[MainWindow] RefreshLanguage exit");
     }
 
@@ -1392,7 +1479,9 @@ public partial class MainWindow : Window
     }
     private async Task SmokeTest()
     {
+        await PanelFeedback.SmokeTest();
         string root = EngineSession.RepositoryRoot(), output = Path.Combine(root, "desktop", "out");
+        if (Environment.GetCommandLineArgs().Contains("--probe-game-help")) { await FloatingBrowser.ProbeGameHelp(output); return; }
         Directory.CreateDirectory(output);
         foreach (int error in new[] { 4551, 1260, 225, 226 })
             if (EngineSession.BlockedMessage(new System.ComponentModel.Win32Exception(error).NativeErrorCode) is not { Length: > 0 } text || !text.Contains("xrplayer.exe"))
@@ -1433,6 +1522,7 @@ public partial class MainWindow : Window
         legacy.Remove("RoomLightColor");
         legacy.Remove("RoomEnvironment");
         legacy.Remove("RoomSeat");
+        foreach (string key in new[] { "ListenAudio", "MusicVisuals", "Creatures", "RoomParticles", "DiscoLights", "TracedShadows", "VisualPreset", "CreatureSpecies", "CreatureCount", "EffectsBrightness", "ParticleDensity" }) legacy.Remove(key);
         legacy.Remove("FuseModels");
         legacy.Remove("DesktopWhenAway");
         File.WriteAllText(store.FileFor(one.ExecutablePath), legacy.ToJsonString());
@@ -1464,33 +1554,33 @@ public partial class MainWindow : Window
         var coloured = new Profile { Ambilight = true, AmbilightStrength = 40, WorldColor = "#2A3441" };
         var roomy = new Profile { Room = 45 };
         var glassy = new Profile { Room = 45, RoomGlass = 60, RoomReflections = 25, RoomLight = 40, RoomLightColor = "#FFD1A3" };
-        if (!new Profile().Control(0, 0, false).StartsWith("VRX 19 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
-            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
-            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
-            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
-            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
-            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1") ||
-            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 0 0 12 100 0 0 0 0 0 1"))
-            throw new Exception("Control snapshot must be v19 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, the edge flattening, the edge steps flag and least change, the widening, the thin parts flag, the sharpened edges flag, the depth map flag, the background layer flag, the environment, and the seat (see desktop_control.h)");
+        if (!new Profile().Control(0, 0, false).StartsWith("VRX 21 ") || !new Profile().Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") ||
+            !original.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") || !both.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") ||
+            !unsteady.Control(0, 0, false).TrimEnd().EndsWith(" 1 0 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") || !delayed.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 1 0 1 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") ||
+            !matchedWins.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 1 0 0 1 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") || !wholePixel.Control(0, 0, false).TrimEnd().EndsWith(" 1 1 0 0 0 0 0 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") ||
+            !curved.Control(0, 0, false).TrimEnd().EndsWith(" 1 65 1 85 0 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") || !coloured.Control(0, 0, false).TrimEnd().EndsWith(" 0 1 40 2765889 0 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") ||
+            !roomy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 0 0 0 16757867 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") ||
+            !glassy.Control(0, 0, false).TrimEnd().EndsWith(" 0 0 85 0 45 60 25 40 16765347 0 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0"))
+            throw new Exception("Control snapshot must be v21 ending with the matched, fast-model, steady, fuse, delayed and sub-pixel flags, the curve percentage, the ambilight flag and strength, the world colour, the room level and the room's glass, reflections, light and light colour, the edge flattening, the edge steps flag and least change, the widening, the thin parts flag, the sharpened edges flag, the depth map flag, the background layer flag, the environment, the seat, life settings, layer mask, reactivity, beams and Vrex (see desktop_control.h)");
         if (!store.Load(one.ExecutablePath).SteadyDepth || store.Load(one.ExecutablePath).FuseModels)
             throw new Exception("Profiles saved before steady/fuse existed must load with steadying on and fusion off");
         if (!store.Load(one.ExecutablePath).SubpixelWarp)
             throw new Exception("Profiles saved before the sub-pixel warp existed must load with it on");
-        if (store.Load(one.ExecutablePath).EdgeFlatten != 0 || new Profile().EdgeFlatten != 0 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9 0 12 100 0 0 0 0 0 1") ||
+        if (store.Load(one.ExecutablePath).EdgeFlatten != 0 || new Profile().EdgeFlatten != 0 || !new Profile { EdgeFlatten = 9 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 9 0 12 100 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") ||
             new Profile { EdgeFlatten = 16 }.Valid() || new Profile { EdgeFlatten = -1 }.Valid())
             throw new Exception("Old and new profiles must have the edge flattening off; it is in the snapshot and 0 to 15");
         var legacyEdges = store.Load(one.ExecutablePath);
         if (legacyEdges.EdgeSteps || legacyEdges.EdgeStepMin != 12 || legacyEdges.WidenNear != 100 ||
-            !new Profile { EdgeSteps = true, EdgeStepMin = 30, WidenNear = 200 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 1 30 200 0 0 0 0 0 1") ||
+            !new Profile { EdgeSteps = true, EdgeStepMin = 30, WidenNear = 200 }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 1 30 200 0 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0") ||
             new Profile { EdgeStepMin = 4 }.Valid() || new Profile { EdgeStepMin = 61 }.Valid() || new Profile { WidenNear = -1 }.Valid() || new Profile { WidenNear = 301 }.Valid())
             throw new Exception("Profiles saved before the edge steps existed must load with them off, at 12 % and 100 % widening; they follow the edge flattening in the snapshot");
-        if (store.Load(one.ExecutablePath).ThinParts || !new Profile { ThinParts = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 1 0 0 0 0 1"))
+        if (store.Load(one.ExecutablePath).ThinParts || !new Profile { ThinParts = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 1 0 0 0 0 1 0 0 255 12 100 40 1 100 1 0"))
             throw new Exception("Profiles saved before the thin parts setting existed must load with it off; it follows the widening in the snapshot");
-        if (store.Load(one.ExecutablePath).SharpenEdges || !new Profile { SharpenEdges = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 1 0 0 0 1"))
+        if (store.Load(one.ExecutablePath).SharpenEdges || !new Profile { SharpenEdges = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 1 0 0 0 1 0 0 255 12 100 40 1 100 1 0"))
             throw new Exception("Profiles saved before the sharpened depth edges existed must load with them off; it follows the thin parts flag in the snapshot");
-        if (store.Load(one.ExecutablePath).ShowDepthMap || new Profile().ShowDepthMap || !new Profile { ShowDepthMap = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 1 0 0 1"))
+        if (store.Load(one.ExecutablePath).ShowDepthMap || new Profile().ShowDepthMap || !new Profile { ShowDepthMap = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 1 0 0 1 0 0 255 12 100 40 1 100 1 0"))
             throw new Exception("The depth map must not be shown by old or new profiles; it follows the sharpened edges flag in the snapshot");
-        if (store.Load(one.ExecutablePath).BackLayer || new Profile().BackLayer || !new Profile { BackLayer = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 1 0 1"))
+        if (store.Load(one.ExecutablePath).BackLayer || new Profile().BackLayer || !new Profile { BackLayer = true }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 1 0 1 0 0 255 12 100 40 1 100 1 0"))
             throw new Exception("Profiles saved before the background layer existed must load with it off; it is followed by the environment");
         if (store.Load(one.ExecutablePath).ScreenCurve != 0 || store.Load(one.ExecutablePath).Ambilight)
             throw new Exception("Profiles saved before the curve and ambilight existed must load flat, with no glow");
@@ -1498,19 +1588,46 @@ public partial class MainWindow : Window
             throw new Exception("Profiles saved before the glow strength and world colour existed must load at 85 % and black");
         if (store.Load(one.ExecutablePath).Room != 0) throw new Exception("Profiles saved before the room existed must load with it off");
         if (store.Load(one.ExecutablePath).RoomEnvironment != Profile.EnvironmentRoom || new Profile().RoomEnvironment != Profile.EnvironmentRoom ||
-            !new Profile { RoomEnvironment = Profile.EnvironmentLounge }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 3 1") ||
+            !new Profile { RoomEnvironment = Profile.EnvironmentLounge }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 3 1 0 0 255 12 100 40 1 100 1 0") ||
             new Profile { RoomEnvironment = Profile.EnvironmentCount }.Valid() || new Profile { RoomEnvironment = -1 }.Valid() || !new Profile { RoomEnvironment = Profile.EnvironmentOpenAir }.Valid())
             throw new Exception("Profiles saved before the environments existed must load in the room; the environment comes before the seat, 0 to 4");
+        var appearanceStore = new ProfileStore(Path.Combine(output, "appearance-settings"));
+        appearanceStore.SaveAppSettings(new AppSettings { Mode = AppSettings.ExpertMode, FloatingTheme = 8, FloatingOpacity = 37, DesktopTheme = 7 });
+        var appearanceBack = appearanceStore.LoadAppSettings();
+        if (appearanceBack.FloatingTheme != 8 || appearanceBack.FloatingOpacity != 37 || appearanceBack.DesktopTheme != 7)
+            throw new Exception("Separate floating and desktop appearance settings must persist app-wide");
+        if (new Profile { VisualLayers = 4096 }.Valid() || new Profile { MusicReactivity = 301 }.Valid())
+            throw new Exception("Layer masks and music reactivity must match native limits");
+        var lifeProfile = new Profile { ExecutablePath = one.ExecutablePath, Room = 35, ListenAudio = true, MusicVisuals = true,
+            Creatures = true, RoomParticles = true, DiscoLights = true, TracedShadows = true, VisualPreset = 11,
+            CreatureSpecies = 165, CreatureCount = 24, EffectsBrightness = 175, ParticleDensity = 90 };
+        string beforeLifeJson = File.ReadAllText(store.FileFor(one.ExecutablePath));
+        store.Save(lifeProfile);
+        var savedLife = store.Load(one.ExecutablePath);
+        if (savedLife.LifeFlags != 63 || savedLife.VisualPreset != 11 || savedLife.CreatureSpecies != 165 || savedLife.CreatureCount != 24 ||
+            savedLife.EffectsBrightness != 175 || savedLife.ParticleDensity != 90 || !savedLife.Control(0,0,false).TrimEnd().EndsWith(" 63 11 165 24 175 90 2048 100 1 0"))
+            throw new Exception("All room life settings must survive persistence and the v20 control snapshot");
+        if (new Profile { VisualPreset = 12 }.Valid() || new Profile { CreatureCount = 25 }.Valid() ||
+            new Profile { CreatureSpecies = 256 }.Valid() || new Profile { EffectsBrightness = 201 }.Valid() || new Profile { ParticleDensity = -1 }.Valid())
+            throw new Exception("Room life setting limits must match the native parser");
+        var beforeLifeProfile = profile;
+        profile = lifeProfile;
+        PutProfile(lifeProfile);
+        if (ReadProfile().LifeFlags != 63 || ReadProfile().CreatureSpecies != 165 || VisualLissajousCheck.IsChecked != true)
+            throw new Exception("Room life controls must read and write the profile");
+        PutProfile(original);
+        profile = beforeLifeProfile;
+        File.WriteAllText(store.FileFor(one.ExecutablePath), beforeLifeJson);
         // The theatre's seat: the middle for old and new profiles, the snapshot's last value, 0 to 2;
         // its distance is room.h RoomTheatreLayout's (playback_test checks the same numbers there).
         if (store.Load(one.ExecutablePath).RoomSeat != Profile.SeatMiddle || new Profile().RoomSeat != Profile.SeatMiddle ||
-            !new Profile { RoomEnvironment = Profile.EnvironmentTheatre, RoomSeat = Profile.SeatRear }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 4 2") ||
+            !new Profile { RoomEnvironment = Profile.EnvironmentTheatre, RoomSeat = Profile.SeatRear }.Control(0, 0, false).TrimEnd().EndsWith(" 16757867 0 0 12 100 0 0 0 0 4 2 0 0 255 12 100 40 1 100 1 0") ||
             new Profile { RoomSeat = Profile.SeatCount }.Valid() || new Profile { RoomSeat = -1 }.Valid() || !new Profile { RoomEnvironment = Profile.EnvironmentTheatre }.Valid() ||
             new Profile { RoomEnvironment = Profile.EnvironmentCount }.Valid())
             throw new Exception("The theatre and its seat: the middle by default and for old profiles, last in the snapshot, the seat 0 to 2 and the environment in range");
         foreach (int themedEnvironment in new[] { Profile.EnvironmentDungeon, Profile.EnvironmentHell, Profile.EnvironmentCyberpunk, Profile.EnvironmentStarship })
             if (!new Profile { RoomEnvironment = themedEnvironment }.Valid() ||
-                !new Profile { RoomEnvironment = themedEnvironment }.Control(0,0,false).TrimEnd().EndsWith($" {themedEnvironment} 1"))
+                !new Profile { RoomEnvironment = themedEnvironment }.Control(0,0,false).TrimEnd().EndsWith($" {themedEnvironment} 1 0 0 255 12 100 40 1 100 1 0"))
                 throw new Exception("Themed rooms must be valid saved profiles and reach the engine through control snapshots");
         if (Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatFront) - 4.56f) > 1e-4f || Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatRear) - 11.4f) > 1e-4f ||
             Math.Abs(Profile.TheatreDistance(5.7f, Profile.SeatMiddle) - (4.56f + 3 * 6.84f / 7)) > 1e-4f || Math.Abs(Profile.TheatreDistance(10f, Profile.SeatRear) - 20f) > 1e-4f ||
@@ -2350,6 +2467,11 @@ public partial class MainWindow : Window
         {
             used.Add(key);
             if (!strings.ContainsKey(key) || PlaceholderCount(key) != 0) problems.Add($"Preset key {key} missing or has placeholders");
+        }
+        foreach (var theme in Appearance.Themes)
+        {
+            used.Add(theme.Key);
+            if (!strings.ContainsKey(theme.Key) || PlaceholderCount(theme.Key) != 0) problems.Add($"Theme key {theme.Key} missing or has placeholders");
         }
         foreach (string key in strings.Keys)
             if (!used.Contains(key)) problems.Add($"Strings.resx: {key} is not used");

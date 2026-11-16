@@ -169,6 +169,8 @@ using Microsoft::WRL::ComPtr;
 #include "ambilight.h"
 #include "screen_curve.h"
 #include "room.h"
+#include "room_life.h"
+#include "room_life_shader.h"
 
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wdx = winrt::Windows::Graphics::DirectX;
@@ -321,6 +323,7 @@ struct Options
     int roomLight = 0;                  // the room light: 0 off .. 100 (room.h RoomLook)
     uint32_t roomLightColor = kRoomLightDefault;    // its colour, 0xRRGGBB
     int roomEnv = kRoomEnvRoom;         // the room's environment: room, cinema, open air, lounge, theatre (room.h kRoomEnv*, XENV.md)
+    RoomLifeSettings life;
     int roomSeat = kRoomSeatMiddle;     // the theatre: your seat, front, middle or rear (room.h kRoomSeat*), which sets the screen's distance
     bool benchRoom = false;             // --bench-room (with --selftest): the offline room benchmark
     bool benchTheatreOnly = false;      // --bench-theatre (with --selftest): only its theatre timing (BenchTheatre)
@@ -631,7 +634,7 @@ struct App
     ComPtr<ID3D12Resource> roomMirror;                   // RGBA16F, kRoomMirrorW x kRoomMirrorMaxH (the first mirrorH rows used), UAV at rest
     ComPtr<ID3D12Resource> roomGeomUp[RING + 1];         // emitter geometry to copy in; [RING] is the self-test's
     unsigned char* roomGeomMapped[RING + 1] = {};
-    ComPtr<ID3D12Resource> roomCbUp;                     // RoomConstants, 512 B per frame slot + 1 for the self-test
+    ComPtr<ID3D12Resource> roomCbUp;                     // RoomConstants per frame slot + 1 for the self-test
     unsigned char* roomCbMapped = nullptr;
     XrSpace stage = XR_NULL_HANDLE;                      // the real floor (STAGE), if the runtime has one
 
@@ -2859,7 +2862,7 @@ void main(uint3 id : SV_DispatchThreadID)
 // The environments (XENV.md) take row 16's third value (roomEnv) and rows 21-31: each face's
 // colour, the bounce per channel, the side walls' lights, the lounge's rug and the open
 // air's night (envAmbient). Rows 32-35 are the theatre's stands, its coarse patches and its
-// seats' columns; the 768-byte buffer's rows 36-47 are padding.
+// seats' columns; later rows carry audio, layered visuals and animated inhabitants.
 static const char* kRoomCbufferHlsl = R"HLSL(
 cbuffer RoomC : register(ROOM_REGISTER)
 {
@@ -2893,6 +2896,14 @@ cbuffer RoomC : register(ROOM_REGISTER)
     float seatX0; float seatBlock; float standsZEnd; float rpad9;
     uint standsRows; uint viewerRow; uint coarseFirst; uint coarseCount;
     int seatJMin; uint seatCols; float rpad10; float rpad11;
+    float lifeTime; float audioBass; float audioMid; float audioHigh;
+    float lifeBeat; float audioLevel; float lifeGain; float particleDensity;
+    uint lifePreset; uint lifeSpecies; uint lifeCount; uint lifeFlags;
+    float4 lifeSpectrum[4];
+    float4 lifeObjects[100];
+    float4 lifeWaveform[12];
+    float visualReactivity; uint visualLayers; float vrexChat; float vrexState;
+    float4 lifePadding[4];
 };
 )HLSL";
 
@@ -3214,7 +3225,13 @@ bool RoomArcRoot(float axisZ, float rho, float tanMax, float maxY, float3 o, flo
 bool RoomScreenH(float3 o, float3 d, float3 invD, out float2 uv)
 {
     uv = float2(0, 0);
-    if (!(R > 0.0)) return false;
+    if (!(R > 0.0))
+    {
+        if ((lifeFlags & 140) == 0 || d.z == 0) return false;
+        float t=-o.z/d.z; float3 h=o+t*d;
+        if(t<=0 || abs(h.x)>halfW || abs(h.y)>halfH) return false;
+        uv=float2(h.x/(2*halfW)+.5,.5-h.y/(2*halfH)); return true;
+    }
     float3 t1 = (float3(-scrBoxX, -scrBoxY, -ROOM_SCREEN_PAD) - o) * invD, t2 = (float3(scrBoxX, scrBoxY, scrBoxZ) - o) * invD;
     float3 tn = min(t1, t2), tf = max(t1, t2);
     float enter = max(max(tn.x, tn.y), tn.z), leave = min(min(tf.x, tf.y), tf.z);
@@ -4487,6 +4504,7 @@ float3 LookColour(int kind, float2 uv, float2 guv, uint e, float3 o, float3 d, f
     return Enc(max(SurfaceH(kind - 1, L, o, d, Dx, Dy), 0.0));
 #endif
 }
+/*VRX_LIFE*/
 #endif
 
 [numthreads(8, 8, 1)]
@@ -4563,7 +4581,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 gid : SV_GroupID, uint gi : SV_G
         // classification as well measured 0.2 ms slower.)
         [loop] for (int k = 0; k < 4; k++)
 #else
-        [unroll] for (int k = 0; k < 4; k++)
+        [loop] for (int k = 0; k < 4; k++)
 #endif
         {
 #if ROOM_LOOK
@@ -4575,6 +4593,16 @@ void main(uint3 id : SV_DispatchThreadID, uint3 gid : SV_GroupID, uint gi : SV_G
 #endif
         }
     }
+#if ROOM_LOOK
+    if ((lifeFlags & 190) != 0)
+    {
+        float3 lifeO, lifeD;
+        Ray(e,(float)id.x+.5,(float)id.y+.5,lifeO,lifeD);
+        // Compose once per pixel after the room's four samples. This keeps the
+        // ray marcher out of the room material's four-sample branch graph.
+        col=LifeCompose(col,kind[0],uv[0],guv[0],e,lifeO,lifeD,Dx,Dy);
+    }
+#endif
     outEye[uint3(id.x, id.y, e)] = float4(col, 1.0);
 }
 )HLSL";
@@ -5240,6 +5268,9 @@ static bool BuildRoomShaderTexts(RoomShaderTexts& out)
     const size_t themeAt = eyeBody.find(themeMarker);
     if (themeAt == std::string::npos) return false;
     eyeBody.replace(themeAt,themeMarker.size(),RoomThemeHlsl()+RoomFutureHlsl()+"\n");
+    const size_t lifeAt=eyeBody.find("/*VRX_LIFE*/");
+    if(lifeAt==std::string::npos) return false;
+    eyeBody.replace(lifeAt,12,RoomLifeHlsl());
     out.eye = std::string("#define ROOM_LOOK 0\n#define ROOM_STANDS 0\n") + eyeHead + eyeBody;
     out.eyeLook = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 0\n") + eyeHead + eyeBody;
     out.eyeStands = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 1\n") + eyeHead + eyeBody;
@@ -10375,6 +10406,7 @@ static void RunFrameLoop(App& app)
     // The room (room.h): rebuilt only when the screen, the recentre point, the curve or
     // the floor change; its light is worked out every frame.
     Room room;
+    RoomLife roomLife;
     RoomEmitterLayout roomLayout;
     std::vector<RoomEmitter> roomGeometry;
     UINT standsVerts = 0;                                   // the theatre's stands in mesh upload 0 (0: none)
@@ -10419,6 +10451,8 @@ static void RunFrameLoop(App& app)
 
     while (!exitLoop && !app.stop.load())
     {
+        if (!running || !(app.opt.life.flags & 1) || app.opt.room<=0 || desktop.follow || app.opt.headLocked)
+            roomLife.EnableAudio(false);
         if (!app.opt.controlPath.empty() && NowSeconds() >= nextControlRead)
         {
             nextControlRead = NowSeconds() + .1;
@@ -10511,6 +10545,7 @@ static void RunFrameLoop(App& app)
                     app.opt.roomEnv = next.env;
                     Log("Room environment: %s", kRoomEnvNames[app.opt.roomEnv]);
                 }
+                if (next.version >= 20) app.opt.life = { next.lifeFlags, next.lifePreset, next.lifeSpecies, next.lifeCount, next.lifeGain, next.lifeDensity, next.lifeLayers, next.lifeReactivity, next.beamReactions, next.vrex };
                 if (next.version >= 19 && app.opt.roomSeat != next.seat)
                 {
                     // In the theatre the screen moves to the seat's distance and the room is built again.
@@ -10853,7 +10888,10 @@ static void RunFrameLoop(App& app)
                 roomRejected = false;
                 roomFailedLogged = false;
             }
-            const bool roomFlat = roomOn && !curvedScreen;
+            const bool lifeProjection = roomOn && ((app.opt.life.flags & 12) != 0 || app.opt.life.vrex != 0);
+            const bool projectionScreen = curvedScreen || lifeProjection;
+            const bool roomFlat = roomOn && !projectionScreen;
+            roomLife.EnableAudio(roomOn && (app.opt.life.flags & 1) != 0);
             if (app.opt.headLocked && (app.opt.curve > 0 || app.opt.ambilight || app.opt.worldColor != 0) && !headLockedNoticeLogged)
             {
                 headLockedNoticeLogged = true;
@@ -10892,11 +10930,11 @@ static void RunFrameLoop(App& app)
             // With the room on, a flat screen stays the compositor's quads and the room is
             // a projection layer under them, drawn at half size into the eye buffers.
             XrReadyImage colorImage, depthImage, eyeImage;
-            const bool needEyes = curvedScreen || roomFlat;
+            const bool needEyes = projectionScreen || roomFlat;
             bool ok = true;
-            if (!curvedScreen) ok = colorImage.Acquire(app.colorSc, xrAcquireImage_, xrWaitImage_);
+            if (!projectionScreen) ok = colorImage.Acquire(app.colorSc, xrAcquireImage_, xrWaitImage_);
             if (ok && needEyes) ok = eyeImage.Acquire(app.eyeSc, xrAcquireImage_, xrWaitImage_);
-            if (ok && useDepthSc && !curvedScreen) ok = depthImage.Acquire(app.depthSc, xrAcquireImage_, xrWaitImage_);
+            if (ok && useDepthSc && !projectionScreen) ok = depthImage.Acquire(app.depthSc, xrAcquireImage_, xrWaitImage_);
             if (!ok) { Log("RunFrameLoop: swapchain acquire/wait failed (%d, %d, %d)",
                 (int)colorImage.result, (int)depthImage.result, (int)eyeImage.result); app.stop = true; }
             // The glow: its own layer behind a flat screen, or drawn into the eye
@@ -11057,7 +11095,7 @@ static void RunFrameLoop(App& app)
                         refinedFrames++;
                     }
                     RecordWarp(app, target, DESC_SRC0 + (UINT)source->index, c, fine);
-                    if (!curvedScreen)
+                    if (!projectionScreen)
                         RecordCopyToSwapchain(app, target, app.cimgs[cIdx].texture, useDepthSc ? app.dimgs[dIdx].texture : nullptr);
                     drewSource = true;
 
@@ -11105,7 +11143,22 @@ static void RunFrameLoop(App& app)
                         look.lightRgb = app.opt.roomLightColor;
                         look.env = app.opt.roomEnv;
                         const RoomShading shading = MakeRoomShading(room, app.opt.room, app.opt.worldColor, screen.size.width * screen.size.height, look);
-                        const RoomConstants rc = MakeRoomConstants(room, shading, roomLayout, view, app.srcW, app.srcH, alpha);
+                        RoomConstants rc = MakeRoomConstants(room, shading, roomLayout, view, app.srcW, app.srcH, alpha);
+                        LifePlayer lifePlayer;
+                        auto screenInverse=vrxmenu::Inverse(screen.pose.orientation);
+                        XrVector3f eyeMiddle{(views[0].pose.position.x+views[1].pose.position.x)*.5f,(views[0].pose.position.y+views[1].pose.position.y)*.5f,(views[0].pose.position.z+views[1].pose.position.z)*.5f};
+                        auto headLocal=vrxmenu::Rotate(screenInverse,vrxmenu::Sub(eyeMiddle,screen.pose.position));
+                        auto lookLocal=vrxmenu::Rotate(screenInverse,vrxmenu::Rotate(sharedRot,{0,0,-1}));
+                        lifePlayer.head={headLocal.x,headLocal.y,headLocal.z};lifePlayer.forward={lookLocal.x,lookLocal.y,lookLocal.z};lifePlayer.valid=true;
+                        for(int hand=0;hand<2;++hand)
+                        {
+                            const auto& beam=app.controllerMenu.GetCreatureBeam(hand);
+                            auto o=vrxmenu::Rotate(screenInverse,vrxmenu::Sub(beam.pose.position,screen.pose.position));
+                            auto d=vrxmenu::Rotate(screenInverse,vrxmenu::Rotate(beam.pose.orientation,{0,0,-1}));
+                            lifePlayer.beams[hand]={{o.x,o.y,o.z},{d.x,d.y,d.z},beam.limit,beam.active && state==XR_SESSION_STATE_FOCUSED,beam.trigger};
+                        }
+                        roomLife.SetPlayer(lifePlayer);
+                        roomLife.Fill(rc, room, app.opt.life, (float)dt, reset);
                         memcpy(app.roomCbMapped + (size_t)ring * sizeof(RoomConstants), &rc, sizeof(rc));
                         roomCb = app.roomCbUp->GetGPUVirtualAddress() + (UINT64)ring * sizeof(RoomConstants);
                         ID3D12Resource* geometry = nullptr;
@@ -11198,7 +11251,7 @@ static void RunFrameLoop(App& app)
                 proj.viewCount = VIEWS;
                 proj.views = pviews;
                 if (app.opt.headLocked) layers[layerCount++] = (const XrCompositionLayerBaseHeader*)&proj;
-                else if (curvedScreen)
+                else if (projectionScreen)
                 {
                     // Each eye as it really was when the pass drew it, so the
                     // compositor reprojects it correctly; the glow is already in it.
@@ -11309,6 +11362,18 @@ static void RunFrameLoop(App& app)
             }
         }
         app.controllerMenu.SetScene(room,screen.pose,app.opt.headLocked ? XrExtent2Df{} : screen.size,cylinder,mouseTarget,mouseWindow,menuFov);
+        LifeVec vrexPosition;VrexMenuFrame vrexMenu;int vrexHost=-1;bool vrexOpen=false;
+        bool vrexTarget=app.opt.life.vrex && app.opt.room>0 && !desktop.follow && !app.opt.headLocked &&
+            roomLife.GetVrexInteraction(vrexPosition,vrexMenu,vrexHost,vrexOpen);
+        XrPosef vrexMenuPose{{0,0,0,1},{0,0,0}};XrVector3f vrexWorld{};
+        if(vrexTarget)
+        {
+            auto worldVector=[&](LifeVec p) {return vrxmenu::Rotate(screen.pose.orientation,{p.x,p.y,p.z});};
+            vrexWorld=vrxmenu::Add(screen.pose.position,worldVector(vrexPosition));
+            vrexMenuPose.position=vrxmenu::Add(screen.pose.position,worldVector(vrexMenu.centre));
+            vrexMenuPose.orientation=vrxmenu::Axes(worldVector(vrexMenu.right),worldVector(vrexMenu.up),worldVector(vrexMenu.normal));
+        }
+        app.controllerMenu.SetVrexTarget(vrexTarget,vrexWorld,vrexHost,vrexOpen,vrexMenuPose);
         app.controllerMenu.Update(g_getProc, app.instance, app.session, app.space, app.device.Get(), app.gfxQueue.Get(),
             state == XR_SESSION_STATE_FOCUSED, fs.shouldRender && trackingWasValid, fs.predictedDisplayTime,
             app.frameControllerProfile, app.genericControllerProfile);
@@ -11851,6 +11916,7 @@ int wmain(int argc, wchar_t** wideArgv)
             app.opt.roomEnv = initial.env;
             Log("Desktop control: room environment %s", kRoomEnvNames[app.opt.roomEnv]);
         }
+        if (initial.version >= 20) app.opt.life = { initial.lifeFlags, initial.lifePreset, initial.lifeSpecies, initial.lifeCount, initial.lifeGain, initial.lifeDensity, initial.lifeLayers, initial.lifeReactivity, initial.beamReactions, initial.vrex };
         if (initial.version >= 19)
         {
             app.opt.roomSeat = initial.seat;
