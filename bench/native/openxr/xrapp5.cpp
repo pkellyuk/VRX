@@ -8506,6 +8506,30 @@ static XrQuaternionf YawPitch(float yawDeg, float pitchDeg)
 static const unsigned char kEyeKindMixed = 255;
 static const int kEyeFarOff = 8;
 
+// Runs body(row) for every row in [0, rows), the rows dealt out over the CPU's threads
+// (interleaved, as BenchClassify does). The body must only read shared state and write
+// its own row's results. Returns the number of threads used.
+template <typename Body>
+static unsigned ParallelRows(int rows, const Body& body)
+{
+    const unsigned threads = std::max(1u, std::min(64u, std::thread::hardware_concurrency()));
+    if (rows <= 0) return threads;
+    std::vector<std::thread> pool;
+    pool.reserve(threads);
+    for (unsigned t = 0; t < threads; t++)
+        pool.emplace_back([&body, rows, threads, t]()
+        {
+            for (int row = (int)t; row < rows; row += (int)threads) body(row);
+        });
+    for (std::thread& th : pool) th.join();
+    return threads;
+}
+
+static double SecondsSince(std::chrono::steady_clock::time_point start)
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
 struct EyeCompare
 {
     size_t checked = 0, bad = 0;        // bad: a channel more than 2 bits off
@@ -8528,14 +8552,34 @@ static bool CompareEyes(const char* what, const std::vector<std::vector<unsigned
     Log("CompareEyes: enter (%s, %dx%d x %u eyes, every %d px%s)", what, w, h, VIEWS, step, kinds ? ", edges apart" : "");
     out = EyeCompare();
     for (uint32_t e = 0; e < VIEWS; e++)
-    {
         if (got[e].size() < (size_t)bufferW * h * 4) { Log("CompareEyes: FAIL %s - eye %u has %zu bytes", what, e, got[e].size()); return false; }
+
+    // The reference for every checked pixel first, over the CPU's threads (the reference
+    // only reads); then the counting, in order, exactly as before.
+    const auto started = std::chrono::steady_clock::now();
+    std::vector<float> refs((size_t)VIEWS * w * h * 3, 0.0f);
+    std::vector<unsigned char> refOk((size_t)VIEWS * w * h, 0);
+    const unsigned threads = ParallelRows((int)VIEWS * h, [&](int row)
+    {
+        const int e = row / h, y = row % h;
+        if ((y - step / 2) % step != 0 || y < step / 2) return;
+        for (int x = step / 2; x < w; x += step)
+        {
+            const size_t at = ((size_t)e * h + y) * w + x;
+            refOk[at] = reference(e, x, y, &refs[at * 3]) ? 1 : 0;
+        }
+    });
+    Log("CompareEyes: %s - references in %.2f s on %u threads", what, SecondsSince(started), threads);
+
+    for (uint32_t e = 0; e < VIEWS; e++)
+    {
         const unsigned char* k = kinds ? kinds->data() + (size_t)e * w * h : nullptr;
         for (int y = step / 2; y < h; y += step)
             for (int x = step / 2; x < w; x += step)
             {
-                float ref[3];
-                if (!reference((int)e, x, y, ref)) { Log("CompareEyes: FAIL %s - no reference for eye %u at %d,%d", what, e, x, y); return false; }
+                const size_t at = ((size_t)e * h + y) * w + x;
+                const float* ref = &refs[at * 3];
+                if (!refOk[at]) { Log("CompareEyes: FAIL %s - no reference for eye %u at %d,%d", what, e, x, y); return false; }
                 const unsigned char* gp = got[e].data() + ((size_t)y * bufferW + x) * 4;
                 int diff = 0;
                 for (int ch = 0; ch < 3; ch++)
@@ -8733,13 +8777,23 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
         size_t badTexel = 0;
         float worstRel = 0;
         bool facesLit[kRoomFaces] = {};
+        // RoomTexel for every texel first, over the CPU's threads (it only reads the room,
+        // the shading and the emitters); then the comparison, in order, as before.
+        const auto lightStarted = std::chrono::steady_clock::now();
+        std::vector<float> cpuTexels((size_t)kRoomFaces * kRoomLightmap * kRoomLightmap * 3, 0.0f);
+        const unsigned lightThreads = ParallelRows(kRoomFaces * kRoomLightmap, [&](int row)
+        {
+            const int f = row / kRoomLightmap, j = row % kRoomLightmap;
+            for (int i = 0; i < kRoomLightmap; i++)
+                RoomTexel(room, shading, em, f, i, j, &cpuTexels[(((size_t)f * kRoomLightmap + j) * kRoomLightmap + i) * 3]);
+        });
+        const double lightSeconds = SecondsSince(lightStarted);
         for (int f = 0; f < kRoomFaces; f++)
             for (int j = 0; j < kRoomLightmap; j++)
                 for (int i = 0; i < kRoomLightmap; i++)
                 {
                     const uint16_t* hx = (const uint16_t*)(lmBytes[f].data() + ((size_t)j * kRoomLightmap + i) * 8);
-                    float cpu[3];
-                    RoomTexel(room, shading, em, f, i, j, cpu);
+                    const float* cpu = &cpuTexels[(((size_t)f * kRoomLightmap + j) * kRoomLightmap + i) * 3];
                     for (int ch = 0; ch < 4; ch++)
                         light.texels[(((size_t)f * kRoomLightmap + j) * kRoomLightmap + i) * 4 + ch] = RoomHalfToFloat(hx[ch]);
                     for (int ch = 0; ch < 3; ch++)
@@ -8903,20 +8957,51 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
             // What the finish drew, from the CPU reference: frames (phi > 0.5), tiled floor,
             // the panel (kappa > 0.5), the ground and the sky beyond the glass.
             size_t framePx = 0, tilePx = 0, lookPanelPx = 0, groundPx = 0, skyPx = 0, horizonPx = 0;
-            for (uint32_t e = 0; e < VIEWS; e++)
+            // Every pixel's CPU reference first, over the CPU's threads (RoomPixel and the
+            // classification only read); then the counting, in order, exactly as before.
+            struct EyeSample
             {
-                RgbaImage pic{ pictures[e].data(), W, H, W * 4 };
+                float ref[3] = {};
+                RoomSurfaceInfo info;
+                int kind = 0;
+                bool ok = false, panel = false, leftWing = false;
+            };
+            float eyeDx[VIEWS][3], eyeDy[VIEWS][3];
+            for (uint32_t e = 0; e < VIEWS; e++)
+                if (!RoomRayDiff(cc, (int)e, eyeDx[e], eyeDy[e])) { Log("SelfTestRoom[%s]: FAIL ray differentials", name); return false; }
+            const auto eyesStarted = std::chrono::steady_clock::now();
+            std::vector<EyeSample> samples((size_t)VIEWS * TEST_EYE_W * TEST_EYE_H);
+            const unsigned eyeThreads = ParallelRows((int)VIEWS * TEST_EYE_H, [&](int row)
+            {
+                const int e = row / TEST_EYE_H, y = row % TEST_EYE_H;
+                const RgbaImage pic{ pictures[e].data(), W, H, W * 4 };
                 RoomEyeInputs inputs;
                 inputs.rc = &rc; inputs.picture = &pic; inputs.glow = &glowImg; inputs.light = &light; inputs.mirror = &mirror;
                 inputs.emitters = &gpuEm;
-                float Dx[3], Dy[3];
-                if (!RoomRayDiff(cc, (int)e, Dx, Dy)) { Log("SelfTestRoom[%s]: FAIL ray differentials", name); return false; }
+                for (int x = 0; x < TEST_EYE_W; x++)
+                {
+                    EyeSample& s = samples[(size_t)row * TEST_EYE_W + x];
+                    s.ok = RoomPixel(cc, cyl, room, view, e, x, y, inputs, s.ref, &s.info);
+                    if (!s.ok) continue;
+                    float o[3], d[3], u, v, gu, gv;
+                    CurveRay(cc, e, x + 0.5f, y + 0.5f, o, d);
+                    s.kind = RoomClassify(cc, cyl, room, view, o, d, &u, &v, &gu, &gv);
+                    s.panel = s.kind == 1 + kFaceCeiling && RoomCeilingPanel(rc, o, d, eyeDx[e], eyeDy[e]) > 0.5f;
+                    RoomHit hit;
+                    s.leftWing = s.kind == 1 + kFaceFront && RoomExit(room, o, d, hit) && hit.part == kRoomPartWingL;
+                }
+            });
+            Log("SelfTestRoom[%s]: CPU reference - lightmap %.2f s on %u threads, eye pass %c %.2f s on %u threads", name, lightSeconds, lightThreads,
+                'A' + di, SecondsSince(eyesStarted), eyeThreads);
+            for (uint32_t e = 0; e < VIEWS; e++)
+            {
                 for (int y = 0; y < TEST_EYE_H; y++)
                     for (int x = 0; x < TEST_EYE_W; x++)
                     {
-                        float ref[3];
-                        RoomSurfaceInfo info;
-                        if (!RoomPixel(cc, cyl, room, view, (int)e, x, y, inputs, ref, &info)) { Log("SelfTestRoom[%s]: FAIL reference at %d,%d", name, x, y); return false; }
+                        const EyeSample& s = samples[((size_t)e * TEST_EYE_H + y) * TEST_EYE_W + x];
+                        const float* ref = s.ref;
+                        const RoomSurfaceInfo& info = s.info;
+                        if (!s.ok) { Log("SelfTestRoom[%s]: FAIL reference at %d,%d", name, x, y); return false; }
                         framePx += info.phi > 0.5f;
                         tilePx += info.grout >= 0;
                         lookPanelPx += info.kappa > 0.5f;
@@ -8926,14 +9011,11 @@ static bool SelfTestRoom(App& app, const std::vector<unsigned char>& scene)
                         if (di == 0) reflPx[e] += info.kappaS > 0 && info.fresnel > 0;
                         if (info.envPart > 0 && info.envPart < kRoomPartCount) parts[info.envPart]++;
                         starPx += info.star > 0.02f;
-                        float o[3], d[3], u, v, gu, gv;
-                        CurveRay(cc, (int)e, x + 0.5f, y + 0.5f, o, d);
-                        const int kind = RoomClassify(cc, cyl, room, view, o, d, &u, &v, &gu, &gv);
+                        const int kind = s.kind;
                         kinds[kind]++;
                         eyeKinds[e][kind]++;
-                        if (kind == 1 + kFaceCeiling && RoomCeilingPanel(rc, o, d, Dx, Dy) > 0.5f) panelPx++;
-                        RoomHit hit;
-                        if (kind == 1 + kFaceFront && RoomExit(room, o, d, hit) && hit.part == kRoomPartWingL) leftWingPx++;
+                        if (s.panel) panelPx++;
+                        if (s.leftWing) leftWingPx++;
                         const unsigned char* gp = got[e].data() + ((size_t)y * TEST_EYE_W + x) * 4;
                         int diff = 0;
                         for (int ch = 0; ch < 3; ch++)
@@ -9130,6 +9212,104 @@ static bool SelfTestEdges(const char* name, const std::vector<unsigned char>& sc
     return ok;
 }
 
+// ------------------------------------------------------------ room self-test memory
+// SelfTestRoom checks the room's GPU passes against room.h. Its result depends only on
+// the engine, the GPU, its driver and the shader compiler, and it takes seconds (the
+// seated rooms trace their seats on the CPU), so a pass is remembered in
+// %LOCALAPPDATA%\VRX\selftest-room.txt, one line per key: the engine executable's
+// SHA-256, the GPU (name, vendor and device ids), its driver version and the compiler.
+// A new engine build, GPU, driver or compiler runs it again; --selftest always runs it.
+static const size_t kRoomTestMemoryLines = 8;
+
+static std::filesystem::path RoomTestMemoryPath()
+{
+    wchar_t local[32768]{};
+    const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", local, DWORD(std::size(local)));
+    if (!count || count >= std::size(local)) return {};
+    return std::filesystem::path(local) / L"VRX" / L"selftest-room.txt";
+}
+
+// The key for this engine, GPU, driver and compiler; empty when any part is unknown
+// (then the room test always runs).
+static std::string RoomTestKey(App& app)
+{
+    Log("RoomTestKey: enter");
+    if (!app.adapter) { Log("RoomTestKey: exit - no adapter, the room test runs"); return {}; }
+
+    std::vector<char> exe;
+    try
+    {
+        wchar_t self[32768]{};
+        const DWORD n = GetModuleFileNameW(nullptr, self, DWORD(std::size(self)));
+        if (!n || n >= std::size(self)) { Log("RoomTestKey: exit - cannot locate the engine executable, the room test runs"); return {}; }
+        std::ifstream in(self, std::ios::binary);
+        exe.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    catch (const std::exception& e) { Log("RoomTestKey: exit - cannot read the engine executable (%s), the room test runs", e.what()); return {}; }
+    uint8_t digest[32];
+    if (exe.empty() || !Sha256(exe.data(), exe.size(), digest)) { Log("RoomTestKey: exit - cannot hash the engine executable, the room test runs"); return {}; }
+    char hex[65];
+    for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", digest[i]);
+
+    DXGI_ADAPTER_DESC1 ad{};
+    if (FAILED(app.adapter->GetDesc1(&ad))) { Log("RoomTestKey: exit - no adapter description, the room test runs"); return {}; }
+    LARGE_INTEGER umd{};
+    if (FAILED(app.adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd))) { Log("RoomTestKey: exit - no driver version, the room test runs"); return {}; }
+    char driver[64];
+    snprintf(driver, sizeof(driver), "%u.%u.%u.%u", (unsigned)HIWORD(umd.HighPart), (unsigned)LOWORD(umd.HighPart),
+             (unsigned)HIWORD(umd.LowPart), (unsigned)LOWORD(umd.LowPart));
+    char ids[32];
+    snprintf(ids, sizeof(ids), "%04X:%04X", ad.VendorId, ad.DeviceId);
+
+    const std::string key = std::string("engine ") + hex + " | gpu " + winrt::to_string(ad.Description) + " " + ids + " | driver " + driver +
+                            " | compiler " + g_shaderCache.compilerId;
+    Log("RoomTestKey: exit - %s", key.c_str());
+    return key;
+}
+
+static std::vector<std::string> ReadRoomTestMemory(const std::filesystem::path& path)
+{
+    std::vector<std::string> lines;
+    if (path.empty()) return lines;
+    std::ifstream in(path);
+    for (std::string line; std::getline(in, line);)
+        if (!line.empty()) lines.push_back(line);
+    return lines;
+}
+
+static bool RoomTestPassedBefore(const std::string& key)
+{
+    if (key.empty()) return false;
+    for (const std::string& line : ReadRoomTestMemory(RoomTestMemoryPath()))
+        if (line == key) return true;
+    return false;
+}
+
+// Adds the key (newest last, the oldest dropped past kRoomTestMemoryLines), through a
+// temporary file so that a crash leaves the old memory whole.
+static void RememberRoomTestPass(const std::string& key)
+{
+    Log("RememberRoomTestPass: enter");
+    const auto path = RoomTestMemoryPath();
+    if (key.empty() || path.empty()) { Log("RememberRoomTestPass: exit - nothing to remember or nowhere to keep it"); return; }
+    std::vector<std::string> lines = ReadRoomTestMemory(path);
+    lines.erase(std::remove(lines.begin(), lines.end(), key), lines.end());
+    lines.push_back(key);
+    if (lines.size() > kRoomTestMemoryLines) lines.erase(lines.begin(), lines.end() - (std::ptrdiff_t)kRoomTestMemoryLines);
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    auto temp = path;
+    temp += L".tmp";
+    {
+        std::ofstream out(temp, std::ios::trunc);
+        for (const std::string& line : lines) out << line << '\n';
+        if (!out) { Log("RememberRoomTestPass: exit - cannot write %s", PathText(temp).c_str()); return; }
+    }
+    std::filesystem::rename(temp, path, ec);
+    if (ec) { Log("RememberRoomTestPass: exit - cannot replace %s (%s)", PathText(path).c_str(), ec.message().c_str()); return; }
+    Log("RememberRoomTestPass: exit - %zu keys in %s", lines.size(), PathText(path).c_str());
+}
+
 static bool SelfTest(App& app)
 {
     Log("SelfTest: enter");
@@ -9230,7 +9410,17 @@ static bool SelfTest(App& app)
     std::vector<float> invalidDepth((size_t)W * H, std::numeric_limits<float>::quiet_NaN());
     ok = SelfTestWarp(app, "flat-fallback-invalid-depth", synth, invalidDepth, off) && ok;
     ok = SelfTestCurve(app) && ok;          // uses the last warped pair and the self-test glow
-    ok = SelfTestRoom(app, synth) && ok;    // likewise, plus the self-test source
+    // The room: likewise, plus the self-test source. Skipped when it has passed before with
+    // this engine, GPU, driver and compiler (RoomTestKey); --selftest always runs it.
+    const std::string roomKey = RoomTestKey(app);
+    if (!app.opt.selfTestOnly && RoomTestPassedBefore(roomKey))
+        Log("SelfTest: room test SKIPPED - it passed before with this engine, GPU, driver and compiler (%s)", PathText(RoomTestMemoryPath()).c_str());
+    else
+    {
+        const bool roomOk = SelfTestRoom(app, synth);
+        if (roomOk) RememberRoomTestPass(roomKey);
+        ok = roomOk && ok;
+    }
 
     Log("SelfTest: exit %s", ok ? "ALL PASS" : "FAILED");
     return ok;
