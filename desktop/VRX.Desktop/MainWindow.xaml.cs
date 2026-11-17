@@ -200,11 +200,12 @@ public partial class MainWindow : Window
         }
         UpdateButtons();
     }
-    // "v1.2" for 1.2.0, "v1.2.3" for a patch release.
+    // "v1.2" for 1.2.0, "v1.2.3" for a patch, including a fourth revision when set.
     public static string DisplayVersion()
     {
         var v = typeof(MainWindow).Assembly.GetName().Version;
         if (v == null) return "";
+        if (v.Revision > 0) return $"v{v.Major}.{v.Minor}.{v.Build}.{v.Revision}";
         return v.Build > 0 ? $"v{v.Major}.{v.Minor}.{v.Build}" : $"v{v.Major}.{v.Minor}";
     }
 
@@ -825,6 +826,8 @@ public partial class MainWindow : Window
     {
         System.Diagnostics.Debug.WriteLine($"[AppSettings] PutAppSettings enter: mode {appSettings.Mode}, auto {appSettings.AutoAttach}, {appSettings.AutoAttachSeconds} s");
         autoSettingsLoading = true;
+        LanguageList.ItemsSource = new[] { new Loc.UiLanguage("", Loc.Get("LanguageAutomatic")) }.Concat(Loc.Languages).ToArray();
+        LanguageList.SelectedValue = Loc.ValidLanguage(appSettings.UiLanguage);
         ControllersOn.IsChecked = appSettings.MotionControllers;
         ControllersOff.IsChecked = !appSettings.MotionControllers;
         AutoAttachCheck.IsChecked = appSettings.AutoAttach;
@@ -848,6 +851,13 @@ public partial class MainWindow : Window
         SaveAppSettings();
         UpdateAutoTimer();
         UpdateGameCard();
+    }
+
+    private void LanguageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ready || autoSettingsLoading || LanguageList.SelectedValue is not string code) return;
+        appSettings.UiLanguage = Loc.ValidLanguage(code);
+        SaveAppSettings();
     }
 
     // Writes app-settings.json; a failure shows in the status line.
@@ -1223,6 +1233,11 @@ public partial class MainWindow : Window
     // the smoke test); XAML text follows by itself.
     private void RefreshLanguage()
     {
+        bool wasLanguageLoading = autoSettingsLoading;
+        autoSettingsLoading = true;
+        LanguageList.ItemsSource = new[] { new Loc.UiLanguage("", Loc.Get("LanguageAutomatic")) }.Concat(Loc.Languages).ToArray();
+        LanguageList.SelectedValue = appSettings.UiLanguage;
+        autoSettingsLoading = wasLanguageLoading;
         System.Diagnostics.Debug.WriteLine($"[MainWindow] RefreshLanguage enter: pseudo {Loc.Pseudo}");
         Title = Loc.Format("WindowTitle", VersionText.Text);
         Subtitle.Text = Loc.Get(appSettings.IsExpert ? "SubtitleExpert" : "SubtitleEasy");
@@ -2003,6 +2018,7 @@ public partial class MainWindow : Window
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
         SmokeTestStrings(root);
+        SmokeTestLanguages(output);
 
         PutProfile(one);
         PathLabel.Text = one.ExecutablePath; Status.Text = "Preview · saved settings are isolated by executable path";
@@ -2244,7 +2260,9 @@ public partial class MainWindow : Window
             throw new Exception($"Leaving Expert must remember its bounds (got {appSettings.ExpertWindow})");
         if (SizeToContent != SizeToContent.Height || ResizeMode != ResizeMode.CanMinimize || MaxButton.IsVisible || WindowChrome.GetWindowChrome(this)?.ResizeBorderThickness != new Thickness(0))
             throw new Exception("Easy must size to its content and not be resizable or maximizable");
-        if (ActualHeight > 0.6 * ExpertDefaultHeight || ActualWidth >= ExpertMinWidth)
+        // Translated labels can exceed Expert's minimum width; Easy must still be
+        // smaller than the default Expert window and fit every control below.
+        if (ActualHeight > 0.6 * ExpertDefaultHeight || ActualWidth >= ExpertDefaultWidth)
             throw new Exception($"Easy must be compact: {ActualWidth:F0} x {ActualHeight:F0}");
         CheckNothingClipped("Easy", GameCard, StartButton, StopButton, EasyRecenterButton, EasyPanel, HeaderSwitches, ControllersOn, ControllersOff, ModeSwitch, Subtitle, EasyIntro, Status, TitleBar, CloseButton);
         double easyWidth = ActualWidth, easyHeight = ActualHeight;
@@ -2479,6 +2497,63 @@ public partial class MainWindow : Window
         System.Diagnostics.Debug.WriteLine($"[Smoke] SmokeTestStrings exit: {strings.Count} strings, {used.Count} used");
     }
 
+    private void SmokeTestLanguages(string output)
+    {
+        var neutral = Loc.NeutralStrings();
+        var preferences = new ProfileStore(Path.Combine(output, "language-settings"));
+        var oldUi = CultureInfo.CurrentUICulture;
+        var oldDefault = CultureInfo.DefaultThreadCurrentUICulture;
+        var oldFormat = CultureInfo.CurrentCulture;
+        string oldChoice = appSettings.UiLanguage;
+        try
+        {
+            if (LanguageList.Items.Count != Loc.Languages.Count + 1 || Loc.ValidLanguage("not-a-language") != "")
+                throw new Exception("Language selection needs Windows automatic, every supported language and safe invalid-value fallback");
+            foreach (var language in Loc.Languages)
+            {
+                var culture = CultureInfo.GetCultureInfo(language.Code);
+                var translated = language.Code == "en" ? neutral : Loc.StringsFor(culture);
+                if (!translated.Keys.Order().SequenceEqual(neutral.Keys.Order()))
+                    throw new Exception($"{language.Code}: translation keys differ from English");
+                foreach (var (key, value) in translated)
+                {
+                    if (string.IsNullOrEmpty(value) || value.Contains('\uFFFD') ||
+                        !Loc.Placeholders(value).Order().SequenceEqual(Loc.Placeholders(neutral[key]).Order()))
+                        throw new Exception($"{language.Code}: invalid translation for {key}");
+                    int count = Loc.Placeholders(neutral[key]).DefaultIfEmpty(-1).Max() + 1;
+                    _ = string.Format(CultureInfo.InvariantCulture, value, Enumerable.Repeat((object)1.5, count).ToArray());
+                }
+                Loc.ConfigureLanguage(language.Code);
+                if (Loc.Raw("LanguageLabel") != translated["LanguageLabel"] || CultureInfo.CurrentCulture != oldFormat)
+                    throw new Exception($"{language.Code}: UI language must load its satellite without changing regional number formatting");
+                preferences.SaveAppSettings(new AppSettings { UiLanguage = language.Code, MotionControllers = true });
+                if (preferences.LoadAppSettings() is not { MotionControllers: true } saved || saved.UiLanguage != language.Code)
+                    throw new Exception($"{language.Code}: language preference did not round-trip independently of other app settings");
+            }
+            foreach (var (regional, parent) in new[] { ("fr-CA", "fr"), ("de-DE", "de"), ("es-MX", "es"), ("pt-BR", "pt"), ("zh-CN", "zh-Hans") })
+            {
+                CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(regional);
+                if (Loc.Raw("LanguageLabel") != Loc.StringsFor(CultureInfo.GetCultureInfo(parent))["LanguageLabel"])
+                    throw new Exception($"{regional}: parent-language fallback failed");
+            }
+            CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("ar-SA");
+            if (Loc.Raw("LanguageLabel") != neutral["LanguageLabel"]) throw new Exception("Unsupported languages must fall back to English");
+            preferences.SaveAppSettings(new AppSettings { UiLanguage = "obsolete-code" });
+            if (preferences.LoadAppSettings().UiLanguage != "") throw new Exception("Unknown saved languages must fall back to Windows");
+            // Exercise the actual selector/save handler using only the smoke-data store.
+            LanguageList.SelectedValue = "fr";
+            if (store.LoadAppSettings().UiLanguage != "fr") throw new Exception("The language selector did not save its choice");
+        }
+        finally
+        {
+            CultureInfo.CurrentUICulture = oldUi;
+            CultureInfo.DefaultThreadCurrentUICulture = oldDefault;
+            LanguageList.SelectedValue = oldChoice;
+        }
+        File.WriteAllText(Path.Combine(output, "languages-pass.txt"),
+            "PASS: English and 8 complete satellite languages; format placeholders; regional/English fallback; app-wide selection and persistence; Windows number formatting preserved.");
+    }
+
     // The arguments of a call whose "(" ends just before `start`, split at top-level commas
     // (strings, chars, brackets and nested calls respected). Empty when unreadable.
     private static List<string> SplitArguments(string code, int start)
@@ -2590,7 +2665,7 @@ public partial class MainWindow : Window
     private void CheckPseudoTexts()
     {
         var problems = new List<string>();
-        var dataOwners = new DependencyObject[] { AppList, WindowList, RecenterKeys, MenuKeys, VersionText, TitleVersion, CardName, WorldHex, LogBox };
+        var dataOwners = new DependencyObject[] { AppList, WindowList, RecenterKeys, MenuKeys, LanguageList, VersionText, TitleVersion, CardName, WorldHex, LogBox };
         void Walk(DependencyObject node)
         {
             if (dataOwners.Contains(node)) return;

@@ -1,0 +1,1432 @@
+<?xml version='1.0' encoding='utf-8'?>
+<root>
+  <data name="LanguageLabel" xml:space="preserve">
+    <value>Sprache / Language</value>
+  </data>
+  <data name="LanguageAutomatic" xml:space="preserve">
+    <value>Automatisch – Windows-Anzeigesprache</value>
+  </data>
+  <data name="LanguageRestartHint" xml:space="preserve">
+    <value>Gilt beim nächsten Start von VRX. Zahlen- und Datumsformate folgen weiterhin Ihren regionalen Windows-Einstellungen.</value>
+  </data>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="AppName" xml:space="preserve">
+    <value>VRX</value>
+    <comment>Product name; normally not translated.</comment>
+  </data>
+  <data name="WindowTitle" xml:space="preserve">
+    <value>VRX {0} – Desktop-Setup</value>
+    <comment>{0} = version, e.g. v1.7.1</comment>
+  </data>
+  <data name="SubtitleEasy" xml:space="preserve">
+    <value>Spielen Sie Ihr Spiel in VR. VRX übernimmt die Einrichtung.</value>
+  </data>
+  <data name="SubtitleExpert" xml:space="preserve">
+    <value>Wählen Sie ein Spiel. Richten Sie Ihren Bildschirm ein.</value>
+  </data>
+  <data name="ModeEasy" xml:space="preserve">
+    <value>Einfach</value>
+  </data>
+  <data name="ModeEasyCaption" xml:space="preserve">
+    <value>Automatisch</value>
+  </data>
+  <data name="ModeEasyTip" xml:space="preserve">
+    <value>Ganz einfach: VRX verbindet sich selbstständig mit dem Spiel davor und verwendet dabei die gespeicherten Einstellungen des Spiels (oder Ihre Grundeinstellungen für ein neues Spiel). Fast alles andere bleibt verborgen.</value>
+  </data>
+  <data name="ModeExpert" xml:space="preserve">
+    <value>Experte</value>
+  </data>
+  <data name="ModeExpertCaption" xml:space="preserve">
+    <value>Alle Einstellungen</value>
+  </data>
+  <data name="ModeExpertTip" xml:space="preserve">
+    <value>Experte: Jede Einstellung ist in Abschnitte gruppiert, die Sie öffnen und schließen können.</value>
+  </data>
+  <data name="TitleMenu" xml:space="preserve">
+    <value>Fenstermenü</value>
+    <comment>The VRX logo at the left of the title bar; opens the window menu (move, size, close).</comment>
+  </data>
+  <data name="TitleMinimize" xml:space="preserve">
+    <value>Minimieren</value>
+    <comment>Title bar button, as in Windows.</comment>
+  </data>
+  <data name="TitleMaximize" xml:space="preserve">
+    <value>Maximieren</value>
+    <comment>Title bar button (Expert only), as in Windows.</comment>
+  </data>
+  <data name="TitleRestore" xml:space="preserve">
+    <value>Wiederherstellen</value>
+    <comment>The maximize button while the window is maximized, as in Windows.</comment>
+  </data>
+  <data name="TitleClose" xml:space="preserve">
+    <value>Schließen</value>
+    <comment>Title bar button, as in Windows.</comment>
+  </data>
+  <data name="EasyIntro" xml:space="preserve">
+    <value>Starten Sie Ihr Spiel und bringen Sie es nach vorne – VRX verbindet sich nach einem kurzen Countdown.</value>
+  </data>
+  <data name="EasyHintSettings" xml:space="preserve">
+    <value>VRX verwendet die gespeicherten Einstellungen des Spiels oder Ihre Grundeinstellungen für ein Spiel, das es zuvor noch nicht gesehen hat. Wechseln Sie zu Expert, um sie zu ändern.</value>
+  </data>
+  <data name="EasyHintSteamVr" xml:space="preserve">
+    <value>Starten Sie SteamVR vor dem Spielen. Drücken Sie „VR stoppen“ oder schließen Sie das Spiel, um es zu beenden.</value>
+  </data>
+  <data name="CardCaption" xml:space="preserve">
+    <value>SPIEL</value>
+  </data>
+  <data name="CardNoGame" xml:space="preserve">
+    <value>Noch kein Spiel</value>
+  </data>
+  <data name="CardWaiting" xml:space="preserve">
+    <value>Warten · Bringen Sie Ihr Spiel in den Vordergrund</value>
+  </data>
+  <data name="CardCountdown" xml:space="preserve">
+    <value>Anhängen in {0} s · Fenster wechseln, um abzubrechen</value>
+    <comment>{0} = seconds left</comment>
+  </data>
+  <data name="CardStarting" xml:space="preserve">
+    <value>VR starten…</value>
+  </data>
+  <data name="CardPlaying" xml:space="preserve">
+    <value>Spielen</value>
+  </data>
+  <data name="CardStopping" xml:space="preserve">
+    <value>VR stoppen…</value>
+  </data>
+  <data name="CardSpent" xml:space="preserve">
+    <value>Angehalten · Wechseln Sie zu einem anderen Fenster und zurück, um es erneut anzuhängen</value>
+  </data>
+  <data name="CardReady" xml:space="preserve">
+    <value>Fertig · Drücken Sie „Anhängen/Wiedergabe“.</value>
+  </data>
+  <data name="CardChooseWindow" xml:space="preserve">
+    <value>Wählen Sie unter Spiel &amp; Fenster das Fenster aus, das Sie aufnehmen möchten</value>
+  </data>
+  <data name="CardPickGame" xml:space="preserve">
+    <value>Wählen Sie unter „Spiel &amp; Fenster“ ein Spiel aus oder aktivieren Sie die automatische Anfügung</value>
+  </data>
+  <data name="AttachPlay" xml:space="preserve">
+    <value>Verbinden / Starten</value>
+  </data>
+  <data name="StopVr" xml:space="preserve">
+    <value>VR stoppen</value>
+  </data>
+  <data name="Recenter" xml:space="preserve">
+    <value>Zentrieren</value>
+  </data>
+  <data name="RecenterTip" xml:space="preserve">
+    <value>Platziert den Bildschirm direkt vor der Stelle, auf die das Headset gerade blickt.</value>
+  </data>
+  <data name="RecenterNow" xml:space="preserve">
+    <value>Jetzt zentrieren</value>
+  </data>
+  <data name="DismissMenuNow" xml:space="preserve">
+    <value>Menü jetzt schließen</value>
+  </data>
+  <data name="RefreshSymbol" xml:space="preserve">
+    <value>↻</value>
+    <comment>Refresh button symbol; normally not translated.</comment>
+  </data>
+  <data name="RefreshTip" xml:space="preserve">
+    <value>Aktualisieren Sie laufende Anwendungen</value>
+  </data>
+  <data name="ResetProfile" xml:space="preserve">
+    <value>Setzen Sie dieses Profil zurück</value>
+  </data>
+  <data name="ResetProfileTip" xml:space="preserve">
+    <value>Setzt dieses Spiel auf die Basiseinstellungen zurück (oder auf die Standardeinstellungen von VRX, wenn keine Basis gespeichert wurde).</value>
+  </data>
+  <data name="MakeBase" xml:space="preserve">
+    <value>Grundeinstellungen vornehmen</value>
+  </data>
+  <data name="MakeBaseTip" xml:space="preserve">
+    <value>Speichert die hier angezeigten Einstellungen als Ausgangspunkt für Spiele, die Sie noch nicht eingerichtet haben. Bildschirmplatzierung, 3D-Stärke, Tiefenoptionen und Verknüpfungen sind alle enthalten; Der eigene Pfad und das Fenster des Spiels sind es nicht. Spiele, die Sie bereits eingerichtet haben, behalten ihre eigenen Einstellungen.</value>
+  </data>
+  <data name="ApplyAll" xml:space="preserve">
+    <value>Bewerben Sie sich für alle</value>
+  </data>
+  <data name="ApplyAllTip" xml:space="preserve">
+    <value>Kopiert die hier angezeigten Einstellungen auf jedes Spiel, das Sie bereits eingerichtet haben, nachdem Sie zur Bestätigung aufgefordert wurden. Bildschirmplatzierung, 3D-Stärke, Tiefenoptionen, Tiefe GPU und Verknüpfungen sind alle enthalten; Jedes Spiel behält seinen eigenen Pfad und sein eigenes Fenster. Spiele, die Sie noch nicht eingerichtet haben, starten weiterhin mit den Grundeinstellungen.</value>
+  </data>
+  <data name="SectionGame" xml:space="preserve">
+    <value>Spiel &amp; Fenster</value>
+  </data>
+  <data name="SectionScreen" xml:space="preserve">
+    <value>Bildschirm</value>
+  </data>
+  <data name="SectionAround" xml:space="preserve">
+    <value>Rund um den Bildschirm</value>
+  </data>
+  <data name="SectionRoom" xml:space="preserve">
+    <value>Zimmer</value>
+  </data>
+  <data name="SectionDepth" xml:space="preserve">
+    <value>3D &amp; Tiefe</value>
+  </data>
+  <data name="SectionExperimental" xml:space="preserve">
+    <value>Experimentell</value>
+  </data>
+  <data name="SectionSteamVr" xml:space="preserve">
+    <value>SteamVR &amp; Verknüpfungen</value>
+  </data>
+  <data name="SectionProfile" xml:space="preserve">
+    <value>Profil</value>
+  </data>
+  <data name="SectionSession" xml:space="preserve">
+    <value>Sitzungsdetails</value>
+  </data>
+  <data name="RunningApplications" xml:space="preserve">
+    <value>Ausführen von Anwendungen</value>
+  </data>
+  <data name="ShowAllProcesses" xml:space="preserve">
+    <value>Alle Prozesse anzeigen</value>
+  </data>
+  <data name="WindowToCapture" xml:space="preserve">
+    <value>Fenster zum Erfassen</value>
+  </data>
+  <data name="PathChoose" xml:space="preserve">
+    <value>Wählen Sie eine Anwendung aus, um loszulegen.</value>
+  </data>
+  <data name="PathNoAccess" xml:space="preserve">
+    <value>Keine zugängliche ausführbare Datei/Fenster. Wählen Sie ein laufendes Spiel aus.</value>
+  </data>
+  <data name="GameHint" xml:space="preserve">
+    <value>Die Einstellungen werden für jede ausführbare Datei separat gespeichert. Starten Sie SteamVR vor dem Spielen.</value>
+  </data>
+  <data name="AutoAttachCheck" xml:space="preserve">
+    <value>Automatisch an das Spiel im Vordergrund anhängen</value>
+  </data>
+  <data name="AutoAttachCountdown" xml:space="preserve">
+    <value>Countdown</value>
+  </data>
+  <data name="AutoAttachTip" xml:space="preserve">
+    <value>Wenn sich ein Spiel im Vordergrund befindet, zählt VRX herunter und verbindet sich dann damit, genau so, als ob Sie es ausgewählt und auf „Anhängen/Spielen“ gedrückt hätten. Ein Fenster zählt, wenn es im Vollbildmodus oder randlos angezeigt wird oder wenn es sich um ein Spiel handelt, das Sie zuvor eingerichtet haben (es verfügt über gespeicherte Einstellungen; Webbrowser zählen nur im Vollbildmodus). Steam, SteamVR, Windows selbst, Terminals und VRX werden niemals angeschlossen. Wechseln Sie während des Countdowns zu einem anderen Fenster, um ihn abzubrechen. Nachdem Sie VR beendet haben oder wenn das Anhängen fehlschlägt, bleibt dieses Fenster in Ruhe, bis Sie es verlassen und wieder zurückschalten. Der Countdown startet nie, solange VRX selbst vorne ist. Im Easy-Modus ist es immer aktiviert.</value>
+  </data>
+  <data name="AppDescriptionOne" xml:space="preserve">
+    <value>PID {0} · 1 Fenster</value>
+    <comment>{0} = process id</comment>
+  </data>
+  <data name="AppDescriptionOther" xml:space="preserve">
+    <value>PID {0} · {1}-Fenster</value>
+    <comment>{0} = process id, {1} = number of windows</comment>
+  </data>
+  <data name="AppNoGameWindow" xml:space="preserve">
+    <value>Kein zugängliches Spielfenster</value>
+  </data>
+  <data name="WindowUntitled" xml:space="preserve">
+    <value>Fenster {0}</value>
+    <comment>{0} = window handle in hex</comment>
+  </data>
+  <data name="ScreenHint" xml:space="preserve">
+    <value>Änderungen gelten live. Die Position ist relativ zu Ihrem letzten Kursteilnehmer.</value>
+  </data>
+  <data name="PreviewLabel" xml:space="preserve">
+    <value>DRAUFSICHT · Ziehen Sie den Bildschirm</value>
+  </data>
+  <data name="PreviewTip" xml:space="preserve">
+    <value>Ziehen Sie den Bildschirm, um die horizontale Position und den Abstand zu ändern</value>
+  </data>
+  <data name="ScreenWidth" xml:space="preserve">
+    <value>Bildschirmbreite</value>
+  </data>
+  <data name="Distance" xml:space="preserve">
+    <value>Entfernung</value>
+  </data>
+  <data name="HeightOffset" xml:space="preserve">
+    <value>Höhenversatz</value>
+  </data>
+  <data name="LeftRightOffset" xml:space="preserve">
+    <value>Links-/Rechtsversatz</value>
+  </data>
+  <data name="ScreenCurve" xml:space="preserve">
+    <value>Bildschirmkurve</value>
+  </data>
+  <data name="ScreenCurveTip" xml:space="preserve">
+    <value>Umhüllt Sie den Bildschirm wie einen gebogenen Fernseher. Für jedes Auge wird ein gekrümmter Bildschirm als echter Zylinder gezeichnet, sodass Umriss, Perspektive und Kopfbewegungsparallaxe stimmen. Die Draufsicht oben zeigt die Form. 0 % ist flach. Funktioniert mit dem festen Bildschirm und mit Head-Follow. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="FollowHead" xml:space="preserve">
+    <value>Der Bildschirm folgt meinem Kopf</value>
+  </data>
+  <data name="ValueMetres" xml:space="preserve">
+    <value>{0:F2} m</value>
+    <comment>{0} = a length in metres</comment>
+  </data>
+  <data name="ValuePercent" xml:space="preserve">
+    <value>{0:F0} %</value>
+    <comment>{0} = a percentage</comment>
+  </data>
+  <data name="ValueNumber" xml:space="preserve">
+    <value>{0:F2}</value>
+    <comment>{0} = a plain number with two decimals</comment>
+  </data>
+  <data name="ValueSeconds" xml:space="preserve">
+    <value>{0} s</value>
+    <comment>{0} = seconds</comment>
+  </data>
+  <data name="Ambilight" xml:space="preserve">
+    <value>Ambilight – leuchtet rund um den Bildschirm</value>
+  </data>
+  <data name="AmbilightTip" xml:space="preserve">
+    <value>Verteilt die Farben am Bildrand sanft in die Dunkelheit rund um den Bildschirm, ähnlich der Schrägbeleuchtung hinter einem Fernseher. Jeder Punkt des Glühens verblendet den gesamten Rand, den nächstgelegenen Teil, so dass er der lokalen Farbe nah am Rand folgt und nach außen hin weicher wird. Es umschließt einen gekrümmten Bildschirm und folgt der Szene fließend, anstatt zu flackern. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="AmbilightStrength" xml:space="preserve">
+    <value>Ambilight-Stärke</value>
+  </data>
+  <data name="AmbilightStrengthTip" xml:space="preserve">
+    <value>Wie hell ist das Leuchten neben dem Bildschirm? es wird immer zum Rand hin ausgeblendet. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="WorldColour" xml:space="preserve">
+    <value>Weltfarbe</value>
+  </data>
+  <data name="WorldListTip" xml:space="preserve">
+    <value>Die Farbe des Raums um den Bildschirm herum, statt Schwarz. Dunkle Farben behalten den Kontrast des Bildes; das Ambilight leuchtet darüber. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="WorldHexTip" xml:space="preserve">
+    <value>Jede Farbe wie #RRGGBB. Wenn Sie die Schachtel mit einer halben Farbe belassen, wird die letzte ganze Farbe zurückgelegt.</value>
+  </data>
+  <data name="WorldBlack" xml:space="preserve">
+    <value>Schwarz (Standard)</value>
+  </data>
+  <data name="WorldCharcoal" xml:space="preserve">
+    <value>Kohle</value>
+  </data>
+  <data name="WorldSlate" xml:space="preserve">
+    <value>Schiefer</value>
+  </data>
+  <data name="WorldMidnight" xml:space="preserve">
+    <value>Mitternachtsblau</value>
+  </data>
+  <data name="WorldPurple" xml:space="preserve">
+    <value>Tiefviolett</value>
+  </data>
+  <data name="WorldForest" xml:space="preserve">
+    <value>Wald</value>
+  </data>
+  <data name="WorldWarm" xml:space="preserve">
+    <value>Warmes Dunkel</value>
+  </data>
+  <data name="WorldCinemaRed" xml:space="preserve">
+    <value>Kinorot</value>
+  </data>
+  <data name="WorldGrey" xml:space="preserve">
+    <value>Grau</value>
+  </data>
+  <data name="WorldDusk" xml:space="preserve">
+    <value>Dämmerung</value>
+  </data>
+  <data name="WorldOvercast" xml:space="preserve">
+    <value>Bedeckt</value>
+  </data>
+  <data name="WorldCustom" xml:space="preserve">
+    <value>Benutzerdefiniert</value>
+  </data>
+  <data name="Environment" xml:space="preserve">
+    <value>Umwelt</value>
+  </data>
+  <data name="EnvironmentTip" xml:space="preserve">
+    <value>Wo der Bildschirm ist. Raum (Standard): der schlichte Raum, sauber und ruhig, mit Glaswänden, Reflexionen und einem unten wählbaren Licht. Im Freien: ein Bildschirm, der nachts auf einem Feld unter den Sternen steht, mit niedrigen Hügeln am Horizont; Der Bildschirm beleuchtet den Boden davor. Lounge: ein Heimkino – ein Eichenboden mit Teppich, getäfelte Wände mit zwei Lampen auf jeder Seite, Downlights in der Decke (beide werden durch das Raumlicht beleuchtet) und Holzlamellen hinter der Leinwand. Kino mit Sitzplätzen: ein Kino mit abgestuften Sitzreihen um Sie herum – Samtvorhänge, schwarze Abdeckung um die Leinwand, ein gemusterter Teppich mit Stufenlichtern entlang der Gänge und Wandleuchter, die vom Raumlicht beleuchtet werden; Wählen Sie unten Ihren Sitzplatz aus, um festzulegen, wie weit der Bildschirm entfernt ist. Kerker: verwitterter Stein, Gitterbögen, Ketten, Bodengitter und Fackelschein. Hölle: dunkler Basalt, Ofenbögen, leuchtende Inschriften und Lavaspalten. Cyberpunk-Neonkino: abgestufte Sitze, Cyan- und Magenta-Beleuchtung, Akustikpaneele und Stadtdarstellungen. Raumschiffkino: abgestufte Sitze in Metallschotts, beleuchtete Rippen und Sichtfenster auf Sterne und einen blauen Planeten. Jedes wird wie der Raum durch das Bild beleuchtet, und der Schieberegler „Raum“ legt fest, wie stark seine Oberflächen reflektiert werden. Wenn Sie eine auswählen, während der Raum ausgeschaltet ist, wird der Raum eingeschaltet. Nicht mit „Screen Follows My Head“. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="EnvironmentRoom" xml:space="preserve">
+    <value>Raum (Standard)</value>
+  </data>
+  <data name="EnvironmentCinema" xml:space="preserve">
+    <value>Kino</value>
+  </data>
+  <data name="EnvironmentOpenAir" xml:space="preserve">
+    <value>Nachts unter freiem Himmel</value>
+  </data>
+  <data name="EnvironmentLounge" xml:space="preserve">
+    <value>Lounge</value>
+  </data>
+  <data name="EnvironmentTheatre" xml:space="preserve">
+    <value>Kino mit Sitzplätzen</value>
+  </data>
+  <data name="EnvironmentDungeon" xml:space="preserve">
+    <value>Kerker</value>
+  </data>
+  <data name="EnvironmentHell" xml:space="preserve">
+    <value>Hölle</value>
+  </data>
+  <data name="EnvironmentCyberpunk" xml:space="preserve">
+    <value>Cyberpunk-Neonkino</value>
+  </data>
+  <data name="EnvironmentStarship" xml:space="preserve">
+    <value>Raumschiffkino</value>
+  </data>
+  <data name="Seat" xml:space="preserve">
+    <value>Sitz</value>
+  </data>
+  <data name="SeatTip" xml:space="preserve">
+    <value>Wo man im Kino mit Sitzgelegenheiten sitzt. Hier wird eingestellt, wie weit der Bildschirm entfernt ist: Die vordere Reihe ist 4,6 m entfernt, die mittlere 7,5 m und die hintere Reihe 11,4 m. Der Saal bleibt unabhängig von der Breite der Leinwand gleich, sodass die Leinwand von Ihrem Sitzplatz aus größer oder kleiner aussieht, so wie es eine größere oder kleinere Leinwand im selben Kino tun würde (bei der Standardbreite von 5,7 m sind die Reihen etwa 0,8, 1,3 und 2 Leinwandbreiten entfernt). Hinter Ihnen steigen die Reihen an, so dass Sie über die Sitze vor Ihnen blicken können. Ein Sitz weiter hinten zeigt auch die Tiefe des Bildes sanfter. Während Sie sitzen, bleibt der Abstandsregler stehen und behält seinen Wert. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="SeatFront" xml:space="preserve">
+    <value>Erste Reihe</value>
+  </data>
+  <data name="SeatMiddle" xml:space="preserve">
+    <value>Mittel (Standard)</value>
+  </data>
+  <data name="SeatRear" xml:space="preserve">
+    <value>Hintere Reihe</value>
+  </data>
+  <data name="SeatDistance" xml:space="preserve">
+    <value>{0:F1} m vom Bildschirm entfernt</value>
+    <comment>{0} = metres</comment>
+  </data>
+  <data name="ValueSeatDistance" xml:space="preserve">
+    <value>{0:F2} m (Ihr Sitzplatz)</value>
+    <comment>{0} = metres; the screen's distance set by the cinema seat</comment>
+  </data>
+  <data name="NeedsRoomEnvironment" xml:space="preserve">
+    <value>Nur Raumumgebung</value>
+  </data>
+  <data name="NotInOpenAir" xml:space="preserve">
+    <value>Nicht im Freien</value>
+  </data>
+  <data name="RoomLabel" xml:space="preserve">
+    <value>Raum – vom Bildschirm beleuchtete Wände</value>
+  </data>
+  <data name="RoomTip" xml:space="preserve">
+    <value>Versetzt Sie in einen dunklen Raum, dessen Wände, Boden und Decke durch das Bild und das Ambilight beleuchtet werden, wie ein Fernseher oder eine Kinoleinwand in einem dunklen Raum. 0 ist aus; Höhere Werte machen die Wände blasser, sodass sie stärker reflektieren. 30-60 % sehen aus wie ein Kino. Wenn der Raum eingeschaltet ist, wird die Weltfarbe zu seinem Hauslicht und der Bildschirm wird gerade gehalten (ein geneigter Boden würde sich falsch anfühlen). Nicht mit „Screen Follows My Head“. Die darüber liegende Umgebung verkleidet es als Kino, Open Air oder Lounge. Glas, Reflexionen und ein Raumlicht liegen darunter. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="GlassWalls" xml:space="preserve">
+    <value>Glaswände</value>
+  </data>
+  <data name="GlassTip" xml:space="preserve">
+    <value>Verwandelt die Seitenwände, die Rückwand und die Decke in schlanke Rahmen aus Glas, sodass Sie auf einen Boden blicken können, der bis zum Horizont in den Farben der Welt reicht. Mit einer schwarzen Weltfarbe ist es nachts ein gläserner Raum: Sie sehen nur die Rahmen und Reflexionen. 0 ist solide Wände, 100 klares Glas. Die Wand mit dem Bildschirm und der Boden bleiben stabil. Glas oder Spiegelungen zeigen auch 1 m Bodenfliesen, sodass Sie die Größe des Bildschirms in Metern abzählen können. Klares Glas hält weniger Licht drin, sodass der Raum etwas dunkler wird. Nur in der Raumumgebung. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="Reflections" xml:space="preserve">
+    <value>Reflexionen</value>
+  </data>
+  <data name="ReflectTip" xml:space="preserve">
+    <value>Wie sehr das Glas, die Wände und ein polierter Boden reflektieren: Der Bildschirm, sein Glanz und das Raumlicht wirken gespiegelt, was zeigt, wie groß der Bildschirm ist und wie weit er entfernt ist. Bei einem Blickwinkel sind die Reflexionen stärker. 0 ist keine. Nur in der Raumumgebung. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="RoomLight" xml:space="preserve">
+    <value>Raumlicht</value>
+  </data>
+  <data name="RoomLightTip" xml:space="preserve">
+    <value>Ein sanftes Lichtpaneel in der Decke direkt über und hinter Ihnen, damit der Raum auch bei dunklem Bild sichtbar bleibt. Wie stark die Wände es aufnehmen, hängt davon ab, wie hell sie sind (der Raumregler). Im Kino steuert es die Wand- und Gangbeleuchtung; im Wohnzimmer die Downlights und Wandlampen. In den Themenzimmern werden außerdem Flammen, Lava, Neon und Displays gedimmt. Diese dekorativen Leuchten reagieren auch auf den Raumschieberegler. Im Freien gibt es kein Raumlicht. 0 ist aus. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="LightColour" xml:space="preserve">
+    <value>Helle Farbe</value>
+  </data>
+  <data name="LightColourTip" xml:space="preserve">
+    <value>Die Farbe des Raumlichts reicht von warm (2700 K, wie bei einer Tischlampe) bis zu Tageslicht (6500 K). Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="LightWarm" xml:space="preserve">
+    <value>Warm (2700 K)</value>
+  </data>
+  <data name="LightSoftWhite" xml:space="preserve">
+    <value>Sanftes Weiß (3000 K)</value>
+  </data>
+  <data name="LightNeutral" xml:space="preserve">
+    <value>Neutral (4000 K)</value>
+  </data>
+  <data name="LightDaylight" xml:space="preserve">
+    <value>Tageslicht (6500 K)</value>
+  </data>
+  <data name="LightCustom" xml:space="preserve">
+    <value>Benutzerdefiniert ({0})</value>
+    <comment>{0} = a colour like #123456</comment>
+  </data>
+  <data name="ValueOff" xml:space="preserve">
+    <value>Aus</value>
+  </data>
+  <data name="ValueSolid" xml:space="preserve">
+    <value>Undurchsichtig</value>
+  </data>
+  <data name="ValueClearPercent" xml:space="preserve">
+    <value>{0} % durchsichtig</value>
+    <comment>{0} = how clear the glass is, percent</comment>
+  </data>
+  <data name="NeedsFixedScreen" xml:space="preserve">
+    <value>Benötigt den festen Bildschirm</value>
+  </data>
+  <data name="NeedsRoom" xml:space="preserve">
+    <value>Braucht den Raum</value>
+  </data>
+  <data name="Strength3D" xml:space="preserve">
+    <value>3D-Stärke</value>
+  </data>
+  <data name="EnableStereo" xml:space="preserve">
+    <value>Aktivieren Sie Stereo 3D</value>
+  </data>
+  <data name="FastModel" xml:space="preserve">
+    <value>Schnelles Tiefenmodell – ZipDepth</value>
+  </data>
+  <data name="FastModelTip" xml:space="preserve">
+    <value>Ein (Standard): ZipDepth, etwa 6x weniger GPU Zeit pro Tiefenschätzung als Depth Anything V2 (2,0 vs. 13,1 ms auf einer RTX 3090), sodass die Tiefe viel besser mit dem Spiel mithalten kann. Aus: Depth Anything V2, das Originalmodell; Die Tiefendetails unterscheiden sich geringfügig zwischen ihnen. Wird live angewendet (die Tiefe pausiert weniger als eine Sekunde, während das Modell geladen wird); pro Spiel gespeichert.</value>
+  </data>
+  <data name="Subpixel" xml:space="preserve">
+    <value>Glatte Tiefenschritte (Subpixel-Warp)</value>
+  </data>
+  <data name="SubpixelTip" xml:space="preserve">
+    <value>Ein (Standard): Die Stereoverschiebung behält ihren Bruchteil bei, sodass sanft abfallende Oberflächen wie Gras, Straßen und Wände glatt aussehen. Aus: Ganzpixelverschiebungen, die die Szene in etwa 25 Tiefenbänder quantisieren und Grate wie ein gepflügtes Feld darstellen können. Aus ist etwas schärfer. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="EdgeFlatten" xml:space="preserve">
+    <value>Glätten Sie die linke und rechte Kante</value>
+  </data>
+  <data name="EdgeFlattenTip" xml:space="preserve">
+    <value>Bringt die Tiefe über diesen großen Teil der Bildbreite an den linken und rechten Rändern gleichmäßig an den eigenen Bildschirmabstand an, sodass beide Augen die gleichen Ränder sehen. Wenn die Tiefe direkt am Rand liegt, sieht ein Auge einen breiteren Rand als das andere, was ermüdend ist (ein Vollbild-Browser zeigt es am meisten). Alles innerhalb dieses Bandes sieht flacher aus, daher ist es standardmäßig deaktiviert (die Kanten, wie in der Tiefe angegeben); Etwa 4 % eignen sich für den Desktop-Einsatz. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="EdgeSteps" xml:space="preserve">
+    <value>An den Tiefenkanten über das Bild hinweg sauber schneiden (aus: schräg)</value>
+  </data>
+  <data name="EdgeStepsTip" xml:space="preserve">
+    <value>Das Bild kann für jedes Auge nur seitwärts verschoben werden. Es gibt also zwei Möglichkeiten, es am oberen oder unteren Rand von etwas zu zeichnen, das näher als dahinter liegt. Ein: Das Bild wird am Rand abgeschnitten, sodass die Dinge daneben aufrecht bleiben (Desktopsymbole direkt über einem Fenster); Wenn der Schnitt leicht von der tatsächlichen Kante abweicht, kann sich ein kleines Fragment mit der falschen Seite bewegen, beispielsweise ein Klecks über dem Kopf einer Figur. Aus: kein Schnitt, aber was neben der Kante liegt, ist in den beiden Augen entgegengesetzt geneigt. Standardmäßig deaktiviert. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="EdgeStepMin" xml:space="preserve">
+    <value>Schneiden Sie nur Kanten ab, die mindestens so tief sind</value>
+  </data>
+  <data name="EdgeStepMinTip" xml:space="preserve">
+    <value>Wie groß muss die Tiefenänderung über eine Kante sein, bevor sie geschnitten wird, als Anteil am gesamten Tiefenbereich? Unten werden mehr Kanten geschnitten, auch flache; Höher schneidet nur die stärkste Einstellung (ein Fenster über dem Desktop ist etwa 60 %) und lässt den Rest schräg. Standardmäßig 12 %. Braucht den Schnitt. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="WidenNear" xml:space="preserve">
+    <value>In der Nähe von Objekten nach oben und unten verbreitern</value>
+  </data>
+  <data name="WidenNearTip" xml:space="preserve">
+    <value>Wie weit die Tiefe eines nahen Objekts über und unter ihm verteilt ist, verglichen mit dem Wert des Tiefenmodells selbst (100 %). „Mehr“ hält die obere und untere Reihe des Objekts in Bewegung, überträgt die Neigung jedoch weiter auf das, was sich daneben befindet; Bei 0 % bleibt die Neigung an der Kante des Objekts. Wenn eine Kante sauber geschnitten ist, wird nichts über den Schnitt verteilt. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="ThinParts" xml:space="preserve">
+    <value>Halten Sie dünne Teile aufrecht</value>
+  </data>
+  <data name="ThinPartsTip" xml:space="preserve">
+    <value>Ein dünner, aufrechter Teil von etwas – eine Spitze auf einem Dach, ein Mast, ein Pfosten – wird vom Tiefenmodell oft übersehen, sodass er im Hintergrund bleibt, während sein Fuß mit dem, worauf er steht, mitgezogen wird, und er sich in den beiden Augen in entgegengesetzte Richtungen biegt. On: Solche Teile sind im Bild zu finden und erhalten die Tiefe dessen, worauf sie stehen, so dass sie sich wie ein Stück mit dem Bild bewegen. Es erhöht die Arbeit bei jedem Tiefendurchgang (das Sitzungsprotokoll meldet dies), kann bei bewegten Bildern zu fehlenden Teilen oder Flimmern führen und kann neben einem Teil einen leicht gesprenkelten Fleck hinterlassen. Standardmäßig deaktiviert. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="SharpenEdges" xml:space="preserve">
+    <value>Tiefenkanten mit dem Bild schärfen</value>
+  </data>
+  <data name="SharpenEdgesTip" xml:space="preserve">
+    <value>Die Tiefenkarte ist viel gröber als das Bild und ihre Kanten sind weich, sodass das Bild um den Umriss eines Objekts um einen dazwischen liegenden Betrag verschoben wird: schräge Kanten, Lichthöfe, Hintergrundteile, die sich mit einem Objekt bewegen. Wenn diese Option aktiviert ist, bezieht jedes Pixel in jedem Frame seine Tiefe aus den benachbarten Tiefenproben, die so aussehen, sodass die Tiefe eines Objekts dort endet, wo das Objekt endet. Wenn diese Option aktiviert ist, ersetzt sie die Verbreiterung naher Objekte und den sauberen Schnitt darüber. Kostet etwa eine halbe Millisekunde GPU-Zeit pro Frame. Im Headset noch nicht beurteilt: Bei verrauschten Videos kann es an den Rändern flackern.</value>
+  </data>
+  <data name="BackLayer" xml:space="preserve">
+    <value>Hinter Objekten aus einer Hintergrundebene füllen</value>
+  </data>
+  <data name="BackLayerTip" xml:space="preserve">
+    <value>Wenn ein nahes Objekt für ein Auge seitwärts bewegt wird, wird nur in diesem Auge ein Streifen dessen sichtbar, was sich dahinter befand. Normalerweise wird dieser Streifen Zeile für Zeile gefüllt, wobei der Hintergrund daneben gespiegelt ist. Wenn diese Option aktiviert ist, wird der Hintergrund hinter nahen Objekten für beide Augen einmal erstellt, und zwar aus dem Hintergrund auf beiden Seiten, und der Streifen zeigt Folgendes: Die gleiche verborgene Oberfläche in beiden Augen, die Reihen stimmen überein und es ist weich, wo das Bild nichts hatte. Funktioniert am besten mit geschärften Tiefenkanten. Weicher als das Spiegelbild; Noch nicht im Headset beurteilt.</value>
+  </data>
+  <data name="ShowDepthMap" xml:space="preserve">
+    <value>Tiefenkarte statt Spiel anzeigen</value>
+  </data>
+  <data name="ShowDepthMapTip" xml:space="preserve">
+    <value>Zeigen Sie die für 3D verwendete Tiefe als flaches Graustufenbild an: Weiß ist nah, Schwarz ist fern. Dies ist die Tiefe nach jeder oben genannten Einstellung, einschließlich geschärfter Kanten. Gilt sofort. Eine nicht verfügbare Tiefenkarte wird schwarz angezeigt. Deaktivieren Sie das Häkchen, um zum Spiel zurückzukehren.</value>
+  </data>
+  <data name="Steady" xml:space="preserve">
+    <value>Stetige Tiefe – Bewegungsvektoren</value>
+  </data>
+  <data name="SteadyTip" xml:space="preserve">
+    <value>Reduziert Tiefenflimmern: Jede neue Tiefenschätzung wird mit der vorherigen gemischt und durch den Hardware-Bewegungsschätzer der Grafikkarte (ihre Video-Engine, nicht die Shader-Kerne) an den aktuellen Stand verschoben. Nur dort, wo die Bewegung überprüft wird, sodass sich bewegende Kanten nicht nachlaufen sollten. Teile des Bildes, die sich nicht verändert haben, behalten fast vollständig ihre Tiefe, so dass eine Veränderung an anderer Stelle sie nicht zum Zucken bringt. Standardmäßig aktiviert; Funktioniert auf jedem GPU mit einem Hardware-Bewegungsschätzer. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="Fuse" xml:space="preserve">
+    <value>Sicherung mit Depth Anything V2</value>
+  </data>
+  <data name="FuseTip" xml:space="preserve">
+    <value>Läuft Depth Anything V2 zusammen mit ZipDepth: ZipDepth hält die Tiefe schnell, Depth Anything bietet eine detailliertere Schichtung und wird mit Bewegungsvektoren zum aktuellen Frame verschoben. Am besten mit einem anderen GPU als Tiefe GPU wählen; auf einem GPU läuft es höchstens 10 Mal pro Sekunde. Benötigt das schnelle Tiefenmodell. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="FuseHint" xml:space="preserve">
+    <value>Die Fusion gelingt am besten mit einer zweiten Tiefe GPU. Beide können zusammen verwendet werden.</value>
+  </data>
+  <data name="DepthGpu" xml:space="preserve">
+    <value>Tiefe GPU</value>
+  </data>
+  <data name="DepthGpuTip" xml:space="preserve">
+    <value>Auf welcher Grafikkarte läuft das Tiefenmodell? Eine weitere Karte verhindert, dass die Tiefe mit dem Spiel um GPU-Zeit konkurriert; Beim Capture-Schritt wird jeder Frame automatisch gesendet. Wenn die ausgewählte Karte fehlt, verwendet VRX die GPU des Spiels. Wird wirksam, wenn Sie das nächste Mal auf „Attach/Play“ drücken. pro Spiel gespeichert.</value>
+  </data>
+  <data name="DepthGpuHint" xml:space="preserve">
+    <value>Ein weiterer GPU hält die Tiefe schnell, während das Spiel die eigene Karte vollständig nutzt. Gilt beim nächsten Anhängen / Abspielen.</value>
+  </data>
+  <data name="GpuSame" xml:space="preserve">
+    <value>Gleiches GPU wie das Spiel (Standard)</value>
+  </data>
+  <data name="GpuAuto" xml:space="preserve">
+    <value>Alle anderen GPU (automatisch)</value>
+  </data>
+  <data name="GpuLabel" xml:space="preserve">
+    <value>{0} ({1})</value>
+    <comment>{0} = GPU name, {1} = its memory, e.g. 12 GB</comment>
+  </data>
+  <data name="GpuLabelCard" xml:space="preserve">
+    <value>{0} ({1}, Karte {2})</value>
+    <comment>{0} = GPU name, {1} = memory, {2} = which of several identical cards (1, 2...)</comment>
+  </data>
+  <data name="GpuSizeGB" xml:space="preserve">
+    <value>{0:0.#} GB</value>
+    <comment>{0} = gigabytes</comment>
+  </data>
+  <data name="GpuSizeMB" xml:space="preserve">
+    <value>{0} MB</value>
+    <comment>{0} = megabytes</comment>
+  </data>
+  <data name="GpuNotFound" xml:space="preserve">
+    <value>Nicht gefunden: {0} (GPU des Spiels wird verwendet)</value>
+    <comment>{0} = GPU name</comment>
+  </data>
+  <data name="ForegroundPasses" xml:space="preserve">
+    <value>Zusätzliche Vordergrundtiefenpässe</value>
+  </data>
+  <data name="ForegroundTip" xml:space="preserve">
+    <value>Gibt hartnäckigen Regionen in der Nähe einen zusätzlichen Detaildurchgang, wenn die Zeit es erlaubt. Benötigt mehr GPU-Zeit; Die Verbesserung variiert je nach Szene. Zum Vergleichen während der Wiedergabe umschalten.</value>
+  </data>
+  <data name="FrameTiming" xml:space="preserve">
+    <value>Spiel-Frame-Timing</value>
+  </data>
+  <data name="FrameTimingTip" xml:space="preserve">
+    <value>Welcher Spielrahmen wird mit der Tiefe angezeigt? Letzter Frame (Standard): glatt und unmittelbar; Die Tiefe bleibt etwas hinter der Bewegung von Dingen zurück. Bis zur Tiefe verzögert: Das Spielbild wird durch die Tiefenverzögerung zurückgehalten, sodass es viel besser ausgerichtet ist und die Bewegung flüssig bleibt. An die Tiefe angepasst: jede Tiefenschätzung mit dem genauen Frame, aus dem sie stammt; beste Ausrichtung, aber die Spielbewegung wird nur mit der Tiefenrate aktualisiert. Verzögerte und angepasste Add-Verzögerung. Gilt live; pro Spiel gespeichert.</value>
+  </data>
+  <data name="TimingLatest" xml:space="preserve">
+    <value>Letzter Frame (Standard)</value>
+  </data>
+  <data name="TimingDelayed" xml:space="preserve">
+    <value>In die Tiefe verzögert – glatt, leicht zurückgeblieben</value>
+  </data>
+  <data name="TimingMatched" xml:space="preserve">
+    <value>An die Tiefe angepasst – exakt, Aktualisierungen mit der Tiefenrate</value>
+  </data>
+  <data name="ExperimentalHint" xml:space="preserve">
+    <value>Optionen werden noch ausprobiert. Sie können GPU Zeit kosten, in manchen Spielen falsch aussehen oder sich in einer späteren Version ändern. Alle gelten live und werden pro Spiel gespeichert.</value>
+  </data>
+  <data name="TimingHint" xml:space="preserve">
+    <value>Verzögert und abgestimmt passen die Tiefe besser zum Spiel, zeigen das Spiel aber später.</value>
+  </data>
+  <data name="DismissOnStart" xml:space="preserve">
+    <value>Schließen Sie das SteamVR-Menü, wenn die Wiedergabe beginnt</value>
+  </data>
+  <data name="KeyboardShortcuts" xml:space="preserve">
+    <value>Tastaturkürzel</value>
+  </data>
+  <data name="ShortcutRecenter" xml:space="preserve">
+    <value>Neu zentrieren</value>
+  </data>
+  <data name="ShortcutDismiss" xml:space="preserve">
+    <value>SteamVR-Menü schließen</value>
+  </data>
+  <data name="ShortcutsHint" xml:space="preserve">
+    <value>Verknüpfungen funktionieren während der VR-Wiedergabe und erreichen auch das Spiel. Wählen Sie Tasten, die nicht mit Ihrer Spielsteuerung in Konflikt geraten.</value>
+  </data>
+  <data name="KeyHome" xml:space="preserve">
+    <value>Pos1</value>
+    <comment>Keyboard key name</comment>
+  </data>
+  <data name="KeyEnd" xml:space="preserve">
+    <value>Ende</value>
+    <comment>Keyboard key name</comment>
+  </data>
+  <data name="KeyInsert" xml:space="preserve">
+    <value>Einfg</value>
+    <comment>Keyboard key name</comment>
+  </data>
+  <data name="KeyPause" xml:space="preserve">
+    <value>Pause</value>
+    <comment>Keyboard key name</comment>
+  </data>
+  <data name="ProfileHint" xml:space="preserve">
+    <value>Die Einstellungen werden für jedes Spiel gespeichert, wenn Sie sie ändern. Diese Schaltflächen kopieren sie zwischen Spielen.</value>
+  </data>
+  <data name="StatusSeparator" xml:space="preserve">
+    <value> · </value>
+    <comment>Joins independent status messages; keep the spaces.</comment>
+  </data>
+  <data name="StatusReady" xml:space="preserve">
+    <value>Bereit · Nur Desktop-Steuerelemente</value>
+  </data>
+  <data name="StatusPlaying" xml:space="preserve">
+    <value>Spielen · {0}</value>
+    <comment>{0} = game executable</comment>
+  </data>
+  <data name="StatusStopped" xml:space="preserve">
+    <value>Gestoppt · Ihre Einstellungen werden gespeichert</value>
+  </data>
+  <data name="StatusEngineFailed" xml:space="preserve">
+    <value>VRX konnte nicht fortfahren. {0}</value>
+    <comment>{0} = the reason (English, from the renderer) or SeeSessionDetails</comment>
+  </data>
+  <data name="SeeSessionDetails" xml:space="preserve">
+    <value>Siehe Sitzungsdetails unten.</value>
+  </data>
+  <data name="StatusRefreshFailed" xml:space="preserve">
+    <value>Anwendungen konnten nicht aktualisiert werden: {0}</value>
+    <comment>{0} = error message</comment>
+  </data>
+  <data name="StatusChooseWindow" xml:space="preserve">
+    <value>Wählen Sie aus, welches Fenster für {0} erfasst werden soll</value>
+    <comment>{0} = game executable</comment>
+  </data>
+  <data name="StatusReadyFor" xml:space="preserve">
+    <value>Bereit · Einstellungen für {0}</value>
+    <comment>{0} = game executable</comment>
+  </data>
+  <data name="StatusSavedPlaying" xml:space="preserve">
+    <value>Wird abgespielt · gespeichert für {0}</value>
+    <comment>{0} = game executable</comment>
+  </data>
+  <data name="StatusSaved" xml:space="preserve">
+    <value>Gespeichert für {0}</value>
+    <comment>{0} = game executable</comment>
+  </data>
+  <data name="StatusStarting" xml:space="preserve">
+    <value>Starten von VR · {0}</value>
+    <comment>{0} = game executable</comment>
+  </data>
+  <data name="StatusStopping" xml:space="preserve">
+    <value>VR stoppen…</value>
+  </data>
+  <data name="StatusStopFailed" xml:space="preserve">
+    <value>VR konnte nicht gestoppt werden: {0}</value>
+    <comment>{0} = error message</comment>
+  </data>
+  <data name="StatusStillStopping" xml:space="preserve">
+    <value>VRX stoppt immer noch. Nach dem Stoppen wieder schließen.</value>
+  </data>
+  <data name="StatusRecenter" xml:space="preserve">
+    <value>Neuzentrierung angefordert · verwendet die aktuelle Headset-Richtung</value>
+  </data>
+  <data name="StatusDismiss" xml:space="preserve">
+    <value>SteamVR Menüauflösung beantragt</value>
+  </data>
+  <data name="StatusResetBase" xml:space="preserve">
+    <value>Zurücksetzen auf Ihre Grundeinstellungen</value>
+  </data>
+  <data name="StatusResetDefault" xml:space="preserve">
+    <value>Zurücksetzen auf die Standardeinstellungen von VRX</value>
+  </data>
+  <data name="StatusBaseSelectFirst" xml:space="preserve">
+    <value>Wählen Sie zuerst ein Spiel aus und speichern Sie dann seine Einstellungen als Basis.</value>
+  </data>
+  <data name="StatusBaseSaved" xml:space="preserve">
+    <value>Grundeinstellungen gespeichert · Spiele, die Sie noch nicht eingerichtet haben, werden mit diesen gestartet</value>
+  </data>
+  <data name="StatusBaseFailed" xml:space="preserve">
+    <value>Grundeinstellungen konnten nicht gespeichert werden: {0}</value>
+    <comment>{0} = error message</comment>
+  </data>
+  <data name="StatusAppSettingsFailed" xml:space="preserve">
+    <value>Die App-Einstellungen konnten nicht gespeichert werden: {0}</value>
+    <comment>{0} = error message</comment>
+  </data>
+  <data name="StatusApplyAllSelectFirst" xml:space="preserve">
+    <value>Wählen Sie zuerst ein Spiel aus und wenden Sie dann seine Einstellungen auf alle Spiele an.</value>
+  </data>
+  <data name="StatusApplyAllCancelled" xml:space="preserve">
+    <value>Auf alle anwenden storniert · Es wurde nichts geändert</value>
+  </data>
+  <data name="StatusApplyAllFailed" xml:space="preserve">
+    <value>Konnte nicht auf alle Spiele angewendet werden: {0}</value>
+    <comment>{0} = error message</comment>
+  </data>
+  <data name="AppliedAllOne" xml:space="preserve">
+    <value>Auf Ihr gespeichertes {0}-Spiel angewendete Einstellungen</value>
+    <comment>{0} = 1</comment>
+  </data>
+  <data name="AppliedAllOther" xml:space="preserve">
+    <value>Die Einstellungen werden auf alle gespeicherten {0}-Spiele angewendet</value>
+    <comment>{0} = number of games</comment>
+  </data>
+  <data name="AppliedSomeOne" xml:space="preserve">
+    <value>Auf {0} gespeichertes Spiel angewendete Einstellungen</value>
+    <comment>{0} = 1</comment>
+  </data>
+  <data name="AppliedSomeOther" xml:space="preserve">
+    <value>Auf gespeicherte {0}-Spiele angewendete Einstellungen</value>
+    <comment>{0} = number of games</comment>
+  </data>
+  <data name="SkippedOne" xml:space="preserve">
+    <value>{0} unlesbares Profil bleibt unverändert</value>
+    <comment>{0} = 1</comment>
+  </data>
+  <data name="SkippedOther" xml:space="preserve">
+    <value>{0} unlesbare Profile bleiben unverändert</value>
+    <comment>{0} = number of profiles</comment>
+  </data>
+  <data name="FailedWrite" xml:space="preserve">
+    <value>{0} konnte nicht geschrieben werden (schreibgeschützt oder in Verwendung) und behält ihre alten Einstellungen bei</value>
+    <comment>{0} = number of profiles</comment>
+  </data>
+  <data name="ApplyAllTitle" xml:space="preserve">
+    <value>Auf alle Spiele anwenden</value>
+  </data>
+  <data name="ApplyAllQuestionOne" xml:space="preserve">
+    <value>Die hier gezeigten Einstellungen auf Ihr gespeichertes {0}-Spiel anwenden?
+
+Die Bildschirmplatzierung, die 3D-Stärke, die Tiefenoptionen, die Tiefe GPU und die Tastenkombinationen jedes Spiels werden durch diese ersetzt. Jedes Spiel behält seinen eigenen Pfad und sein eigenes Fenster.
+
+Dies kann nicht rückgängig gemacht werden. Spiele, die Sie noch nicht eingerichtet haben, starten weiterhin mit den Grundeinstellungen.</value>
+    <comment>{0} = 1</comment>
+  </data>
+  <data name="ApplyAllQuestionOther" xml:space="preserve">
+    <value>Die hier gezeigten Einstellungen auf alle gespeicherten {0}-Spiele anwenden?
+
+Die Bildschirmplatzierung, die 3D-Stärke, die Tiefenoptionen, die Tiefe GPU und die Tastenkombinationen jedes Spiels werden durch diese ersetzt. Jedes Spiel behält seinen eigenen Pfad und sein eigenes Fenster.
+
+Dies kann nicht rückgängig gemacht werden. Spiele, die Sie noch nicht eingerichtet haben, starten weiterhin mit den Grundeinstellungen.</value>
+    <comment>{0} = number of games</comment>
+  </data>
+  <data name="AutoCountdown" xml:space="preserve">
+    <value>Anhängen von VRX an {0} in {1} – Fenster zum Abbrechen wechseln</value>
+    <comment>{0} = game title, {1} = seconds left</comment>
+  </data>
+  <data name="AutoTheGame" xml:space="preserve">
+    <value>das Spiel</value>
+    <comment>Used as {0} in AutoCountdown when the game has no name</comment>
+  </data>
+  <data name="StatusAutoListFailed" xml:space="preserve">
+    <value>Beim automatischen Anhängen konnten keine Anwendungen aufgelistet werden: {0}</value>
+    <comment>{0} = error message</comment>
+  </data>
+  <data name="StatusAutoGone" xml:space="preserve">
+    <value>Automatisches Anhängen: {0} ist nicht mehr verfügbar</value>
+    <comment>{0} = game name</comment>
+  </data>
+  <data name="StatusAutoStarted" xml:space="preserve">
+    <value>Automatisch angehängt · VR wird gestartet · {0}</value>
+    <comment>{0} = game name</comment>
+  </data>
+  <data name="OverlayTitle" xml:space="preserve">
+    <value>VRX automatische Verbindung</value>
+  </data>
+  <data name="ErrorSelectGame" xml:space="preserve">
+    <value>Wählen Sie zunächst ein Spiel aus.</value>
+  </data>
+  <data name="ErrorWorldColour" xml:space="preserve">
+    <value>Die Weltfarbe muss aus sechs Hexadezimalziffern bestehen, z. B. #1C1C1E. Änderungen werden erst gespeichert, wenn dies der Fall ist.</value>
+  </data>
+  <data name="ErrorShortcutsConflict" xml:space="preserve">
+    <value>Wählen Sie zwei verschiedene Tastenkombinationen. Änderungen werden erst gespeichert, wenn die Einstellungen gültig sind.</value>
+  </data>
+  <data name="ErrorSettingsInvalid" xml:space="preserve">
+    <value>Die Einstellungen liegen außerhalb des zulässigen Bereichs oder es besteht ein Konflikt mit den Tastenkombinationen.</value>
+  </data>
+  <data name="ErrorProfileInvalid" xml:space="preserve">
+    <value>Die gespeicherten Einstellungen dieses Spiels sind ungültig. Sie wurden nicht überschrieben.</value>
+  </data>
+  <data name="ErrorStopFirst" xml:space="preserve">
+    <value>Stoppen Sie zunächst die aktuelle Sitzung.</value>
+  </data>
+  <data name="ErrorAnotherSession" xml:space="preserve">
+    <value>Eine weitere VRX-Sitzung wird ausgeführt. Schließen Sie die Sitzung, bevor Sie hier eine Verbindung herstellen.</value>
+  </data>
+  <data name="DesktopWhenAway" xml:space="preserve">
+    <value>Zeigen Sie den Desktop an, wenn Sie das Spiel verlassen</value>
+  </data>
+  <data name="DesktopWhenAwayHint" xml:space="preserve">
+    <value>Während das Spiel nicht vorne liegt – nach Ctrl+Esc, der Windows-Taste oder Alt+Tab – zeigt VR das Display an, auf dem es sich befindet. Zurück im Spiel zeigt VR das Spiel noch einmal. Wenn das Spiel geschlossen wird, läuft VR mit dem Desktop weiter, bis Sie Stop VR drücken. Gilt bei Attach / Play.</value>
+  </data>
+  <data name="CardDesktop" xml:space="preserve">
+    <value>Desktop</value>
+    <comment>The game card while VR shows the display instead of the game.</comment>
+  </data>
+  <data name="CardShowingDesktop" xml:space="preserve">
+    <value>Zeigt den Desktop · zurück zu {0}, wenn er vorne ist</value>
+    <comment>{0} = the game's name</comment>
+  </data>
+  <data name="CardGameClosed" xml:space="preserve">
+    <value>{0} wurde geschlossen und zeigt den Desktop an, bis Sie Stop VR drücken</value>
+    <comment>{0} = the game's name</comment>
+  </data>
+  <data name="StatusGameClosedDesktop" xml:space="preserve">
+    <value>{0} wurde geschlossen. VR zeigt den Desktop an, bis Sie Stop VR drücken.</value>
+    <comment>{0} = the game's name</comment>
+  </data>
+  <data name="ErrorScreenChanged" xml:space="preserve">
+    <value>Die Anzeigen haben sich seit der Erstellung der Liste geändert. Wählen Sie erneut.</value>
+  </data>
+  <data name="ChooseButton" xml:space="preserve">
+    <value>Auswählen…</value>
+    <comment>Opens the chooser: pictures of every window and display.</comment>
+  </data>
+  <data name="ChooseTip" xml:space="preserve">
+    <value>Wählen Sie aus Livebildern ein Fenster oder einen ganzen Bildschirm aus und spielen Sie es in VR ab</value>
+  </data>
+  <data name="ChooserTitle" xml:space="preserve">
+    <value>Wählen Sie, was Sie spielen möchten</value>
+  </data>
+  <data name="ChooserIntro" xml:space="preserve">
+    <value>Klicken Sie auf ein Fenster oder einen Bildschirm, um es in VR abzuspielen.</value>
+  </data>
+  <data name="ChooserWindows" xml:space="preserve">
+    <value>Windows</value>
+  </data>
+  <data name="ChooserNoWindows" xml:space="preserve">
+    <value>Keine Fenster zum Anzeigen. Starten Sie Ihr Spiel und wählen Sie es erneut.</value>
+  </data>
+  <data name="ChooserScreens" xml:space="preserve">
+    <value>Ganzer Bildschirm</value>
+  </data>
+  <data name="ChooserScreensHint" xml:space="preserve">
+    <value>Alles, was auf diesem Display angezeigt wird, z. B. Ihr Desktop oder ein Videoplayer. Es wird abgespielt, bis Sie Stop VR drücken.</value>
+  </data>
+  <data name="ChooserMainDisplay" xml:space="preserve">
+    <value>Hauptanzeige</value>
+  </data>
+  <data name="ChooserMinimized" xml:space="preserve">
+    <value>{0} · minimiert</value>
+    <comment>{0} = executable name</comment>
+  </data>
+  <data name="WholeScreen" xml:space="preserve">
+    <value>Ganzer Bildschirm</value>
+  </data>
+  <data name="ScreenTitle" xml:space="preserve">
+    <value>Anzeige {0} · {1} × {2}</value>
+    <comment>{0} = display number, {1} x {2} = resolution in pixels</comment>
+  </data>
+  <data name="ScreenTitlePrimary" xml:space="preserve">
+    <value>Anzeige {0} · {1} × {2} · Haupt</value>
+    <comment>{0} = display number, {1} x {2} = resolution in pixels</comment>
+  </data>
+  <data name="ScreenDescriptionOne" xml:space="preserve">
+    <value>1 Anzeige</value>
+  </data>
+  <data name="ScreenDescriptionOther" xml:space="preserve">
+    <value>{0} wird angezeigt</value>
+    <comment>{0} = number of displays</comment>
+  </data>
+  <data name="PathWholeScreen" xml:space="preserve">
+    <value>Alles auf dem Display angezeigt. Ein Satz von Einstellungen wird von allen Displays gemeinsam genutzt.</value>
+  </data>
+  <data name="StatusChoiceGone" xml:space="preserve">
+    <value>Dieses Fenster oder diese Anzeige ist nicht mehr vorhanden. Wählen Sie erneut.</value>
+  </data>
+  <data name="ErrorEngineBlockedPolicy" xml:space="preserve">
+    <value>Windows hat die 3D-Engine von VRX (engine\xrplayer.exe) blockiert. Dies ist normalerweise Smart App Control, das neue Programme stoppt, die noch nicht digital signiert sind, und die Programme von VRX sind noch nicht signiert. Um jetzt zu spielen, schalten Sie Smart App Control unter Windows-Sicherheit &gt; App- und Browser-Steuerung &gt; Smart App Control-Einstellungen aus; Unter Windows lässt sich das Gerät möglicherweise nicht ohne Zurücksetzen wieder einschalten. Fragen Sie auf einem Arbeits- oder Schul-PC den Administrator.</value>
+  </data>
+  <data name="ErrorEngineBlockedAntivirus" xml:space="preserve">
+    <value>Ihr Antivirenprogramm hat die Ausführung der 3D-Engine (engine\xrplayer.exe) von VRX gestoppt. Wenn Sie VRX von der GitHub-Version heruntergeladen haben, können Sie den Download mit SHA256SUMS.txt vergleichen, die Datei dann in Ihrem Antivirenprogramm zulassen und sie als falsch positiv melden.</value>
+  </data>
+  <data name="ErrorProcessChanged" xml:space="preserve">
+    <value>Der ausgewählte Prozess wurde geschlossen oder geändert. Aktualisieren Sie die Liste.</value>
+  </data>
+  <data name="ErrorRendererMissing" xml:space="preserve">
+    <value>VRX-Renderer fehlt. Installieren Sie VRX neu oder erstellen Sie das Projekt.</value>
+  </data>
+  <data name="ErrorBuildRenderer" xml:space="preserve">
+    <value>Erstellen Sie zunächst den Desktop-Renderer mit bench/native/openxr/build.bat --desktop.</value>
+  </data>
+  <data name="LogStopTimeout" xml:space="preserve">
+    <value>VRX wurde nicht rechtzeitig gestoppt; Beenden des Renderers. Das Spiel bleibt davon unberührt.</value>
+  </data>
+  <data name="Controllers" xml:space="preserve">
+    <value>Controller</value>
+  </data>
+  <data name="ControllersOff" xml:space="preserve">
+    <value>Aus</value>
+  </data>
+  <data name="ControllersOn" xml:space="preserve">
+    <value>Ein</value>
+  </data>
+  <data name="ControllersTip" xml:space="preserve">
+    <value>Optionale Motion-Controller-Einstellungen. Drücken Sie die Menütaste des Controllers, um das Bedienfeld dort anzuzeigen oder auszublenden, wo Sie gerade suchen. Zeigen und drücken Sie den Auslöser, um die Titelleiste auszuwählen oder zu ziehen. Verwenden Sie zum Scrollen den Daumenstift. Index-/generische Controller verwenden den Daumenklick. Erfordert VR-Controller-Modus und XR-Eingabefokus.</value>
+  </data>
+  <data name="ControllerMenuTitle" xml:space="preserve">
+    <value>VRX-Einstellungen</value>
+  </data>
+  <data name="ControllerMenuHint" xml:space="preserve">
+    <value>Menü: Ein- oder Ausblenden · Zeiger + Auslöser: Auswählen · Daumenstift: Scrollen</value>
+  </data>
+  <data name="ControllerMenuDrag" xml:space="preserve">
+    <value>Zum Verschieben hier den Trigger halten</value>
+  </data>
+  <data name="ControllerMenuBack" xml:space="preserve">
+    <value>Zurück / Bereiche</value>
+  </data>
+  <data name="ControllerMenuControlScreen" xml:space="preserve">
+    <value>Bildschirm steuern</value>
+  </data>
+  <data name="ControllerMenuStopControlScreen" xml:space="preserve">
+    <value>Bildschirmsteuerung beenden</value>
+  </data>
+  <data name="ControllerMenuScreenHint" xml:space="preserve">
+    <value>Rechter Auslöser: Linksklick/Ziehen · Rechter Griff: Rechtsklick · Menü: Einstellungen ausblenden</value>
+  </data>
+  <data name="SnapshotTake" xml:space="preserve">
+    <value>Schnappschuss</value>
+  </data>
+  <data name="SnapshotOpenFolder" xml:space="preserve">
+    <value>Öffnen Sie den Bilderordner</value>
+  </data>
+  <data name="SnapshotTitle" xml:space="preserve">
+    <value>Schnappschuss · Titel zum Verschieben gedrückt halten</value>
+  </data>
+  <data name="SnapshotSave" xml:space="preserve">
+    <value>Speichern</value>
+  </data>
+  <data name="SnapshotDelete" xml:space="preserve">
+    <value>Löschen</value>
+  </data>
+  <data name="SnapshotClose" xml:space="preserve">
+    <value>Schließen</value>
+  </data>
+  <data name="SnapshotSaved" xml:space="preserve">
+    <value>Gespeichert in VRX / Bilder</value>
+  </data>
+  <data name="SnapshotLimit" xml:space="preserve">
+    <value>Schließen Sie ein schwebendes Fenster, um Platz für ein anderes zu schaffen.</value>
+  </data>
+  <data name="BrowserOpen" xml:space="preserve">
+    <value>Browser</value>
+  </data>
+  <data name="BrowserTitle" xml:space="preserve">
+    <value>Browser · Titel zum Verschieben gedrückt halten</value>
+  </data>
+  <data name="BrowserGo" xml:space="preserve">
+    <value>Geh</value>
+  </data>
+  <data name="BrowserNew" xml:space="preserve">
+    <value>Neuer Browser</value>
+  </data>
+  <data name="BrowserLicenses" xml:space="preserve">
+    <value>Lizenzen</value>
+  </data>
+  <data name="BrowserBack" xml:space="preserve">
+    <value>Zurück</value>
+  </data>
+  <data name="BrowserReload" xml:space="preserve">
+    <value>Neu laden</value>
+  </data>
+  <data name="BrowserLoading" xml:space="preserve">
+    <value>Laden…</value>
+  </data>
+  <data name="BrowserOpenLink" xml:space="preserve">
+    <value>Link in neuem Fenster öffnen</value>
+  </data>
+  <data name="BrowserCopyLink" xml:space="preserve">
+    <value>Link kopieren</value>
+  </data>
+  <data name="BrowserCopy" xml:space="preserve">
+    <value>Kopieren</value>
+  </data>
+  <data name="BrowserPaste" xml:space="preserve">
+    <value>Einfügen</value>
+  </data>
+  <data name="KeyboardOpen" xml:space="preserve">
+    <value>Tastatur</value>
+  </data>
+  <data name="ArrangeWindows" xml:space="preserve">
+    <value>Fenster anordnen</value>
+  </data>
+  <data name="KeyboardTitle" xml:space="preserve">
+    <value>Tastatur · Titel zum Verschieben gedrückt halten</value>
+  </data>
+  <data name="KeyboardShift" xml:space="preserve">
+    <value>Umschalt</value>
+  </data>
+  <data name="KeyboardSpace" xml:space="preserve">
+    <value>Leertaste</value>
+  </data>
+  <data name="KeyboardEnter" xml:space="preserve">
+    <value>Eingabe</value>
+  </data>
+  <data name="KeyboardHint" xml:space="preserve">
+    <value>Tippen Sie auf die Tasten oder halten Sie den Auslöser gedrückt und streichen Sie über die Buchstaben. Zum Tippen loslassen; Wählen Sie einen anderen Vorschlag, um das Wort zu ersetzen.</value>
+  </data>
+  <data name="KeyboardChooseTarget" xml:space="preserve">
+    <value>Wählen Sie ein Browserfeld aus oder aktivieren Sie den Steuerungsbildschirm und klicken Sie auf ein Spiel-/Windows-Feld.</value>
+  </data>
+  <data name="KeyboardBrowserTarget" xml:space="preserve">
+    <value>Eingabe in den Browser: {0}</value>
+  </data>
+  <data name="KeyboardWindowsTarget" xml:space="preserve">
+    <value>Eingabe in das ausgewählte Spiel-/Windows-Fenster</value>
+  </data>
+  <data name="KeyboardAddWord" xml:space="preserve">
+    <value>Wort hinzufügen: {0}</value>
+  </data>
+  <data name="SnapshotFailed" xml:space="preserve">
+    <value>Schnappschuss konnte nicht erfasst werden. Versuchen Sie es erneut.</value>
+  </data>
+  <data name="SnapshotFileError" xml:space="preserve">
+    <value>Bild: {0}</value>
+  </data>
+  <data name="ControllerMenuSelect" xml:space="preserve">
+    <value>Option auswählen</value>
+  </data>
+  <data name="ControllerMenuDelete" xml:space="preserve">
+    <value>Ziffer löschen</value>
+  </data>
+  <data name="ControllerMenuApply" xml:space="preserve">
+    <value>Anwenden</value>
+  </data>
+  <data name="ControllerMenuCancel" xml:space="preserve">
+    <value>Abbrechen</value>
+  </data>
+  <data name="ControllerMenuApplyAllQuestion" xml:space="preserve">
+    <value>Einstellungen in jedem gespeicherten Spielprofil durch die aktuellen Einstellungen ersetzen? Der Pfad und das Fenster jedes Spiels bleiben erhalten.</value>
+  </data>
+  <data name="ControllerMenuFailed" xml:space="preserve">
+    <value>Controller-Einstellungsmenü nicht verfügbar: {0}</value>
+  </data>
+  <data name="RoomLife" xml:space="preserve">
+    <value>Raumleben &amp; Musik</value>
+  </data>
+  <data name="RoomLifeHint" xml:space="preserve">
+    <value>Benötigt einen festen Bildschirm und Platz. „Listen“ erfasst den Windows-Wiedergabemix, einschließlich anderer Apps auf der Standard-Wiedergabeausgabe; kein Mikrofon oder Aufnahme. Alle Effekte gelten live und gespeichert pro Spiel. Schatten zeichnen die Geometrie von Lebewesen und Sitzplätzen nach; Dies ist keine Hardware DXR.</value>
+  </data>
+  <data name="ListenAudio" xml:space="preserve">
+    <value>Hören Sie sich die Audiowiedergabe an</value>
+  </data>
+  <data name="MusicVisuals" xml:space="preserve">
+    <value>Musikanimationen an Wand und Decke</value>
+  </data>
+  <data name="Creatures" xml:space="preserve">
+    <value>Animierte Kreaturen</value>
+  </data>
+  <data name="RoomParticles" xml:space="preserve">
+    <value>Bunter 3D-Staub</value>
+  </data>
+  <data name="DiscoLights" xml:space="preserve">
+    <value>Bewegliche Disco-Scheinwerfer</value>
+  </data>
+  <data name="TracedShadows" xml:space="preserve">
+    <value>Raytracing-Schatten (zusätzliche GPU-Kosten)</value>
+  </data>
+  <data name="CreatureCount" xml:space="preserve">
+    <value>Kreaturenpopulation (bis zu 24)</value>
+  </data>
+  <data name="EffectsBrightness" xml:space="preserve">
+    <value>Effekthelligkeit (%)</value>
+  </data>
+  <data name="ParticleDensity" xml:space="preserve">
+    <value>Staubpartikel (bis zu 100)</value>
+  </data>
+  <data name="CreatureShark" xml:space="preserve">
+    <value>Holografische Haie</value>
+  </data>
+  <data name="CreatureFish" xml:space="preserve">
+    <value>Kleiner Fisch</value>
+  </data>
+  <data name="CreatureRobot" xml:space="preserve">
+    <value>Laufroboter</value>
+  </data>
+  <data name="CreatureJelly" xml:space="preserve">
+    <value>Qualle</value>
+  </data>
+  <data name="CreatureManta" xml:space="preserve">
+    <value>Mantarochen</value>
+  </data>
+  <data name="CreatureFirefly" xml:space="preserve">
+    <value>Glühwürmchen</value>
+  </data>
+  <data name="CreatureTurtle" xml:space="preserve">
+    <value>Schildkröten</value>
+  </data>
+  <data name="CreatureDrone" xml:space="preserve">
+    <value>Vermessungsdrohnen</value>
+  </data>
+  <data name="VisualSpectrum" xml:space="preserve">
+    <value>Spektrum</value>
+  </data>
+  <data name="VisualOscilloscope" xml:space="preserve">
+    <value>Oszilloskop</value>
+  </data>
+  <data name="VisualPlasma" xml:space="preserve">
+    <value>Plasma</value>
+  </data>
+  <data name="VisualRipples" xml:space="preserve">
+    <value>Wellen</value>
+  </data>
+  <data name="VisualKaleidoscope" xml:space="preserve">
+    <value>Kaleidoskop</value>
+  </data>
+  <data name="VisualNeonGrid" xml:space="preserve">
+    <value>Neongitter</value>
+  </data>
+  <data name="VisualAurora" xml:space="preserve">
+    <value>Aurora</value>
+  </data>
+  <data name="VisualVortex" xml:space="preserve">
+    <value>Wirbel</value>
+  </data>
+  <data name="VisualLava" xml:space="preserve">
+    <value>Lava</value>
+  </data>
+  <data name="VisualStars" xml:space="preserve">
+    <value>Sterne</value>
+  </data>
+  <data name="VisualRibbons" xml:space="preserve">
+    <value>Bänder</value>
+  </data>
+  <data name="VisualLissajous" xml:space="preserve">
+    <value>Lissajous</value>
+  </data>
+  <data name="AudioOff" xml:space="preserve">
+    <value>Die Wiedergabewiedergabe ist ausgeschaltet.</value>
+  </data>
+  <data name="AudioReady" xml:space="preserve">
+    <value>Das Wiedergabehören beginnt mit VR.</value>
+  </data>
+  <data name="AudioConnecting" xml:space="preserve">
+    <value>Verbindung zum Windows-Wiedergabeausgang herstellen...</value>
+  </data>
+  <data name="AudioListening" xml:space="preserve">
+    <value>Anhören des Windows-Wiedergabemixes.</value>
+  </data>
+  <data name="AudioUnavailable" xml:space="preserve">
+    <value>Wiedergabeaufnahme nicht verfügbar. Überprüfen Sie das Standard-Windows-Ausgabegerät. VRX wird es erneut versuchen.</value>
+  </data>
+  <data name="VisualLayers" xml:space="preserve">
+    <value>Visualizer-Ebenen – kombinieren Sie beliebige</value>
+  </data>
+  <data name="MusicReactivity" xml:space="preserve">
+    <value>Musikreaktivität</value>
+  </data>
+  <data name="BeamReactions" xml:space="preserve">
+    <value>Kreaturen reagieren auf Controller-Strahlen</value>
+  </data>
+  <data name="Vrex" xml:space="preserve">
+    <value>Vrex – Jetpack-Roboter-Begleiter</value>
+  </data>
+  <data name="ThemeDefault" xml:space="preserve">
+    <value>Standard</value>
+  </data>
+  <data name="ThemeRobots" xml:space="preserve">
+    <value>Roboter</value>
+  </data>
+  <data name="ThemeDinosaurs" xml:space="preserve">
+    <value>Dinosaurier</value>
+  </data>
+  <data name="ThemeAquarium" xml:space="preserve">
+    <value>Aquarium</value>
+  </data>
+  <data name="ThemeHell" xml:space="preserve">
+    <value>Hölle</value>
+  </data>
+  <data name="ThemeHeaven" xml:space="preserve">
+    <value>Himmel</value>
+  </data>
+  <data name="ThemeDark" xml:space="preserve">
+    <value>Dunkel</value>
+  </data>
+  <data name="ThemeLight" xml:space="preserve">
+    <value>Licht</value>
+  </data>
+  <data name="ThemeGrape" xml:space="preserve">
+    <value>Traube</value>
+  </data>
+  <data name="AppearanceTitle" xml:space="preserve">
+    <value>Sprache und Designs</value>
+  </data>
+  <data name="FloatingThemeLabel" xml:space="preserve">
+    <value>Schwebendes Panel-Thema</value>
+  </data>
+  <data name="FloatingOpacityLabel" xml:space="preserve">
+    <value>Hintergrunddeckkraft des schwebenden Panels</value>
+  </data>
+  <data name="DesktopThemeLabel" xml:space="preserve">
+    <value>Desktop-Thema</value>
+  </data>
+  <data name="AppearanceHint" xml:space="preserve">
+    <value>Panelthemen und Transparenz gelten für die VR-Einstellungen, Tastatur, Browser-Chrome und Schnappschüsse. Desktop-Farben sind getrennt. Der Inhalt bleibt lesbar.</value>
+  </data>
+  <data name="Quick3D" xml:space="preserve">
+    <value>3D</value>
+  </data>
+  <data name="Quick3DTip" xml:space="preserve">
+    <value>Schalten Sie Stereo 3D ein oder aus. Gilt sofort.</value>
+  </data>
+  <data name="DictationDefaultMic" xml:space="preserve">
+    <value>Windows-Standardmikrofon</value>
+  </data>
+  <data name="DictationStart" xml:space="preserve">
+    <value>Spracheingabe</value>
+  </data>
+  <data name="DictationStop" xml:space="preserve">
+    <value>Zuhören beenden</value>
+  </data>
+  <data name="DictationMicrophone" xml:space="preserve">
+    <value>Mikrofon: {0} ▾</value>
+  </data>
+  <data name="DictationOff" xml:space="preserve">
+    <value>Die Spracheingabe ist ausgeschaltet.</value>
+  </data>
+  <data name="DictationStarting" xml:space="preserve">
+    <value>Windows-Spracherkennung wird gestartet…</value>
+  </data>
+  <data name="DictationListening" xml:space="preserve">
+    <value>Zuhören – {0}. Sprechen Sie in das ausgewählte Mikrofon.</value>
+  </data>
+  <data name="DictationHearing" xml:space="preserve">
+    <value>Anhörung: {0}</value>
+  </data>
+  <data name="DictationHeard" xml:space="preserve">
+    <value>Eingefügt: {0}</value>
+  </data>
+  <data name="DictationError" xml:space="preserve">
+    <value>Spracheingabe: {0}</value>
+  </data>
+  <data name="DictationNoRecognizer" xml:space="preserve">
+    <value>Es ist kein Windows-Desktop-Spracherkenner installiert. Fügen Sie ein Windows-Sprachpaket hinzu, um die Spracheingabe zu verwenden.</value>
+  </data>
+  <data name="DictationOverrun" xml:space="preserve">
+    <value>Die Audioaufnahme konnte nicht mithalten. Stoppen Sie die Spracheingabe und starten Sie sie neu.</value>
+  </data>
+  <data name="DictationNoMicrophones" xml:space="preserve">
+    <value>Es ist kein Mikrofon verfügbar. Schließen Sie ein Mikrofon an und überprüfen Sie den Windows-Mikrofonzugriff.</value>
+  </data>
+  <data name="DictationMicRemoved" xml:space="preserve">
+    <value>Das ausgewählte Mikrofon ist nicht mehr verfügbar. Wählen Sie ein anderes Mikrofon.</value>
+  </data>
+  <data name="ControllerMenuCollapse" xml:space="preserve">
+    <value>Schnellsteuerung ausblenden</value>
+  </data>
+  <data name="ControllerMenuExpand" xml:space="preserve">
+    <value>Schnellsteuerung anzeigen</value>
+  </data>
+  <data name="BrowserClearAddress" xml:space="preserve">
+    <value>Klare Adresse</value>
+  </data>
+  <data name="RoomCategoryEnvironment" xml:space="preserve">
+    <value>Umgebung &amp; Sitzgelegenheiten</value>
+  </data>
+  <data name="RoomCategorySurfaces" xml:space="preserve">
+    <value>Oberflächen &amp; Beleuchtung</value>
+  </data>
+  <data name="RoomCategoryMusic" xml:space="preserve">
+    <value>Musikvisualisierungen</value>
+  </data>
+  <data name="RoomCategoryCreatures" xml:space="preserve">
+    <value>Kreaturen</value>
+  </data>
+  <data name="RoomCategoryAtmosphere" xml:space="preserve">
+    <value>Atmosphäreneffekte</value>
+  </data>
+  <data name="RoomCategoryVrex" xml:space="preserve">
+    <value>Vrex</value>
+  </data>
+  <data name="BrowserSiteAccess" xml:space="preserve">
+    <value>Zugriff auf die Website</value>
+  </data>
+  <data name="BrowserPermissionTitle" xml:space="preserve">
+    <value>Erlaubnisanfrage</value>
+  </data>
+  <data name="BrowserPermissionOrigin" xml:space="preserve">
+    <value>{0} möchte Zugriff auf:</value>
+  </data>
+  <data name="BrowserPermissionEmbedded" xml:space="preserve">
+    <value>{0} möchte Zugriff, während Sie sich auf {1} befinden:</value>
+  </data>
+  <data name="BrowserPermissionRemember" xml:space="preserve">
+    <value>Ihre Auswahl „Zulassen“ oder „Verweigern“ wird für diese Site gespeichert. Überprüfen Sie es oder setzen Sie es über den Site-Zugriff zurück.</value>
+  </data>
+  <data name="BrowserPermissionAllow" xml:space="preserve">
+    <value>Erlauben</value>
+  </data>
+  <data name="BrowserPermissionDeny" xml:space="preserve">
+    <value>Ablehnen</value>
+  </data>
+  <data name="BrowserPermissionMicrophone" xml:space="preserve">
+    <value>Mikrofon</value>
+  </data>
+  <data name="BrowserPermissionCamera" xml:space="preserve">
+    <value>Kamera</value>
+  </data>
+  <data name="BrowserPermissionDesktopAudio" xml:space="preserve">
+    <value>Bildschirm-Audioaufnahme</value>
+  </data>
+  <data name="BrowserPermissionDesktopVideo" xml:space="preserve">
+    <value>Bildschirmaufnahme</value>
+  </data>
+  <data name="BrowserPermissionLocation" xml:space="preserve">
+    <value>Standort</value>
+  </data>
+  <data name="BrowserPermissionNotifications" xml:space="preserve">
+    <value>Benachrichtigungen</value>
+  </data>
+  <data name="BrowserPermissionClipboard" xml:space="preserve">
+    <value>Zwischenablage</value>
+  </data>
+  <data name="BrowserPermissionOther" xml:space="preserve">
+    <value>{0}</value>
+  </data>
+  <data name="BrowserPermissionSaveFailed" xml:space="preserve">
+    <value>Die Auswahl gilt jetzt, konnte aber nicht für das nächste Mal gespeichert werden.</value>
+  </data>
+  <data name="BrowserPermissionNoSite" xml:space="preserve">
+    <value>Es wird keine Website geladen.</value>
+  </data>
+  <data name="BrowserPermissionNoSaved" xml:space="preserve">
+    <value>Für diese Website wurden keine Berechtigungsoptionen gespeichert.</value>
+  </data>
+  <data name="BrowserPermissionSaved" xml:space="preserve">
+    <value>{0}: {1} — {2}</value>
+  </data>
+  <data name="BrowserPermissionReset" xml:space="preserve">
+    <value>Zurücksetzen und neu laden</value>
+  </data>
+  <data name="BrowserPermissionResetFailed" xml:space="preserve">
+    <value>Die gespeicherten Site-Berechtigungen konnten nicht zurückgesetzt werden.</value>
+  </data>
+  <data name="GameHelpStart" xml:space="preserve">
+    <value>Hilfe zu diesem Spiel</value>
+  </data>
+  <data name="GameHelpSettings" xml:space="preserve">
+    <value>Spielhilfeeinstellungen</value>
+  </data>
+  <data name="GameHelpSharingHint" xml:space="preserve">
+    <value>Wählen Sie einen Dienst. Wenn Sie beim aktuellen Bildschirm helfen, werden ein VRX-Bildschirmbild und eine Frage an diesen Dienst gesendet. Es wird nichts weitergegeben, bis Sie es zulassen.</value>
+  </data>
+  <data name="GameHelpSharingWith" xml:space="preserve">
+    <value>Das Teilen von Screenshots mit {0} wird getrennt von den Mikrofon- oder Kameraberechtigungen gespeichert.</value>
+  </data>
+  <data name="GameHelpStopSharing" xml:space="preserve">
+    <value>Hören Sie auf, Screenshots zu teilen</value>
+  </data>
+  <data name="GameHelpAllowAndStart" xml:space="preserve">
+    <value>Erlaube Screenshots und erhalte Hilfe</value>
+  </data>
+  <data name="GameHelpSaveFailed" xml:space="preserve">
+    <value>Die Screenshot-Freigabeeinstellungen konnten nicht gespeichert werden.</value>
+  </data>
+  <data name="GameHelpNeedsSession" xml:space="preserve">
+    <value>Starten Sie eine VRX-Sitzung und ermöglichen Sie Controllern, den aktuellen Bildschirm zu erfassen.</value>
+  </data>
+  <data name="GameHelpCapturing" xml:space="preserve">
+    <value>Erfassen des aktuellen VRX-Bildschirms für Spielhilfe…</value>
+  </data>
+  <data name="GameHelpCaptureFailed" xml:space="preserve">
+    <value>Die Bildschirmaufnahme wurde nicht abgeschlossen. Bitte versuchen Sie es noch einmal mit der Spielhilfe.</value>
+  </data>
+  <data name="GameHelpImageTooLarge" xml:space="preserve">
+    <value>Das Spielhilfebild ist zu groß zum Hochladen.</value>
+  </data>
+  <data name="GameHelpRetry" xml:space="preserve">
+    <value>Versuchen Sie es erneut</value>
+  </data>
+  <data name="GameHelpProgress" xml:space="preserve">
+    <value>{0}: {1}</value>
+  </data>
+  <data name="GameHelpOpening" xml:space="preserve">
+    <value>Hilfedienst öffnen…</value>
+  </data>
+  <data name="GameHelpUploading" xml:space="preserve">
+    <value>Aktuellen Bildschirm anhängen…</value>
+  </data>
+  <data name="GameHelpPreparingQuestion" xml:space="preserve">
+    <value>Vorbereiten der Spielhilfefrage…</value>
+  </data>
+  <data name="GameHelpSearching" xml:space="preserve">
+    <value>Frage eingereicht. Hier können Sie weitere Fragen stellen.</value>
+  </data>
+  <data name="GameHelpNeedsSetup" xml:space="preserve">
+    <value>Beenden Sie die Zustimmungs- oder Anmeldeaufforderung der Website. Die Hilfe wird automatisch fortgesetzt.</value>
+  </data>
+  <data name="GameHelpNoConsent" xml:space="preserve">
+    <value>Die Screenshot-Freigabe ist deaktiviert. Aktivieren Sie es in den Spielhilfeeinstellungen.</value>
+  </data>
+  <data name="GameHelpExistingDraft" xml:space="preserve">
+    <value>Die Seite hat bereits einen Entwurf. Deaktivieren Sie es und wählen Sie dann Hilfe erneut versuchen.</value>
+  </data>
+  <data name="GameHelpRetryNeeded" xml:space="preserve">
+    <value>Die Seite ist noch nicht fertig. Beenden Sie alle Site-Eingabeaufforderungen und wählen Sie dann Hilfe erneut versuchen.</value>
+  </data>
+  <data name="GameHelpPrompt" xml:space="preserve">
+    <value>Identifizieren Sie das Spiel und die genaue Szene in diesem Screenshot. Geben Sie mir einen nützlichen Hinweis, was als nächstes zu tun ist, vermeiden Sie große Spoiler, und fügen Sie Links zu relevanten Komplettlösungen oder Leitfäden hinzu. Wenn Sie es nicht sicher identifizieren können, stellen Sie mir eine Frage, anstatt zu raten.</value>
+  </data>
+</root>

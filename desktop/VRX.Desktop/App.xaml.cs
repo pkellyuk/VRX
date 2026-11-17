@@ -1,4 +1,5 @@
 using System.Windows;
+using System.IO;
 
 namespace VRX.Desktop;
 public partial class App : Application
@@ -7,9 +8,14 @@ public partial class App : Application
     {
         base.OnStartup(e);
         System.Diagnostics.Debug.WriteLine($"[App] OnStartup: {string.Join(' ', e.Args)}");
+        bool smoke = e.Args.Contains("--smoke-test");
+        string? language = e.Args.FirstOrDefault(a => a.StartsWith("--language=", StringComparison.Ordinal))?[11..];
+        language ??= smoke ? "en" : new ProfileStore(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX")).LoadAppSettings().UiLanguage;
+        Loc.ConfigureLanguage(language);
         // Before any window exists, so every string is transformed from the start.
         if (e.Args.Contains("--pseudo-locale")) Loc.SetPseudo(true);
-        var window = new MainWindow(e.Args.Contains("--smoke-test"));
+        var window = new MainWindow(smoke);
         MainWindow = window;
         window.Show();
     }

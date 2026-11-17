@@ -12,8 +12,8 @@ using System.Windows.Markup;
 namespace VRX.Desktop;
 
 // Every user-visible string lives in Strings.resx (neutral = English). The UI culture
-// follows Windows (CurrentUICulture); a missing translation falls back to English. To add
-// a language, copy Strings.resx to Strings.<culture>.resx (e.g. Strings.de.resx) and
+// follows Windows unless selected under Language and themes; missing translations fall
+// back to English. To add a language, copy Strings.resx to Strings.<culture>.resx and
 // translate the values, keeping each {0}, {1}... placeholder.
 //
 // XAML uses {l:Tr Key} for text and {l:TrValue Key, Element=SliderName} for a slider's value
@@ -23,6 +23,29 @@ namespace VRX.Desktop;
 // version so untranslated or clipped text stands out.
 public sealed partial class Loc : INotifyPropertyChanged
 {
+    private static readonly CultureInfo WindowsUICulture = CultureInfo.CurrentUICulture;
+    public sealed record UiLanguage(string Code, string Name);
+    // Native names make the selector usable even when the current language is unfamiliar.
+    public static IReadOnlyList<UiLanguage> Languages { get; } = Array.AsReadOnly(new[]
+    {
+        new UiLanguage("en", "English"), new UiLanguage("fr", "Français"),
+        new UiLanguage("de", "Deutsch"), new UiLanguage("es", "Español"),
+        new UiLanguage("it", "Italiano"), new UiLanguage("pt", "Português"),
+        new UiLanguage("zh-Hans", "简体中文"), new UiLanguage("ja", "日本語"), new UiLanguage("ko", "한국어")
+    });
+
+    public static string ValidLanguage(string? code) =>
+        Languages.FirstOrDefault(l => string.Equals(l.Code, code, StringComparison.OrdinalIgnoreCase))?.Code ?? "";
+
+    public static void ConfigureLanguage(string? code)
+    {
+        string selected = ValidLanguage(code);
+        // UI language and number/date formatting are separate Windows preferences.
+        var culture = selected.Length == 0 ? WindowsUICulture : CultureInfo.GetCultureInfo(selected);
+        CultureInfo.CurrentUICulture = culture;
+        CultureInfo.DefaultThreadCurrentUICulture = culture;
+    }
+
     public static Loc Instance { get; } = new();
     private static readonly ResourceManager Resources = new("VRX.Desktop.Strings", typeof(Loc).Assembly);
     private static readonly HashSet<string> missing = new(StringComparer.Ordinal);
@@ -61,7 +84,7 @@ public sealed partial class Loc : INotifyPropertyChanged
         return Pseudo ? PseudoTransform(text) : text;
     }
 
-    // The neutral (English) string for `key`, or null when there is none.
+    // The untranslated resource for `key` in the UI culture (with English fallback).
     public static string? Raw(string key)
     {
         if (string.IsNullOrEmpty(key))
@@ -96,10 +119,13 @@ public sealed partial class Loc : INotifyPropertyChanged
     }
 
     // Every key in the neutral resources.
-    public static IReadOnlyDictionary<string, string> NeutralStrings()
+    public static IReadOnlyDictionary<string, string> NeutralStrings() => StringsFor(CultureInfo.InvariantCulture);
+
+    // Read only this satellite, without allowing English fallback to hide missing keys.
+    internal static IReadOnlyDictionary<string, string> StringsFor(CultureInfo culture)
     {
         var all = new SortedDictionary<string, string>(StringComparer.Ordinal);
-        var set = Resources.GetResourceSet(CultureInfo.InvariantCulture, true, false);
+        var set = Resources.GetResourceSet(culture, true, false);
         if (set == null) return all;
         foreach (DictionaryEntry entry in set)
             if (entry.Key is string key && entry.Value is string value) all[key] = value;

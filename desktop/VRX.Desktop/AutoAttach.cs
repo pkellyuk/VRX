@@ -22,6 +22,8 @@ public sealed class AppSettings
     public bool AutoAttach { get; set; }
     // Opt-in, app-wide. Old settings files and new installs leave motion input off.
     public bool MotionControllers { get; set; }
+    // Empty follows the Windows display language; explicit choices apply on next startup.
+    public string UiLanguage { get; set; } = "";
     public int FloatingTheme { get; set; }
     public int FloatingOpacity { get; set; } = 95;
     public int DesktopTheme { get; set; }
