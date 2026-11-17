@@ -56,7 +56,13 @@ $env:PYTHONUTF8 = '1'
 # PyTorch picks its CPU kernels by instruction set, and the export folds weights with them:
 # the released models were made on an AVX2 CPU, so use the AVX2 kernels everywhere.
 $env:ATEN_CPU_CAPABILITY = 'avx2'
-Write-Output "build-models: CPU $((Get-CimInstance Win32_Processor | Select-Object -First 1).Name), PyTorch kernels $env:ATEN_CPU_CAPABILITY"
+# oneDNN (convolutions) and MKL (matrix maths) choose their own instructions and would use
+# AVX-512/AMX on newer Xeons, giving different bytes; cap them at AVX2 too.
+$env:ONEDNN_MAX_CPU_ISA = 'AVX2'
+$env:DNNL_MAX_CPU_ISA = 'AVX2'
+$env:MKL_ENABLE_INSTRUCTIONS = 'AVX2'
+$env:MKL_CBWR = 'AVX2'
+Write-Output "build-models: CPU $((Get-CimInstance Win32_Processor | Select-Object -First 1).Name), PyTorch kernels $env:ATEN_CPU_CAPABILITY, oneDNN $env:ONEDNN_MAX_CPU_ISA, MKL $env:MKL_CBWR"
 
 if ($missing -contains 'model_fixed_686x392.onnx')
 {
