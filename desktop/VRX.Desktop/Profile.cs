@@ -267,6 +267,7 @@ public sealed class ProfileStore(string root)
         try
         {
             loaded = File.Exists(AppSettingsFile) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(AppSettingsFile)) ?? new AppSettings() : new AppSettings();
+            loaded.UiLanguage = Loc.ValidLanguage(loaded.UiLanguage);
             loaded.FloatingTheme = Math.Clamp(loaded.FloatingTheme, 0, Appearance.Themes.Length - 1);
             loaded.DesktopTheme = Math.Clamp(loaded.DesktopTheme, 0, Appearance.Themes.Length - 1);
             loaded.FloatingOpacity = Math.Clamp(loaded.FloatingOpacity, 0, 100);
@@ -312,6 +313,7 @@ public sealed class ProfileStore(string root)
         {
             AutoAttach = settings.AutoAttach,
             MotionControllers = settings.MotionControllers,
+            UiLanguage = Loc.ValidLanguage(settings.UiLanguage),
             FloatingTheme = Math.Clamp(settings.FloatingTheme, 0, Appearance.Themes.Length - 1),
             DesktopTheme = Math.Clamp(settings.DesktopTheme, 0, Appearance.Themes.Length - 1),
             FloatingOpacity = Math.Clamp(settings.FloatingOpacity, 0, 100),

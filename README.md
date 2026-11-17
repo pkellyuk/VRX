@@ -34,6 +34,22 @@ wants automatic updates or to support the project.
 
 ## Quick hints
 
+### Languages
+
+The desktop app and in-headset settings support English, French, German, Spanish,
+Italian, Portuguese, Simplified Chinese, Japanese and Korean. VRX follows the Windows
+display language automatically. To choose a different language, open **Expert →
+Language & themes → Language**, select it, then restart VRX. Language names appear in
+their own language. Number and date formats continue to follow your Windows region.
+Unsupported display languages fall back to English. The first translation set is
+machine-assisted, with contextual corrections; native-speaker improvements are welcome.
+
+For developers: `dotnet build desktop/VRX.Desktop/VRX.Desktop.csproj -c Release`, then
+`./desktop/test-languages.ps1` runs the Windows smoke suite in every language and saves
+screenshots under `desktop/out/international/<culture>/`. The suite checks complete
+satellite resources, placeholders, language persistence and regional fallback. Use
+`VRX.Desktop.exe --language=fr` to preview a language without changing its saved choice.
+
 ### Optional motion-controller settings
 
 The smaller **Controllers · Off / On** switch to the left of **Easy / Expert** enables

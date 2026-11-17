@@ -337,6 +337,9 @@
 
     <Expander x:Name="ThemesSection" Header="{l:Tr AppearanceTitle}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="ThemesContent">
+      <TextBlock Text="{l:Tr LanguageLabel}" Style="{StaticResource Label}"/>
+      <ComboBox x:Name="LanguageList" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="LanguageChanged"/>
+      <TextBlock Text="{l:Tr LanguageRestartHint}" Style="{StaticResource Hint}" Margin="0,0,0,8"/>
       <TextBlock Text="{l:Tr FloatingThemeLabel}" Style="{StaticResource Label}"/>
       <ComboBox x:Name="FloatingThemeList" SelectionChanged="AppearanceChanged"/>
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=FloatingOpacitySlider}"/><TextBlock Text="{l:Tr FloatingOpacityLabel}" Style="{StaticResource Label}"/></DockPanel>

@@ -4,10 +4,13 @@
   To translate, copy this file to Strings.<culture>.resx (for example Strings.de.resx or
   Strings.fr-CA.resx) next to it, translate each <value>, and keep every {0}, {1}...
   placeholder (their order may change). Keys ending in One / Other are the singular
-  and plural forms. Rebuild: the translation ships as a satellite assembly and is
-  picked automatically from the Windows display language.
+  and plural forms. Rebuild: the translation ships as a satellite assembly. The
+  language follows Windows unless overridden under Language and themes; restart to apply.
 -->
 <root>
+  <data name="LanguageLabel" xml:space="preserve"><value>Language</value></data>
+  <data name="LanguageAutomatic" xml:space="preserve"><value>Automatic — Windows display language</value></data>
+  <data name="LanguageRestartHint" xml:space="preserve"><value>Applies the next time you start VRX. Number and date formats still follow your Windows regional settings.</value></data>
   <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
   <resheader name="version"><value>2.0</value></resheader>
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
@@ -421,7 +424,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ThemeDark" xml:space="preserve"><value>Dark</value></data>
   <data name="ThemeLight" xml:space="preserve"><value>Light</value></data>
   <data name="ThemeGrape" xml:space="preserve"><value>Grape</value></data>
-  <data name="AppearanceTitle" xml:space="preserve"><value>Themes</value></data>
+  <data name="AppearanceTitle" xml:space="preserve"><value>Language &amp; themes</value></data>
   <data name="FloatingThemeLabel" xml:space="preserve"><value>Floating panel theme</value></data>
   <data name="FloatingOpacityLabel" xml:space="preserve"><value>Floating panel background opacity</value></data>
   <data name="DesktopThemeLabel" xml:space="preserve"><value>Desktop theme</value></data>
