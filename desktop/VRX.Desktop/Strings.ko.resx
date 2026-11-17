@@ -4,10 +4,10 @@
     <value>언어 / Language</value>
   </data>
   <data name="LanguageAutomatic" xml:space="preserve">
-    <value>자동 - Windows 표시 언어</value>
+    <value>자동 — Windows 표시 언어</value>
   </data>
   <data name="LanguageRestartHint" xml:space="preserve">
-    <value>다음에 VRX를 시작할 때 적용됩니다. 숫자 및 날짜 형식은 여전히 ​​Windows 지역 설정을 따릅니다.</value>
+    <value>다음에 VRX를 시작할 때 적용됩니다. 숫자와 날짜 형식은 계속 Windows 지역 설정을 따릅니다.</value>
   </data>
   <resheader name="resmimetype">
     <value>text/microsoft-resx</value>
@@ -26,14 +26,14 @@
     <comment>Product name; normally not translated.</comment>
   </data>
   <data name="WindowTitle" xml:space="preserve">
-    <value>VRX {0} — 데스크탑 설정</value>
+    <value>VRX {0} — 데스크톱 설정</value>
     <comment>{0} = version, e.g. v1.7.1</comment>
   </data>
   <data name="SubtitleEasy" xml:space="preserve">
-    <value>VR로 게임을 즐겨보세요. VRX가 설정을 수행합니다.</value>
+    <value>VR에서 게임을 즐기세요. 설정은 VRX가 알아서 합니다.</value>
   </data>
   <data name="SubtitleExpert" xml:space="preserve">
-    <value>게임을 선택하세요. 화면을 설정하세요.</value>
+    <value>게임을 선택하고 화면을 설정하세요.</value>
   </data>
   <data name="ModeEasy" xml:space="preserve">
     <value>간편</value>
@@ -42,16 +42,16 @@
     <value>자동</value>
   </data>
   <data name="ModeEasyTip" xml:space="preserve">
-    <value>쉬움: VRX는 게임의 저장된 설정(또는 새 게임의 기본 설정)을 사용하여 앞의 게임에 자동으로 연결됩니다. 그 밖의 거의 모든 것은 숨겨져 있습니다.</value>
+    <value>간편: VRX가 맨 앞의 게임에 자동으로 연결하며, 게임에 저장된 설정(새 게임이면 기준 설정)을 사용합니다. 그 밖의 항목은 대부분 숨겨집니다.</value>
   </data>
   <data name="ModeExpert" xml:space="preserve">
-    <value>고급</value>
+    <value>전문가</value>
   </data>
   <data name="ModeExpertCaption" xml:space="preserve">
     <value>모든 설정</value>
   </data>
   <data name="ModeExpertTip" xml:space="preserve">
-    <value>전문가: 모든 설정이 열거나 닫을 수 있는 섹션으로 그룹화됩니다.</value>
+    <value>전문가: 모든 설정을 열고 닫을 수 있는 섹션별로 보여 줍니다.</value>
   </data>
   <data name="TitleMenu" xml:space="preserve">
     <value>창 메뉴</value>
@@ -66,7 +66,7 @@
     <comment>Title bar button (Expert only), as in Windows.</comment>
   </data>
   <data name="TitleRestore" xml:space="preserve">
-    <value>아래로 복원</value>
+    <value>이전 크기로 복원</value>
     <comment>The maximize button while the window is maximized, as in Windows.</comment>
   </data>
   <data name="TitleClose" xml:space="preserve">
@@ -74,13 +74,13 @@
     <comment>Title bar button, as in Windows.</comment>
   </data>
   <data name="EasyIntro" xml:space="preserve">
-    <value>게임을 시작하고 앞으로 가져오세요. VRX는 짧은 카운트다운 후에 연결됩니다.</value>
+    <value>게임을 시작하고 맨 앞으로 가져오세요. 잠깐 카운트다운한 뒤 VRX가 연결됩니다.</value>
   </data>
   <data name="EasyHintSettings" xml:space="preserve">
-    <value>VRX는 게임의 저장된 설정 또는 이전에 본 적이 없는 게임의 기본 설정을 사용합니다. 변경하려면 전문가로 전환하세요.</value>
+    <value>VRX는 게임에 저장된 설정을 사용하고, 처음 보는 게임에는 기준 설정을 사용합니다. 바꾸려면 전문가 모드로 전환하세요.</value>
   </data>
   <data name="EasyHintSteamVr" xml:space="preserve">
-    <value>재생하기 전에 SteamVR를 시작하십시오. VR 중지를 누르거나 게임을 종료하여 종료하세요.</value>
+    <value>플레이하기 전에 SteamVR을 시작하세요. 끝내려면 'VR 중지'를 누르거나 게임을 종료하세요.</value>
   </data>
   <data name="CardCaption" xml:space="preserve">
     <value>게임</value>
@@ -89,35 +89,35 @@
     <value>아직 게임 없음</value>
   </data>
   <data name="CardWaiting" xml:space="preserve">
-    <value>대기 중 · 게임을 앞으로 가져오세요</value>
+    <value>대기 중 · 게임을 맨 앞으로 가져오세요</value>
   </data>
   <data name="CardCountdown" xml:space="preserve">
-    <value>{0} s에 부착 · 취소하려면 창 전환</value>
+    <value>{0}초 후 연결 · 창을 전환하면 취소</value>
     <comment>{0} = seconds left</comment>
   </data>
   <data name="CardStarting" xml:space="preserve">
-    <value>VR을 시작하는 중…</value>
+    <value>VR 시작 중…</value>
   </data>
   <data name="CardPlaying" xml:space="preserve">
-    <value>재생</value>
+    <value>플레이 중</value>
   </data>
   <data name="CardStopping" xml:space="preserve">
     <value>VR 중지 중…</value>
   </data>
   <data name="CardSpent" xml:space="preserve">
-    <value>중지됨 · 다른 창으로 전환했다가 다시 연결하려면 다시 돌아가세요.</value>
+    <value>중지됨 · 다시 연결하려면 다른 창으로 갔다가 돌아오세요</value>
   </data>
   <data name="CardReady" xml:space="preserve">
-    <value>준비 · 첨부/재생 누르기</value>
+    <value>준비됨 · '연결 / 플레이'를 누르세요</value>
   </data>
   <data name="CardChooseWindow" xml:space="preserve">
-    <value>게임 및 창에서 캡처할 창을 선택하세요.</value>
+    <value>'게임 및 창'에서 캡처할 창을 선택하세요</value>
   </data>
   <data name="CardPickGame" xml:space="preserve">
-    <value>게임 및 창에서 게임을 선택하거나 자동 연결을 켜세요.</value>
+    <value>'게임 및 창'에서 게임을 고르거나 자동 연결을 켜세요</value>
   </data>
   <data name="AttachPlay" xml:space="preserve">
-    <value>연결 / 재생</value>
+    <value>연결 / 플레이</value>
   </data>
   <data name="StopVr" xml:space="preserve">
     <value>VR 중지</value>
@@ -126,7 +126,7 @@
     <value>중앙 재설정</value>
   </data>
   <data name="RecenterTip" xml:space="preserve">
-    <value>현재 헤드셋이 보고 있는 곳 바로 앞에 화면을 배치합니다.</value>
+    <value>헤드셋이 지금 보고 있는 방향 정면에 화면을 놓습니다.</value>
   </data>
   <data name="RecenterNow" xml:space="preserve">
     <value>지금 중앙 재설정</value>
@@ -142,22 +142,22 @@
     <value>실행 중인 애플리케이션 새로 고침</value>
   </data>
   <data name="ResetProfile" xml:space="preserve">
-    <value>이 프로필 재설정</value>
+    <value>이 프로필 초기화</value>
   </data>
   <data name="ResetProfileTip" xml:space="preserve">
-    <value>이 게임을 기본 설정(또는 기본이 저장되지 않은 경우 VRX의 기본값)으로 되돌립니다.</value>
+    <value>이 게임을 기준 설정으로 되돌립니다(기준 설정을 저장하지 않았다면 VRX 기본값).</value>
   </data>
   <data name="MakeBase" xml:space="preserve">
-    <value>기본 설정하기</value>
+    <value>기준 설정으로 저장</value>
   </data>
   <data name="MakeBaseTip" xml:space="preserve">
-    <value>여기에 표시된 설정을 아직 설정하지 않은 게임의 시작점으로 저장합니다. 화면 배치, 3D 강도, 깊이 옵션 및 단축키가 모두 포함되어 있습니다. 게임 자체의 경로와 창은 그렇지 않습니다. 이미 설정한 게임은 자체 설정을 유지합니다.</value>
+    <value>여기 표시된 설정을 아직 설정하지 않은 게임의 출발점으로 저장합니다. 화면 배치, 3D 강도, 깊이 옵션, 단축키가 모두 포함되며, 게임의 경로와 창은 포함되지 않습니다. 이미 설정한 게임은 자체 설정을 유지합니다.</value>
   </data>
   <data name="ApplyAll" xml:space="preserve">
-    <value>모두에게 적용</value>
+    <value>모두에 적용</value>
   </data>
   <data name="ApplyAllTip" xml:space="preserve">
-    <value>확인을 요청한 후 여기에 표시된 설정을 이미 설정한 모든 게임에 복사합니다. 화면 배치, 3D 강도, 깊이 옵션, 깊이 GPU 및 바로가기가 모두 포함됩니다. 각 게임은 고유한 경로와 창을 유지합니다. 아직 설정하지 않은 게임은 기본 설정에서 시작됩니다.</value>
+    <value>확인을 받은 뒤 여기 표시된 설정을 이미 설정한 모든 게임에 복사합니다. 화면 배치, 3D 강도, 깊이 옵션, 깊이 GPU, 단축키가 모두 포함되며, 각 게임의 경로와 창은 그대로 유지됩니다. 아직 설정하지 않은 게임은 여전히 기준 설정에서 시작합니다.</value>
   </data>
   <data name="SectionGame" xml:space="preserve">
     <value>게임 및 창</value>
@@ -169,13 +169,13 @@
     <value>화면 주변</value>
   </data>
   <data name="SectionRoom" xml:space="preserve">
-    <value>방</value>
+    <value>룸</value>
   </data>
   <data name="SectionDepth" xml:space="preserve">
     <value>3D 및 깊이</value>
   </data>
   <data name="SectionExperimental" xml:space="preserve">
-    <value>실험적</value>
+    <value>실험 기능</value>
   </data>
   <data name="SectionSteamVr" xml:space="preserve">
     <value>SteamVR 및 단축키</value>
@@ -184,10 +184,10 @@
     <value>프로필</value>
   </data>
   <data name="SectionSession" xml:space="preserve">
-    <value>세션 세부정보</value>
+    <value>세션 정보</value>
   </data>
   <data name="RunningApplications" xml:space="preserve">
-    <value>애플리케이션 실행</value>
+    <value>실행 중인 애플리케이션</value>
   </data>
   <data name="ShowAllProcesses" xml:space="preserve">
     <value>모든 프로세스 표시</value>
@@ -199,26 +199,26 @@
     <value>시작하려면 애플리케이션을 선택하세요.</value>
   </data>
   <data name="PathNoAccess" xml:space="preserve">
-    <value>액세스 가능한 실행 파일/창이 없습니다. 실행중인 게임을 선택하세요.</value>
+    <value>접근 가능한 실행 파일/창이 없습니다. 실행 중인 게임을 선택하세요.</value>
   </data>
   <data name="GameHint" xml:space="preserve">
-    <value>설정은 각 실행 파일에 대해 별도로 저장됩니다. 플레이하기 전에 SteamVR를 시작하세요.</value>
+    <value>설정은 실행 파일마다 따로 저장됩니다. 플레이하기 전에 SteamVR을 시작하세요.</value>
   </data>
   <data name="AutoAttachCheck" xml:space="preserve">
-    <value>앞의 게임에 자동 연결</value>
+    <value>맨 앞의 게임에 자동 연결</value>
   </data>
   <data name="AutoAttachCountdown" xml:space="preserve">
     <value>카운트다운</value>
   </data>
   <data name="AutoAttachTip" xml:space="preserve">
-    <value>게임이 앞에 있으면 VRX는 카운트다운을 한 다음 게임에 연결합니다. 마치 게임을 선택하고 연결/재생을 누른 것과 같습니다. 창은 전체 화면이거나 경계선이 없을 때 또는 이전에 설정한 게임일 때 계산됩니다(설정이 저장되어 있습니다. 웹 브라우저는 전체 화면만 계산합니다). Steam, SteamVR, Windows 자체, 터미널 및 VRX는 절대 부착되지 않습니다. 취소하려면 카운트다운 중에 다른 창으로 전환하세요. VR을 중지한 후 또는 연결에 실패하면 해당 창은 다른 창으로 전환할 때까지 그대로 유지됩니다. VRX 자체가 앞에 있는 동안에는 카운트다운이 시작되지 않습니다. Easy 모드는 항상 켜져 있습니다.</value>
+    <value>게임이 맨 앞에 오면 VRX가 카운트다운한 뒤 그 게임에 연결합니다. 게임을 골라 '연결 / 플레이'를 누른 것과 똑같습니다. 대상이 되는 창은 전체 화면이나 테두리 없는 창, 또는 전에 설정한 게임(저장된 설정이 있는 경우이며, 웹 브라우저는 전체 화면일 때만)입니다. Steam, SteamVR, Windows 자체, 터미널, VRX에는 절대 연결하지 않습니다. 카운트다운 중에 다른 창으로 전환하면 취소됩니다. VR을 중지했거나 연결에 실패한 창은 다른 창으로 갔다가 돌아올 때까지 건드리지 않습니다. VRX 자체가 맨 앞에 있을 때는 카운트다운이 시작되지 않습니다. 간편 모드에서는 항상 켜져 있습니다.</value>
   </data>
   <data name="AppDescriptionOne" xml:space="preserve">
-    <value>PID {0} · 1 창</value>
+    <value>PID {0} · 창 1개</value>
     <comment>{0} = process id</comment>
   </data>
   <data name="AppDescriptionOther" xml:space="preserve">
-    <value>PID {0} · {1} 창</value>
+    <value>PID {0} · 창 {1}개</value>
     <comment>{0} = process id, {1} = number of windows</comment>
   </data>
   <data name="AppNoGameWindow" xml:space="preserve">
@@ -229,13 +229,13 @@
     <comment>{0} = window handle in hex</comment>
   </data>
   <data name="ScreenHint" xml:space="preserve">
-    <value>변경사항은 실시간으로 적용됩니다. 위치는 마지막 최근 항목을 기준으로 합니다.</value>
+    <value>변경 사항은 실시간으로 적용됩니다. 위치는 마지막 중앙 재설정 기준입니다.</value>
   </data>
   <data name="PreviewLabel" xml:space="preserve">
-    <value>TOP VIEW · 화면을 드래그</value>
+    <value>상단 뷰 · 화면을 드래그하세요</value>
   </data>
   <data name="PreviewTip" xml:space="preserve">
-    <value>화면을 드래그하여 수평 위치와 거리를 변경하세요.</value>
+    <value>화면을 드래그해 좌우 위치와 거리를 바꿉니다</value>
   </data>
   <data name="ScreenWidth" xml:space="preserve">
     <value>화면 너비</value>
@@ -247,16 +247,16 @@
     <value>높이 오프셋</value>
   </data>
   <data name="LeftRightOffset" xml:space="preserve">
-    <value>왼쪽/오른쪽 오프셋</value>
+    <value>좌우 오프셋</value>
   </data>
   <data name="ScreenCurve" xml:space="preserve">
-    <value>스크린 곡선</value>
+    <value>화면 곡률</value>
   </data>
   <data name="ScreenCurveTip" xml:space="preserve">
-    <value>곡면 TV처럼 화면을 감싸줍니다. 곡면 화면은 각 눈의 실제 원통형으로 그려지므로 윤곽선, 원근감 및 머리 움직임 시차가 정확합니다. 위의 평면도는 모양을 보여줍니다. 0%는 평평하다. 고정 화면 및 머리 따르기와 함께 작동합니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>곡면 TV처럼 화면이 나를 감싸도록 휩니다. 곡면 화면은 눈마다 실제 원통으로 그려지므로 윤곽, 원근감, 머리 움직임에 따른 시차가 정확합니다. 위의 상단 뷰에서 모양을 볼 수 있습니다. 0 %는 평면입니다. 고정 화면과 머리 따라가기 모두에서 작동합니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="FollowHead" xml:space="preserve">
-    <value>화면이 내 머리를 따라다닌다</value>
+    <value>화면이 머리를 따라 이동</value>
   </data>
   <data name="ValueMetres" xml:space="preserve">
     <value>{0:F2} m</value>
@@ -275,31 +275,31 @@
     <comment>{0} = seconds</comment>
   </data>
   <data name="Ambilight" xml:space="preserve">
-    <value>Ambilight — 화면 주위에 빛이 납니다.</value>
+    <value>앰비라이트 — 화면 주변 빛</value>
   </data>
   <data name="AmbilightTip" xml:space="preserve">
-    <value>텔레비전 뒤의 바이어스 조명처럼 화면 가장자리의 색상을 화면 주변의 어둠 속으로 부드럽게 퍼뜨립니다. 글로우의 각 지점은 가장 가까운 부분인 전체 테두리를 혼합하므로 로컬 색상을 가깝게 따르고 더 부드러워집니다. 곡면 화면을 감싸며 깜박거리지 않고 부드럽게 장면을 따라갑니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>TV 뒤의 바이어스 조명처럼, 영상 가장자리의 색을 화면 주변 어둠 속으로 부드럽게 퍼뜨립니다. 빛의 각 지점은 테두리 전체를 섞되 가장 가까운 부분을 가장 많이 반영하므로, 가까이에서는 그 부분의 색을 따르고 멀어질수록 부드러워집니다. 곡면 화면도 감싸며, 깜박임 없이 장면을 부드럽게 따라갑니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="AmbilightStrength" xml:space="preserve">
-    <value>엠비라이트 강도</value>
+    <value>앰비라이트 강도</value>
   </data>
   <data name="AmbilightStrengthTip" xml:space="preserve">
-    <value>화면 옆의 빛이 얼마나 밝습니까? 항상 가장자리 쪽으로 페이드 아웃됩니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>화면 바로 옆의 빛 밝기입니다. 빛은 항상 바깥쪽으로 갈수록 옅어집니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="WorldColour" xml:space="preserve">
-    <value>월드 컬러</value>
+    <value>월드 색상</value>
   </data>
   <data name="WorldListTip" xml:space="preserve">
-    <value>검은색이 아닌 화면 주변 공간의 색상입니다. 어두운 색상은 그림의 대비를 유지합니다. 그 위에 앰비라이트가 빛난다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>검은색 대신 화면 주변 공간에 쓸 색입니다. 어두운 색은 영상의 명암비를 유지하고, 앰비라이트가 그 위에서 빛납니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="WorldHexTip" xml:space="preserve">
-    <value>#RRGGBB와 같은 모든 색상. 절반의 색상이 들어 있는 상자를 그대로 두면 마지막 전체 색상이 다시 들어옵니다.</value>
+    <value>#RRGGBB 형식으로 어떤 색이든 입력할 수 있습니다. 색을 반만 입력한 채 상자를 벗어나면 마지막으로 입력한 완전한 색으로 돌아갑니다.</value>
   </data>
   <data name="WorldBlack" xml:space="preserve">
-    <value>검정색(기본값)</value>
+    <value>검정(기본값)</value>
   </data>
   <data name="WorldCharcoal" xml:space="preserve">
-    <value>숯</value>
+    <value>차콜</value>
   </data>
   <data name="WorldSlate" xml:space="preserve">
     <value>슬레이트</value>
@@ -311,46 +311,46 @@
     <value>딥 퍼플</value>
   </data>
   <data name="WorldForest" xml:space="preserve">
-    <value>숲</value>
+    <value>포레스트</value>
   </data>
   <data name="WorldWarm" xml:space="preserve">
-    <value>따뜻하고 어두운</value>
+    <value>웜 다크</value>
   </data>
   <data name="WorldCinemaRed" xml:space="preserve">
     <value>시네마 레드</value>
   </data>
   <data name="WorldGrey" xml:space="preserve">
-    <value>그레이</value>
+    <value>회색</value>
   </data>
   <data name="WorldDusk" xml:space="preserve">
     <value>황혼</value>
   </data>
   <data name="WorldOvercast" xml:space="preserve">
-    <value>흐림</value>
+    <value>흐린 하늘</value>
   </data>
   <data name="WorldCustom" xml:space="preserve">
-    <value>맞춤</value>
+    <value>사용자 지정</value>
   </data>
   <data name="Environment" xml:space="preserve">
     <value>환경</value>
   </data>
   <data name="EnvironmentTip" xml:space="preserve">
-    <value>화면이 있는 곳. 방(기본값): 유리벽, 반사, 빛을 선택할 수 있는 깨끗하고 차분한 평범한 방입니다. 야외: 밤에 별빛 아래 수평선에 낮은 언덕이 있는 들판에 스크린이 서 있습니다. 화면이 그 앞의 땅을 비춥니다. 라운지: 홈 시어터 - 양탄자가 깔린 오크 바닥, 양쪽에 2개의 램프가 있는 패널 벽, 천장의 다운라이트(둘 다 실내 조명으로 켜짐) 및 스크린 뒤의 목재 칸막이. 좌석이 있는 영화관: 벨벳 커튼, 스크린 둘레의 검은색 마스킹, 통로를 따라 계단식 조명이 있는 패턴 카펫, 실내 조명이 켜진 벽의 스콘 등 계단식 좌석 열이 있는 영화관입니다. 화면의 거리를 설정하는 아래 좌석을 선택하세요. 던전: 풍화된 돌, 막대가 있는 아치, 사슬, 바닥 격자 및 횃불. 지옥: 어두운 현무암, 용광로 아치, 빛나는 비문 및 용암 균열. 사이버펑크 네온 시네마: 계단식 좌석, 청록색 및 자홍색 조명, 음향 패널 및 도시 디스플레이. 스타쉽 시네마: 금속 격벽의 계단식 좌석, 조명이 들어오는 갈비뼈, 별과 푸른 행성을 볼 수 있는 뷰포트. 각각은 방과 같은 그림으로 조명을 받고, 방 슬라이더는 표면이 반사되는 정도를 설정합니다. 방이 꺼져 있는 동안 하나를 선택하면 방이 켜집니다. '화면이 내 머리를 따른다'는 아닙니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>화면이 놓이는 곳입니다. 룸(기본값): 깔끔하고 차분한 기본 룸으로, 유리 벽, 반사, 룸 조명을 아래에서 고를 수 있습니다. 밤의 야외: 별빛 아래 들판에 화면이 서 있고 지평선에는 낮은 언덕이 보입니다. 화면이 앞쪽 땅을 비춥니다. 라운지: 홈 시어터입니다. 러그를 깐 오크 바닥, 양쪽에 램프가 두 개씩 달린 패널 벽, 천장 다운라이트(둘 다 룸 조명으로 켜짐), 화면 뒤의 목재 루버가 있습니다. 좌석 있는 영화관: 계단식 좌석이 나를 둘러싼 극장입니다. 벨벳 커튼, 화면 둘레의 검은 마스킹, 통로를 따라 계단등이 있는 무늬 카펫, 룸 조명으로 켜지는 벽등이 있습니다. 아래에서 좌석을 고르면 화면까지의 거리가 정해집니다. 던전: 풍화된 돌, 쇠창살 아치, 사슬, 바닥 창살, 횃불. 지옥: 어두운 현무암, 용광로 아치, 빛나는 문자, 용암 균열. 사이버펑크 네온 영화관: 계단식 좌석, 청록색과 자홍색 조명, 흡음 패널, 도시 디스플레이. 우주선 영화관: 금속 격벽 안의 계단식 좌석, 빛나는 골조, 별과 푸른 행성이 보이는 관측창. 모두 룸처럼 영상의 빛을 받으며, '룸' 슬라이더로 표면의 반사 정도를 정합니다. 룸이 꺼져 있을 때 하나를 고르면 룸이 켜집니다. '화면이 머리를 따라 이동'과는 함께 쓸 수 없습니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="EnvironmentRoom" xml:space="preserve">
-    <value>방(기본값)</value>
+    <value>룸(기본값)</value>
   </data>
   <data name="EnvironmentCinema" xml:space="preserve">
-    <value>시네마</value>
+    <value>영화관</value>
   </data>
   <data name="EnvironmentOpenAir" xml:space="preserve">
-    <value>밤에는 야외</value>
+    <value>밤의 야외</value>
   </data>
   <data name="EnvironmentLounge" xml:space="preserve">
     <value>라운지</value>
   </data>
   <data name="EnvironmentTheatre" xml:space="preserve">
-    <value>좌석이 있는 영화관</value>
+    <value>좌석 있는 영화관</value>
   </data>
   <data name="EnvironmentDungeon" xml:space="preserve">
     <value>던전</value>
@@ -359,16 +359,16 @@
     <value>지옥</value>
   </data>
   <data name="EnvironmentCyberpunk" xml:space="preserve">
-    <value>사이버펑크 네온 시네마</value>
+    <value>사이버펑크 네온 영화관</value>
   </data>
   <data name="EnvironmentStarship" xml:space="preserve">
-    <value>스타쉽 시네마</value>
+    <value>우주선 영화관</value>
   </data>
   <data name="Seat" xml:space="preserve">
     <value>좌석</value>
   </data>
   <data name="SeatTip" xml:space="preserve">
-    <value>영화관에서 좌석이 있는 곳. 화면 거리를 설정합니다. 앞줄은 4.6m, 가운데는 7.5m, 뒷줄은 11.4m입니다. 홀은 화면 너비에 관계없이 동일하게 유지되므로 Width는 동일한 영화관의 화면이 더 크거나 작은 것처럼 좌석에서 화면을 더 크거나 작게 보이게 합니다(기본 5.7m에서 행은 약 0.8, 1.3 및 2 화면 너비 떨어져 있습니다). 줄이 당신 뒤로 올라가므로 앞 좌석 너머로 볼 수 있습니다. 좀 더 뒤쪽에 앉으면 그림의 깊이가 더욱 부드럽게 드러납니다. 앉아 있는 동안 거리 슬라이더는 정지되어 해당 값을 유지합니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>좌석 있는 영화관에서 앉는 자리입니다. 화면까지의 거리가 정해집니다: 앞줄 4.6 m, 중간 7.5 m, 뒷줄 11.4 m. 홀은 화면 너비와 관계없이 그대로이므로, '화면 너비'를 바꾸면 같은 영화관에 더 크거나 작은 화면을 단 것처럼 좌석에서 화면이 더 크거나 작게 보입니다(기본값 5.7 m에서 각 줄은 화면 너비의 약 0.8배, 1.3배, 2배 거리). 줄은 뒤로 갈수록 높아지므로 앞좌석 너머로 볼 수 있습니다. 뒤쪽 좌석일수록 영상의 깊이도 더 부드럽게 보입니다. 앉아 있는 동안 '거리' 슬라이더는 멈추고 값을 유지합니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="SeatFront" xml:space="preserve">
     <value>앞줄</value>
@@ -384,59 +384,59 @@
     <comment>{0} = metres</comment>
   </data>
   <data name="ValueSeatDistance" xml:space="preserve">
-    <value>{0:F2} m (좌석)</value>
+    <value>{0:F2} m (내 좌석)</value>
     <comment>{0} = metres; the screen's distance set by the cinema seat</comment>
   </data>
   <data name="NeedsRoomEnvironment" xml:space="preserve">
-    <value>실내 환경만</value>
+    <value>룸 환경 전용</value>
   </data>
   <data name="NotInOpenAir" xml:space="preserve">
-    <value>야외에는 없고</value>
+    <value>야외에서는 사용 불가</value>
   </data>
   <data name="RoomLabel" xml:space="preserve">
-    <value>방 — 스크린으로 밝혀진 벽</value>
+    <value>룸 — 화면 빛이 비추는 벽</value>
   </data>
   <data name="RoomTip" xml:space="preserve">
-    <value>어두운 방에 있는 텔레비전이나 영화 스크린처럼 벽, 바닥, 천장이 그림과 주변광으로 밝혀지는 어두운 방에 들어갑니다. 0은 꺼져 있습니다. 값이 높을수록 벽이 더 옅어지므로 더 많이 반사됩니다. 30~60%는 영화관처럼 보입니다. 방이 켜져 있으면 세계 색상이 집 조명이 되고 화면은 수평으로 유지됩니다(기울어진 바닥은 잘못된 느낌을 줍니다). '화면이 내 머리를 따른다'는 아닙니다. 위의 환경은 영화관, 야외 또는 라운지로 꾸며져 있습니다. 아래에는 유리, 반사 및 실내 조명이 있습니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>영상과 앰비라이트가 벽, 바닥, 천장을 비추는 어두운 룸에 들어갑니다. 어두운 방의 TV나 영화관 스크린과 같습니다. 0은 꺼짐이며, 값이 높을수록 벽이 밝은 색이 되어 더 많이 반사합니다. 30-60 %면 영화관처럼 보입니다. 룸이 켜지면 월드 색상이 객석 조명이 되고 화면은 수평으로 유지됩니다(바닥이 기울어지면 어색하게 느껴지므로). '화면이 머리를 따라 이동'과는 함께 쓸 수 없습니다. 위의 '환경'으로 영화관, 야외, 라운지로 꾸밀 수 있습니다. 유리, 반사, 룸 조명은 아래에 있습니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="GlassWalls" xml:space="preserve">
-    <value>유리벽</value>
+    <value>유리 벽</value>
   </data>
   <data name="GlassTip" xml:space="preserve">
-    <value>측면 벽, 후면 벽, 천장을 슬림한 프레임의 유리로 바꿔서 월드 컬러의 수평선으로 이어지는 땅을 내다볼 수 있습니다. 검은색 세계 색상을 사용하면 밤에는 유리방이 됩니다. 프레임과 반사만 보입니다. 0은 단단한 벽, 100은 투명 유리입니다. 스크린이 있는 벽과 바닥이 단단하게 유지됩니다. 유리나 반사에도 1m 바닥 타일이 표시되므로 화면 크기를 미터 단위로 계산할 수 있습니다. 투명한 유리는 빛을 덜 들어오게 하여 방이 조금 더 어두워집니다. Room 환경에서만 가능합니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>옆벽, 뒷벽, 천장을 얇은 프레임의 유리로 바꿔, 월드 색상의 지평선까지 이어지는 땅을 내다볼 수 있게 합니다. 월드 색상이 검은색이면 밤의 유리 룸이 되어 프레임과 반사만 보입니다. 0은 막힌 벽, 100은 투명 유리입니다. 화면이 있는 벽과 바닥은 그대로 막혀 있습니다. 유리나 반사를 켜면 1 m 바닥 타일도 표시되어 화면 크기를 미터 단위로 셀 수 있습니다. 투명한 유리는 빛을 덜 가두므로 룸이 조금 어두워집니다. 룸 환경에서만 사용할 수 있습니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="Reflections" xml:space="preserve">
     <value>반사</value>
   </data>
   <data name="ReflectTip" xml:space="preserve">
-    <value>유리, 벽 및 광택이 나는 바닥이 얼마나 많이 반사되는지: 화면, 빛 및 실내 조명이 거울처럼 나타나 화면이 얼마나 크고 얼마나 멀리 떨어져 있는지 보여줍니다. 반사는 비스듬한 각도에서 더 강해집니다. 0은 없음입니다. Room 환경에서만 가능합니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>유리, 벽, 광택 바닥이 얼마나 반사할지 정합니다. 화면과 그 빛, 룸 조명이 거울처럼 비쳐 화면의 크기와 거리를 가늠할 수 있습니다. 비스듬히 볼수록 반사가 강해집니다. 0은 반사 없음입니다. 룸 환경에서만 사용할 수 있습니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="RoomLight" xml:space="preserve">
-    <value>방 조명</value>
+    <value>룸 조명</value>
   </data>
   <data name="RoomLightTip" xml:space="preserve">
-    <value>바로 위와 뒤의 천장에 부드러운 조명 패널이 있어서 사진이 어두워도 방이 계속 보입니다. 벽이 얼마나 창백한지(방 슬라이더)에 따라 달라집니다. 영화관에서는 벽면 조명과 통로 조명을 제어합니다. 라운지에는 다운라이트와 벽램프가 있어요. 테마가 있는 방에서는 불꽃, 용암, 네온 및 디스플레이도 어두워집니다. 이러한 장식 조명은 룸 슬라이더에도 반응합니다. 야외에는 실내 조명이 없습니다. 0은 꺼져 있습니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>머리 바로 위 약간 뒤쪽 천장에 있는 부드러운 조명 패널로, 영상이 어두울 때도 룸이 보이게 합니다. 벽에 비치는 정도는 벽의 밝기('룸' 슬라이더)에 따라 달라집니다. 영화관에서는 벽등과 통로 조명을, 라운지에서는 다운라이트와 벽 램프를 조절합니다. 테마 룸에서는 불꽃, 용암, 네온, 디스플레이의 밝기도 함께 낮춥니다. 이런 장식 조명은 '룸' 슬라이더에도 반응합니다. 야외에는 룸 조명이 없습니다. 0은 꺼짐입니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="LightColour" xml:space="preserve">
-    <value>연한 색</value>
+    <value>조명 색</value>
   </data>
   <data name="LightColourTip" xml:space="preserve">
-    <value>실내 조명의 색상은 따뜻한 조명(테이블 램프와 같은 2700K)부터 일광(6500K)까지입니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>룸 조명의 색으로, 따뜻한 색(2700 K, 탁상 램프 정도)부터 주광색(6500 K)까지 고를 수 있습니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="LightWarm" xml:space="preserve">
-    <value>따뜻함(2700K)</value>
+    <value>따뜻한 색(2700 K)</value>
   </data>
   <data name="LightSoftWhite" xml:space="preserve">
-    <value>소프트 화이트(3000K)</value>
+    <value>소프트 화이트(3000 K)</value>
   </data>
   <data name="LightNeutral" xml:space="preserve">
-    <value>중립(4000K)</value>
+    <value>중간색(4000 K)</value>
   </data>
   <data name="LightDaylight" xml:space="preserve">
-    <value>일광(6500K)</value>
+    <value>주광색(6500 K)</value>
   </data>
   <data name="LightCustom" xml:space="preserve">
-    <value>커스텀({0})</value>
+    <value>사용자 지정({0})</value>
     <comment>{0} = a colour like #123456</comment>
   </data>
   <data name="ValueOff" xml:space="preserve">
@@ -446,110 +446,110 @@
     <value>불투명</value>
   </data>
   <data name="ValueClearPercent" xml:space="preserve">
-    <value>{0} % 투명</value>
+    <value>투명도 {0} %</value>
     <comment>{0} = how clear the glass is, percent</comment>
   </data>
   <data name="NeedsFixedScreen" xml:space="preserve">
-    <value>고정된 화면이 필요합니다</value>
+    <value>고정 화면 필요</value>
   </data>
   <data name="NeedsRoom" xml:space="preserve">
-    <value>방이 필요해</value>
+    <value>룸 필요</value>
   </data>
   <data name="Strength3D" xml:space="preserve">
     <value>3D 강도</value>
   </data>
   <data name="EnableStereo" xml:space="preserve">
-    <value>스테레오 3D 활성화</value>
+    <value>스테레오 3D 사용</value>
   </data>
   <data name="FastModel" xml:space="preserve">
     <value>빠른 깊이 모델 — ZipDepth</value>
   </data>
   <data name="FastModelTip" xml:space="preserve">
-    <value>켜짐(기본값): ZipDepth, Depth Anything V2(RTX 3090의 경우 2.0ms 대 13.1ms)보다 깊이 추정당 GPU 시간이 약 6배 적으므로 깊이가 게임을 훨씬 더 잘 따라갑니다. 꺼짐: Depth Anything V2, 원래 모델; 깊이 세부 사항은 그들 사이에 약간 다릅니다. 실시간으로 적용됩니다(모델이 로드되는 동안 깊이가 1초 미만 동안 일시 중지됨). 게임별로 저장됩니다.</value>
+    <value>켜짐(기본값): ZipDepth를 사용합니다. 깊이 추정 1회당 GPU 시간이 Depth Anything V2보다 약 6배 적어(RTX 3090에서 2.0 ms 대 13.1 ms) 깊이가 게임을 훨씬 잘 따라갑니다. 꺼짐: 원래 모델인 Depth Anything V2를 사용합니다. 두 모델은 깊이 디테일이 조금 다릅니다. 실시간으로 적용되고(모델을 불러오는 동안 1초 미만 깊이가 멈춤) 게임별로 저장됩니다.</value>
   </data>
   <data name="Subpixel" xml:space="preserve">
-    <value>부드러운 깊이 단계(하위 픽셀 워프)</value>
+    <value>부드러운 깊이 단계(서브픽셀 워프)</value>
   </data>
   <data name="SubpixelTip" xml:space="preserve">
-    <value>켜짐(기본값): 스테레오 전환이 분수 부분을 유지하므로 잔디, 도로, 벽과 같이 부드럽게 뒤로 물러나는 표면이 부드럽게 보입니다. 끄기: 장면을 약 25개의 깊이 밴드로 양자화하고 경작지처럼 능선을 표시할 수 있는 전체 픽셀 이동입니다. Off는 매우 약간 더 선명합니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>켜짐(기본값): 스테레오 이동량의 소수 부분을 유지하므로 잔디, 도로, 벽처럼 멀어지는 표면이 매끄럽게 보입니다. 꺼짐: 픽셀 단위로만 이동해 장면이 약 25개의 깊이 층으로 나뉘고, 갈아 놓은 밭 같은 줄무늬가 보일 수 있습니다. 꺼짐이 아주 약간 더 선명합니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="EdgeFlatten" xml:space="preserve">
-    <value>왼쪽과 오른쪽 가장자리를 평평하게 만듭니다.</value>
+    <value>좌우 가장자리 평탄화</value>
   </data>
   <data name="EdgeFlattenTip" xml:space="preserve">
-    <value>왼쪽 및 오른쪽 가장자리에서 그림 너비의 이 정도에 걸쳐 화면 자체 거리까지 깊이를 부드럽게 가져와 두 눈이 동일한 가장자리를 볼 수 있도록 합니다. 가장자리에 깊이가 있으면 한쪽 눈이 다른 쪽 눈보다 더 넓은 가장자리를 보게 되므로 보기가 피곤해집니다(전체 화면 브라우저에서 가장 많이 표시됨). 해당 밴드 내부의 모든 항목은 더 평평해 보이므로 기본적으로 꺼져 있습니다(깊이에 따른 가장자리). 약 4%는 데스크탑 사용에 적합합니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>영상 좌우 가장자리에서 이 비율만큼의 폭에 걸쳐 깊이를 화면 자체의 거리로 부드럽게 맞춰, 두 눈이 같은 가장자리를 보게 합니다. 가장자리까지 깊이가 있으면 한쪽 눈에 가장자리가 더 넓게 보여 눈이 피로해집니다(전체 화면 브라우저에서 가장 두드러짐). 이 구간 안쪽은 더 평평해 보이므로 기본값은 꺼짐(깊이 그대로의 가장자리)이며, 데스크톱 용도에는 약 4 %가 적당합니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="EdgeSteps" xml:space="preserve">
-    <value>그림 전체의 깊이 가장자리를 깔끔하게 자릅니다. (꺼짐: 기울어짐)</value>
+    <value>영상 전체의 깊이 경계에서 깔끔하게 자르기(끔: 기울임)</value>
   </data>
   <data name="EdgeStepsTip" xml:space="preserve">
-    <value>그림은 각 눈의 옆쪽으로만 이동할 수 있으므로 뒤에 있는 것보다 더 가까운 항목의 위쪽 또는 아래쪽 가장자리에 그림을 그리는 두 가지 방법이 있습니다. 켜기: 그림의 가장자리가 잘려서 옆에 있는 것들이 똑바로 유지됩니다(창 바로 위의 바탕 화면 아이콘). 컷이 실제 가장자리에서 약간 벗어난 위치에서는 캐릭터 머리 위의 얼룩과 같이 작은 조각이 잘못된 쪽으로 이동할 수 있습니다. 꺼짐: 상처는 없지만 가장자리 옆에 있는 부분이 기울어져 있어 두 눈의 반대 방향입니다. 기본적으로 꺼져 있습니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>영상은 눈마다 옆으로만 이동할 수 있으므로, 뒤에 있는 것보다 가까운 물체의 위아래 가장자리를 그리는 방법이 두 가지입니다. 켜짐: 가장자리에서 영상을 잘라 그 옆의 것들이 똑바로 유지됩니다(창 바로 위의 바탕 화면 아이콘 등). 잘린 위치가 실제 가장자리에서 조금 벗어나면 캐릭터 머리 위의 얼룩처럼 작은 조각이 엉뚱한 쪽과 함께 움직일 수 있습니다. 꺼짐: 자르지 않지만 가장자리 옆의 부분이 두 눈에서 서로 반대 방향으로 기울어집니다. 기본값은 꺼짐입니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="EdgeStepMin" xml:space="preserve">
-    <value>최소한 이 깊이만큼 가장자리만 자릅니다.</value>
+    <value>이 깊이 이상인 경계만 자르기</value>
   </data>
   <data name="EdgeStepMinTip" xml:space="preserve">
-    <value>전체 깊이 범위의 일부로 절단되기 전에 모서리 전체의 깊이 변화가 얼마나 커야 하는지입니다. 낮은 부분은 얕은 부분을 포함하여 더 많은 가장자리를 절단합니다. 높을수록 가장 강한 것만 잘라내고(데스크톱 위의 창은 약 60%) 나머지는 기울어지게 둡니다. 기본적으로 12%입니다. 절단이 필요합니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>가장자리를 자르려면 그 경계의 깊이 변화가 전체 깊이 범위의 몇 %가 되어야 하는지 정합니다. 낮추면 얕은 경계까지 더 많이 자르고, 높이면 가장 강한 경계만 자르고(데스크톱 위의 창은 약 60 %) 나머지는 기울어진 채로 둡니다. 기본값은 12 %입니다. 자르기를 켜야 합니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="WidenNear" xml:space="preserve">
     <value>가까운 물체를 위아래로 넓히기</value>
   </data>
   <data name="WidenNearTip" xml:space="preserve">
-    <value>가까운 물체의 깊이가 깊이 모델 자체의 양(100%)과 비교하여 위아래로 얼마나 퍼져 있는지입니다. 더 많이는 개체 자체의 위쪽 및 아래쪽 행을 계속 움직이게 하지만 옆에 있는 항목에 더 멀리 기울어지게 합니다. 0%는 개체 자체의 가장자리에 대한 경사를 유지합니다. 가장자리가 깔끔하게 절단되면 절단면 전체에 아무것도 퍼지지 않습니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>가까운 물체의 깊이를 위아래로 얼마나 넓힐지를 깊이 모델 자체의 양(100 %)과 비교해 정합니다. 높이면 물체의 맨 위아래 줄까지 물체와 함께 움직이지만, 기울어짐이 옆의 것까지 더 번집니다. 0 %는 기울어짐을 물체 자체의 가장자리에 둡니다. 깔끔하게 잘린 가장자리에서는 잘린 곳 너머로 넓히지 않습니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="ThinParts" xml:space="preserve">
-    <value>얇은 부품을 수직으로 유지</value>
+    <value>얇은 부분을 똑바로 유지</value>
   </data>
   <data name="ThinPartsTip" xml:space="preserve">
-    <value>지붕 위의 첨탑, 돛대, 기둥 등 무언가의 얇은 수직 부분은 깊이 모델에서 종종 누락되므로 발이 서있는 것과 함께 끌려가는 동안 배경에 머물며 두 눈에서 반대 방향으로 구부러집니다. 켜짐: 그러한 부분은 그림에서 발견되며, 그 부분이 서 있는 부분의 깊이를 고려하여 하나의 조각으로 함께 움직입니다. 각 깊이 패스(세션 로그에 보고됨)에 작업이 추가되고, 동영상에서 부품이 누락되거나 깜박일 수 있으며, 부품 옆에 약간 얼룩덜룩한 패치가 남을 수 있습니다. 기본적으로 꺼져 있습니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>지붕 위 첨탑, 돛대, 기둥처럼 가늘고 곧게 선 부분은 깊이 모델이 놓치는 경우가 많습니다. 그러면 그 부분은 배경에 남고 밑동은 서 있는 곳과 함께 끌려가서, 두 눈에서 서로 반대 방향으로 휘어 보입니다. 켜짐: 영상에서 이런 부분을 찾아 서 있는 곳의 깊이를 주므로 한 덩어리로 함께 움직입니다. 깊이 처리마다 작업이 늘어나고(세션 로그에 기록됨), 움직이는 영상에서는 일부를 놓치거나 깜박일 수 있으며, 그 옆에 약간 얼룩진 부분이 남을 수 있습니다. 기본값은 꺼짐입니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="SharpenEdges" xml:space="preserve">
-    <value>그림의 깊이 가장자리를 선명하게 합니다.</value>
+    <value>영상에 맞춰 깊이 경계 선명하게</value>
   </data>
   <data name="SharpenEdgesTip" xml:space="preserve">
-    <value>깊이 맵은 그림보다 훨씬 거칠고 가장자리가 부드럽기 때문에 개체 윤곽선 주위의 그림은 기울어진 가장자리, 후광, 개체와 함께 이동하는 배경 조각 등 중간 정도만큼 이동합니다. 켜져 있으면 각 픽셀은 매 프레임마다 비슷하게 보이는 근처 깊이 샘플에서 깊이를 가져오므로 개체의 깊이는 개체가 있는 곳에서 끝납니다. 켜져 있는 동안 가까운 물체의 확대와 위쪽의 깔끔한 절단을 대체합니다. 프레임당 GPU 시간의 약 0.5밀리초가 소요됩니다. 헤드셋에서는 아직 판단되지 않습니다. 시끄러운 비디오에서 가장자리를 따라 깜박일 수 있습니다.</value>
+    <value>깊이 맵은 영상보다 훨씬 거칠고 경계가 흐릿해서, 물체 윤곽 주변의 영상이 어중간한 양만큼 이동합니다. 그래서 가장자리가 기울어지고, 후광이 생기고, 배경 조각이 물체와 함께 움직입니다. 켜면 매 프레임 각 픽셀이 주변 깊이 샘플 중 자신과 비슷해 보이는 것에서 깊이를 가져오므로, 물체의 깊이가 물체 경계에서 정확히 끝납니다. 켜져 있는 동안에는 가까운 물체 넓히기와 위의 깔끔한 자르기를 대신합니다. 프레임당 GPU 시간이 약 0.5 ms 듭니다. 아직 헤드셋에서 검증되지 않았으며, 노이즈가 많은 동영상에서는 가장자리가 깜박일 수 있습니다.</value>
   </data>
   <data name="BackLayer" xml:space="preserve">
-    <value>배경 레이어에서 개체 뒤 채우기</value>
+    <value>배경 레이어로 물체 뒤 채우기</value>
   </data>
   <data name="BackLayerTip" xml:space="preserve">
-    <value>가까운 물체가 눈을 위해 옆으로 움직일 때, 그 뒤에 있던 것의 띠가 그 옆에, 그 눈에만 보입니다. 일반적으로 해당 스트립은 미러링된 배경과 함께 한 줄씩 채워집니다. 켜면 가까운 물체 뒤의 배경이 양쪽 눈에 대해 한 번 만들어지며 스트립은 양쪽 눈의 동일한 숨겨진 표면, 행이 일치하고 그림에 아무것도 없는 부분이 부드럽다는 것을 보여줍니다. 날카로운 깊이 가장자리에 가장 잘 작동합니다. 거울에 비친 그림보다 부드럽습니다. 아직 헤드셋에서 판단되지 않았습니다.</value>
+    <value>가까운 물체가 한쪽 눈을 위해 옆으로 이동하면, 그 눈에서만 물체 뒤에 있던 띠 모양 영역이 드러납니다. 보통은 이 영역을 바로 옆 배경을 줄마다 거울처럼 뒤집어 채웁니다. 켜면 가까운 물체 뒤의 배경을 양옆 배경으로부터 두 눈 공통으로 한 번 만들어 그 영역에 보여 줍니다. 두 눈에 같은 가려진 면이 보이고 줄이 서로 맞으며, 영상에 정보가 없던 곳은 부드럽게 처리됩니다. 깊이 경계를 선명하게 하는 옵션과 함께 쓰면 가장 좋습니다. 거울 방식보다 부드럽고, 아직 헤드셋에서 검증되지 않았습니다.</value>
   </data>
   <data name="ShowDepthMap" xml:space="preserve">
     <value>게임 대신 깊이 맵 표시</value>
   </data>
   <data name="ShowDepthMapTip" xml:space="preserve">
-    <value>3D에 사용되는 깊이를 평면 회색조 이미지로 표시합니다. 흰색은 가깝고 검은색은 멀습니다. 날카로운 모서리를 포함하여 위의 모든 설정 이후의 깊이입니다. 즉시 적용됩니다. 사용할 수 없는 깊이 맵은 검은색으로 표시됩니다. 게임으로 돌아가려면 선택을 취소하세요.</value>
+    <value>3D에 쓰이는 깊이를 평면 흑백 이미지로 보여 줍니다. 흰색은 가깝고 검은색은 멉니다. 선명하게 한 경계를 포함해 위의 모든 설정이 적용된 뒤의 깊이입니다. 즉시 적용됩니다. 깊이 맵을 쓸 수 없으면 검은색으로 표시됩니다. 게임으로 돌아가려면 선택을 해제하세요.</value>
   </data>
   <data name="Steady" xml:space="preserve">
-    <value>일정한 깊이 — 모션 벡터</value>
+    <value>안정된 깊이 — 모션 벡터</value>
   </data>
   <data name="SteadyTip" xml:space="preserve">
-    <value>깊이 쉬머 감소: 각각의 새로운 깊이 추정은 이전 추정과 혼합되고 그래픽 카드의 하드웨어 모션 추정기(셰이더 코어가 아닌 비디오 엔진)에 의해 현재 위치로 이동됩니다. 모션이 확인된 경우에만 이동 가장자리가 따라가지 않아야 합니다. 변경되지 않은 그림의 부분은 깊이를 거의 그대로 유지하므로 다른 부분을 변경해도 그림이 꿈틀거리지 않습니다. 기본적으로 켜져 있습니다. 하드웨어 모션 추정기가 있는 모든 GPU에서 작동합니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>깊이 떨림을 줄입니다. 새 깊이 추정을 이전 추정과 섞되, 이전 추정은 그래픽 카드의 하드웨어 모션 추정기(셰이더 코어가 아닌 비디오 엔진)로 지금 위치에 맞춰 옮깁니다. 움직임이 확인된 곳에서만 적용하므로 움직이는 가장자리에 잔상이 남지 않아야 합니다. 바뀌지 않은 부분은 깊이를 거의 그대로 유지하므로 다른 곳이 바뀌어도 떨리지 않습니다. 기본값은 켜짐이며, 하드웨어 모션 추정기가 있는 모든 GPU에서 작동합니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="Fuse" xml:space="preserve">
-    <value>Depth Anything V2와 퓨즈</value>
+    <value>Depth Anything V2와 융합</value>
   </data>
   <data name="FuseTip" xml:space="preserve">
-    <value>ZipDepth와 함께 Depth Anything V2를 실행합니다. ZipDepth는 깊이를 빠르게 유지하고 Depth Anything은 더 자세한 레이어링을 제공하며 모션 벡터를 사용하여 현재 프레임으로 이동합니다. 깊이 GPU로 선택한 다른 GPU와 가장 잘 맞습니다. 하나의 GPU에서는 초당 최대 10번 실행됩니다. 빠른 깊이 모델이 필요합니다. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>ZipDepth와 함께 Depth Anything V2를 실행합니다. ZipDepth는 깊이를 빠르게 유지하고, Depth Anything은 더 세밀한 층 구분을 제공하며 모션 벡터로 현재 프레임에 맞춰 옮겨집니다. 다른 GPU를 깊이 GPU로 선택했을 때 가장 좋으며, GPU가 하나면 초당 최대 10번 실행됩니다. 빠른 깊이 모델이 필요합니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="FuseHint" xml:space="preserve">
-    <value>두 번째 깊이 GPU를 사용하면 융합이 가장 좋습니다. 둘 다 함께 사용할 수 있습니다.</value>
+    <value>융합은 두 번째 깊이 GPU가 있을 때 가장 좋습니다. 둘을 함께 쓸 수 있습니다.</value>
   </data>
   <data name="DepthGpu" xml:space="preserve">
     <value>깊이 GPU</value>
   </data>
   <data name="DepthGpuTip" xml:space="preserve">
-    <value>깊이 모델을 실행하는 그래픽 카드입니다. 또 다른 카드는 GPU 시간 동안 게임과 깊이 경쟁하는 것을 중지합니다. 캡처 단계는 각 프레임을 자동으로 전송합니다. 선택한 카드가 누락된 경우 VRX는 게임의 GPU를 사용합니다. 다음에 연결/재생을 누를 때 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>깊이 모델을 실행할 그래픽 카드입니다. 다른 카드를 쓰면 깊이 처리가 게임과 GPU 시간을 다투지 않으며, 캡처 단계에서 각 프레임을 자동으로 넘겨 줍니다. 선택한 카드가 없으면 VRX는 게임의 GPU를 사용합니다. 다음에 '연결 / 플레이'를 누를 때 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="DepthGpuHint" xml:space="preserve">
-    <value>또 다른 GPU는 게임이 자체 카드를 완전히 사용하는 동안 깊이를 빠르게 유지합니다. 다음 Attach / Play 시 적용됩니다.</value>
+    <value>다른 GPU를 쓰면 게임이 자기 카드를 온전히 쓰는 동안에도 깊이가 빠르게 유지됩니다. 다음 '연결 / 플레이' 때 적용됩니다.</value>
   </data>
   <data name="GpuSame" xml:space="preserve">
     <value>게임과 동일한 GPU(기본값)</value>
   </data>
   <data name="GpuAuto" xml:space="preserve">
-    <value>기타 GPU(자동)</value>
+    <value>다른 GPU 아무거나(자동)</value>
   </data>
   <data name="GpuLabel" xml:space="preserve">
     <value>{0} ({1})</value>
@@ -568,50 +568,50 @@
     <comment>{0} = megabytes</comment>
   </data>
   <data name="GpuNotFound" xml:space="preserve">
-    <value>찾을 수 없음: {0}(게임의 GPU가 사용됨)</value>
+    <value>찾을 수 없음: {0}(게임의 GPU 사용)</value>
     <comment>{0} = GPU name</comment>
   </data>
   <data name="ForegroundPasses" xml:space="preserve">
-    <value>추가 전경 깊이 패스</value>
+    <value>전경 깊이 추가 패스</value>
   </data>
   <data name="ForegroundTip" xml:space="preserve">
-    <value>시간이 허용되면 지속적인 인근 지역에 추가 세부 정보 전달을 제공합니다. 더 많은 GPU 시간을 사용합니다. 개선 사항은 장면에 따라 다릅니다. 비교하려면 재생 중에 전환하세요.</value>
+    <value>시간 여유가 있을 때 계속 가까이 있는 영역에 디테일 패스를 한 번 더 수행합니다. GPU 시간이 더 들고, 개선 정도는 장면마다 다릅니다. 플레이 중에 켜고 꺼서 비교해 보세요.</value>
   </data>
   <data name="FrameTiming" xml:space="preserve">
     <value>게임 프레임 타이밍</value>
   </data>
   <data name="FrameTimingTip" xml:space="preserve">
-    <value>깊이와 함께 표시되는 게임 프레임입니다. 최신 프레임(기본값): 부드럽고 즉각적입니다. 깊이는 움직이는 물체보다 약간 뒤떨어집니다. 깊이 지연: 게임 이미지가 깊이 지연으로 인해 지연되어 훨씬 더 잘 정렬되고 모션이 부드럽게 유지됩니다. 깊이에 일치: 각 깊이 추정치는 해당 프레임의 정확한 출처입니다. 최상의 정렬이지만 게임 모션은 깊이 비율로만 업데이트됩니다. 지연 및 일치 추가 지연. 실시간으로 적용됩니다. 게임별로 저장됩니다.</value>
+    <value>깊이와 함께 표시할 게임 프레임입니다. 최신 프레임(기본값): 부드럽고 즉각적이지만, 움직이는 물체보다 깊이가 약간 늦습니다. 깊이에 맞춰 지연: 게임 영상을 깊이 지연만큼 늦춰 둘이 훨씬 잘 맞고 움직임도 부드럽습니다. 깊이와 일치: 각 깊이 추정을 그 원본 프레임과 정확히 짝지어 정렬이 가장 좋지만, 게임 움직임이 깊이 속도로만 갱신됩니다. 지연과 일치는 지연 시간이 늘어납니다. 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="TimingLatest" xml:space="preserve">
     <value>최신 프레임(기본값)</value>
   </data>
   <data name="TimingDelayed" xml:space="preserve">
-    <value>깊이까지 지연됨 - 매끄럽고 약간 뒤처짐</value>
+    <value>깊이에 맞춰 지연 — 부드럽고 약간 늦음</value>
   </data>
   <data name="TimingMatched" xml:space="preserve">
-    <value>깊이에 일치 - 정확함, 깊이 비율로 업데이트</value>
+    <value>깊이와 일치 — 정확, 깊이 속도로 갱신</value>
   </data>
   <data name="ExperimentalHint" xml:space="preserve">
-    <value>옵션은 아직 시험 중입니다. GPU 시간이 걸리거나, 일부 게임에서 잘못 보이거나, 이후 버전에서 변경될 수 있습니다. 모두 실시간으로 적용되며 게임별로 저장됩니다.</value>
+    <value>아직 시험 중인 옵션입니다. GPU 시간이 더 들거나, 일부 게임에서 이상하게 보이거나, 이후 버전에서 바뀔 수 있습니다. 모두 실시간으로 적용되고 게임별로 저장됩니다.</value>
   </data>
   <data name="TimingHint" xml:space="preserve">
-    <value>지연 및 매칭 라인은 게임의 깊이를 더 좋게 만들지만 나중에 게임을 보여줍니다.</value>
+    <value>'깊이에 맞춰 지연'과 '깊이와 일치'는 깊이를 게임과 더 잘 맞추지만 게임이 더 늦게 표시됩니다.</value>
   </data>
   <data name="DismissOnStart" xml:space="preserve">
-    <value>재생이 시작되면 SteamVR 메뉴 닫기</value>
+    <value>플레이가 시작되면 SteamVR 메뉴 닫기</value>
   </data>
   <data name="KeyboardShortcuts" xml:space="preserve">
     <value>키보드 단축키</value>
   </data>
   <data name="ShortcutRecenter" xml:space="preserve">
-    <value>최근</value>
+    <value>중앙 재설정</value>
   </data>
   <data name="ShortcutDismiss" xml:space="preserve">
     <value>SteamVR 메뉴 닫기</value>
   </data>
   <data name="ShortcutsHint" xml:space="preserve">
-    <value>바로가기는 VR 재생 중에 작동하며 게임에도 연결됩니다. 게임 컨트롤과 충돌하지 않는 키를 선택하십시오.</value>
+    <value>단축키는 VR 플레이 중에 작동하며 게임에도 전달됩니다. 게임 조작과 겹치지 않는 키를 고르세요.</value>
   </data>
   <data name="KeyHome" xml:space="preserve">
     <value>Home</value>
@@ -630,17 +630,17 @@
     <comment>Keyboard key name</comment>
   </data>
   <data name="ProfileHint" xml:space="preserve">
-    <value>설정을 변경하면 각 게임에 대한 설정이 저장됩니다. 이 버튼은 게임 간에 복사됩니다.</value>
+    <value>설정은 바꿀 때마다 게임별로 저장됩니다. 이 버튼들은 설정을 게임 간에 복사합니다.</value>
   </data>
   <data name="StatusSeparator" xml:space="preserve">
     <value> · </value>
     <comment>Joins independent status messages; keep the spaces.</comment>
   </data>
   <data name="StatusReady" xml:space="preserve">
-    <value>준비됨 · 데스크톱 컨트롤만 해당</value>
+    <value>준비됨 · 데스크톱 컨트롤만</value>
   </data>
   <data name="StatusPlaying" xml:space="preserve">
-    <value>재생 중 · {0}</value>
+    <value>플레이 중 · {0}</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStopped" xml:space="preserve">
@@ -651,62 +651,62 @@
     <comment>{0} = the reason (English, from the renderer) or SeeSessionDetails</comment>
   </data>
   <data name="SeeSessionDetails" xml:space="preserve">
-    <value>아래의 세션 세부정보를 참조하세요.</value>
+    <value>아래 '세션 정보'를 확인하세요.</value>
   </data>
   <data name="StatusRefreshFailed" xml:space="preserve">
     <value>애플리케이션을 새로 고칠 수 없습니다: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusChooseWindow" xml:space="preserve">
-    <value>{0}에 대해 캡처할 창을 선택하세요.</value>
+    <value>{0}에서 캡처할 창을 선택하세요</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusReadyFor" xml:space="preserve">
-    <value>{0}에 대한 준비 · 설정</value>
+    <value>준비됨 · {0} 설정</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusSavedPlaying" xml:space="preserve">
-    <value>재생 중 · {0}용으로 저장됨</value>
+    <value>플레이 중 · {0}에 저장됨</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusSaved" xml:space="preserve">
-    <value>{0}용으로 저장됨</value>
+    <value>{0}에 저장됨</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStarting" xml:space="preserve">
-    <value>VR 시작 · {0}</value>
+    <value>VR 시작 중 · {0}</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStopping" xml:space="preserve">
     <value>VR 중지 중…</value>
   </data>
   <data name="StatusStopFailed" xml:space="preserve">
-    <value>VR을 중지할 수 없음: {0}</value>
+    <value>VR을 중지할 수 없습니다: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusStillStopping" xml:space="preserve">
-    <value>VRX가 여전히 중지 중입니다. 중지된 후 다시 닫습니다.</value>
+    <value>VRX가 아직 중지 중입니다. 중지된 뒤 다시 닫으세요.</value>
   </data>
   <data name="StatusRecenter" xml:space="preserve">
-    <value>최근 요청됨 · 현재 헤드셋 방향을 사용합니다.</value>
+    <value>중앙 재설정 요청됨 · 현재 헤드셋 방향 사용</value>
   </data>
   <data name="StatusDismiss" xml:space="preserve">
-    <value>SteamVR 메뉴 해제를 요청했습니다.</value>
+    <value>SteamVR 메뉴 닫기 요청됨</value>
   </data>
   <data name="StatusResetBase" xml:space="preserve">
-    <value>기본 설정으로 재설정</value>
+    <value>기준 설정으로 초기화됨</value>
   </data>
   <data name="StatusResetDefault" xml:space="preserve">
-    <value>VRX의 기본 설정으로 재설정</value>
+    <value>VRX 기본값으로 초기화됨</value>
   </data>
   <data name="StatusBaseSelectFirst" xml:space="preserve">
-    <value>먼저 게임을 선택한 다음 해당 설정을 기본으로 저장하세요.</value>
+    <value>먼저 게임을 선택한 뒤 그 설정을 기준 설정으로 저장하세요.</value>
   </data>
   <data name="StatusBaseSaved" xml:space="preserve">
-    <value>기본 설정이 저장되었습니다 · 아직 설정하지 않은 게임은 이 설정에서 시작됩니다</value>
+    <value>기준 설정 저장됨 · 아직 설정하지 않은 게임은 이 설정으로 시작합니다</value>
   </data>
   <data name="StatusBaseFailed" xml:space="preserve">
-    <value>기본 설정을 저장할 수 없습니다: {0}</value>
+    <value>기준 설정을 저장할 수 없습니다: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusAppSettingsFailed" xml:space="preserve">
@@ -714,64 +714,64 @@
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusApplyAllSelectFirst" xml:space="preserve">
-    <value>먼저 게임을 선택한 다음 해당 설정을 모든 게임에 적용하세요.</value>
+    <value>먼저 게임을 선택한 뒤 그 설정을 모든 게임에 적용하세요.</value>
   </data>
   <data name="StatusApplyAllCancelled" xml:space="preserve">
-    <value>취소된 모든 항목에 적용 · 변경된 사항 없음</value>
+    <value>모두에 적용 취소됨 · 변경된 내용 없음</value>
   </data>
   <data name="StatusApplyAllFailed" xml:space="preserve">
-    <value>모든 게임에 적용할 수 없음: {0}</value>
+    <value>모든 게임에 적용할 수 없습니다: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="AppliedAllOne" xml:space="preserve">
-    <value>{0} 저장된 게임에 적용된 설정</value>
+    <value>저장된 게임 {0}개에 설정을 적용했습니다</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="AppliedAllOther" xml:space="preserve">
-    <value>모든 {0} 저장된 게임에 적용되는 설정</value>
+    <value>저장된 게임 {0}개 모두에 설정을 적용했습니다</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="AppliedSomeOne" xml:space="preserve">
-    <value>{0} 저장된 게임에 적용된 설정</value>
+    <value>저장된 게임 {0}개에 설정을 적용했습니다</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="AppliedSomeOther" xml:space="preserve">
-    <value>{0} 저장된 게임에 적용되는 설정</value>
+    <value>저장된 게임 {0}개에 설정을 적용했습니다</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="SkippedOne" xml:space="preserve">
-    <value>{0} 읽을 수 없는 프로필은 변경되지 않은 채로 남아 있습니다.</value>
+    <value>읽을 수 없는 프로필 {0}개는 변경하지 않았습니다</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="SkippedOther" xml:space="preserve">
-    <value>{0} 읽을 수 없는 프로필은 변경되지 않은 채로 남아 있습니다.</value>
+    <value>읽을 수 없는 프로필 {0}개는 변경하지 않았습니다</value>
     <comment>{0} = number of profiles</comment>
   </data>
   <data name="FailedWrite" xml:space="preserve">
-    <value>{0}를 쓸 수 없으며(읽기 전용 또는 사용 중) 이전 설정을 유지할 수 없습니다.</value>
+    <value>{0}개는 쓸 수 없어(읽기 전용 또는 사용 중) 이전 설정을 유지합니다</value>
     <comment>{0} = number of profiles</comment>
   </data>
   <data name="ApplyAllTitle" xml:space="preserve">
     <value>모든 게임에 적용</value>
   </data>
   <data name="ApplyAllQuestionOne" xml:space="preserve">
-    <value>여기에 표시된 설정을 {0} 저장된 게임에 적용하시겠습니까?
+    <value>여기 표시된 설정을 저장된 게임 {0}개에 적용할까요?
 
-모든 게임의 화면 배치, 3D 강도, 깊이 옵션, 깊이 GPU 및 단축키가 이것들로 대체됩니다. 각 게임은 고유한 경로와 창을 유지합니다.
+모든 게임의 화면 배치, 3D 강도, 깊이 옵션, 깊이 GPU, 단축키가 이 설정으로 바뀝니다. 각 게임의 경로와 창은 그대로 유지됩니다.
 
-이 작업은 취소할 수 없습니다. 아직 설정하지 않은 게임은 기본 설정에서 시작됩니다.</value>
+이 작업은 되돌릴 수 없습니다. 아직 설정하지 않은 게임은 여전히 기준 설정에서 시작합니다.</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="ApplyAllQuestionOther" xml:space="preserve">
-    <value>여기에 표시된 설정을 모든 {0} 저장된 게임에 적용하시겠습니까?
+    <value>여기 표시된 설정을 저장된 게임 {0}개 모두에 적용할까요?
 
-모든 게임의 화면 배치, 3D 강도, 깊이 옵션, 깊이 GPU 및 단축키가 이들로 대체됩니다. 각 게임은 고유한 경로와 창을 유지합니다.
+모든 게임의 화면 배치, 3D 강도, 깊이 옵션, 깊이 GPU, 단축키가 이 설정으로 바뀝니다. 각 게임의 경로와 창은 그대로 유지됩니다.
 
-이 작업은 취소할 수 없습니다. 아직 설정하지 않은 게임은 기본 설정에서 시작됩니다.</value>
+이 작업은 되돌릴 수 없습니다. 아직 설정하지 않은 게임은 여전히 기준 설정에서 시작합니다.</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="AutoCountdown" xml:space="preserve">
-    <value>{1}의 {0}에 VRX 연결 - 취소하려면 창 전환</value>
+    <value>{1}초 후 {0}에 VRX 연결 - 창을 전환하면 취소</value>
     <comment>{0} = game title, {1} = seconds left</comment>
   </data>
   <data name="AutoTheGame" xml:space="preserve">
@@ -779,15 +779,15 @@
     <comment>Used as {0} in AutoCountdown when the game has no name</comment>
   </data>
   <data name="StatusAutoListFailed" xml:space="preserve">
-    <value>자동 연결이 응용 프로그램을 나열할 수 없습니다: {0}</value>
+    <value>자동 연결이 애플리케이션 목록을 가져올 수 없습니다: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusAutoGone" xml:space="preserve">
-    <value>자동 연결: {0}는 더 이상 사용할 수 없습니다.</value>
+    <value>자동 연결: {0}을(를) 더 이상 사용할 수 없습니다</value>
     <comment>{0} = game name</comment>
   </data>
   <data name="StatusAutoStarted" xml:space="preserve">
-    <value>자동 연결 · VR 시작 · {0}</value>
+    <value>자동 연결됨 · VR 시작 중 · {0}</value>
     <comment>{0} = game name</comment>
   </data>
   <data name="OverlayTitle" xml:space="preserve">
@@ -797,16 +797,16 @@
     <value>먼저 게임을 선택하세요.</value>
   </data>
   <data name="ErrorWorldColour" xml:space="preserve">
-    <value>월드 컬러는 #1C1C1E와 같이 6자리 16진수여야 합니다. 변경사항은 완료될 때까지 저장되지 않습니다.</value>
+    <value>월드 색상은 #1C1C1E처럼 16진수 6자리여야 합니다. 올바르게 입력할 때까지 변경 사항이 저장되지 않습니다.</value>
   </data>
   <data name="ErrorShortcutsConflict" xml:space="preserve">
-    <value>서로 다른 두 가지 단축키를 선택하세요. 설정이 유효해질 때까지 변경 사항은 저장되지 않습니다.</value>
+    <value>서로 다른 단축키 두 개를 선택하세요. 설정이 올바를 때까지 변경 사항이 저장되지 않습니다.</value>
   </data>
   <data name="ErrorSettingsInvalid" xml:space="preserve">
     <value>설정이 허용된 범위를 벗어났거나 단축키가 충돌합니다.</value>
   </data>
   <data name="ErrorProfileInvalid" xml:space="preserve">
-    <value>이 게임의 저장된 설정이 유효하지 않습니다. 덮어쓰지 않았습니다.</value>
+    <value>이 게임에 저장된 설정이 올바르지 않습니다. 덮어쓰지 않았습니다.</value>
   </data>
   <data name="ErrorStopFirst" xml:space="preserve">
     <value>먼저 현재 세션을 중지하세요.</value>
@@ -815,45 +815,45 @@
     <value>다른 VRX 세션이 실행 중입니다. 여기에 연결하기 전에 해당 세션을 닫으세요.</value>
   </data>
   <data name="DesktopWhenAway" xml:space="preserve">
-    <value>게임을 종료할 때 바탕 화면을 표시합니다.</value>
+    <value>게임에서 벗어나면 데스크톱 표시</value>
   </data>
   <data name="DesktopWhenAwayHint" xml:space="preserve">
-    <value>게임이 앞에 있지 않은 동안 - Ctrl+Esc 이후, Windows 키 또는 Alt+Tab - VR은 게임이 진행 중인 디스플레이를 표시합니다. 게임으로 돌아가면 VR이 게임을 다시 보여줍니다. 게임이 종료되면 VR 중지를 누를 때까지 VR이 데스크탑에서 계속됩니다. Attach / Play 시 적용됩니다.</value>
+    <value>게임이 맨 앞에 있지 않을 때(Ctrl+Esc, Windows 키, Alt+Tab 이후) VR에는 게임이 있던 디스플레이가 표시됩니다. 게임으로 돌아가면 VR에 다시 게임이 표시됩니다. 게임이 종료되면 'VR 중지'를 누를 때까지 VR에 데스크톱이 계속 표시됩니다. '연결 / 플레이' 때 적용됩니다.</value>
   </data>
   <data name="CardDesktop" xml:space="preserve">
-    <value>데스크탑</value>
+    <value>데스크톱</value>
     <comment>The game card while VR shows the display instead of the game.</comment>
   </data>
   <data name="CardShowingDesktop" xml:space="preserve">
-    <value>데스크탑 표시 · {0}가 앞에 있을 때 다시 돌아가기</value>
+    <value>데스크톱 표시 중 · {0}이(가) 맨 앞에 오면 돌아갑니다</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="CardGameClosed" xml:space="preserve">
-    <value>{0}가 닫혔습니다. VR 중지를 누를 때까지 바탕 화면을 표시합니다.</value>
+    <value>{0} 종료됨 · 'VR 중지'를 누를 때까지 데스크톱 표시</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="StatusGameClosedDesktop" xml:space="preserve">
-    <value>{0}가 종료되었습니다. VR은 Stop VR을 누를 때까지 데스크탑을 표시합니다.</value>
+    <value>{0}이(가) 종료되었습니다. 'VR 중지'를 누를 때까지 VR에 데스크톱이 표시됩니다.</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="ErrorScreenChanged" xml:space="preserve">
-    <value>목록이 작성된 이후 표시가 변경되었습니다. 다시 선택하세요.</value>
+    <value>목록을 만든 뒤 디스플레이 구성이 바뀌었습니다. 다시 선택하세요.</value>
   </data>
   <data name="ChooseButton" xml:space="preserve">
     <value>선택…</value>
     <comment>Opens the chooser: pictures of every window and display.</comment>
   </data>
   <data name="ChooseTip" xml:space="preserve">
-    <value>라이브 사진에서 창이나 전체 화면을 선택하고 VR에서 재생</value>
+    <value>실시간 미리보기에서 창이나 전체 화면을 골라 VR에서 플레이합니다</value>
   </data>
   <data name="ChooserTitle" xml:space="preserve">
-    <value>무엇을 재생할지 선택하세요</value>
+    <value>플레이할 대상 선택</value>
   </data>
   <data name="ChooserIntro" xml:space="preserve">
-    <value>창이나 화면을 클릭하면 VR로 재생됩니다.</value>
+    <value>창이나 화면을 클릭하면 VR에서 플레이합니다.</value>
   </data>
   <data name="ChooserWindows" xml:space="preserve">
-    <value>윈도우</value>
+    <value>창</value>
   </data>
   <data name="ChooserNoWindows" xml:space="preserve">
     <value>표시할 창이 없습니다. 게임을 시작한 다음 다시 선택하세요.</value>
@@ -862,13 +862,13 @@
     <value>전체 화면</value>
   </data>
   <data name="ChooserScreensHint" xml:space="preserve">
-    <value>데스크톱이나 비디오 플레이어 등 해당 디스플레이에 표시되는 모든 것. Stop VR을 누를 때까지 재생됩니다.</value>
+    <value>데스크톱이나 동영상 플레이어 등 해당 디스플레이에 표시되는 모든 것입니다. 'VR 중지'를 누를 때까지 재생됩니다.</value>
   </data>
   <data name="ChooserMainDisplay" xml:space="preserve">
     <value>메인 디스플레이</value>
   </data>
   <data name="ChooserMinimized" xml:space="preserve">
-    <value>{0} · 최소화</value>
+    <value>{0} · 최소화됨</value>
     <comment>{0} = executable name</comment>
   </data>
   <data name="WholeScreen" xml:space="preserve">
@@ -886,32 +886,32 @@
     <value>디스플레이 1개</value>
   </data>
   <data name="ScreenDescriptionOther" xml:space="preserve">
-    <value>{0} 디스플레이</value>
+    <value>디스플레이 {0}개</value>
     <comment>{0} = number of displays</comment>
   </data>
   <data name="PathWholeScreen" xml:space="preserve">
-    <value>디스플레이에 모든 것이 표시됩니다. 하나의 설정 세트가 모든 디스플레이에서 공유됩니다.</value>
+    <value>디스플레이에 표시되는 모든 것입니다. 모든 디스플레이가 하나의 설정을 공유합니다.</value>
   </data>
   <data name="StatusChoiceGone" xml:space="preserve">
-    <value>해당 창이나 디스플레이는 더 이상 존재하지 않습니다. 다시 선택하세요.</value>
+    <value>그 창이나 디스플레이가 더 이상 없습니다. 다시 선택하세요.</value>
   </data>
   <data name="ErrorEngineBlockedPolicy" xml:space="preserve">
-    <value>Windows에서 VRX의 3D 엔진(engine\xrplayer.exe)을 차단했습니다. 이는 일반적으로 아직 디지털 서명되지 않은 새 프로그램을 중지하고 VRX의 프로그램이 아직 서명되지 않은 스마트 앱 제어입니다. 지금 플레이하려면 Windows 보안 &gt; 앱 및 브라우저 제어 &gt; 스마트 앱 제어 설정에서 스마트 앱 제어를 끄세요. Windows에서는 재설정 없이는 다시 켜는 것이 허용되지 않을 수 있습니다. 직장이나 학교 PC에서는 관리자에게 문의하세요.</value>
+    <value>Windows가 VRX의 3D 엔진(engine\xrplayer.exe)을 차단했습니다. 대개 Smart App Control 때문입니다. 이 기능은 아직 디지털 서명이 없는 새 프로그램을 막는데, VRX 프로그램은 아직 서명되지 않았습니다. 지금 플레이하려면 Windows 보안 &gt; 앱 및 브라우저 컨트롤 &gt; 스마트 앱 컨트롤 설정에서 Smart App Control을 끄세요. 한 번 끄면 Windows를 재설정하지 않고는 다시 켜지 못할 수 있습니다. 회사나 학교 PC라면 관리자에게 문의하세요.</value>
   </data>
   <data name="ErrorEngineBlockedAntivirus" xml:space="preserve">
-    <value>바이러스 백신이 VRX의 3D 엔진(engine\xrplayer.exe) 실행을 중지했습니다. GitHub 릴리스에서 VRX를 다운로드한 경우 SHA256SUMS.txt에 대해 다운로드를 확인한 다음 바이러스 백신에서 파일을 허용하고 오탐지로 보고할 수 있습니다.</value>
+    <value>백신 프로그램이 VRX의 3D 엔진(engine\xrplayer.exe) 실행을 막았습니다. VRX를 GitHub 릴리스에서 받았다면 다운로드한 파일을 SHA256SUMS.txt와 대조해 확인한 뒤, 백신에서 파일을 허용하고 오탐으로 신고할 수 있습니다.</value>
   </data>
   <data name="ErrorProcessChanged" xml:space="preserve">
-    <value>선택한 프로세스가 닫혔거나 변경되었습니다. 목록을 새로 고칩니다.</value>
+    <value>선택한 프로세스가 종료되었거나 바뀌었습니다. 목록을 새로 고치세요.</value>
   </data>
   <data name="ErrorRendererMissing" xml:space="preserve">
-    <value>VRX 렌더러가 없습니다. VRX를 다시 설치하거나 프로젝트를 빌드하십시오.</value>
+    <value>VRX 렌더러가 없습니다. VRX를 다시 설치하거나 프로젝트를 빌드하세요.</value>
   </data>
   <data name="ErrorBuildRenderer" xml:space="preserve">
-    <value>bench/native/openxr/build.bat --desktop를 사용하여 먼저 데스크탑 렌더러를 빌드합니다.</value>
+    <value>먼저 bench/native/openxr/build.bat --desktop으로 데스크톱 렌더러를 빌드하세요.</value>
   </data>
   <data name="LogStopTimeout" xml:space="preserve">
-    <value>VRX가 제 시간에 멈추지 않았습니다. 렌더러를 종료합니다. 게임은 영향을 받지 않습니다.</value>
+    <value>VRX가 제때 중지되지 않아 렌더러를 종료합니다. 게임에는 영향이 없습니다.</value>
   </data>
   <data name="Controllers" xml:space="preserve">
     <value>컨트롤러</value>
@@ -923,19 +923,19 @@
     <value>켜짐</value>
   </data>
   <data name="ControllersTip" xml:space="preserve">
-    <value>선택적 모션 컨트롤러 설정. 컨트롤러 메뉴 버튼을 누르면 현재 보고 있는 패널을 표시하거나 숨길 수 있습니다. 제목 표시줄을 선택하거나 드래그하려면 트리거를 가리키고 쥐세요. 스크롤하려면 엄지스틱을 사용하세요. 인덱스/일반 컨트롤러는 썸스틱 클릭을 사용합니다. VR 컨트롤러 모드와 XR 입력 포커스가 필요합니다.</value>
+    <value>선택 사항인 모션 컨트롤러 설정입니다. 컨트롤러의 메뉴 버튼을 누르면 보고 있는 곳에 패널을 표시하거나 숨깁니다. 가리킨 뒤 트리거를 당겨 선택하거나 제목 표시줄을 드래그하고, 썸스틱으로 스크롤합니다. Index/일반 컨트롤러는 썸스틱 클릭을 사용합니다. VR 컨트롤러 모드와 XR 입력 포커스가 필요합니다.</value>
   </data>
   <data name="ControllerMenuTitle" xml:space="preserve">
     <value>VRX 설정</value>
   </data>
   <data name="ControllerMenuHint" xml:space="preserve">
-    <value>메뉴: 표시 또는 숨기기 · 포인트 + 트리거: 선택 · 썸스틱: 스크롤</value>
+    <value>메뉴: 표시/숨기기 · 가리키기 + 트리거: 선택 · 썸스틱: 스크롤</value>
   </data>
   <data name="ControllerMenuDrag" xml:space="preserve">
-    <value>여기서 트리거를 누른 채 패널 이동</value>
+    <value>여기서 트리거를 누른 채 이동</value>
   </data>
   <data name="ControllerMenuBack" xml:space="preserve">
-    <value>뒤로 / 설정 항목</value>
+    <value>뒤로 / 섹션</value>
   </data>
   <data name="ControllerMenuControlScreen" xml:space="preserve">
     <value>화면 제어</value>
@@ -953,7 +953,7 @@
     <value>이미지 폴더 열기</value>
   </data>
   <data name="SnapshotTitle" xml:space="preserve">
-    <value>스냅샷 · 이동하려면 제목을 누르세요.</value>
+    <value>스냅샷 · 제목을 누른 채 이동</value>
   </data>
   <data name="SnapshotSave" xml:space="preserve">
     <value>저장</value>
@@ -965,16 +965,16 @@
     <value>닫기</value>
   </data>
   <data name="SnapshotSaved" xml:space="preserve">
-    <value>VRX/이미지에 저장됨</value>
+    <value>VRX / images에 저장됨</value>
   </data>
   <data name="SnapshotLimit" xml:space="preserve">
-    <value>부동 창을 닫아 다른 창을 위한 공간을 확보하세요.</value>
+    <value>다른 창을 열려면 떠 있는 창 하나를 닫으세요.</value>
   </data>
   <data name="BrowserOpen" xml:space="preserve">
     <value>브라우저</value>
   </data>
   <data name="BrowserTitle" xml:space="preserve">
-    <value>브라우저 · 이동하려면 제목을 누르세요.</value>
+    <value>브라우저 · 제목을 누른 채 이동</value>
   </data>
   <data name="BrowserGo" xml:space="preserve">
     <value>이동</value>
@@ -983,7 +983,7 @@
     <value>새 브라우저</value>
   </data>
   <data name="BrowserLicenses" xml:space="preserve">
-    <value>라이센스</value>
+    <value>라이선스</value>
   </data>
   <data name="BrowserBack" xml:space="preserve">
     <value>뒤로</value>
@@ -992,7 +992,7 @@
     <value>새로고침</value>
   </data>
   <data name="BrowserLoading" xml:space="preserve">
-    <value>로드 중…</value>
+    <value>불러오는 중…</value>
   </data>
   <data name="BrowserOpenLink" xml:space="preserve">
     <value>새 창에서 링크 열기</value>
@@ -1010,37 +1010,37 @@
     <value>키보드</value>
   </data>
   <data name="ArrangeWindows" xml:space="preserve">
-    <value>창문 정렬</value>
+    <value>창 정렬</value>
   </data>
   <data name="KeyboardTitle" xml:space="preserve">
-    <value>키보드 · 제목을 길게 눌러 이동하세요</value>
+    <value>키보드 · 제목을 누른 채 이동</value>
   </data>
   <data name="KeyboardShift" xml:space="preserve">
     <value>Shift</value>
   </data>
   <data name="KeyboardSpace" xml:space="preserve">
-    <value>스페이스</value>
+    <value>Space</value>
   </data>
   <data name="KeyboardEnter" xml:space="preserve">
     <value>Enter</value>
   </data>
   <data name="KeyboardHint" xml:space="preserve">
-    <value>키를 탭하거나 트리거를 누른 상태에서 문자를 스와이프하세요. 유형에 맞춰 놓으세요. 단어를 대체하려면 다른 제안을 선택하세요.</value>
+    <value>키를 탭하거나, 트리거를 누른 채 글자 위를 밀어 쓰세요. 손을 떼면 입력되며, 다른 추천 단어를 고르면 단어가 바뀝니다.</value>
   </data>
   <data name="KeyboardChooseTarget" xml:space="preserve">
-    <value>브라우저 필드를 선택하거나 제어 화면을 활성화하고 게임/Windows 필드를 클릭합니다.</value>
+    <value>브라우저 입력란을 선택하거나, '화면 제어'를 켜고 게임/Windows 입력란을 클릭하세요.</value>
   </data>
   <data name="KeyboardBrowserTarget" xml:space="preserve">
     <value>브라우저에 입력: {0}</value>
   </data>
   <data name="KeyboardWindowsTarget" xml:space="preserve">
-    <value>선택한 게임/Windows 창에 입력하기</value>
+    <value>선택한 게임/Windows 창에 입력 중</value>
   </data>
   <data name="KeyboardAddWord" xml:space="preserve">
     <value>단어 추가: {0}</value>
   </data>
   <data name="SnapshotFailed" xml:space="preserve">
-    <value>스냅샷을 캡처할 수 없습니다. 다시 시도해 보세요.</value>
+    <value>스냅샷을 찍을 수 없습니다. 다시 시도하세요.</value>
   </data>
   <data name="SnapshotFileError" xml:space="preserve">
     <value>이미지: {0}</value>
@@ -1049,7 +1049,7 @@
     <value>옵션 선택</value>
   </data>
   <data name="ControllerMenuDelete" xml:space="preserve">
-    <value>한 자리 삭제</value>
+    <value>숫자 삭제</value>
   </data>
   <data name="ControllerMenuApply" xml:space="preserve">
     <value>적용</value>
@@ -1058,7 +1058,7 @@
     <value>취소</value>
   </data>
   <data name="ControllerMenuApplyAllQuestion" xml:space="preserve">
-    <value>저장된 모든 게임 프로필의 설정을 현재 설정으로 바꾸시겠습니까? 각 게임의 경로와 창이 유지됩니다.</value>
+    <value>저장된 모든 게임 프로필의 설정을 현재 설정으로 바꿀까요? 각 게임의 경로와 창은 유지됩니다.</value>
   </data>
   <data name="ControllerMenuFailed" xml:space="preserve">
     <value>컨트롤러 설정 메뉴를 사용할 수 없음: {0}</value>
@@ -1067,7 +1067,7 @@
     <value>룸 라이프 &amp; 음악</value>
   </data>
   <data name="RoomLifeHint" xml:space="preserve">
-    <value>고정된 화면과 공간이 필요합니다. Listen은 기본 재생 출력의 다른 앱을 포함하여 Windows 재생 믹스를 캡처합니다. 마이크나 녹음이 없습니다. 모든 효과는 실시간으로 적용되며 게임별로 저장됩니다. 그림자는 생물과 좌석 기하학을 추적합니다. 이것은 하드웨어 DXR가 아닙니다.</value>
+    <value>고정 화면과 룸이 필요합니다. '재생 오디오 듣기'는 기본 재생 출력의 다른 앱 소리까지 포함한 Windows 재생 믹스를 캡처하며, 마이크 사용이나 녹음은 하지 않습니다. 모든 효과는 실시간으로 적용되고 게임별로 저장됩니다. 그림자는 생물과 좌석 지오메트리를 추적하며, 하드웨어 DXR은 아닙니다.</value>
   </data>
   <data name="ListenAudio" xml:space="preserve">
     <value>재생 오디오 듣기</value>
@@ -1076,25 +1076,25 @@
     <value>벽 및 천장 음악 애니메이션</value>
   </data>
   <data name="Creatures" xml:space="preserve">
-    <value>애니메이션 생물</value>
+    <value>움직이는 생물</value>
   </data>
   <data name="RoomParticles" xml:space="preserve">
-    <value>다채로운 3D 먼지</value>
+    <value>알록달록한 3D 먼지</value>
   </data>
   <data name="DiscoLights" xml:space="preserve">
     <value>움직이는 디스코 스포트라이트</value>
   </data>
   <data name="TracedShadows" xml:space="preserve">
-    <value>광선 추적형 그림자(추가 GPU 비용)</value>
+    <value>레이 트레이싱 그림자(GPU 추가 부하)</value>
   </data>
   <data name="CreatureCount" xml:space="preserve">
-    <value>생물 개체수(최대 24개)</value>
+    <value>생물 수(최대 24)</value>
   </data>
   <data name="EffectsBrightness" xml:space="preserve">
     <value>효과 밝기(%)</value>
   </data>
   <data name="ParticleDensity" xml:space="preserve">
-    <value>먼지 입자(최대 100개)</value>
+    <value>먼지 입자(최대 100)</value>
   </data>
   <data name="CreatureShark" xml:space="preserve">
     <value>홀로그램 상어</value>
@@ -1109,7 +1109,7 @@
     <value>해파리</value>
   </data>
   <data name="CreatureManta" xml:space="preserve">
-    <value>만타 가오리</value>
+    <value>만타가오리</value>
   </data>
   <data name="CreatureFirefly" xml:space="preserve">
     <value>반딧불이</value>
@@ -1118,7 +1118,7 @@
     <value>거북이</value>
   </data>
   <data name="CreatureDrone" xml:space="preserve">
-    <value>측량 드론</value>
+    <value>탐사 드론</value>
   </data>
   <data name="VisualSpectrum" xml:space="preserve">
     <value>스펙트럼</value>
@@ -1130,7 +1130,7 @@
     <value>플라즈마</value>
   </data>
   <data name="VisualRipples" xml:space="preserve">
-    <value>잔물결</value>
+    <value>물결</value>
   </data>
   <data name="VisualKaleidoscope" xml:space="preserve">
     <value>만화경</value>
@@ -1154,13 +1154,13 @@
     <value>리본</value>
   </data>
   <data name="VisualLissajous" xml:space="preserve">
-    <value>리사쥬</value>
+    <value>리사주</value>
   </data>
   <data name="AudioOff" xml:space="preserve">
-    <value>재생 듣기가 꺼져 있습니다.</value>
+    <value>재생 오디오 듣기가 꺼져 있습니다.</value>
   </data>
   <data name="AudioReady" xml:space="preserve">
-    <value>재생 청취는 VR에서 시작됩니다.</value>
+    <value>재생 오디오 듣기는 VR과 함께 시작됩니다.</value>
   </data>
   <data name="AudioConnecting" xml:space="preserve">
     <value>Windows 재생 출력에 연결 중...</value>
@@ -1172,16 +1172,16 @@
     <value>재생 캡처를 사용할 수 없습니다. 기본 Windows 출력 장치를 확인하세요. VRX가 다시 시도합니다.</value>
   </data>
   <data name="VisualLayers" xml:space="preserve">
-    <value>Visualizer 레이어 - 모든 항목을 결합합니다.</value>
+    <value>비주얼라이저 레이어 — 자유롭게 조합</value>
   </data>
   <data name="MusicReactivity" xml:space="preserve">
     <value>음악 반응성</value>
   </data>
   <data name="BeamReactions" xml:space="preserve">
-    <value>생물은 컨트롤러 빔에 반응합니다.</value>
+    <value>컨트롤러 빔에 생물이 반응</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex — 제트팩 로봇 동반자</value>
+    <value>Vrex — 제트팩 로봇 동료</value>
   </data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>기본값</value>
@@ -1202,10 +1202,10 @@
     <value>천국</value>
   </data>
   <data name="ThemeDark" xml:space="preserve">
-    <value>어둠</value>
+    <value>다크</value>
   </data>
   <data name="ThemeLight" xml:space="preserve">
-    <value>빛</value>
+    <value>라이트</value>
   </data>
   <data name="ThemeGrape" xml:space="preserve">
     <value>포도</value>
@@ -1214,16 +1214,16 @@
     <value>언어 및 테마</value>
   </data>
   <data name="FloatingThemeLabel" xml:space="preserve">
-    <value>부동 패널 테마</value>
+    <value>플로팅 패널 테마</value>
   </data>
   <data name="FloatingOpacityLabel" xml:space="preserve">
-    <value>부동 패널 배경 불투명도</value>
+    <value>플로팅 패널 배경 불투명도</value>
   </data>
   <data name="DesktopThemeLabel" xml:space="preserve">
-    <value>데스크탑 테마</value>
+    <value>데스크톱 테마</value>
   </data>
   <data name="AppearanceHint" xml:space="preserve">
-    <value>패널 테마와 투명도는 VR 설정, 키보드, 브라우저 크롬 및 스냅샷에 적용됩니다. 데스크탑 색상은 별도입니다. 콘텐츠는 계속 읽을 수 있습니다.</value>
+    <value>패널 테마와 투명도는 VR 설정, 키보드, 브라우저 테두리, 스냅샷에 적용됩니다. 데스크톱 색상은 별도입니다. 내용은 계속 읽기 쉽게 유지됩니다.</value>
   </data>
   <data name="Quick3D" xml:space="preserve">
     <value>3D</value>
@@ -1250,10 +1250,10 @@
     <value>Windows 음성 인식을 시작하는 중…</value>
   </data>
   <data name="DictationListening" xml:space="preserve">
-    <value>듣기 — {0}. 선택한 마이크에 대고 말하세요.</value>
+    <value>듣는 중 — {0}. 선택한 마이크에 대고 말하세요.</value>
   </data>
   <data name="DictationHearing" xml:space="preserve">
-    <value>청력: {0}</value>
+    <value>인식 중: {0}</value>
   </data>
   <data name="DictationHeard" xml:space="preserve">
     <value>삽입됨: {0}</value>
@@ -1301,19 +1301,19 @@
     <value>Vrex</value>
   </data>
   <data name="BrowserSiteAccess" xml:space="preserve">
-    <value>사이트 접속</value>
+    <value>사이트 권한</value>
   </data>
   <data name="BrowserPermissionTitle" xml:space="preserve">
     <value>권한 요청</value>
   </data>
   <data name="BrowserPermissionOrigin" xml:space="preserve">
-    <value>{0}는 다음에 대한 액세스를 원합니다:</value>
+    <value>{0}에서 다음 권한을 요청합니다:</value>
   </data>
   <data name="BrowserPermissionEmbedded" xml:space="preserve">
-    <value>{0}는 {1}에 있는 동안 액세스를 원합니다:</value>
+    <value>{1}에 있는 동안 {0}에서 다음 권한을 요청합니다:</value>
   </data>
   <data name="BrowserPermissionRemember" xml:space="preserve">
-    <value>이 사이트에 대한 허용 또는 거부 선택이 기억됩니다. 사이트 액세스를 사용하여 검토하거나 재설정하세요.</value>
+    <value>이 사이트에 대한 '허용' 또는 '거부' 선택이 기억됩니다. '사이트 권한'에서 확인하거나 초기화하세요.</value>
   </data>
   <data name="BrowserPermissionAllow" xml:space="preserve">
     <value>허용</value>
@@ -1346,10 +1346,10 @@
     <value>{0}</value>
   </data>
   <data name="BrowserPermissionSaveFailed" xml:space="preserve">
-    <value>선택 사항이 지금 적용되지만 다음 번에 저장할 수 없습니다.</value>
+    <value>선택은 지금 적용되지만 다음을 위해 저장하지 못했습니다.</value>
   </data>
   <data name="BrowserPermissionNoSite" xml:space="preserve">
-    <value>웹사이트가 로드되지 않았습니다.</value>
+    <value>로드된 웹사이트가 없습니다.</value>
   </data>
   <data name="BrowserPermissionNoSaved" xml:space="preserve">
     <value>이 사이트에 대해 저장된 권한 선택이 없습니다.</value>
@@ -1358,46 +1358,46 @@
     <value>{0}: {1} — {2}</value>
   </data>
   <data name="BrowserPermissionReset" xml:space="preserve">
-    <value>재설정 및 새로고침</value>
+    <value>초기화 후 새로고침</value>
   </data>
   <data name="BrowserPermissionResetFailed" xml:space="preserve">
-    <value>저장된 사이트 권한을 재설정할 수 없습니다.</value>
+    <value>저장된 사이트 권한을 초기화할 수 없습니다.</value>
   </data>
   <data name="GameHelpStart" xml:space="preserve">
-    <value>이 게임 도움말</value>
+    <value>이 게임 도움받기</value>
   </data>
   <data name="GameHelpSettings" xml:space="preserve">
     <value>게임 도움말 설정</value>
   </data>
   <data name="GameHelpSharingHint" xml:space="preserve">
-    <value>서비스를 선택하세요. 현재 화면에 대한 도움말은 VRX 화면 이미지 하나와 질문을 해당 서비스로 보냅니다. 귀하가 허용할 때까지 아무 것도 공유되지 않습니다.</value>
+    <value>서비스를 선택하세요. 현재 화면에 대한 도움을 요청하면 VRX 화면 이미지 한 장과 질문이 해당 서비스로 전송됩니다. 허용하기 전에는 아무것도 공유되지 않습니다.</value>
   </data>
   <data name="GameHelpSharingWith" xml:space="preserve">
-    <value>{0}와의 스크린샷 공유는 마이크 또는 카메라 권한과 별도로 기억됩니다.</value>
+    <value>{0}와(과)의 스크린샷 공유 설정은 마이크·카메라 권한과 별도로 기억됩니다.</value>
   </data>
   <data name="GameHelpStopSharing" xml:space="preserve">
     <value>스크린샷 공유 중지</value>
   </data>
   <data name="GameHelpAllowAndStart" xml:space="preserve">
-    <value>스크린샷을 허용하고 도움을 받으세요</value>
+    <value>스크린샷 허용하고 도움받기</value>
   </data>
   <data name="GameHelpSaveFailed" xml:space="preserve">
     <value>스크린샷 공유 환경설정을 저장할 수 없습니다.</value>
   </data>
   <data name="GameHelpNeedsSession" xml:space="preserve">
-    <value>VRX 세션을 시작하고 컨트롤러를 활성화하여 현재 화면을 캡처하십시오.</value>
+    <value>현재 화면을 캡처하려면 VRX 세션을 시작하고 컨트롤러를 켜세요.</value>
   </data>
   <data name="GameHelpCapturing" xml:space="preserve">
     <value>게임 도움말을 위해 현재 VRX 화면을 캡처하는 중…</value>
   </data>
   <data name="GameHelpCaptureFailed" xml:space="preserve">
-    <value>화면 캡처가 완료되지 않았습니다. 게임 도움말을 다시 시도해 보세요.</value>
+    <value>화면 캡처가 완료되지 않았습니다. 게임 도움을 다시 요청하세요.</value>
   </data>
   <data name="GameHelpImageTooLarge" xml:space="preserve">
     <value>게임 도움말 이미지가 너무 커서 업로드할 수 없습니다.</value>
   </data>
   <data name="GameHelpRetry" xml:space="preserve">
-    <value>도움말 재시도</value>
+    <value>도움 다시 요청</value>
   </data>
   <data name="GameHelpProgress" xml:space="preserve">
     <value>{0}: {1}</value>
@@ -1406,27 +1406,27 @@
     <value>도움말 서비스를 여는 중…</value>
   </data>
   <data name="GameHelpUploading" xml:space="preserve">
-    <value>현재 화면을 연결하는 중…</value>
+    <value>현재 화면 첨부 중…</value>
   </data>
   <data name="GameHelpPreparingQuestion" xml:space="preserve">
     <value>게임 도움말 질문 준비 중…</value>
   </data>
   <data name="GameHelpSearching" xml:space="preserve">
-    <value>질문이 제출되었습니다. 여기서 후속 질문을 할 수 있습니다.</value>
+    <value>질문을 보냈습니다. 여기서 이어서 질문할 수 있습니다.</value>
   </data>
   <data name="GameHelpNeedsSetup" xml:space="preserve">
-    <value>사이트의 동의 또는 로그인 프롬프트를 완료합니다. 도움이 자동으로 계속됩니다.</value>
+    <value>사이트의 동의 또는 로그인 화면을 완료하세요. 도움 요청은 자동으로 이어집니다.</value>
   </data>
   <data name="GameHelpNoConsent" xml:space="preserve">
-    <value>스크린샷 공유가 꺼져 있습니다. 게임 도움말 설정에서 활성화하세요.</value>
+    <value>스크린샷 공유가 꺼져 있습니다. '게임 도움말 설정'에서 켜세요.</value>
   </data>
   <data name="GameHelpExistingDraft" xml:space="preserve">
-    <value>사이트에 이미 초안이 있습니다. 이를 지운 다음 Retry help(도움말 재시도)를 선택하십시오.</value>
+    <value>사이트에 이미 작성 중인 내용이 있습니다. 지운 뒤 '도움 다시 요청'을 선택하세요.</value>
   </data>
   <data name="GameHelpRetryNeeded" xml:space="preserve">
-    <value>사이트가 준비되지 않았습니다. 사이트 프롬프트를 완료한 후 도움말 재시도를 선택합니다.</value>
+    <value>사이트가 아직 준비되지 않았습니다. 사이트 안내를 모두 완료한 뒤 '도움 다시 요청'을 선택하세요.</value>
   </data>
   <data name="GameHelpPrompt" xml:space="preserve">
-    <value>이 스크린샷에서 게임과 정확한 장면을 식별하세요. 주요 스포일러를 피하면서 다음에 수행할 작업에 대한 유용한 힌트를 제공하고 관련 연습 또는 가이드에 대한 링크를 포함하세요. 자신있게 식별할 수 없다면 추측보다는 질문을 해보세요.</value>
+    <value>이 스크린샷의 게임과 정확한 장면을 알아내 주세요. 큰 스포일러는 피하면서 다음에 무엇을 하면 좋을지 유용한 힌트를 주고, 관련 공략이나 가이드 링크도 함께 알려 주세요. 확실히 알 수 없으면 추측하지 말고 저에게 질문해 주세요.</value>
   </data>
 </root>

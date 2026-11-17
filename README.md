@@ -41,8 +41,9 @@ Italian, Portuguese, Simplified Chinese, Japanese and Korean. VRX follows the Wi
 display language automatically. To choose a different language, open **Expert →
 Language & themes → Language**, select it, then restart VRX. Language names appear in
 their own language. Number and date formats continue to follow your Windows region.
-Unsupported display languages fall back to English. The first translation set is
-machine-assisted, with contextual corrections; native-speaker improvements are welcome.
+Unsupported display languages fall back to English. The translations were
+machine-assisted, then revised for consistent terms and natural wording; corrections from
+native speakers are welcome.
 
 For developers: `dotnet build desktop/VRX.Desktop/VRX.Desktop.csproj -c Release`, then
 `./desktop/test-languages.ps1` runs the Windows smoke suite in every language and saves
@@ -222,9 +223,9 @@ From using VRX day to day:
 
 ## Get started
 
-Download VRX v1.8.4: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.8.4/VRX-Setup-1.8.4.exe)
-or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.8.4/VRX-1.8.4-win-x64.zip)
-([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.8.4); older versions on
+Download VRX v1.8.4.1: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.8.4.1/VRX-Setup-1.8.4.1.exe)
+or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.8.4.1/VRX-1.8.4.1-win-x64.zip)
+([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.8.4.1); older versions on
 [GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.

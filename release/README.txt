@@ -16,6 +16,11 @@ also shows it on its own flat screen ("Desktop Game Theatre") in front of VRX's.
 In Steam, right-click the game > Properties > General and untick "Use Desktop Game
 Theatre while SteamVR is active".
 
+Languages: VRX shows English, French, German, Spanish, Italian, Portuguese,
+Simplified Chinese, Japanese or Korean, following the Windows display language. To
+choose another, open Expert > Language & themes > Language and restart VRX. Number
+and date formats follow your Windows region. Vrex's chat bubbles are English for now.
+
 VRX opens in Easy mode (the switch at the top): start your game and bring it to
 the front, and VRX attaches after a short countdown, using the game's saved
 settings or your base settings for a new game. Expert mode shows every setting in

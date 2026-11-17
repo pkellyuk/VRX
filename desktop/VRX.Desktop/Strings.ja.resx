@@ -4,10 +4,10 @@
     <value>言語 / Language</value>
   </data>
   <data name="LanguageAutomatic" xml:space="preserve">
-    <value>自動 — Windows 表示言語</value>
+    <value>自動 — Windows の表示言語</value>
   </data>
   <data name="LanguageRestartHint" xml:space="preserve">
-    <value>次回VRXを起動した時から適用されます。数値と日付の形式は Windows の地域設定に従います。</value>
+    <value>次回 VRX を起動したときに反映されます。数値と日付の形式は引き続き Windows の地域設定に従います。</value>
   </data>
   <resheader name="resmimetype">
     <value>text/microsoft-resx</value>
@@ -26,14 +26,14 @@
     <comment>Product name; normally not translated.</comment>
   </data>
   <data name="WindowTitle" xml:space="preserve">
-    <value>VRX {0} — デスクトップセットアップ</value>
+    <value>VRX {0} — デスクトップ設定</value>
     <comment>{0} = version, e.g. v1.7.1</comment>
   </data>
   <data name="SubtitleEasy" xml:space="preserve">
-    <value>VR でゲームをプレイします。 VRXがセットアップを行います。</value>
+    <value>ゲームを VR でプレイ。セットアップは VRX にお任せください。</value>
   </data>
   <data name="SubtitleExpert" xml:space="preserve">
-    <value>ゲームを選択してください。画面をセットアップします。</value>
+    <value>ゲームを選んで、スクリーンを設定します。</value>
   </data>
   <data name="ModeEasy" xml:space="preserve">
     <value>かんたん</value>
@@ -42,31 +42,31 @@
     <value>自動</value>
   </data>
   <data name="ModeEasyTip" xml:space="preserve">
-    <value>簡単: VRX は、ゲームの保存された設定 (または新しいゲームの基本設定) を使用して、前面のゲームに単独でアタッチされます。それ以外はほとんどすべて隠されています。</value>
+    <value>かんたん: 前面のゲームに VRX が自動でアタッチし、そのゲームの保存済み設定 (新しいゲームでは基本設定) を使います。ほかの設定はほとんど非表示になります。</value>
   </data>
   <data name="ModeExpert" xml:space="preserve">
-    <value>詳細</value>
+    <value>エキスパート</value>
   </data>
   <data name="ModeExpertCaption" xml:space="preserve">
     <value>すべての設定</value>
   </data>
   <data name="ModeExpertTip" xml:space="preserve">
-    <value>エキスパート: すべての設定は、開いたり閉じたりできるセクションにグループ化されています。</value>
+    <value>エキスパート: すべての設定を、開閉できるセクションに分けて表示します。</value>
   </data>
   <data name="TitleMenu" xml:space="preserve">
     <value>ウィンドウメニュー</value>
     <comment>The VRX logo at the left of the title bar; opens the window menu (move, size, close).</comment>
   </data>
   <data name="TitleMinimize" xml:space="preserve">
-    <value>最小化する</value>
+    <value>最小化</value>
     <comment>Title bar button, as in Windows.</comment>
   </data>
   <data name="TitleMaximize" xml:space="preserve">
-    <value>最大化する</value>
+    <value>最大化</value>
     <comment>Title bar button (Expert only), as in Windows.</comment>
   </data>
   <data name="TitleRestore" xml:space="preserve">
-    <value>リストアダウン</value>
+    <value>元に戻す (縮小)</value>
     <comment>The maximize button while the window is maximized, as in Windows.</comment>
   </data>
   <data name="TitleClose" xml:space="preserve">
@@ -74,50 +74,50 @@
     <comment>Title bar button, as in Windows.</comment>
   </data>
   <data name="EasyIntro" xml:space="preserve">
-    <value>ゲームを開始して最前面に移動します - 短いカウントダウンの後に VRX が接続されます。</value>
+    <value>ゲームを起動して前面に出してください。短いカウントダウンの後、VRX がアタッチします。</value>
   </data>
   <data name="EasyHintSettings" xml:space="preserve">
-    <value>VRX は、ゲームの保存された設定、またはこれまでに見たことのないゲームの基本設定を使用します。それらを変更するには、エキスパートに切り替えてください。</value>
+    <value>VRX はゲームの保存済み設定を使い、初めてのゲームでは基本設定を使います。変更するにはエキスパートに切り替えてください。</value>
   </data>
   <data name="EasyHintSteamVr" xml:space="preserve">
-    <value>プレイする前にSteamVRを起動してください。 [Stop VR] を押すか、ゲームを終了して終了します。</value>
+    <value>プレイ前に SteamVR を起動してください。終了するには「VR を停止」を押すか、ゲームを閉じます。</value>
   </data>
   <data name="CardCaption" xml:space="preserve">
     <value>ゲーム</value>
   </data>
   <data name="CardNoGame" xml:space="preserve">
-    <value>まだ試合はありません</value>
+    <value>ゲームはまだありません</value>
   </data>
   <data name="CardWaiting" xml:space="preserve">
-    <value>待っています · ゲームを前面に押し出します</value>
+    <value>待機中 · ゲームを前面に出してください</value>
   </data>
   <data name="CardCountdown" xml:space="preserve">
-    <value>{0}に装着・キャンセル画面切り替え</value>
+    <value>{0} 秒後にアタッチ · ウィンドウを切り替えるとキャンセル</value>
     <comment>{0} = seconds left</comment>
   </data>
   <data name="CardStarting" xml:space="preserve">
-    <value>VRを始めています…</value>
+    <value>VR を開始しています…</value>
   </data>
   <data name="CardPlaying" xml:space="preserve">
-    <value>遊ぶ</value>
+    <value>プレイ中</value>
   </data>
   <data name="CardStopping" xml:space="preserve">
-    <value>VRを停止中…</value>
+    <value>VR を停止しています…</value>
   </data>
   <data name="CardSpent" xml:space="preserve">
-    <value>停止しました · 別のウィンドウに切り替えて、戻って再度接続します</value>
+    <value>停止しました · 別のウィンドウに切り替えて戻ると再びアタッチします</value>
   </data>
   <data name="CardReady" xml:space="preserve">
-    <value>準備完了・「接続/再生」を押します</value>
+    <value>準備完了 · 「アタッチ / プレイ」を押してください</value>
   </data>
   <data name="CardChooseWindow" xml:space="preserve">
-    <value>「ゲームとウィンドウ」でキャプチャするウィンドウを選択します</value>
+    <value>「ゲームとウィンドウ」でキャプチャするウィンドウを選んでください</value>
   </data>
   <data name="CardPickGame" xml:space="preserve">
-    <value>「ゲームとウィンドウ」でゲームを選択するか、自動アタッチをオンにします</value>
+    <value>「ゲームとウィンドウ」でゲームを選ぶか、自動アタッチをオンにしてください</value>
   </data>
   <data name="AttachPlay" xml:space="preserve">
-    <value>接続 / 再生</value>
+    <value>アタッチ / プレイ</value>
   </data>
   <data name="StopVr" xml:space="preserve">
     <value>VR を停止</value>
@@ -126,7 +126,7 @@
     <value>位置をリセット</value>
   </data>
   <data name="RecenterTip" xml:space="preserve">
-    <value>ヘッドセットが現在見ている場所の真正面に画面を配置します。</value>
+    <value>ヘッドセットが今向いている方向の正面にスクリーンを置きます。</value>
   </data>
   <data name="RecenterNow" xml:space="preserve">
     <value>今すぐ位置をリセット</value>
@@ -139,55 +139,55 @@
     <comment>Refresh button symbol; normally not translated.</comment>
   </data>
   <data name="RefreshTip" xml:space="preserve">
-    <value>実行中のアプリケーションを更新する</value>
+    <value>実行中のアプリケーションを更新</value>
   </data>
   <data name="ResetProfile" xml:space="preserve">
-    <value>このプロファイルをリセットする</value>
+    <value>このプロファイルをリセット</value>
   </data>
   <data name="ResetProfileTip" xml:space="preserve">
-    <value>このゲームを基本設定 (または、基本が保存されていない場合は VRX のデフォルト) に戻します。</value>
+    <value>このゲームを基本設定に戻します (基本設定が保存されていない場合は VRX の既定値)。</value>
   </data>
   <data name="MakeBase" xml:space="preserve">
-    <value>基本的な設定を行う</value>
+    <value>基本設定にする</value>
   </data>
   <data name="MakeBaseTip" xml:space="preserve">
-    <value>ここに表示されている設定を、まだ設定していないゲームの開始点として保存します。画面の配置、3D 強度、深さのオプション、ショートカットがすべて含まれています。ゲーム自体のパスとウィンドウはそうではありません。すでにセットアップしたゲームには独自の設定が保持されます。</value>
+    <value>ここに表示中の設定を、まだ設定していないゲームの初期値として保存します。スクリーンの配置、3D の強さ、深度オプション、ショートカットがすべて含まれます。ゲーム自体のパスとウィンドウは含まれません。設定済みのゲームはそれぞれの設定を保持します。</value>
   </data>
   <data name="ApplyAll" xml:space="preserve">
-    <value>全員に適用</value>
+    <value>すべてに適用</value>
   </data>
   <data name="ApplyAllTip" xml:space="preserve">
-    <value>確認を求めた後、ここに表示されている設定を、すでにセットアップされているすべてのゲームにコピーします。画面の配置、3D 強度、深度オプション、深さ GPU、およびショートカットがすべて含まれています。各ゲームは独自のパスとウィンドウを保持します。まだセットアップしていないゲームは基本設定から開始されます。</value>
+    <value>確認の後、ここに表示中の設定を、設定済みのすべてのゲームにコピーします。スクリーンの配置、3D の強さ、深度オプション、深度 GPU、ショートカットがすべて含まれます。各ゲームのパスとウィンドウはそのまま残ります。まだ設定していないゲームは引き続き基本設定から始まります。</value>
   </data>
   <data name="SectionGame" xml:space="preserve">
     <value>ゲームとウィンドウ</value>
   </data>
   <data name="SectionScreen" xml:space="preserve">
-    <value>画面</value>
+    <value>スクリーン</value>
   </data>
   <data name="SectionAround" xml:space="preserve">
-    <value>画面の周り</value>
+    <value>スクリーンの周囲</value>
   </data>
   <data name="SectionRoom" xml:space="preserve">
-    <value>部屋</value>
+    <value>ルーム</value>
   </data>
   <data name="SectionDepth" xml:space="preserve">
-    <value>3Dと奥行き</value>
+    <value>3D と深度</value>
   </data>
   <data name="SectionExperimental" xml:space="preserve">
-    <value>実験的</value>
+    <value>実験的機能</value>
   </data>
   <data name="SectionSteamVr" xml:space="preserve">
     <value>SteamVR とショートカット</value>
   </data>
   <data name="SectionProfile" xml:space="preserve">
-    <value>プロフィール</value>
+    <value>プロファイル</value>
   </data>
   <data name="SectionSession" xml:space="preserve">
-    <value>セッション詳細</value>
+    <value>セッションの詳細</value>
   </data>
   <data name="RunningApplications" xml:space="preserve">
-    <value>アプリケーションの実行</value>
+    <value>実行中のアプリケーション</value>
   </data>
   <data name="ShowAllProcesses" xml:space="preserve">
     <value>すべてのプロセスを表示</value>
@@ -196,49 +196,49 @@
     <value>キャプチャするウィンドウ</value>
   </data>
   <data name="PathChoose" xml:space="preserve">
-    <value>開始するにはアプリケーションを選択してください。</value>
+    <value>アプリケーションを選んで始めましょう。</value>
   </data>
   <data name="PathNoAccess" xml:space="preserve">
-    <value>アクセス可能な実行可能ファイル/ウィンドウがありません。実行中のゲームを選択します。</value>
+    <value>アクセスできる実行ファイル/ウィンドウがありません。実行中のゲームを選んでください。</value>
   </data>
   <data name="GameHint" xml:space="preserve">
-    <value>設定は実行可能ファイルごとに個別に保存されます。プレイする前にSteamVRを起動してください。</value>
+    <value>設定は実行ファイルごとに保存されます。プレイ前に SteamVR を起動してください。</value>
   </data>
   <data name="AutoAttachCheck" xml:space="preserve">
-    <value>前のゲームに自動アタッチ</value>
+    <value>前面のゲームに自動アタッチ</value>
   </data>
   <data name="AutoAttachCountdown" xml:space="preserve">
     <value>カウントダウン</value>
   </data>
   <data name="AutoAttachTip" xml:space="preserve">
-    <value>ゲームが前にある場合、VRX はカウントダウンしてから、ゲームを選択して「アタッチ / プレイ」を押したかのように、ゲームにアタッチします。ウィンドウは、全画面またはボーダレスの場合、または以前に設定したゲームの場合にカウントされます (設定が保存されています。Web ブラウザは全画面のみカウントされます)。 Steam、SteamVR、Windows本体、端末、VRXは一切付属しません。カウントダウン中に別のウィンドウに切り替えるとキャンセルされます。 VR を停止した後、またはアタッチが失敗した場合、そのウィンドウは、VR から離れて元に戻るまでそのまま残されます。 VRX本体が前にいる間はカウントダウンは始まりません。イージーモードは常にオンになっています。</value>
+    <value>ゲームが前面にあると、VRX はカウントダウンしてからアタッチします。ゲームを選んで「アタッチ / プレイ」を押したときとまったく同じです。対象になるのは、全画面またはボーダーレスのウィンドウか、以前に設定したゲーム (保存済みの設定があるもの。Web ブラウザーは全画面のときのみ) です。Steam、SteamVR、Windows 自体、ターミナル、VRX にはアタッチしません。カウントダウン中に別のウィンドウに切り替えるとキャンセルされます。VR を停止した後やアタッチに失敗した後は、そのウィンドウから一度切り替えて戻るまで対象外になります。VRX 自体が前面にある間はカウントダウンは始まりません。かんたんモードでは常にオンです。</value>
   </data>
   <data name="AppDescriptionOne" xml:space="preserve">
-    <value>PID {0}・1ウィンドウ</value>
+    <value>PID {0} · 1 ウィンドウ</value>
     <comment>{0} = process id</comment>
   </data>
   <data name="AppDescriptionOther" xml:space="preserve">
-    <value>PID {0} · {1} 窓</value>
+    <value>PID {0} · {1} ウィンドウ</value>
     <comment>{0} = process id, {1} = number of windows</comment>
   </data>
   <data name="AppNoGameWindow" xml:space="preserve">
-    <value>アクセス可能なゲームウィンドウがありません</value>
+    <value>アクセスできるゲームウィンドウがありません</value>
   </data>
   <data name="WindowUntitled" xml:space="preserve">
     <value>ウィンドウ {0}</value>
     <comment>{0} = window handle in hex</comment>
   </data>
   <data name="ScreenHint" xml:space="preserve">
-    <value>変更はライブで適用されます。位置は、最後に再センタしたときの相対位置です。</value>
+    <value>変更はすぐに反映されます。位置は最後に位置をリセットした時点が基準です。</value>
   </data>
   <data name="PreviewLabel" xml:space="preserve">
-    <value>TOP VIEW・画面をドラッグ</value>
+    <value>俯瞰図 · スクリーンをドラッグ</value>
   </data>
   <data name="PreviewTip" xml:space="preserve">
-    <value>画面をドラッグして水平位置と距離を変更します</value>
+    <value>スクリーンをドラッグして左右の位置と距離を変更</value>
   </data>
   <data name="ScreenWidth" xml:space="preserve">
-    <value>画面幅</value>
+    <value>スクリーンの幅</value>
   </data>
   <data name="Distance" xml:space="preserve">
     <value>距離</value>
@@ -247,16 +247,16 @@
     <value>高さオフセット</value>
   </data>
   <data name="LeftRightOffset" xml:space="preserve">
-    <value>左/右オフセット</value>
+    <value>左右オフセット</value>
   </data>
   <data name="ScreenCurve" xml:space="preserve">
-    <value>スクリーンカーブ</value>
+    <value>スクリーンの湾曲</value>
   </data>
   <data name="ScreenCurveTip" xml:space="preserve">
-    <value>曲面テレビのように画面を体に包み込みます。曲面スクリーンはそれぞれの目に実際の円柱として描かれるため、その輪郭、遠近感、頭の動きの視差は正確です。上の平面図は形状を示しています。 0 % はフラットです。固定画面およびヘッドフォローで動作します。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>曲面テレビのように、スクリーンをあなたの周りに湾曲させます。曲面スクリーンは目ごとに本物の円柱として描画されるため、輪郭、遠近感、頭の動きによる視差が正しくなります。形は上の俯瞰図で確認できます。0 % で平面です。固定スクリーンでも頭への追従でも使えます。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="FollowHead" xml:space="preserve">
-    <value>画面が頭についてくる</value>
+    <value>スクリーンを頭に追従</value>
   </data>
   <data name="ValueMetres" xml:space="preserve">
     <value>{0:F2} m</value>
@@ -275,31 +275,31 @@
     <comment>{0} = seconds</comment>
   </data>
   <data name="Ambilight" xml:space="preserve">
-    <value>アンビライト — 画面の周囲を光らせる</value>
+    <value>アンビライト — スクリーン周囲の光</value>
   </data>
   <data name="AmbilightTip" xml:space="preserve">
-    <value>テレビの後ろのバイアス照明のように、画面の周囲の暗闇に画像の端の色を柔らかく広げます。グローの各ポイントは境界線全体、つまり最も近い部分をブレンドするため、近くではローカル カラーに従い、外側では柔らかくなります。湾曲した画面を包み込み、ちらつきがなくスムーズにシーンに追従します。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>テレビ背面のバイアス照明のように、映像の端の色をスクリーン周囲の暗がりへ柔らかく広げます。光の各点は縁全体の色を混ぜ合わせ、近い部分ほど強く反映するため、スクリーンの近くでは周辺の色に沿い、離れるほど柔らかくなります。曲面スクリーンにも沿って回り込み、ちらつかずに滑らかに場面に追従します。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="AmbilightStrength" xml:space="preserve">
     <value>アンビライトの強さ</value>
   </data>
   <data name="AmbilightStrengthTip" xml:space="preserve">
-    <value>画面の隣のグローの明るさ。常に端に向かってフェードアウトします。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>スクリーンのすぐ横での光の明るさです。外側に向かって常にフェードアウトします。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="WorldColour" xml:space="preserve">
     <value>ワールドカラー</value>
   </data>
   <data name="WorldListTip" xml:space="preserve">
-    <value>黒ではなく、画面の周囲の空間の色。暗い色は写真のコントラストを保ちます。アンビライトがその上を照らします。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>黒の代わりに使う、スクリーン周囲の空間の色です。暗い色なら映像のコントラストが保たれ、その上にアンビライトが光ります。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="WorldHexTip" xml:space="preserve">
-    <value>#RRGGBBとして任意の色。半分の色が入ったボックスをそのままにしておくと、最後の色全体が元に戻ります。</value>
+    <value>#RRGGBB 形式で任意の色を指定できます。入力が途中のまま欄を離れると、最後に有効だった色に戻ります。</value>
   </data>
   <data name="WorldBlack" xml:space="preserve">
-    <value>黒 (デフォルト)</value>
+    <value>黒 (既定)</value>
   </data>
   <data name="WorldCharcoal" xml:space="preserve">
-    <value>木炭</value>
+    <value>チャコール</value>
   </data>
   <data name="WorldSlate" xml:space="preserve">
     <value>スレート</value>
@@ -308,13 +308,13 @@
     <value>ミッドナイトブルー</value>
   </data>
   <data name="WorldPurple" xml:space="preserve">
-    <value>深い紫</value>
+    <value>ディープパープル</value>
   </data>
   <data name="WorldForest" xml:space="preserve">
-    <value>森</value>
+    <value>フォレスト</value>
   </data>
   <data name="WorldWarm" xml:space="preserve">
-    <value>暖かい暗い</value>
+    <value>ウォームダーク</value>
   </data>
   <data name="WorldCinemaRed" xml:space="preserve">
     <value>シネマレッド</value>
@@ -335,22 +335,22 @@
     <value>環境</value>
   </data>
   <data name="EnvironmentTip" xml:space="preserve">
-    <value>スクリーンがある場所。部屋 (デフォルト): ガラスの壁、反射、以下から選択できる照明を備えた、清潔で落ち着いたシンプルな部屋です。屋外: 星空の下、地平線に低い丘が見える夜の野原に佇むスクリーン。スクリーンはその前の地面を照らします。ラウンジ: ホームシアター - 敷物を敷いたオーク材の床、両側に 2 つのランプが付いたパネル張りの壁、天井のダウンライト (両方とも室内灯で照らされています)、スクリーンの後ろには木製のスラットがあります。座席のある映画館: ベルベットのカーテン、スクリーンの周りの黒いマスキング、通路沿いのステップライトが付いた模様入りのカーペット、室内灯で照らされた壁の燭台など、周囲に階段状の座席が並ぶ映画館。下の座席を選択して、画面からの距離を設定します。ダンジョン: 風化した石、鉄格子、鎖、床の格子、たいまつ。地獄: 暗い玄武岩、炉のアーチ、輝く碑文、溶岩の亀裂。サイバーパンク ネオン シネマ: 階段状の座席、シアンとマゼンタの照明、音響パネル、都市ディスプレイ。スターシップシネマ: 金属隔壁の階段状の座席、照明付きのリブ、星と青い惑星のビューポート。それぞれは部屋のように写真によって照らされ、部屋スライダーはその表面がどの程度反射するかを設定します。部屋がオフのときにいずれかを選択すると、部屋がオンになります。 「画面が頭についてくる」とは違います。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>スクリーンを置く場所です。ルーム (既定): ガラスの壁、反射、下で選べるルームライトを備えた、すっきりと落ち着いたシンプルなルームです。夜の屋外: 星空の下、低い丘が地平線に連なる夜の野原に立つスクリーン。スクリーンが手前の地面を照らします。ラウンジ: ホームシアター。ラグを敷いたオーク材の床、左右に 2 つずつランプのあるパネル張りの壁、天井のダウンライト (どちらもルームライトで点灯)、スクリーン背後の木製ルーバー。座席付き映画館: 階段状の座席に囲まれた映画館。ベルベットのカーテン、スクリーン周りの黒いマスキング、通路に足元灯のある柄入りカーペット、ルームライトで灯る壁の燭台。下で座席を選ぶと、スクリーンまでの距離が決まります。ダンジョン: 風化した石、鉄格子のアーチ、鎖、床の格子、たいまつの明かり。地獄: 暗い玄武岩、炉のアーチ、光る碑文、溶岩の裂け目。サイバーパンク ネオンシネマ: 階段状の座席、シアンとマゼンタの照明、吸音パネル、街のディスプレイ。宇宙船シネマ: 金属の隔壁に囲まれた階段状の座席、光るリブ、星と青い惑星が見える窓。どれもルームと同じく映像で照らされ、「ルーム」スライダーで表面の反射の強さを設定します。ルームがオフのときに選ぶとルームがオンになります。「スクリーンを頭に追従」とは併用できません。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="EnvironmentRoom" xml:space="preserve">
-    <value>部屋 (デフォルト)</value>
+    <value>ルーム (既定)</value>
   </data>
   <data name="EnvironmentCinema" xml:space="preserve">
-    <value>映画</value>
+    <value>映画館</value>
   </data>
   <data name="EnvironmentOpenAir" xml:space="preserve">
-    <value>夜のオープンエア</value>
+    <value>夜の屋外</value>
   </data>
   <data name="EnvironmentLounge" xml:space="preserve">
     <value>ラウンジ</value>
   </data>
   <data name="EnvironmentTheatre" xml:space="preserve">
-    <value>座席のある映画館</value>
+    <value>座席付き映画館</value>
   </data>
   <data name="EnvironmentDungeon" xml:space="preserve">
     <value>ダンジョン</value>
@@ -359,84 +359,84 @@
     <value>地獄</value>
   </data>
   <data name="EnvironmentCyberpunk" xml:space="preserve">
-    <value>サイバーパンクネオンシネマ</value>
+    <value>サイバーパンク ネオンシネマ</value>
   </data>
   <data name="EnvironmentStarship" xml:space="preserve">
-    <value>スターシップシネマ</value>
+    <value>宇宙船シネマ</value>
   </data>
   <data name="Seat" xml:space="preserve">
-    <value>シート</value>
+    <value>座席</value>
   </data>
   <data name="SeatTip" xml:space="preserve">
-    <value>座席のある映画館で座る場所。スクリーンまでの距離を設定します。前列は 4.6 m、中央は 7.5 m、後列は 11.4 m です。ホールはスクリーンの幅に関係なく同じままであるため、同じ映画館のスクリーンが大きいか小さいかのように、幅によって座席からスクリーンが大きく見えたり小さく見えたりすることができます (デフォルトの 5.7 m では、列は約 0.8、1.3、および 2 スクリーン幅離れています)。列は後ろに上がるので、前の席を見渡すことになります。さらに後ろの席ほど、絵の奥行きがより穏やかに表現されます。座っている間、距離スライダーは停止し、その値が維持されます。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>座席付き映画館で座る場所です。スクリーンまでの距離が決まります: 最前列は 4.6 m、中央は 7.5 m、最後列は 11.4 m。スクリーンの幅を変えてもホールは同じなので、同じ映画館のスクリーンが大きく (小さく) なったように、「スクリーンの幅」で座席からの見た目の大きさが変わります (既定の 5.7 m では、各列はスクリーン幅の約 0.8、1.3、2 倍の距離)。列は後ろに向かって高くなるので、前の座席越しに見渡せます。後ろの座席ほど映像の奥行きも穏やかに見えます。着席中は「距離」スライダーは動かず、値はそのまま保たれます。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="SeatFront" xml:space="preserve">
     <value>最前列</value>
   </data>
   <data name="SeatMiddle" xml:space="preserve">
-    <value>中央 (デフォルト)</value>
+    <value>中央 (既定)</value>
   </data>
   <data name="SeatRear" xml:space="preserve">
-    <value>後列</value>
+    <value>最後列</value>
   </data>
   <data name="SeatDistance" xml:space="preserve">
-    <value>{0:F1} 画面からメートル</value>
+    <value>スクリーンから {0:F1} m</value>
     <comment>{0} = metres</comment>
   </data>
   <data name="ValueSeatDistance" xml:space="preserve">
-    <value>{0:F2} m（座席）</value>
+    <value>{0:F2} m (座席)</value>
     <comment>{0} = metres; the screen's distance set by the cinema seat</comment>
   </data>
   <data name="NeedsRoomEnvironment" xml:space="preserve">
-    <value>室内環境のみ</value>
+    <value>ルーム環境のみ</value>
   </data>
   <data name="NotInOpenAir" xml:space="preserve">
-    <value>屋外ではありません</value>
+    <value>屋外では使用不可</value>
   </data>
   <data name="RoomLabel" xml:space="preserve">
-    <value>部屋 - スクリーンで照らされた壁</value>
+    <value>ルーム — スクリーンに照らされる壁</value>
   </data>
   <data name="RoomTip" xml:space="preserve">
-    <value>暗い部屋のテレビや映画のスクリーンのように、壁、床、天井が画像とアンビライトによって照らされる暗い部屋にあなたを置きます。 0はオフです。値を高くすると壁の色が薄くなるため、反射が多くなります。 30〜60％は映画館のようです。部屋をオンにすると、世界の色がその家の照明になり、画面は水平に保たれます (床が傾いていると違和感があります)。 「画面が頭についてくる」とは違います。上の環境は、映画館、屋外、またはラウンジのように見せかけます。ガラス、反射、室内灯が下にあります。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>暗い部屋のテレビや映画館のスクリーンのように、壁・床・天井が映像とアンビライトで照らされる暗いルームの中に入ります。0 でオフ。値を上げると壁が明るい色になり、反射が強くなります。30〜60 % で映画館のような見た目になります。ルームがオンのときはワールドカラーが客席照明になり、スクリーンは水平に保たれます (床が傾くと違和感があるため)。「スクリーンを頭に追従」とは併用できません。上の「環境」で映画館、屋外、ラウンジに変えられます。ガラス、反射、ルームライトは下にあります。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="GlassWalls" xml:space="preserve">
     <value>ガラスの壁</value>
   </data>
   <data name="GlassTip" xml:space="preserve">
-    <value>側壁、後壁、天井をスリムなフレームのガラスに変えると、地平線まで広がる世界の色が広がる地面を眺めることができます。黒の世界色では、夜のガラスの部屋です。フレームと反射だけが見えます。 0 は頑丈な壁、100 は透明なガラスです。スクリーンのある壁と床はしっかりしたままです。ガラスや反射には 1 m の床タイルも表示されるため、画面のサイズをメートル単位で数えることができます。透明なガラスを使用すると光が少なくなるため、部屋が少し暗くなります。ルーム環境のみ。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>側面の壁、背面の壁、天井を細いフレームのガラスに変え、ワールドカラーの地平線まで続く地面を見渡せるようにします。ワールドカラーが黒なら夜のガラス張りのルームになり、見えるのはフレームと反射だけです。0 で普通の壁、100 で透明なガラス。スクリーンのある壁と床はそのままです。ガラスや反射を使うと 1 m の床タイルも表示され、スクリーンの大きさをメートル単位で数えられます。透明なガラスほど光が逃げるため、ルームが少し暗くなります。ルーム環境でのみ有効。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="Reflections" xml:space="preserve">
     <value>反射</value>
   </data>
   <data name="ReflectTip" xml:space="preserve">
-    <value>ガラス、壁、磨かれた床がどれだけ反射するか: スクリーン、その輝き、部屋の光が鏡のように映り、スクリーンの大きさと距離がわかります。反射は視角でより強くなります。 0は何もありません。ルーム環境のみ。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>ガラス、壁、磨かれた床がどれだけ反射するかです。スクリーン、その光、ルームライトが映り込み、スクリーンの大きさや距離がわかります。反射は浅い角度で見るほど強くなります。0 で反射なし。ルーム環境でのみ有効。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="RoomLight" xml:space="preserve">
     <value>ルームライト</value>
   </data>
   <data name="RoomLightTip" xml:space="preserve">
-    <value>天井のすぐ上と後ろに柔らかい光のパネルがあるため、写真が暗くても部屋が見え続けます。壁がそれをどの程度拾うかは、壁の色がどれだけ薄いか (部屋スライダー) によって決まります。映画館では、壁取り付け用燭台と通路の照明を制御します。ラウンジにはダウンライトとウォールランプ。テーマのある部屋では、炎、溶岩、ネオン、ディスプレイも暗くなります。これらの装飾ライトは、ルーム スライダーにも反応します。屋外には部屋の明かりはありません。 0はオフです。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>頭上やや後方の天井にある柔らかな光のパネルで、映像が暗いときもルームが見えるようにします。壁がどれだけ光を受けるかは壁の明るさ (「ルーム」スライダー) で決まります。映画館では壁の燭台と通路の照明、ラウンジではダウンライトと壁のランプを調整します。テーマのあるルームでは炎、溶岩、ネオン、ディスプレイの明るさも調整します。これらの装飾照明は「ルーム」スライダーにも反応します。屋外にはルームライトはありません。0 でオフ。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="LightColour" xml:space="preserve">
-    <value>明るい色</value>
+    <value>照明の色</value>
   </data>
   <data name="LightColourTip" xml:space="preserve">
-    <value>ルームライトの色は、暖色 (テーブルランプのような 2700 K) から昼光色 (6500 K) まであります。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>ルームライトの色です。暖色 (2700 K、卓上ランプのような色) から昼光色 (6500 K) まで選べます。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="LightWarm" xml:space="preserve">
-    <value>暖かい (2700 K)</value>
+    <value>電球色 (2700 K)</value>
   </data>
   <data name="LightSoftWhite" xml:space="preserve">
-    <value>ソフトホワイト（3000K）</value>
+    <value>温白色 (3000 K)</value>
   </data>
   <data name="LightNeutral" xml:space="preserve">
-    <value>ニュートラル(4000K)</value>
+    <value>白色 (4000 K)</value>
   </data>
   <data name="LightDaylight" xml:space="preserve">
-    <value>昼光色(6500K)</value>
+    <value>昼光色 (6500 K)</value>
   </data>
   <data name="LightCustom" xml:space="preserve">
-    <value>カスタム({0})</value>
+    <value>カスタム ({0})</value>
     <comment>{0} = a colour like #123456</comment>
   </data>
   <data name="ValueOff" xml:space="preserve">
@@ -446,117 +446,117 @@
     <value>不透明</value>
   </data>
   <data name="ValueClearPercent" xml:space="preserve">
-    <value>{0} % 透明</value>
+    <value>透明度 {0} %</value>
     <comment>{0} = how clear the glass is, percent</comment>
   </data>
   <data name="NeedsFixedScreen" xml:space="preserve">
-    <value>固定画面が必要</value>
+    <value>固定スクリーンが必要</value>
   </data>
   <data name="NeedsRoom" xml:space="preserve">
-    <value>部屋が必要です</value>
+    <value>ルームが必要</value>
   </data>
   <data name="Strength3D" xml:space="preserve">
-    <value>3D強度</value>
+    <value>3D の強さ</value>
   </data>
   <data name="EnableStereo" xml:space="preserve">
-    <value>ステレオ 3D を有効にする</value>
+    <value>ステレオ 3D を有効化</value>
   </data>
   <data name="FastModel" xml:space="preserve">
     <value>高速深度モデル — ZipDepth</value>
   </data>
   <data name="FastModelTip" xml:space="preserve">
-    <value>オン (デフォルト): ZipDepth、GPU の深さあたりの推定時間は Depth Anything V2 よりも約 6 倍短い (RTX 3090 では 2.0 対 13.1 ミリ秒) ため、深度はゲームにはるかによく追従します。オフ: Depth Anything V2、オリジナルモデル。深さの詳細はそれらの間でわずかに異なります。ライブで適用されます (モデルのロード中に深度が 1 秒未満停止します)。ゲームごとに保存されます。</value>
+    <value>オン (既定): ZipDepth。深度推定 1 回あたりの GPU 時間が Depth Anything V2 の約 1/6 (RTX 3090 で 2.0 ms 対 13.1 ms) なので、深度がゲームにずっとよく追いつきます。オフ: 元のモデルである Depth Anything V2。両者で深度の細かさがわずかに異なります。すぐに反映され (モデルの読み込み中、深度は 1 秒弱止まります)、ゲームごとに保存されます。</value>
   </data>
   <data name="Subpixel" xml:space="preserve">
-    <value>スムーズな深度ステップ (サブピクセル ワープ)</value>
+    <value>滑らかな深度段差 (サブピクセルワープ)</value>
   </data>
   <data name="SubpixelTip" xml:space="preserve">
-    <value>オン (デフォルト): ステレオ シフトの小数部分が維持されるため、草、道路、壁などの滑らかに後退する表面が滑らかに見えます。オフ: ピクセル全体をシフトし、シーンを約 25 の深度バンドに量子化し、耕された畑のような尾根を表示できます。オフは非常にわずかにシャープになります。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>オン (既定): ステレオのずらし量の小数部分を保持するため、草地、道路、壁など奥へ滑らかに続く面が滑らかに見えます。オフ: ピクセル単位でずらすため、場面が約 25 段階の深度に量子化され、耕した畑のような筋が見えることがあります。オフのほうがごくわずかにシャープです。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="EdgeFlatten" xml:space="preserve">
-    <value>左右の端を平らにします</value>
+    <value>左右の端を平らにする</value>
   </data>
   <data name="EdgeFlattenTip" xml:space="preserve">
-    <value>画像の左右の端の幅に相当する幅にわたって、奥行きを画面自体の距離にスムーズに合わせて、両目に同じ端が見えるようにします。端に奥行きがあると、片方の目にはもう一方の目よりも広い端が見え、見るのが疲れます (全画面ブラウザで最もよく見えます)。そのバンド内にあるものはすべて平らに見えるため、デフォルトではオフになっています (深さが示すエッジ)。約 4 % がデスクトップでの使用に適しています。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>映像の左右の端で、指定した幅の範囲にわたって深度をスクリーン自体の距離へ滑らかに近づけ、両目に同じ端が見えるようにします。端に深度があると片目にだけ端が広く見え、見ていて疲れます (全画面のブラウザーで特に目立ちます)。その範囲内のものは平らに見えるため、既定はオフ (深度どおりの端) です。デスクトップ用途には約 4 % が適しています。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="EdgeSteps" xml:space="preserve">
-    <value>画像全体の奥行きエッジをきれいにカットします (オフ: 斜め)</value>
+    <value>映像全体で深度の境界をきれいに切る (オフ: 斜め)</value>
   </data>
   <data name="EdgeStepsTip" xml:space="preserve">
-    <value>画像は各目ごとに横方向にのみ移動できるため、その後ろにあるものの上端または下端に描画する方法は 2 つあります。オン: 画像の端がカットされるため、画像の隣にあるものは直立したままになります (デスクトップ アイコンはウィンドウの真上にあります)。カットが実際のエッジからわずかに外れている場合、キャラクターの頭の上の塊など、小さな破片が間違った側に移動する可能性があります。オフ: カットはありませんが、エッジの隣にあるものは、2 つの目が反対方向に傾いています。デフォルトではオフです。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>映像は目ごとに横方向にしかずらせないため、背後のものより手前にある物体の上端や下端には 2 通りの描き方があります。オン: 境界で映像を切るため、隣のものはまっすぐ立ったままです (ウィンドウのすぐ上にあるデスクトップアイコンなど)。切る位置が実際の境界から少しずれると、キャラクターの頭上の塊のように、小さな断片が反対側と一緒に動くことがあります。オフ: 切りませんが、境界の隣にあるものが両目で逆向きに傾きます。既定はオフ。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="EdgeStepMin" xml:space="preserve">
-    <value>少なくともこの深さのエッジのみをカットします</value>
+    <value>この深さ以上の境界だけを切る</value>
   </data>
   <data name="EdgeStepMinTip" xml:space="preserve">
-    <value>エッジを切断する前に、エッジ全体の深さの変化がどのくらいの大きさでなければならないか (深さ範囲全体の割合として)。下部では、浅いものも含め、より多くのエッジをカットします。これを高くすると、最も強い部分 (デスクトップ上のウィンドウが約 60 %) のみがカットされ、残りは斜めのままになります。デフォルトでは 12 %。カットが必要です。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>境界を切るのに必要な深度の変化量を、深度範囲全体に対する割合で指定します。低くすると浅いものも含めて多くの境界を切り、高くすると最も強い境界 (デスクトップ上のウィンドウで約 60 %) だけを切って、残りは斜めのままにします。既定は 12 %。境界を切る設定をオンにする必要があります。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="WidenNear" xml:space="preserve">
-    <value>オブジェクトの近くを上下に広げる</value>
+    <value>手前の物体の深度を上下に広げる</value>
   </data>
   <data name="WidenNearTip" xml:space="preserve">
-    <value>奥行きモデル自体の量 (100 %) と比較して、近くのオブジェクトの奥行きがその上下にどれだけ広がっているか。 「More」は、オブジェクト自体の上部と下部の行を一緒に動かし続けますが、その傾斜をその隣にあるものにさらに伝えます。 0 % では、オブジェクト自体のエッジの傾斜が維持されます。エッジがきれいにカットされている場合、カットには何も広がりません。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>手前の物体の深度をその上下にどれだけ広げるかを、深度モデル自体の量 (100 %) と比べて指定します。大きくすると物体自身の上端と下端の行も一緒に動きますが、傾きが隣のものにまで広がります。0 % では傾きが物体自身の縁に残ります。境界がきれいに切られている所では、切れ目を越えて広がることはありません。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="ThinParts" xml:space="preserve">
-    <value>薄い部分は立てて保管してください</value>
+    <value>細い部分をまっすぐ保つ</value>
   </data>
   <data name="ThinPartsTip" xml:space="preserve">
-    <value>屋根の上の尖塔、マスト、支柱など、何かの薄い直立部分は、深度モデルでは見逃されることが多いため、足が立っているものと一緒に引きずられる間、背景に留まり、2 つの目で反対方向に曲がります。オン: そのような部分は絵の中にあり、その部分が立っているものの奥行きが与えられているため、絵と一緒に 1 つのピースとして動きます。各深度パスに作業が追加され (セッション ログが報告します)、パーツが欠落したり、動画でちらついたり、パーツの横にわずかに斑点のあるパッチが残ることがあります。デフォルトではオフです。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>屋根の尖塔、マスト、柱などの細く直立した部分は深度モデルに見落とされやすく、背景と一緒に残る一方で根元は立っている物と一緒に引っ張られるため、両目で逆向きに曲がって見えます。オン: そうした部分を映像から見つけ、立っている物と同じ深度を与えるため、一体となって動きます。深度処理ごとに負荷が増え (セッションログに記録されます)、部分を見落としたり動きのある映像でちらついたりすることがあり、部分の横にわずかに斑点が残ることもあります。既定はオフ。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="SharpenEdges" xml:space="preserve">
-    <value>画像で奥行きエッジをシャープにする</value>
+    <value>映像に合わせて深度の境界をシャープにする</value>
   </data>
   <data name="SharpenEdgesTip" xml:space="preserve">
-    <value>深度マップは画像よりもはるかに粗く、そのエッジは柔らかいため、オブジェクトの輪郭の周りの画像は、その中間の量だけ移動します。つまり、斜めのエッジ、ハロー、オブジェクトと一緒に移動する背景のビットなどです。オンにすると、各ピクセルはフレームごとに、それと似ている近くの深度サンプルから深度を取得するため、オブジェクトの深度はオブジェクトが終了した時点で終了します。オンの間、近くのオブジェクトの拡大と上部のきれいなカットが置き換えられます。 1 フレームあたり GPU 時間の約 0.5 ミリ秒かかります。ヘッドセットではまだ判断されていません。ノイズの多いビデオではエッジに沿ってちらつく可能性があります。</value>
+    <value>深度マップは映像よりずっと粗く境界もぼやけているため、物体の輪郭周りの映像が中途半端な量だけずれます。その結果、斜めの境界、ハロー、物体と一緒に動く背景の断片が生じます。オンにすると、各ピクセルが毎フレーム、近くの深度サンプルのうち自分に似たものから深度を取るため、物体の深度が物体の輪郭で終わります。オンの間は、手前の物体の深度の拡張と、上の境界の切断の代わりになります。1 フレームあたり GPU 時間を約 0.5 ms 使います。ヘッドセットでの評価はまだです。ノイズの多い動画では境界沿いにちらつくことがあります。</value>
   </data>
   <data name="BackLayer" xml:space="preserve">
-    <value>背景レイヤーからオブジェクトの後ろを塗りつぶす</value>
+    <value>背景レイヤーで物体の背後を埋める</value>
   </data>
   <data name="BackLayerTip" xml:space="preserve">
-    <value>近くの物体を目で横に動かすと、その目でのみ、その後ろにあったものの横の部分が見えます。通常、そのストリップは行ごとに埋められ、その隣の背景がミラーリングされます。オンにすると、近くのオブジェクトの背後の背景が両側の背景から両目に一度作成され、ストリップは次のことを示します: 両目に同じ隠された表面、行は一致し、画像に何もなかった部分は柔らかくなります。シャープな深さのエッジに最適です。鏡に映した写真よりも柔らかいです。ヘッドセットではまだ判定されていません。</value>
+    <value>手前の物体を片目分だけ横にずらすと、その目にだけ、物体の背後にあった部分が帯状に見えてきます。通常、この帯は隣の背景を行ごとに反転して埋めます。オンにすると、手前の物体の背後の背景を両側の背景から両目共通で一度だけ作り、帯にそれを表示します。両目に同じ隠れた面が見え、行もそろい、映像に情報がない所は柔らかくなります。シャープにした深度の境界と組み合わせると最適です。反転した映像より柔らかめです。ヘッドセットでの評価はまだです。</value>
   </data>
   <data name="ShowDepthMap" xml:space="preserve">
-    <value>ゲームの代わりに深度マップを表示する</value>
+    <value>ゲームの代わりに深度マップを表示</value>
   </data>
   <data name="ShowDepthMapTip" xml:space="preserve">
-    <value>3D に使用される深度をフラットなグレースケール イメージとして表示します。白は近く、黒は遠くです。これは、シャープなエッジを含む、上記のすべての設定後の深さです。すぐに適用されます。利用できない深度マップは黒で表示されます。ゲームに戻るにはチェックを外します。</value>
+    <value>3D に使う深度を平面のグレースケール画像で表示します。白が近く、黒が遠くです。シャープにした境界を含め、上のすべての設定を適用した後の深度です。すぐに反映されます。深度マップがない場合は黒になります。チェックを外すとゲームに戻ります。</value>
   </data>
   <data name="Steady" xml:space="preserve">
-    <value>安定した深さ — 動きベクトル</value>
+    <value>深度の安定化 — モーションベクトル</value>
   </data>
   <data name="SteadyTip" xml:space="preserve">
-    <value>深度のきらめきを低減します。新しい深度推定値はそれぞれ前の推定値とブレンドされ、グラフィックス カードのハードウェア モーション推定器 (シェーダー コアではなくビデオ エンジン) によって現在の位置に移動されます。モーションが検証される場所のみなので、移動エッジが尾を引くことはありません。画像の変更されていない部分は、奥行きがほぼ完全に保たれているため、他の部分を変更してもピクッとすることはありません。デフォルトではオンです。ハードウェア動作推定器を備えたすべての GPU で動作します。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>深度のちらつきを抑えます。新しい深度推定を前回の推定と混ぜ合わせ、前回の推定はグラフィックカードのハードウェア動き推定器 (シェーダーコアではなくビデオエンジン) で現在の位置へ移動させます。動きが確認できた所だけで行うため、動く境界が尾を引くことはありません。映像の変化していない部分は深度をほぼそのまま保つので、ほかの場所が変化してもぴくつきません。既定はオン。ハードウェア動き推定器を持つ GPU なら動作します。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="Fuse" xml:space="preserve">
-    <value>Depth Anything V2とのヒューズ</value>
+    <value>Depth Anything V2 と融合</value>
   </data>
   <data name="FuseTip" xml:space="preserve">
-    <value>Depth Anything V2 を ZipDepth と並行して実行します。ZipDepth は深度を高速に保ち、Depth Anything はより詳細なレイヤー化を提供し、モーション ベクトルを使用して現在のフレームに移動します。深さ GPU として選択された別の GPU と組み合わせるのが最適です。 1 つの GPU では、1 秒間に最大 10 回実行されます。高速深度モデルが必要です。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>ZipDepth と並行して Depth Anything V2 を実行します。ZipDepth で深度を高速に保ち、Depth Anything がより細かい前後関係を補い、モーションベクトルで現在のフレームに合わせます。深度 GPU に別の GPU を選ぶと最適です。GPU が 1 つの場合は最大で毎秒 10 回の実行になります。高速深度モデルが必要です。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="FuseHint" xml:space="preserve">
-    <value>Fusion は 2 番目の深さの GPU と最適です。両方を一緒に使用できます。</value>
+    <value>融合は 2 台目の深度 GPU があると最適です。両方を同時に使えます。</value>
   </data>
   <data name="DepthGpu" xml:space="preserve">
-    <value>奥行きGPU</value>
+    <value>深度 GPU</value>
   </data>
   <data name="DepthGpuTip" xml:space="preserve">
-    <value>どのグラフィックス カードが深度モデルを実行するか。別のカードは、GPU 時間でゲームとの深度の競合を停止します。キャプチャ ステップでは、各フレームが自動的に送信されます。選択したカードが存在しない場合、VRX はゲームの GPU を使用します。次に「Attach / Play」を押したときに有効になります。ゲームごとに保存されます。</value>
+    <value>深度モデルを実行するグラフィックカードです。別のカードを使うと、深度がゲームと GPU 時間を奪い合わなくなります。各フレームはキャプチャ処理が自動で転送します。選んだカードが見つからない場合はゲームの GPU を使います。次に「アタッチ / プレイ」を押したときに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="DepthGpuHint" xml:space="preserve">
-    <value>別の GPU は、ゲームが独自のカードを完全に使用しながら、深度を高速に保ちます。次回のアタッチ/プレイ時に適用されます。</value>
+    <value>別の GPU を使うと、ゲームが自分のカードをフルに使いながら深度も高速に保てます。次の「アタッチ / プレイ」から反映されます。</value>
   </data>
   <data name="GpuSame" xml:space="preserve">
-    <value>ゲームと同じ GPU (デフォルト)</value>
+    <value>ゲームと同じ GPU (既定)</value>
   </data>
   <data name="GpuAuto" xml:space="preserve">
-    <value>その他のGPU（自動）</value>
+    <value>ほかの GPU (自動)</value>
   </data>
   <data name="GpuLabel" xml:space="preserve">
     <value>{0} ({1})</value>
     <comment>{0} = GPU name, {1} = its memory, e.g. 12 GB</comment>
   </data>
   <data name="GpuLabelCard" xml:space="preserve">
-    <value>{0}（{1}、カード {2}）</value>
+    <value>{0} ({1}、カード {2})</value>
     <comment>{0} = GPU name, {1} = memory, {2} = which of several identical cards (1, 2...)</comment>
   </data>
   <data name="GpuSizeGB" xml:space="preserve">
@@ -568,50 +568,50 @@
     <comment>{0} = megabytes</comment>
   </data>
   <data name="GpuNotFound" xml:space="preserve">
-    <value>見つかりません: {0} (ゲームの GPU が使用されます)</value>
+    <value>見つかりません: {0} (ゲームの GPU を使用)</value>
     <comment>{0} = GPU name</comment>
   </data>
   <data name="ForegroundPasses" xml:space="preserve">
-    <value>追加の前景深度パス</value>
+    <value>前景の追加深度パス</value>
   </data>
   <data name="ForegroundTip" xml:space="preserve">
-    <value>時間が許す限り、永続的な近くの領域に追加の詳細パスを提供します。 GPU 時間をより多く使用します。改善の度合いはシーンによって異なります。再生中に切り替えて比較します。</value>
+    <value>時間に余裕があるとき、近くに留まっている領域に追加の詳細パスをかけます。GPU 時間を多く使い、効果は場面によって異なります。再生中に切り替えて比べてみてください。</value>
   </data>
   <data name="FrameTiming" xml:space="preserve">
     <value>ゲームフレームのタイミング</value>
   </data>
   <data name="FrameTimingTip" xml:space="preserve">
-    <value>どのゲームフレームを奥行きで表示するか。最新フレーム (デフォルト): スムーズかつ即時。奥行きは動くものよりわずかに遅れます。深度まで遅延: ゲーム画像は深度遅延によって抑制されるため、画像の位置がより良くなり、動きがスムーズになります。深度に一致: 各深度推定値とそれが由来する正確なフレーム。最適な位置合わせですが、ゲーム モーションは深度レートでのみ更新されます。遅延と一致は遅延を追加します。ライブに適用されます。ゲームごとに保存されます。</value>
+    <value>深度と一緒にどのゲームフレームを表示するかです。最新フレーム (既定): 滑らかで遅れなし。動くものに対して深度がわずかに遅れます。深度に合わせて遅延: ゲーム映像を深度の遅れ分だけ待たせるため、ずれがかなり減り、動きも滑らかなままです。深度に一致: 各深度推定を元になったフレームそのものと組み合わせます。位置合わせは最良ですが、ゲームの動きは深度の更新頻度でしか更新されません。遅延と一致は遅延が増えます。すぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="TimingLatest" xml:space="preserve">
-    <value>最新フレーム (デフォルト)</value>
+    <value>最新フレーム (既定)</value>
   </data>
   <data name="TimingDelayed" xml:space="preserve">
-    <value>深度まで遅延 — スムーズ、わずかに遅れています</value>
+    <value>深度に合わせて遅延 — 滑らか、わずかに遅れる</value>
   </data>
   <data name="TimingMatched" xml:space="preserve">
-    <value>深度に一致 - 正確、深度レートで更新</value>
+    <value>深度に一致 — 正確、深度の頻度で更新</value>
   </data>
   <data name="ExperimentalHint" xml:space="preserve">
-    <value>オプションはまだ試行中です。 GPU 時間がかかるか、一部のゲームで間違って見えるか、後のバージョンで変更される可能性があります。すべてライブで適用され、ゲームごとに保存されます。</value>
+    <value>試験中のオプションです。GPU 時間を使ったり、一部のゲームで表示がおかしくなったり、今後のバージョンで変わったりすることがあります。どれもすぐに反映され、ゲームごとに保存されます。</value>
   </data>
   <data name="TimingHint" xml:space="preserve">
-    <value>遅延と一致により、ゲームの深さがより良く一致しますが、ゲームの表示は後で行われます。</value>
+    <value>遅延と一致は深度とゲームのずれを減らしますが、ゲームの表示が遅れます。</value>
   </data>
   <data name="DismissOnStart" xml:space="preserve">
-    <value>再生開始時にSteamVRメニューを閉じる</value>
+    <value>再生開始時に SteamVR メニューを閉じる</value>
   </data>
   <data name="KeyboardShortcuts" xml:space="preserve">
     <value>キーボードショートカット</value>
   </data>
   <data name="ShortcutRecenter" xml:space="preserve">
-    <value>再中心化</value>
+    <value>位置をリセット</value>
   </data>
   <data name="ShortcutDismiss" xml:space="preserve">
-    <value>SteamVRメニューを閉じる</value>
+    <value>SteamVR メニューを閉じる</value>
   </data>
   <data name="ShortcutsHint" xml:space="preserve">
-    <value>ショートカットは VR 再生中に機能し、ゲームにもアクセスできます。ゲームのコントロールと競合しないキーを選択してください。</value>
+    <value>ショートカットは VR 再生中に使え、ゲームにも送られます。ゲームの操作と重ならないキーを選んでください。</value>
   </data>
   <data name="KeyHome" xml:space="preserve">
     <value>Home</value>
@@ -630,80 +630,80 @@
     <comment>Keyboard key name</comment>
   </data>
   <data name="ProfileHint" xml:space="preserve">
-    <value>設定を変更すると、ゲームごとに設定が保存されます。これらのボタンはゲーム間でコピーします。</value>
+    <value>設定は変更するたびにゲームごとに保存されます。これらのボタンでゲーム間に設定をコピーできます。</value>
   </data>
   <data name="StatusSeparator" xml:space="preserve">
     <value> · </value>
     <comment>Joins independent status messages; keep the spaces.</comment>
   </data>
   <data name="StatusReady" xml:space="preserve">
-    <value>準備完了・デスクトップコントロールのみ</value>
+    <value>準備完了 · デスクトップ操作のみ</value>
   </data>
   <data name="StatusPlaying" xml:space="preserve">
-    <value>再生中・{0}</value>
+    <value>プレイ中 · {0}</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStopped" xml:space="preserve">
-    <value>停止しました · 設定は保存されました</value>
+    <value>停止しました · 設定は保存済みです</value>
   </data>
   <data name="StatusEngineFailed" xml:space="preserve">
-    <value>VRX は続行できませんでした。 {0}</value>
+    <value>VRX を続行できませんでした。{0}</value>
     <comment>{0} = the reason (English, from the renderer) or SeeSessionDetails</comment>
   </data>
   <data name="SeeSessionDetails" xml:space="preserve">
-    <value>以下のセッションの詳細をご覧ください。</value>
+    <value>下の「セッションの詳細」を確認してください。</value>
   </data>
   <data name="StatusRefreshFailed" xml:space="preserve">
     <value>アプリケーションを更新できませんでした: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusChooseWindow" xml:space="preserve">
-    <value>{0} でキャプチャするウィンドウを選択してください</value>
+    <value>{0} でキャプチャするウィンドウを選んでください</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusReadyFor" xml:space="preserve">
-    <value>{0}の準備完了・設定</value>
+    <value>準備完了 · {0} の設定</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusSavedPlaying" xml:space="preserve">
-    <value>再生中・{0}用に保存</value>
+    <value>プレイ中 · {0} 用に保存しました</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusSaved" xml:space="preserve">
-    <value>{0} 用に保存</value>
+    <value>{0} 用に保存しました</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStarting" xml:space="preserve">
-    <value>VRを始める・{0}</value>
+    <value>VR を開始中 · {0}</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStopping" xml:space="preserve">
-    <value>VRを停止中…</value>
+    <value>VR を停止しています…</value>
   </data>
   <data name="StatusStopFailed" xml:space="preserve">
-    <value>VRを停止できませんでした: {0}</value>
+    <value>VR を停止できませんでした: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusStillStopping" xml:space="preserve">
-    <value>VRXはまだ停止中です。停止後、再度閉じてください。</value>
+    <value>VRX はまだ停止処理中です。停止してからもう一度閉じてください。</value>
   </data>
   <data name="StatusRecenter" xml:space="preserve">
-    <value>再センタリングが要求されました · 現在のヘッドセットの方向を使用します</value>
+    <value>位置リセットを要求しました · 現在のヘッドセットの向きを使います</value>
   </data>
   <data name="StatusDismiss" xml:space="preserve">
-    <value>SteamVR メニューの削除が要求されました</value>
+    <value>SteamVR メニューを閉じるよう要求しました</value>
   </data>
   <data name="StatusResetBase" xml:space="preserve">
-    <value>基本設定にリセットする</value>
+    <value>基本設定にリセットしました</value>
   </data>
   <data name="StatusResetDefault" xml:space="preserve">
-    <value>VRXのデフォルト設定にリセット</value>
+    <value>VRX の既定の設定にリセットしました</value>
   </data>
   <data name="StatusBaseSelectFirst" xml:space="preserve">
-    <value>まずゲームを選択し、その設定をベースとして保存します。</value>
+    <value>まずゲームを選び、その設定を基本設定として保存してください。</value>
   </data>
   <data name="StatusBaseSaved" xml:space="preserve">
-    <value>基本設定が保存されました。まだ設定していないゲームはこれらから開始されます</value>
+    <value>基本設定を保存しました · まだ設定していないゲームはこの設定から始まります</value>
   </data>
   <data name="StatusBaseFailed" xml:space="preserve">
     <value>基本設定を保存できませんでした: {0}</value>
@@ -714,64 +714,64 @@
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusApplyAllSelectFirst" xml:space="preserve">
-    <value>まずゲームを選択し、その設定をすべてのゲームに適用します。</value>
+    <value>まずゲームを選び、その設定をすべてのゲームに適用してください。</value>
   </data>
   <data name="StatusApplyAllCancelled" xml:space="preserve">
-    <value>キャンセルされたすべてに適用・何も変更されませんでした</value>
+    <value>「すべてに適用」をキャンセルしました · 何も変更されていません</value>
   </data>
   <data name="StatusApplyAllFailed" xml:space="preserve">
     <value>すべてのゲームに適用できませんでした: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="AppliedAllOne" xml:space="preserve">
-    <value>{0} 保存済みゲームに適用される設定</value>
+    <value>保存済みのゲーム {0} 件に設定を適用しました</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="AppliedAllOther" xml:space="preserve">
-    <value>{0} で保存されたすべてのゲームに設定が適用される</value>
+    <value>保存済みのゲーム {0} 件すべてに設定を適用しました</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="AppliedSomeOne" xml:space="preserve">
-    <value>{0} セーブドゲームに適用される設定</value>
+    <value>保存済みのゲーム {0} 件に設定を適用しました</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="AppliedSomeOther" xml:space="preserve">
-    <value>{0} 保存済みゲームに適用される設定</value>
+    <value>保存済みのゲーム {0} 件に設定を適用しました</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="SkippedOne" xml:space="preserve">
-    <value>{0} 読み取り不能なプロファイルは変更されないままです</value>
+    <value>読み取れないプロファイル {0} 件は変更していません</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="SkippedOther" xml:space="preserve">
-    <value>{0} 読み取り不可能なプロファイルは変更されないまま</value>
+    <value>読み取れないプロファイル {0} 件は変更していません</value>
     <comment>{0} = number of profiles</comment>
   </data>
   <data name="FailedWrite" xml:space="preserve">
-    <value>{0} に書き込むことができず (読み取り専用または使用中)、古い設定を保持します。</value>
+    <value>{0} 件は書き込めなかったため (読み取り専用または使用中)、元の設定のままです</value>
     <comment>{0} = number of profiles</comment>
   </data>
   <data name="ApplyAllTitle" xml:space="preserve">
     <value>すべてのゲームに適用</value>
   </data>
   <data name="ApplyAllQuestionOne" xml:space="preserve">
-    <value>ここに示されている設定を {0} 保存したゲームに適用しますか?
+    <value>ここに表示中の設定を、保存済みのゲーム {0} 件に適用しますか？
 
-すべてのゲームの画面配置、3D 強度、深度オプション、深度 GPU およびショートカット キーがこれらに置き換えられます。各ゲームは独自のパスとウィンドウを保持します。
+各ゲームのスクリーン配置、3D の強さ、深度オプション、深度 GPU、ショートカットキーがこの設定に置き換わります。各ゲームのパスとウィンドウはそのまま残ります。
 
-これを元に戻すことはできません。まだセットアップしていないゲームは基本設定から開始されます。</value>
+この操作は元に戻せません。まだ設定していないゲームは引き続き基本設定から始まります。</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="ApplyAllQuestionOther" xml:space="preserve">
-    <value>ここに示されている設定をすべての {0} 保存済みゲームに適用しますか?
+    <value>ここに表示中の設定を、保存済みのゲーム {0} 件すべてに適用しますか？
 
-すべてのゲームの画面配置、3D 強度、深度オプション、深度 GPU およびショートカット キーがこれらに置き換えられます。各ゲームは独自のパスとウィンドウを保持します。
+各ゲームのスクリーン配置、3D の強さ、深度オプション、深度 GPU、ショートカットキーがこの設定に置き換わります。各ゲームのパスとウィンドウはそのまま残ります。
 
-これを元に戻すことはできません。まだセットアップしていないゲームは基本設定から開始されます。</value>
+この操作は元に戻せません。まだ設定していないゲームは引き続き基本設定から始まります。</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="AutoCountdown" xml:space="preserve">
-    <value>{1} の VRX を {0} に接続 - ウィンドウを切り替えてキャンセルします</value>
+    <value>{1} 秒後に VRX を {0} にアタッチします - ウィンドウを切り替えるとキャンセル</value>
     <comment>{0} = game title, {1} = seconds left</comment>
   </data>
   <data name="AutoTheGame" xml:space="preserve">
@@ -779,7 +779,7 @@
     <comment>Used as {0} in AutoCountdown when the game has no name</comment>
   </data>
   <data name="StatusAutoListFailed" xml:space="preserve">
-    <value>自動アタッチでアプリケーションをリストできませんでした: {0}</value>
+    <value>自動アタッチ: アプリケーションの一覧を取得できませんでした: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusAutoGone" xml:space="preserve">
@@ -787,131 +787,131 @@
     <comment>{0} = game name</comment>
   </data>
   <data name="StatusAutoStarted" xml:space="preserve">
-    <value>自動付・VR起動・{0}</value>
+    <value>自動アタッチ · VR を開始中 · {0}</value>
     <comment>{0} = game name</comment>
   </data>
   <data name="OverlayTitle" xml:space="preserve">
     <value>VRX 自動アタッチ</value>
   </data>
   <data name="ErrorSelectGame" xml:space="preserve">
-    <value>最初にゲームを選択します。</value>
+    <value>まずゲームを選んでください。</value>
   </data>
   <data name="ErrorWorldColour" xml:space="preserve">
-    <value>ワールドカラーは、#1C1C1E のような 6 つの 16 進数である必要があります。変更は保存されるまで保存されません。</value>
+    <value>ワールドカラーは #1C1C1E のような 16 進数 6 桁で指定してください。正しく入力するまで変更は保存されません。</value>
   </data>
   <data name="ErrorShortcutsConflict" xml:space="preserve">
-    <value>2 つの異なるショートカット キーを選択します。設定が有効になるまで、変更は保存されません。</value>
+    <value>異なる 2 つのショートカットキーを選んでください。設定が正しくなるまで変更は保存されません。</value>
   </data>
   <data name="ErrorSettingsInvalid" xml:space="preserve">
     <value>設定が許容範囲外であるか、ショートカット キーが競合しています。</value>
   </data>
   <data name="ErrorProfileInvalid" xml:space="preserve">
-    <value>このゲームの保存された設定は無効です。上書きされていません。</value>
+    <value>このゲームの保存済み設定が無効です。上書きはしていません。</value>
   </data>
   <data name="ErrorStopFirst" xml:space="preserve">
-    <value>まず現在のセッションを停止します。</value>
+    <value>まず現在のセッションを停止してください。</value>
   </data>
   <data name="ErrorAnotherSession" xml:space="preserve">
-    <value>別の VRX セッションが実行中です。ここにアタッチする前に、そのセッションを閉じてください。</value>
+    <value>別の VRX セッションが実行中です。そのセッションを閉じてからアタッチしてください。</value>
   </data>
   <data name="DesktopWhenAway" xml:space="preserve">
-    <value>ゲームを終了するときにデスクトップを表示する</value>
+    <value>ゲームから離れたらデスクトップを表示</value>
   </data>
   <data name="DesktopWhenAwayHint" xml:space="preserve">
-    <value>ゲームが前面にない間、Ctrl+Esc の後、Windows キーまたは Alt+Tab - VR はゲームがオンになっているディスプレイを表示します。ゲームに戻ると、VR でゲームが再び表示されます。ゲームが終了しても、VR の停止を押すまで、VR はデスクトップを継続します。アタッチ/プレイ時に適用されます。</value>
+    <value>ゲームが前面にない間 (Ctrl+Esc、Windows キー、Alt+Tab の後など)、VR にはゲームがあるディスプレイを表示します。ゲームに戻ると、VR は再びゲームを表示します。ゲームが終了した場合は、「VR を停止」を押すまでデスクトップを表示し続けます。「アタッチ / プレイ」時に反映されます。</value>
   </data>
   <data name="CardDesktop" xml:space="preserve">
     <value>デスクトップ</value>
     <comment>The game card while VR shows the display instead of the game.</comment>
   </data>
   <data name="CardShowingDesktop" xml:space="preserve">
-    <value>デスクトップを表示・{0}が前面にある場合に戻る</value>
+    <value>デスクトップを表示中 · {0} が前面に来ると戻ります</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="CardGameClosed" xml:space="preserve">
-    <value>{0} が閉じました。VR の停止を押すまでデスクトップが表示されます</value>
+    <value>{0} が終了しました · 「VR を停止」を押すまでデスクトップを表示します</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="StatusGameClosedDesktop" xml:space="preserve">
-    <value>{0}は閉店しました。 VR では、Stop VR を押すまでデスクトップが表示されます。</value>
+    <value>{0} が終了しました。「VR を停止」を押すまで VR にデスクトップを表示します。</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="ErrorScreenChanged" xml:space="preserve">
-    <value>リスト作成時より表示が変更されています。もう一度選択してください。</value>
+    <value>一覧の作成後にディスプレイ構成が変わりました。もう一度選んでください。</value>
   </data>
   <data name="ChooseButton" xml:space="preserve">
     <value>選択…</value>
     <comment>Opens the chooser: pictures of every window and display.</comment>
   </data>
   <data name="ChooseTip" xml:space="preserve">
-    <value>ライブ画像からウィンドウまたは画面全体を選択し、VR で再生します</value>
+    <value>ライブ映像からウィンドウまたは画面全体を選び、VR で再生します</value>
   </data>
   <data name="ChooserTitle" xml:space="preserve">
-    <value>何をプレイするかを選択してください</value>
+    <value>再生するものを選択</value>
   </data>
   <data name="ChooserIntro" xml:space="preserve">
-    <value>ウィンドウまたは画面をクリックすると VR で再生されます。</value>
+    <value>ウィンドウまたは画面をクリックすると VR で再生します。</value>
   </data>
   <data name="ChooserWindows" xml:space="preserve">
-    <value>窓</value>
+    <value>ウィンドウ</value>
   </data>
   <data name="ChooserNoWindows" xml:space="preserve">
-    <value>表示するウィンドウはありません。ゲームを開始してから、もう一度選択してください。</value>
+    <value>表示できるウィンドウがありません。ゲームを起動してから、もう一度選んでください。</value>
   </data>
   <data name="ChooserScreens" xml:space="preserve">
     <value>画面全体</value>
   </data>
   <data name="ChooserScreensHint" xml:space="preserve">
-    <value>デスクトップやビデオプレーヤーなど、そのディスプレイに表示されるすべてのもの。 VR の停止を押すまで再生されます。</value>
+    <value>デスクトップや動画プレーヤーなど、そのディスプレイに表示されるものすべてです。「VR を停止」を押すまで再生します。</value>
   </data>
   <data name="ChooserMainDisplay" xml:space="preserve">
     <value>メインディスプレイ</value>
   </data>
   <data name="ChooserMinimized" xml:space="preserve">
-    <value>{0} · 最小化</value>
+    <value>{0} · 最小化中</value>
     <comment>{0} = executable name</comment>
   </data>
   <data name="WholeScreen" xml:space="preserve">
     <value>画面全体</value>
   </data>
   <data name="ScreenTitle" xml:space="preserve">
-    <value>ディスプレイ {0}・{1} × {2}</value>
+    <value>ディスプレイ {0} · {1} × {2}</value>
     <comment>{0} = display number, {1} x {2} = resolution in pixels</comment>
   </data>
   <data name="ScreenTitlePrimary" xml:space="preserve">
-    <value>ディスプレイ {0}・{1} × {2}・メイン</value>
+    <value>ディスプレイ {0} · {1} × {2} · メイン</value>
     <comment>{0} = display number, {1} x {2} = resolution in pixels</comment>
   </data>
   <data name="ScreenDescriptionOne" xml:space="preserve">
-    <value>1ディスプレイ</value>
+    <value>ディスプレイ 1 台</value>
   </data>
   <data name="ScreenDescriptionOther" xml:space="preserve">
-    <value>{0} ディスプレイ</value>
+    <value>ディスプレイ {0} 台</value>
     <comment>{0} = number of displays</comment>
   </data>
   <data name="PathWholeScreen" xml:space="preserve">
-    <value>ディスプレイに表示されるすべて。 1 つの設定セットがすべてのディスプレイで共有されます。</value>
+    <value>ディスプレイに表示されるものすべて。設定は 1 つで、すべてのディスプレイで共通です。</value>
   </data>
   <data name="StatusChoiceGone" xml:space="preserve">
-    <value>そのウィンドウやディスプレイはもう存在しません。もう一度選択してください。</value>
+    <value>そのウィンドウまたはディスプレイはもうありません。もう一度選んでください。</value>
   </data>
   <data name="ErrorEngineBlockedPolicy" xml:space="preserve">
-    <value>Windows が VRX の 3D エンジン (engine\xrplayer.exe) をブロックしました。これは通常、まだデジタル署名されていない新しいプログラムを停止するスマート アプリ コントロールであり、VRX のプログラムはまだ署名されていません。今すぐプレイするには、[Windows セキュリティ] &gt; [アプリとブラウザーのコントロール] &gt; [スマート アプリ コントロールの設定] でスマート アプリ コントロールをオフにしてください。 Windows では、リセットしないと再度オンにできない場合があります。職場または学校の PC では、その管理者に問い合わせてください。</value>
+    <value>Windows が VRX の 3D エンジン (engine\xrplayer.exe) をブロックしました。通常は Smart App Control (スマート アプリ コントロール) が原因です。これはまだデジタル署名されていない新しいプログラムを止める機能で、VRX のプログラムはまだ署名されていません。今すぐプレイするには、Windows セキュリティ &gt; アプリとブラウザー コントロール &gt; スマート アプリ コントロールの設定 で Smart App Control をオフにしてください。リセットしないと再びオンにできない場合があります。職場や学校の PC では管理者に相談してください。</value>
   </data>
   <data name="ErrorEngineBlockedAntivirus" xml:space="preserve">
-    <value>ウイルス対策プログラムにより、VRX の 3D エンジン (engine\xrplayer.exe) の実行が停止されました。 VRX を GitHub リリースからダウンロードした場合は、ダウンロードを SHA256SUMS.txt と比較してチェックし、ウイルス対策でそのファイルを許可し、誤検知として報告できます。</value>
+    <value>ウイルス対策ソフトが VRX の 3D エンジン (engine\xrplayer.exe) の実行を止めました。VRX を GitHub のリリースからダウンロードした場合は、ダウンロードしたファイルを SHA256SUMS.txt と照合できます。その後、ウイルス対策ソフトでファイルを許可し、誤検知として報告してください。</value>
   </data>
   <data name="ErrorProcessChanged" xml:space="preserve">
-    <value>選択したプロセスは終了したか、変更されました。リストを更新します。</value>
+    <value>選択したプロセスは終了したか変更されました。一覧を更新してください。</value>
   </data>
   <data name="ErrorRendererMissing" xml:space="preserve">
-    <value>VRX レンダラーがありません。 VRX を再インストールするか、プロジェクトをビルドします。</value>
+    <value>VRX のレンダラーが見つかりません。VRX を再インストールするか、プロジェクトをビルドしてください。</value>
   </data>
   <data name="ErrorBuildRenderer" xml:space="preserve">
-    <value>まず、bench/native/openxr/build.bat --desktop を使用してデスクトップ レンダラーをビルドします。</value>
+    <value>先に bench/native/openxr/build.bat --desktop でデスクトップ用レンダラーをビルドしてください。</value>
   </data>
   <data name="LogStopTimeout" xml:space="preserve">
-    <value>VRX は時間内に停止しませんでした。レンダラーを終了します。ゲームには影響ありません。</value>
+    <value>VRX が時間内に停止しなかったため、レンダラーを終了します。ゲームには影響しません。</value>
   </data>
   <data name="Controllers" xml:space="preserve">
     <value>コントローラー</value>
@@ -923,37 +923,37 @@
     <value>オン</value>
   </data>
   <data name="ControllersTip" xml:space="preserve">
-    <value>オプションのモーション コントローラー設定。コントローラーのメニュー ボタンを押して、見ているパネルを表示または非表示にします。タイトル バーを選択またはドラッグするには、トリガーをポイントして押します。サムスティックを使用してスクロールします。インデックス/汎用コントローラーはサムスティックのクリックを使用します。 VR コントローラー モードと XR 入力フォーカスが必要です。</value>
+    <value>モーションコントローラー用のオプション設定です。コントローラーのメニューボタンを押すと、見ている方向にパネルを表示/非表示します。ポイントしてトリガーを引くと選択、タイトルバーではドラッグできます。サムスティックでスクロールします。Index/汎用コントローラーはサムスティックのクリックを使います。VR コントローラーモードと XR 入力フォーカスが必要です。</value>
   </data>
   <data name="ControllerMenuTitle" xml:space="preserve">
-    <value>VRXの設定</value>
+    <value>VRX 設定</value>
   </data>
   <data name="ControllerMenuHint" xml:space="preserve">
-    <value>メニュー: 表示または非表示 · ポイント + トリガー: 選択 · サムスティック: スクロール</value>
+    <value>メニュー: 表示/非表示 · ポイント + トリガー: 選択 · サムスティック: スクロール</value>
   </data>
   <data name="ControllerMenuDrag" xml:space="preserve">
-    <value>ここでトリガーを押してパネルを移動</value>
+    <value>ここでトリガーを押したまま移動</value>
   </data>
   <data name="ControllerMenuBack" xml:space="preserve">
-    <value>戻る / 設定項目</value>
+    <value>戻る / セクション</value>
   </data>
   <data name="ControllerMenuControlScreen" xml:space="preserve">
     <value>画面を操作</value>
   </data>
   <data name="ControllerMenuStopControlScreen" xml:space="preserve">
-    <value>画面操作を終了</value>
+    <value>画面の操作を終了</value>
   </data>
   <data name="ControllerMenuScreenHint" xml:space="preserve">
-    <value>右トリガー：左クリック/ドラッグ・右グリップ：右クリック・メニュー：設定を隠す</value>
+    <value>右トリガー: 左クリック/ドラッグ · 右グリップ: 右クリック · メニュー: 設定を隠す</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
     <value>スナップショット</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
-    <value>画像フォルダを開く</value>
+    <value>画像フォルダーを開く</value>
   </data>
   <data name="SnapshotTitle" xml:space="preserve">
-    <value>スナップショット・タイトルを長押しして移動</value>
+    <value>スナップショット · タイトルをつかんで移動</value>
   </data>
   <data name="SnapshotSave" xml:space="preserve">
     <value>保存</value>
@@ -965,22 +965,22 @@
     <value>閉じる</value>
   </data>
   <data name="SnapshotSaved" xml:space="preserve">
-    <value>VRX / 画像に保存されました</value>
+    <value>VRX / images に保存しました</value>
   </data>
   <data name="SnapshotLimit" xml:space="preserve">
-    <value>フローティング ウィンドウを閉じて、別のウィンドウのためのスペースを空けます。</value>
+    <value>別のウィンドウを開くには、フローティングウィンドウを 1 つ閉じてください。</value>
   </data>
   <data name="BrowserOpen" xml:space="preserve">
-    <value>ブラウザ</value>
+    <value>ブラウザー</value>
   </data>
   <data name="BrowserTitle" xml:space="preserve">
-    <value>ブラウザ・タイトル長押しで移動</value>
+    <value>ブラウザー · タイトルをつかんで移動</value>
   </data>
   <data name="BrowserGo" xml:space="preserve">
-    <value>行く</value>
+    <value>移動</value>
   </data>
   <data name="BrowserNew" xml:space="preserve">
-    <value>新しいブラウザ</value>
+    <value>新しいブラウザー</value>
   </data>
   <data name="BrowserLicenses" xml:space="preserve">
     <value>ライセンス</value>
@@ -989,13 +989,13 @@
     <value>戻る</value>
   </data>
   <data name="BrowserReload" xml:space="preserve">
-    <value>リロード</value>
+    <value>再読み込み</value>
   </data>
   <data name="BrowserLoading" xml:space="preserve">
     <value>読み込み中…</value>
   </data>
   <data name="BrowserOpenLink" xml:space="preserve">
-    <value>リンクを新しいウィンドウで開く</value>
+    <value>新しいウィンドウでリンクを開く</value>
   </data>
   <data name="BrowserCopyLink" xml:space="preserve">
     <value>リンクをコピー</value>
@@ -1004,16 +1004,16 @@
     <value>コピー</value>
   </data>
   <data name="BrowserPaste" xml:space="preserve">
-    <value>ペースト</value>
+    <value>貼り付け</value>
   </data>
   <data name="KeyboardOpen" xml:space="preserve">
     <value>キーボード</value>
   </data>
   <data name="ArrangeWindows" xml:space="preserve">
-    <value>ウィンドウを配置する</value>
+    <value>ウィンドウを整列</value>
   </data>
   <data name="KeyboardTitle" xml:space="preserve">
-    <value>キーボード・タイトルを押したまま移動</value>
+    <value>キーボード · タイトルをつかんで移動</value>
   </data>
   <data name="KeyboardShift" xml:space="preserve">
     <value>Shift</value>
@@ -1025,22 +1025,22 @@
     <value>Enter</value>
   </data>
   <data name="KeyboardHint" xml:space="preserve">
-    <value>キーをタップするか、トリガーを押したまま文字をスワイプします。放して入力します。単語を置き換える別の候補を選択してください。</value>
+    <value>キーをタップするか、トリガーを押したまま文字をなぞります。離すと入力されます。別の候補を選ぶと単語を置き換えます。</value>
   </data>
   <data name="KeyboardChooseTarget" xml:space="preserve">
-    <value>ブラウザー フィールドを選択するか、コントロール画面を有効にしてゲーム/Windows フィールドをクリックします。</value>
+    <value>ブラウザーの入力欄を選ぶか、「画面を操作」をオンにしてゲーム/Windows の入力欄をクリックしてください。</value>
   </data>
   <data name="KeyboardBrowserTarget" xml:space="preserve">
-    <value>ブラウザに入力: {0}</value>
+    <value>ブラウザーに入力中: {0}</value>
   </data>
   <data name="KeyboardWindowsTarget" xml:space="preserve">
-    <value>選択したゲーム/Windows ウィンドウに入力する</value>
+    <value>選択したゲーム/Windows のウィンドウに入力中</value>
   </data>
   <data name="KeyboardAddWord" xml:space="preserve">
     <value>単語を追加: {0}</value>
   </data>
   <data name="SnapshotFailed" xml:space="preserve">
-    <value>スナップショットを取得できませんでした。もう一度やり直してください。</value>
+    <value>スナップショットを撮れませんでした。もう一度お試しください。</value>
   </data>
   <data name="SnapshotFileError" xml:space="preserve">
     <value>画像: {0}</value>
@@ -1058,25 +1058,25 @@
     <value>キャンセル</value>
   </data>
   <data name="ControllerMenuApplyAllQuestion" xml:space="preserve">
-    <value>保存されているすべてのゲーム プロファイルの設定を現在の設定に置き換えますか?各ゲームのパスとウィンドウは保持されます。</value>
+    <value>保存済みのすべてのゲームプロファイルの設定を現在の設定に置き換えますか？各ゲームのパスとウィンドウは保持されます。</value>
   </data>
   <data name="ControllerMenuFailed" xml:space="preserve">
-    <value>コントローラー設定メニューが利用不可: {0}</value>
+    <value>コントローラー設定メニューを使用できません: {0}</value>
   </data>
   <data name="RoomLife" xml:space="preserve">
-    <value>ルームライフと音楽</value>
+    <value>ルームの演出と音楽</value>
   </data>
   <data name="RoomLifeHint" xml:space="preserve">
-    <value>固定スクリーンと部屋が必要です。 Listen は、デフォルトの再生出力上の他のアプリを含む Windows 再生ミックスをキャプチャします。マイクや録音はありません。すべてのエフェクトはライブで適用され、ゲームごとに保存されます。影は生き物と座席の形状を追跡します。これはハードウェアDXRではありません。</value>
+    <value>固定スクリーンとルームが必要です。「再生音を聴く」は、既定の再生出力にあるほかのアプリも含めて Windows の再生ミックスを取り込みます。マイクや録音は使いません。すべての効果はすぐに反映され、ゲームごとに保存されます。影は生き物と座席の形状をトレースして描きます。ハードウェア DXR ではありません。</value>
   </data>
   <data name="ListenAudio" xml:space="preserve">
-    <value>再生音声を聞く</value>
+    <value>再生音を聴く</value>
   </data>
   <data name="MusicVisuals" xml:space="preserve">
     <value>壁と天井の音楽アニメーション</value>
   </data>
   <data name="Creatures" xml:space="preserve">
-    <value>アニメーションの生き物</value>
+    <value>動く生き物</value>
   </data>
   <data name="RoomParticles" xml:space="preserve">
     <value>カラフルな 3D ダスト</value>
@@ -1085,25 +1085,25 @@
     <value>動くディスコスポットライト</value>
   </data>
   <data name="TracedShadows" xml:space="preserve">
-    <value>レイ トレーシング シャドウ (GPU 追加コスト)</value>
+    <value>レイトレーシングの影 (GPU 負荷増)</value>
   </data>
   <data name="CreatureCount" xml:space="preserve">
-    <value>生き物の数（最大24）</value>
+    <value>生き物の数 (最大 24)</value>
   </data>
   <data name="EffectsBrightness" xml:space="preserve">
     <value>エフェクトの明るさ (%)</value>
   </data>
   <data name="ParticleDensity" xml:space="preserve">
-    <value>粉塵（最大100個）</value>
+    <value>ダストの粒子 (最大 100)</value>
   </data>
   <data name="CreatureShark" xml:space="preserve">
-    <value>ホログラフィックサメ</value>
+    <value>ホログラムのサメ</value>
   </data>
   <data name="CreatureFish" xml:space="preserve">
     <value>小魚</value>
   </data>
   <data name="CreatureRobot" xml:space="preserve">
-    <value>歩行ロボット</value>
+    <value>歩くロボット</value>
   </data>
   <data name="CreatureJelly" xml:space="preserve">
     <value>クラゲ</value>
@@ -1118,7 +1118,7 @@
     <value>カメ</value>
   </data>
   <data name="CreatureDrone" xml:space="preserve">
-    <value>測量用ドローン</value>
+    <value>探査ドローン</value>
   </data>
   <data name="VisualSpectrum" xml:space="preserve">
     <value>スペクトル</value>
@@ -1148,7 +1148,7 @@
     <value>溶岩</value>
   </data>
   <data name="VisualStars" xml:space="preserve">
-    <value>スター</value>
+    <value>星</value>
   </data>
   <data name="VisualRibbons" xml:space="preserve">
     <value>リボン</value>
@@ -1157,34 +1157,34 @@
     <value>リサージュ</value>
   </data>
   <data name="AudioOff" xml:space="preserve">
-    <value>再生リスニングがオフになっています。</value>
+    <value>再生音の聴き取りはオフです。</value>
   </data>
   <data name="AudioReady" xml:space="preserve">
-    <value>VRで再生試聴が始まります。</value>
+    <value>再生音の聴き取りは VR の開始とともに始まります。</value>
   </data>
   <data name="AudioConnecting" xml:space="preserve">
-    <value>Windows 再生出力に接続しています...</value>
+    <value>Windows の再生出力に接続しています...</value>
   </data>
   <data name="AudioListening" xml:space="preserve">
-    <value>Windows プレイバック ミックスを聞いています。</value>
+    <value>Windows の再生ミックスを聴いています。</value>
   </data>
   <data name="AudioUnavailable" xml:space="preserve">
-    <value>再生キャプチャは使用できません。デフォルトの Windows 出力デバイスを確認します。 VRX は再試行します。</value>
+    <value>再生音を取り込めません。Windows の既定の出力デバイスを確認してください。VRX が再試行します。</value>
   </data>
   <data name="VisualLayers" xml:space="preserve">
-    <value>ビジュアライザーレイヤー — 任意のレイヤーを組み合わせる</value>
+    <value>ビジュアライザーのレイヤー — 自由に組み合わせ可能</value>
   </data>
   <data name="MusicReactivity" xml:space="preserve">
-    <value>音楽の反応性</value>
+    <value>音楽への反応度</value>
   </data>
   <data name="BeamReactions" xml:space="preserve">
-    <value>クリーチャーはコントローラーのビームに反応します</value>
+    <value>生き物がコントローラーのビームに反応</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex — ジェットパックロボットコンパニオン</value>
+    <value>Vrex — ジェットパックのロボット相棒</value>
   </data>
   <data name="ThemeDefault" xml:space="preserve">
-    <value>デフォルト</value>
+    <value>既定</value>
   </data>
   <data name="ThemeRobots" xml:space="preserve">
     <value>ロボット</value>
@@ -1202,13 +1202,13 @@
     <value>天国</value>
   </data>
   <data name="ThemeDark" xml:space="preserve">
-    <value>暗い</value>
+    <value>ダーク</value>
   </data>
   <data name="ThemeLight" xml:space="preserve">
     <value>ライト</value>
   </data>
   <data name="ThemeGrape" xml:space="preserve">
-    <value>ぶどう</value>
+    <value>グレープ</value>
   </data>
   <data name="AppearanceTitle" xml:space="preserve">
     <value>言語とテーマ</value>
@@ -1217,28 +1217,28 @@
     <value>フローティングパネルのテーマ</value>
   </data>
   <data name="FloatingOpacityLabel" xml:space="preserve">
-    <value>フローティングパネルの背景の不透明度</value>
+    <value>フローティングパネル背景の不透明度</value>
   </data>
   <data name="DesktopThemeLabel" xml:space="preserve">
     <value>デスクトップテーマ</value>
   </data>
   <data name="AppearanceHint" xml:space="preserve">
-    <value>パネルのテーマと透明度は、VR 設定、キーボード、ブラウザーのクロム、スナップショットに適用されます。デスクトップの色は別々です。コンテンツは読みやすいままです。</value>
+    <value>パネルのテーマと透明度は、VR の設定、キーボード、ブラウザーの枠、スナップショットに適用されます。デスクトップの配色は別に設定します。内容は読みやすいまま保たれます。</value>
   </data>
   <data name="Quick3D" xml:space="preserve">
     <value>3D</value>
   </data>
   <data name="Quick3DTip" xml:space="preserve">
-    <value>ステレオ 3D のオンとオフを切り替えます。すぐに適用されます。</value>
+    <value>ステレオ 3D のオン/オフを切り替えます。すぐに反映されます。</value>
   </data>
   <data name="DictationDefaultMic" xml:space="preserve">
-    <value>Windowsのデフォルトマイク</value>
+    <value>Windows の既定のマイク</value>
   </data>
   <data name="DictationStart" xml:space="preserve">
     <value>音声入力</value>
   </data>
   <data name="DictationStop" xml:space="preserve">
-    <value>音声入力を停止</value>
+    <value>聴き取りを停止</value>
   </data>
   <data name="DictationMicrophone" xml:space="preserve">
     <value>マイク: {0} ▾</value>
@@ -1250,25 +1250,25 @@
     <value>Windows 音声認識を開始しています…</value>
   </data>
   <data name="DictationListening" xml:space="preserve">
-    <value>リスニング — {0}。選択したマイクに向かって話します。</value>
+    <value>聴き取り中 — {0}。選択したマイクに向かって話してください。</value>
   </data>
   <data name="DictationHearing" xml:space="preserve">
-    <value>聴覚: {0}</value>
+    <value>認識中: {0}</value>
   </data>
   <data name="DictationHeard" xml:space="preserve">
-    <value>挿入: {0}</value>
+    <value>入力しました: {0}</value>
   </data>
   <data name="DictationError" xml:space="preserve">
-    <value>音声入力：{0}</value>
+    <value>音声入力: {0}</value>
   </data>
   <data name="DictationNoRecognizer" xml:space="preserve">
-    <value>Windows デスクトップ音声認識機能がインストールされていません。音声入力を使用するには、Windows 音声言語パックを追加します。</value>
+    <value>Windows のデスクトップ音声認識エンジンがインストールされていません。音声入力を使うには Windows の音声言語パックを追加してください。</value>
   </data>
   <data name="DictationOverrun" xml:space="preserve">
-    <value>音声キャプチャが追いつきませんでした。音声入力を停止して再開します。</value>
+    <value>音声の取り込みが追いつきませんでした。音声入力を停止して再開してください。</value>
   </data>
   <data name="DictationNoMicrophones" xml:space="preserve">
-    <value>マイクは使用できません。マイクを接続し、Windows マイクへのアクセスを確認します。</value>
+    <value>使用できるマイクがありません。マイクを接続し、Windows のマイクへのアクセス設定を確認してください。</value>
   </data>
   <data name="DictationMicRemoved" xml:space="preserve">
     <value>選択したマイクは使用できなくなりました。別のマイクを選択してください。</value>
@@ -1277,10 +1277,10 @@
     <value>クイックコントロールを折りたたむ</value>
   </data>
   <data name="ControllerMenuExpand" xml:space="preserve">
-    <value>クイックコントロールを表示する</value>
+    <value>クイックコントロールを表示</value>
   </data>
   <data name="BrowserClearAddress" xml:space="preserve">
-    <value>アドレスをクリアする</value>
+    <value>アドレスをクリア</value>
   </data>
   <data name="RoomCategoryEnvironment" xml:space="preserve">
     <value>環境と座席</value>
@@ -1289,34 +1289,34 @@
     <value>表面と照明</value>
   </data>
   <data name="RoomCategoryMusic" xml:space="preserve">
-    <value>音楽のビジュアライゼーション</value>
+    <value>音楽ビジュアライザー</value>
   </data>
   <data name="RoomCategoryCreatures" xml:space="preserve">
     <value>生き物</value>
   </data>
   <data name="RoomCategoryAtmosphere" xml:space="preserve">
-    <value>雰囲気効果</value>
+    <value>雰囲気エフェクト</value>
   </data>
   <data name="RoomCategoryVrex" xml:space="preserve">
     <value>Vrex</value>
   </data>
   <data name="BrowserSiteAccess" xml:space="preserve">
-    <value>サイトアクセス</value>
+    <value>サイトの許可</value>
   </data>
   <data name="BrowserPermissionTitle" xml:space="preserve">
-    <value>許可リクエスト</value>
+    <value>アクセス許可の要求</value>
   </data>
   <data name="BrowserPermissionOrigin" xml:space="preserve">
-    <value>{0} は次へのアクセスを希望しています:</value>
+    <value>{0} が次へのアクセスを求めています:</value>
   </data>
   <data name="BrowserPermissionEmbedded" xml:space="preserve">
-    <value>{0} は、{1} を使用中にアクセスを要求しています:</value>
+    <value>{0} が {1} の閲覧中にアクセスを求めています:</value>
   </data>
   <data name="BrowserPermissionRemember" xml:space="preserve">
-    <value>許可または拒否の選択は、このサイトに対して記憶されます。サイトアクセスを使用して確認またはリセットします。</value>
+    <value>「許可」または「拒否」の選択はこのサイトについて記憶されます。「サイトの許可」で確認またはリセットできます。</value>
   </data>
   <data name="BrowserPermissionAllow" xml:space="preserve">
-    <value>許可する</value>
+    <value>許可</value>
   </data>
   <data name="BrowserPermissionDeny" xml:space="preserve">
     <value>拒否</value>
@@ -1328,13 +1328,13 @@
     <value>カメラ</value>
   </data>
   <data name="BrowserPermissionDesktopAudio" xml:space="preserve">
-    <value>画面音声キャプチャ</value>
+    <value>画面の音声キャプチャ</value>
   </data>
   <data name="BrowserPermissionDesktopVideo" xml:space="preserve">
     <value>スクリーンキャプチャ</value>
   </data>
   <data name="BrowserPermissionLocation" xml:space="preserve">
-    <value>場所</value>
+    <value>位置情報</value>
   </data>
   <data name="BrowserPermissionNotifications" xml:space="preserve">
     <value>通知</value>
@@ -1346,58 +1346,58 @@
     <value>{0}</value>
   </data>
   <data name="BrowserPermissionSaveFailed" xml:space="preserve">
-    <value>選択は現在適用されていますが、次回のために保存できませんでした。</value>
+    <value>選択は今は適用されていますが、次回用に保存できませんでした。</value>
   </data>
   <data name="BrowserPermissionNoSite" xml:space="preserve">
     <value>Web サイトが読み込まれていません。</value>
   </data>
   <data name="BrowserPermissionNoSaved" xml:space="preserve">
-    <value>このサイトには保存された権限の選択肢がありません。</value>
+    <value>このサイトに保存された許可の選択はありません。</value>
   </data>
   <data name="BrowserPermissionSaved" xml:space="preserve">
     <value>{0}: {1} — {2}</value>
   </data>
   <data name="BrowserPermissionReset" xml:space="preserve">
-    <value>リセットしてリロードする</value>
+    <value>リセットして再読み込み</value>
   </data>
   <data name="BrowserPermissionResetFailed" xml:space="preserve">
-    <value>保存されたサイト権限をリセットできませんでした。</value>
+    <value>保存されたサイトの許可をリセットできませんでした。</value>
   </data>
   <data name="GameHelpStart" xml:space="preserve">
-    <value>このゲームのヒント</value>
+    <value>このゲームのヘルプ</value>
   </data>
   <data name="GameHelpSettings" xml:space="preserve">
-    <value>ゲームのヘルプ設定</value>
+    <value>ゲームヘルプの設定</value>
   </data>
   <data name="GameHelpSharingHint" xml:space="preserve">
-    <value>サービスを選択してください。現在の画面を支援すると、1 つの VRX 画面イメージと質問がそのサービスに送信されます。許可するまでは何も共有されません。</value>
+    <value>サービスを選んでください。現在の画面についてヘルプを求めると、VRX の画面画像 1 枚と質問がそのサービスに送信されます。許可するまで何も共有されません。</value>
   </data>
   <data name="GameHelpSharingWith" xml:space="preserve">
-    <value>{0} とのスクリーンショットの共有は、マイクやカメラの権限とは別に記憶されます。</value>
+    <value>{0} とのスクリーンショット共有の許可は、マイクやカメラの許可とは別に記憶されます。</value>
   </data>
   <data name="GameHelpStopSharing" xml:space="preserve">
-    <value>スクリーンショットの共有を停止する</value>
+    <value>スクリーンショットの共有を停止</value>
   </data>
   <data name="GameHelpAllowAndStart" xml:space="preserve">
-    <value>スクリーンショットを許可してヘルプを表示する</value>
+    <value>スクリーンショットを許可してヘルプを見る</value>
   </data>
   <data name="GameHelpSaveFailed" xml:space="preserve">
     <value>スクリーンショット共有設定を保存できませんでした。</value>
   </data>
   <data name="GameHelpNeedsSession" xml:space="preserve">
-    <value>VRX セッションを開始し、コントローラーが現在の画面をキャプチャできるようにします。</value>
+    <value>現在の画面を取り込むには、VRX セッションを開始してコントローラーを有効にしてください。</value>
   </data>
   <data name="GameHelpCapturing" xml:space="preserve">
-    <value>ゲームのヘルプ用に現在の VRX 画面をキャプチャしています…</value>
+    <value>ゲームヘルプ用に現在の VRX 画面を取り込んでいます…</value>
   </data>
   <data name="GameHelpCaptureFailed" xml:space="preserve">
-    <value>画面キャプチャが完了しませんでした。もう一度ゲームのヘルプを試してください。</value>
+    <value>画面の取り込みが完了しませんでした。もう一度ゲームヘルプをお試しください。</value>
   </data>
   <data name="GameHelpImageTooLarge" xml:space="preserve">
-    <value>ゲームのヘルプ画像が大きすぎるためアップロードできません。</value>
+    <value>ゲームヘルプの画像が大きすぎてアップロードできません。</value>
   </data>
   <data name="GameHelpRetry" xml:space="preserve">
-    <value>ヘルプを再試行する</value>
+    <value>ヘルプを再試行</value>
   </data>
   <data name="GameHelpProgress" xml:space="preserve">
     <value>{0}: {1}</value>
@@ -1406,27 +1406,27 @@
     <value>ヘルプサービスを開いています…</value>
   </data>
   <data name="GameHelpUploading" xml:space="preserve">
-    <value>現在の画面を接続しています…</value>
+    <value>現在の画面を添付しています…</value>
   </data>
   <data name="GameHelpPreparingQuestion" xml:space="preserve">
-    <value>ゲームに関するヘルプの質問を準備しています…</value>
+    <value>ゲームヘルプの質問を準備しています…</value>
   </data>
   <data name="GameHelpSearching" xml:space="preserve">
-    <value>質問が送信されました。ここで追加の質問をすることができます。</value>
+    <value>質問を送信しました。ここで続けて質問できます。</value>
   </data>
   <data name="GameHelpNeedsSetup" xml:space="preserve">
-    <value>サイトの同意またはサインインのプロンプトを終了します。ヘルプは自動的に続行されます。</value>
+    <value>サイトの同意またはサインインの画面を完了してください。ヘルプは自動的に続きます。</value>
   </data>
   <data name="GameHelpNoConsent" xml:space="preserve">
-    <value>スクリーンショットの共有はオフになっています。ゲームのヘルプ設定で有効にします。</value>
+    <value>スクリーンショットの共有はオフです。「ゲームヘルプの設定」で有効にしてください。</value>
   </data>
   <data name="GameHelpExistingDraft" xml:space="preserve">
-    <value>サイトにはすでに下書きがあります。それをクリアし、[ヘルプを再試行] を選択します。</value>
+    <value>サイトに下書きが残っています。消去してから「ヘルプを再試行」を選んでください。</value>
   </data>
   <data name="GameHelpRetryNeeded" xml:space="preserve">
-    <value>サイトの準備ができていません。サイトのプロンプトをすべて終了し、[ヘルプを再試行] を選択します。</value>
+    <value>サイトの準備ができていません。サイトの表示を完了してから「ヘルプを再試行」を選んでください。</value>
   </data>
   <data name="GameHelpPrompt" xml:space="preserve">
-    <value>このスクリーンショットでゲームと正確なシーンを特定してください。重大なネタバレを避け、次に何をすべきかについて役立つヒントを提供し、関連するウォークスルーやガイドへのリンクを含めます。自信を持って特定できない場合は、推測するのではなく、私に質問してください。</value>
+    <value>このスクリーンショットのゲームと具体的な場面を特定してください。大きなネタバレは避けて、次に何をすればよいか役立つヒントをください。関連する攻略やガイドへのリンクも付けてください。確信を持って特定できない場合は、推測せずに質問してください。</value>
   </data>
 </root>

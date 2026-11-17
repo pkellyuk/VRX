@@ -7,7 +7,7 @@
     <value>Automático — idioma de exibição do Windows</value>
   </data>
   <data name="LanguageRestartHint" xml:space="preserve">
-    <value>Aplica-se na próxima vez que você iniciar o VRX. Os formatos de número e data ainda seguem as configurações regionais do Windows.</value>
+    <value>Vale a partir da próxima vez que você iniciar o VRX. Os formatos de número e data continuam seguindo as configurações regionais do Windows.</value>
   </data>
   <resheader name="resmimetype">
     <value>text/microsoft-resx</value>
@@ -26,11 +26,11 @@
     <comment>Product name; normally not translated.</comment>
   </data>
   <data name="WindowTitle" xml:space="preserve">
-    <value>VRX {0} — Configuração da área de trabalho</value>
+    <value>VRX {0} — Configuração no PC</value>
     <comment>{0} = version, e.g. v1.7.1</comment>
   </data>
   <data name="SubtitleEasy" xml:space="preserve">
-    <value>Jogue seu jogo em VR. VRX faz a configuração.</value>
+    <value>Jogue seu jogo em VR. O VRX cuida da configuração.</value>
   </data>
   <data name="SubtitleExpert" xml:space="preserve">
     <value>Escolha um jogo. Configure sua tela.</value>
@@ -42,7 +42,7 @@
     <value>Automático</value>
   </data>
   <data name="ModeEasyTip" xml:space="preserve">
-    <value>Fácil: o VRX se conecta sozinho ao jogo na frente, usando as configurações salvas do jogo (ou as configurações básicas para um novo jogo). Quase todo o resto está oculto.</value>
+    <value>Fácil: o VRX se conecta sozinho ao jogo em primeiro plano, usando as configurações salvas do jogo (ou suas configurações base, se o jogo for novo). Quase todo o resto fica oculto.</value>
   </data>
   <data name="ModeExpert" xml:space="preserve">
     <value>Avançado</value>
@@ -51,10 +51,10 @@
     <value>Todas as configurações</value>
   </data>
   <data name="ModeExpertTip" xml:space="preserve">
-    <value>Especialista: todas as configurações, agrupadas em seções que você pode abrir e fechar.</value>
+    <value>Avançado: todas as configurações, agrupadas em seções que você pode abrir e fechar.</value>
   </data>
   <data name="TitleMenu" xml:space="preserve">
-    <value>Menu janela</value>
+    <value>Menu da janela</value>
     <comment>The VRX logo at the left of the title bar; opens the window menu (move, size, close).</comment>
   </data>
   <data name="TitleMinimize" xml:space="preserve">
@@ -74,13 +74,13 @@
     <comment>Title bar button, as in Windows.</comment>
   </data>
   <data name="EasyIntro" xml:space="preserve">
-    <value>Comece seu jogo e traga-o para a frente - VRX é anexado após uma breve contagem regressiva.</value>
+    <value>Inicie seu jogo e coloque-o em primeiro plano - o VRX se conecta após uma breve contagem regressiva.</value>
   </data>
   <data name="EasyHintSettings" xml:space="preserve">
-    <value>VRX usa as configurações salvas do jogo ou as configurações básicas de um jogo que nunca viu antes. Mude para Expert para alterá-los.</value>
+    <value>O VRX usa as configurações salvas do jogo, ou suas configurações base para um jogo que ele ainda não conhece. Mude para Avançado para alterá-las.</value>
   </data>
   <data name="EasyHintSteamVr" xml:space="preserve">
-    <value>Inicie o SteamVR antes de jogar. Pressione Stop VR ou feche o jogo para terminar.</value>
+    <value>Inicie o SteamVR antes de jogar. Para terminar, pressione Parar VR ou feche o jogo.</value>
   </data>
   <data name="CardCaption" xml:space="preserve">
     <value>JOGO</value>
@@ -89,35 +89,35 @@
     <value>Nenhum jogo ainda</value>
   </data>
   <data name="CardWaiting" xml:space="preserve">
-    <value>Esperando · traga seu jogo para a frente</value>
+    <value>Aguardando · coloque seu jogo em primeiro plano</value>
   </data>
   <data name="CardCountdown" xml:space="preserve">
-    <value>Anexando em {0} · alternar janela para cancelar</value>
+    <value>Conectando em {0} s · troque de janela para cancelar</value>
     <comment>{0} = seconds left</comment>
   </data>
   <data name="CardStarting" xml:space="preserve">
-    <value>Iniciando a RV…</value>
+    <value>Iniciando VR…</value>
   </data>
   <data name="CardPlaying" xml:space="preserve">
     <value>Jogando</value>
   </data>
   <data name="CardStopping" xml:space="preserve">
-    <value>Parando a RV…</value>
+    <value>Parando VR…</value>
   </data>
   <data name="CardSpent" xml:space="preserve">
-    <value>Parado · mudar para outra janela e voltar para anexar novamente</value>
+    <value>Parado · troque para outra janela e volte para conectar de novo</value>
   </data>
   <data name="CardReady" xml:space="preserve">
-    <value>Pronto · pressione Anexar / Reproduzir</value>
+    <value>Pronto · pressione Conectar / Jogar</value>
   </data>
   <data name="CardChooseWindow" xml:space="preserve">
-    <value>Escolha a janela a ser capturada em Jogo e janela</value>
+    <value>Escolha a janela a capturar em Jogo e janela</value>
   </data>
   <data name="CardPickGame" xml:space="preserve">
-    <value>Escolha um jogo em Jogo e janela ou ative a anexação automática</value>
+    <value>Escolha um jogo em Jogo e janela ou ative a conexão automática</value>
   </data>
   <data name="AttachPlay" xml:space="preserve">
-    <value>Iniciar em VR</value>
+    <value>Conectar / Jogar</value>
   </data>
   <data name="StopVr" xml:space="preserve">
     <value>Parar VR</value>
@@ -126,13 +126,13 @@
     <value>Recentralizar</value>
   </data>
   <data name="RecenterTip" xml:space="preserve">
-    <value>Coloca a tela bem na frente de onde o fone de ouvido está olhando agora.</value>
+    <value>Coloca a tela bem à frente de onde o headset está olhando agora.</value>
   </data>
   <data name="RecenterNow" xml:space="preserve">
     <value>Recentralizar agora</value>
   </data>
   <data name="DismissMenuNow" xml:space="preserve">
-    <value>Ignorar menu agora</value>
+    <value>Fechar menu agora</value>
   </data>
   <data name="RefreshSymbol" xml:space="preserve">
     <value>↻</value>
@@ -145,19 +145,19 @@
     <value>Redefinir este perfil</value>
   </data>
   <data name="ResetProfileTip" xml:space="preserve">
-    <value>Coloca este jogo de volta nas configurações básicas (ou nos padrões do VRX se nenhuma base tiver sido salva).</value>
+    <value>Volta este jogo às configurações base (ou aos padrões do VRX, se nenhuma base tiver sido salva).</value>
   </data>
   <data name="MakeBase" xml:space="preserve">
-    <value>Faça configurações básicas</value>
+    <value>Salvar como base</value>
   </data>
   <data name="MakeBaseTip" xml:space="preserve">
-    <value>Salva as configurações mostradas aqui como ponto de partida para jogos que você ainda não configurou. Posicionamento da tela, força 3D, opções de profundidade e atalhos estão incluídos; o caminho e a janela do jogo não são. Os jogos que você já configurou mantêm suas próprias configurações.</value>
+    <value>Salva as configurações mostradas aqui como ponto de partida para os jogos que você ainda não configurou. Posição da tela, intensidade 3D, opções de profundidade e atalhos estão incluídos; o caminho e a janela do jogo, não. Os jogos que você já configurou mantêm as próprias configurações.</value>
   </data>
   <data name="ApplyAll" xml:space="preserve">
     <value>Aplicar a todos</value>
   </data>
   <data name="ApplyAllTip" xml:space="preserve">
-    <value>Copia as configurações mostradas aqui para todos os jogos que você já configurou, após solicitar sua confirmação. Posicionamento da tela, força 3D, opções de profundidade, profundidade GPU e atalhos estão todos incluídos; cada jogo mantém seu próprio caminho e janela. Os jogos que você ainda não configurou ainda iniciam nas configurações básicas.</value>
+    <value>Copia as configurações mostradas aqui para todos os jogos que você já configurou, depois de pedir sua confirmação. Posição da tela, intensidade 3D, opções de profundidade, GPU de profundidade e atalhos estão incluídos; cada jogo mantém o próprio caminho e janela. Os jogos que você ainda não configurou continuam começando pelas configurações base.</value>
   </data>
   <data name="SectionGame" xml:space="preserve">
     <value>Jogo e janela</value>
@@ -169,7 +169,7 @@
     <value>Ao redor da tela</value>
   </data>
   <data name="SectionRoom" xml:space="preserve">
-    <value>Quarto</value>
+    <value>Sala</value>
   </data>
   <data name="SectionDepth" xml:space="preserve">
     <value>3D e profundidade</value>
@@ -187,7 +187,7 @@
     <value>Detalhes da sessão</value>
   </data>
   <data name="RunningApplications" xml:space="preserve">
-    <value>Executando aplicativos</value>
+    <value>Aplicativos em execução</value>
   </data>
   <data name="ShowAllProcesses" xml:space="preserve">
     <value>Mostrar todos os processos</value>
@@ -205,20 +205,20 @@
     <value>As configurações são salvas separadamente para cada executável. Inicie o SteamVR antes de jogar.</value>
   </data>
   <data name="AutoAttachCheck" xml:space="preserve">
-    <value>Anexar automaticamente ao jogo na frente</value>
+    <value>Conectar sozinho ao jogo em primeiro plano</value>
   </data>
   <data name="AutoAttachCountdown" xml:space="preserve">
     <value>Contagem regressiva</value>
   </data>
   <data name="AutoAttachTip" xml:space="preserve">
-    <value>Quando um jogo está na frente, o VRX faz uma contagem regressiva e depois se conecta a ele, exatamente como se você o tivesse escolhido e pressionado Anexar/Jogar. Uma janela conta quando está em tela cheia ou sem bordas, ou quando é um jogo que você configurou anteriormente (ela tem configurações salvas; os navegadores contam apenas em tela cheia). Steam, SteamVR, o próprio Windows, terminais e VRX nunca são conectados. Mude para outra janela durante a contagem regressiva para cancelá-la. Depois de interromper a VR, ou se a conexão falhar, essa janela será deixada sozinha até que você saia dela e volte. A contagem regressiva nunca começa enquanto o próprio VRX estiver na frente. O modo fácil está sempre ativado.</value>
+    <value>Quando um jogo está em primeiro plano, o VRX faz uma contagem regressiva e então se conecta a ele, exatamente como se você o tivesse escolhido e pressionado Conectar / Jogar. Uma janela conta quando está em tela cheia ou sem bordas, ou quando é um jogo que você já configurou (ele tem configurações salvas; navegadores só contam em tela cheia). Steam, SteamVR, o próprio Windows, terminais e o VRX nunca são conectados. Troque para outra janela durante a contagem para cancelá-la. Depois que você para o VR, ou se a conexão falhar, essa janela é ignorada até você sair dela e voltar. A contagem nunca começa enquanto o próprio VRX está em primeiro plano. No modo Fácil, isso está sempre ativado.</value>
   </data>
   <data name="AppDescriptionOne" xml:space="preserve">
     <value>PID {0} · 1 janela</value>
     <comment>{0} = process id</comment>
   </data>
   <data name="AppDescriptionOther" xml:space="preserve">
-    <value>PID {0} · Janelas {1}</value>
+    <value>PID {0} · {1} janelas</value>
     <comment>{0} = process id, {1} = number of windows</comment>
   </data>
   <data name="AppNoGameWindow" xml:space="preserve">
@@ -229,10 +229,10 @@
     <comment>{0} = window handle in hex</comment>
   </data>
   <data name="ScreenHint" xml:space="preserve">
-    <value>As alterações se aplicam ao vivo. A posição é relativa ao seu último recentrador.</value>
+    <value>As alterações valem na hora. A posição é relativa à sua última recentralização.</value>
   </data>
   <data name="PreviewLabel" xml:space="preserve">
-    <value>VISTA SUPERIOR · arraste a tela</value>
+    <value>VISTA DE CIMA · arraste a tela</value>
   </data>
   <data name="PreviewTip" xml:space="preserve">
     <value>Arraste a tela para alterar a posição horizontal e a distância</value>
@@ -250,10 +250,10 @@
     <value>Deslocamento esquerda/direita</value>
   </data>
   <data name="ScreenCurve" xml:space="preserve">
-    <value>Curva de tela</value>
+    <value>Curvatura da tela</value>
   </data>
   <data name="ScreenCurveTip" xml:space="preserve">
-    <value>Envolve a tela ao seu redor como uma televisão curva. Uma tela curva é desenhada como um cilindro real para cada olho, de modo que seu contorno, perspectiva e paralaxe de movimento da cabeça estejam corretos; a vista superior acima mostra a forma. 0% é estável. Funciona com tela fixa e com head-follow. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Curva a tela ao seu redor como uma TV curva. Uma tela curva é desenhada como um cilindro de verdade para cada olho, então o contorno, a perspectiva e a paralaxe do movimento da cabeça ficam corretos; a vista de cima mostra o formato. 0 % é plana. Funciona com a tela fixa e com a tela seguindo a cabeça. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="FollowHead" xml:space="preserve">
     <value>A tela segue minha cabeça</value>
@@ -275,25 +275,25 @@
     <comment>{0} = seconds</comment>
   </data>
   <data name="Ambilight" xml:space="preserve">
-    <value>Ambilight – brilho ao redor da tela</value>
+    <value>Ambilight — brilho ao redor da tela</value>
   </data>
   <data name="AmbilightTip" xml:space="preserve">
-    <value>Espalha suavemente as cores nas bordas da imagem na escuridão ao redor da tela, como a iluminação polarizada atrás de uma televisão. Cada ponto do brilho combina toda a borda, a parte mais próxima mais próxima, de modo que segue a cor local de perto e suaviza ainda mais. Ele envolve uma tela curva e segue a cena suavemente, em vez de piscar. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Espalha suavemente as cores da borda da imagem na escuridão ao redor da tela, como a iluminação traseira de uma TV. Cada ponto do brilho mistura a borda inteira, com mais peso na parte mais próxima, então perto da tela ele segue a cor local e mais longe fica mais suave. Ele contorna uma tela curva e acompanha a cena com suavidade, sem piscar. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="AmbilightStrength" xml:space="preserve">
-    <value>Força do ambiente de luz</value>
+    <value>Intensidade do Ambilight</value>
   </data>
   <data name="AmbilightStrengthTip" xml:space="preserve">
-    <value>Quão forte é o brilho próximo à tela; ele sempre desaparece em direção à sua borda. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>O quanto o brilho é forte junto à tela; ele sempre esmaece em direção à própria borda. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="WorldColour" xml:space="preserve">
     <value>Cor do mundo</value>
   </data>
   <data name="WorldListTip" xml:space="preserve">
-    <value>A cor do espaço ao redor da tela, em vez de preto. As cores escuras mantêm o contraste da imagem; a luz ambiente brilha sobre ele. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>A cor do espaço ao redor da tela, em vez de preto. Cores escuras preservam o contraste da imagem; o Ambilight brilha por cima dela. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="WorldHexTip" xml:space="preserve">
-    <value>Qualquer cor como #RRGGBB. Deixar a caixa com meia cor coloca a última inteira de volta.</value>
+    <value>Qualquer cor no formato #RRGGBB. Se você sair da caixa com uma cor incompleta, a última cor completa volta.</value>
   </data>
   <data name="WorldBlack" xml:space="preserve">
     <value>Preto (padrão)</value>
@@ -308,7 +308,7 @@
     <value>Azul meia-noite</value>
   </data>
   <data name="WorldPurple" xml:space="preserve">
-    <value>Roxo profundo</value>
+    <value>Roxo escuro</value>
   </data>
   <data name="WorldForest" xml:space="preserve">
     <value>Floresta</value>
@@ -317,7 +317,7 @@
     <value>Escuro quente</value>
   </data>
   <data name="WorldCinemaRed" xml:space="preserve">
-    <value>Cinema vermelho</value>
+    <value>Vermelho cinema</value>
   </data>
   <data name="WorldGrey" xml:space="preserve">
     <value>Cinza</value>
@@ -332,10 +332,10 @@
     <value>Personalizado</value>
   </data>
   <data name="Environment" xml:space="preserve">
-    <value>Meio Ambiente</value>
+    <value>Ambiente</value>
   </data>
   <data name="EnvironmentTip" xml:space="preserve">
-    <value>Onde está a tela. Quarto (padrão): o quarto simples, limpo e calmo, com paredes de vidro, reflexos e uma luz à escolha abaixo. Ao ar livre: uma tela num campo à noite sob as estrelas, com colinas baixas no horizonte; a tela ilumina o chão à sua frente. Lounge: home theater - piso de carvalho com tapete, paredes apaineladas com duas luminárias de cada lado, downlights no teto (ambos iluminados pela luz do ambiente) e ripas de madeira atrás do biombo. Cinema com poltronas: uma sala de cinema com fileiras de assentos em camadas ao seu redor - cortinas de veludo, máscara preta em volta da tela, tapete estampado com luzes de degraus ao longo dos corredores e arandelas nas paredes iluminadas pela luz da sala; escolha seu assento abaixo, que define a distância da tela. Calabouço: pedra desgastada, arcos gradeados, correntes, grades no chão e tochas. Inferno: basalto escuro, arcos de fornalhas, inscrições brilhantes e fissuras de lava. Cinema neon cyberpunk: poltronas escalonadas, iluminação ciano e magenta, painéis acústicos e exibições urbanas. Cinema Starship: assentos escalonados em anteparas de metal, costelas iluminadas e janelas de visualização para estrelas e um planeta azul. Cada um é iluminado pela imagem como a sala, e o controle deslizante Sala define o quanto suas superfícies refletem. Escolher um enquanto a sala está desligada liga a sala. Não com 'A tela segue minha cabeça'. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Onde a tela fica. Sala (padrão): a sala simples, limpa e tranquila, com paredes de vidro, reflexos e uma luz para escolher abaixo. Ao ar livre: uma tela em um campo à noite sob as estrelas, com colinas baixas no horizonte; a tela ilumina o chão à sua frente. Lounge: um home theater - piso de carvalho com tapete, paredes revestidas com duas luminárias de cada lado, spots no teto (todos acesos pela luz da sala) e ripas de madeira atrás da tela. Cinema com poltronas: uma sala de cinema com fileiras de poltronas em degraus ao seu redor - cortinas de veludo, moldura preta em volta da tela, carpete estampado com luzes de degrau nos corredores e arandelas nas paredes acesas pela luz da sala; escolha sua poltrona abaixo, o que define a distância da tela. Masmorra: pedra desgastada, arcos com grades, correntes, grelhas no chão e luz de tochas. Inferno: basalto escuro, arcos de fornalha, inscrições brilhantes e fendas de lava. Cinema neon cyberpunk: poltronas em degraus, iluminação ciano e magenta, painéis acústicos e telões da cidade. Cinema de nave estelar: poltronas em degraus entre anteparas de metal, nervuras iluminadas e janelas para estrelas e um planeta azul. Cada um é iluminado pela imagem como a sala, e o controle Sala define o quanto as superfícies refletem. Escolher um com a sala desligada liga a sala. Não funciona com “A tela segue minha cabeça”. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="EnvironmentRoom" xml:space="preserve">
     <value>Sala (padrão)</value>
@@ -347,7 +347,7 @@
     <value>Ao ar livre à noite</value>
   </data>
   <data name="EnvironmentLounge" xml:space="preserve">
-    <value>Salão</value>
+    <value>Lounge</value>
   </data>
   <data name="EnvironmentTheatre" xml:space="preserve">
     <value>Cinema com poltronas</value>
@@ -365,63 +365,63 @@
     <value>Cinema de nave estelar</value>
   </data>
   <data name="Seat" xml:space="preserve">
-    <value>Assento</value>
+    <value>Poltrona</value>
   </data>
   <data name="SeatTip" xml:space="preserve">
-    <value>Onde você se senta no cinema com assentos. Ele define a distância da tela: a primeira fila a 4,6 m de distância, a do meio a 7,5 m e a última fila a 11,4 m. A sala permanece a mesma independentemente da largura da tela, então a Largura faz com que a tela pareça maior ou menor do seu assento, como faria uma tela maior ou menor no mesmo cinema (no padrão de 5,7 m, as fileiras estão a cerca de 0,8, 1,3 e 2 larguras de tela). As fileiras aumentam atrás de você, então você olha para os assentos da frente. Um assento mais atrás também mostra a profundidade da imagem com mais suavidade. Enquanto você está sentado, o controle deslizante Distância permanece parado e mantém seu valor. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Onde você se senta no cinema com poltronas. Define a distância da tela: a primeira fila fica a 4,6 m, o meio a 7,5 m e a última fila a 11,4 m. A sala de cinema é a mesma qualquer que seja a largura da tela, então a Largura da tela faz a tela parecer maior ou menor da sua poltrona, como uma tela maior ou menor no mesmo cinema (com o padrão de 5,7 m, as fileiras ficam a cerca de 0,8, 1,3 e 2 larguras de tela). As fileiras sobem atrás de você, então você enxerga por cima das poltronas da frente. Uma poltrona mais atrás também mostra a profundidade da imagem de forma mais suave. Enquanto você está sentado, o controle Distância fica parado e mantém o valor. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="SeatFront" xml:space="preserve">
     <value>Primeira fila</value>
   </data>
   <data name="SeatMiddle" xml:space="preserve">
-    <value>Médio (padrão)</value>
+    <value>Meio (padrão)</value>
   </data>
   <data name="SeatRear" xml:space="preserve">
-    <value>Fila de trás</value>
+    <value>Última fila</value>
   </data>
   <data name="SeatDistance" xml:space="preserve">
     <value>{0:F1} m da tela</value>
     <comment>{0} = metres</comment>
   </data>
   <data name="ValueSeatDistance" xml:space="preserve">
-    <value>{0:F2} m (seu assento)</value>
+    <value>{0:F2} m (sua poltrona)</value>
     <comment>{0} = metres; the screen's distance set by the cinema seat</comment>
   </data>
   <data name="NeedsRoomEnvironment" xml:space="preserve">
-    <value>Apenas ambiente de sala</value>
+    <value>Só no ambiente Sala</value>
   </data>
   <data name="NotInOpenAir" xml:space="preserve">
-    <value>Não ao ar livre</value>
+    <value>Não disponível ao ar livre</value>
   </data>
   <data name="RoomLabel" xml:space="preserve">
     <value>Sala — paredes iluminadas pela tela</value>
   </data>
   <data name="RoomTip" xml:space="preserve">
-    <value>Coloca você em uma sala escura cujas paredes, piso e teto são iluminados pela imagem e pela luz ambiente, como uma televisão ou uma tela de cinema em uma sala escura. 0 está desativado; valores mais altos tornam as paredes mais pálidas, refletindo mais; 30-60% parece um cinema. Com a sala ligada, a cor do mundo se transforma nas luzes da casa e a tela é mantida nivelada (um piso inclinado pareceria errado). Não com 'A tela segue minha cabeça'. O ambiente acima o veste de cinema, ao ar livre ou lounge. Vidro, reflexos e uma luz ambiente estão abaixo. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Coloca você em uma sala escura cujas paredes, piso e teto são iluminados pela imagem e pelo Ambilight, como uma TV ou uma tela de cinema em uma sala escura. 0 é desligado; valores maiores deixam as paredes mais claras, então elas refletem mais; 30-60 % parece um cinema. Com a sala ligada, a cor do mundo vira a luz ambiente da sala e a tela fica nivelada (um piso inclinado pareceria errado). Não funciona com “A tela segue minha cabeça”. O ambiente acima a transforma em cinema, ao ar livre ou lounge. Vidro, reflexos e luz da sala estão abaixo. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="GlassWalls" xml:space="preserve">
     <value>Paredes de vidro</value>
   </data>
   <data name="GlassTip" xml:space="preserve">
-    <value>Transforma as paredes laterais, a parede posterior e o teto em vidro em molduras finas, para que você olhe para um terreno que se estende até um horizonte na cor do mundo. Com a cor preta do mundo é uma sala de vidro à noite: você vê apenas as molduras e os reflexos. 0 são paredes sólidas, 100 vidro transparente. A parede com a tela e o chão permanecem sólidos. O vidro ou os reflexos também mostram pisos de 1 m, então você pode contar o tamanho da tela em metros. O vidro transparente mantém menos luz, então o ambiente fica um pouco mais escuro. Somente no ambiente Room. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Transforma as paredes laterais, a parede do fundo e o teto em vidro com molduras finas, para você olhar um terreno que se estende até um horizonte na cor do mundo. Com a cor do mundo preta, é uma sala de vidro à noite: você só vê as molduras e os reflexos. 0 são paredes sólidas, 100 vidro transparente. A parede da tela e o piso continuam sólidos. Com vidro ou reflexos, o piso também mostra placas de 1 m, para você contar o tamanho da tela em metros. Vidro transparente segura menos luz, então a sala fica um pouco mais escura. Só no ambiente Sala. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="Reflections" xml:space="preserve">
-    <value>Reflexões</value>
+    <value>Reflexos</value>
   </data>
   <data name="ReflectTip" xml:space="preserve">
-    <value>O quanto o vidro, as paredes e um piso polido refletem: a tela, seu brilho e a luz do ambiente aparecem espelhados, o que mostra o tamanho e a distância da tela. Os reflexos são mais fortes em um ângulo de visão. 0 é nenhum. Somente no ambiente Room. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>O quanto o vidro, as paredes e um piso polido refletem: a tela, o brilho dela e a luz da sala aparecem espelhados, o que mostra o tamanho e a distância da tela. Os reflexos são mais fortes em ângulos rasantes. 0 é nenhum. Só no ambiente Sala. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="RoomLight" xml:space="preserve">
-    <value>Luz do quarto</value>
+    <value>Luz da sala</value>
   </data>
   <data name="RoomLightTip" xml:space="preserve">
-    <value>Um painel de luz suave no teto logo acima e atrás de você, para que a sala permaneça visível quando a imagem estiver escura. O quanto as paredes captam depende de quão claras elas são (o controle deslizante Sala). No cinema, controla as arandelas de parede e as luzes do corredor; no salão, os downlights e luminárias de parede. Nas salas temáticas também escurece chamas, lava, néon e displays. Essas luzes decorativas também respondem ao controle deslizante Room. O ar livre não tem luz ambiente. 0 está desativado. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Um painel de luz suave no teto, logo acima e atrás de você, para a sala continuar visível quando a imagem está escura. O quanto as paredes refletem essa luz depende de quão claras elas são (o controle Sala). No cinema, ela controla as arandelas e as luzes dos corredores; no lounge, os spots e as luminárias de parede. Nas salas temáticas, também diminui chamas, lava, neon e telões. Essas luzes decorativas também respondem ao controle Sala. Ao ar livre não há luz da sala. 0 é desligado. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="LightColour" xml:space="preserve">
-    <value>Cor clara</value>
+    <value>Cor da luz</value>
   </data>
   <data name="LightColourTip" xml:space="preserve">
-    <value>A cor da luz da sala, desde quente (2700 K, como um abajur de mesa) até luz do dia (6500 K). Aplica-se ao vivo; salvo por jogo.</value>
+    <value>A cor da luz da sala, de quente (2700 K, como um abajur) até luz do dia (6500 K). Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="LightWarm" xml:space="preserve">
     <value>Quente (2700 K)</value>
@@ -453,103 +453,103 @@
     <value>Precisa da tela fixa</value>
   </data>
   <data name="NeedsRoom" xml:space="preserve">
-    <value>Precisa do quarto</value>
+    <value>Precisa da sala</value>
   </data>
   <data name="Strength3D" xml:space="preserve">
-    <value>Força 3D</value>
+    <value>Intensidade 3D</value>
   </data>
   <data name="EnableStereo" xml:space="preserve">
     <value>Ativar 3D estéreo</value>
   </data>
   <data name="FastModel" xml:space="preserve">
-    <value>Modelo de profundidade rápida — ZipDepth</value>
+    <value>Modelo de profundidade rápido — ZipDepth</value>
   </data>
   <data name="FastModelTip" xml:space="preserve">
-    <value>Ativado (padrão): ZipDepth, cerca de 6x menos tempo GPU por estimativa de profundidade do que Depth Anything V2 (2,0 vs 13,1 ms em um RTX 3090), então a profundidade acompanha o jogo muito melhor. Desligado: Depth Anything V2, o modelo original; os detalhes de profundidade diferem ligeiramente entre eles. Aplica-se ao vivo (a profundidade pausa por menos de um segundo enquanto o modelo é carregado); salvo por jogo.</value>
+    <value>Ligado (padrão): ZipDepth, cerca de 6x menos tempo de GPU por estimativa de profundidade que o Depth Anything V2 (2,0 vs 13,1 ms em uma RTX 3090), então a profundidade acompanha o jogo muito melhor. Desligado: Depth Anything V2, o modelo original; os detalhes de profundidade diferem um pouco entre os dois. Aplica na hora (a profundidade pausa por menos de um segundo enquanto o modelo carrega); salvo por jogo.</value>
   </data>
   <data name="Subpixel" xml:space="preserve">
-    <value>Etapas de profundidade suaves (distorção de subpixel)</value>
+    <value>Suavizar degraus de profundidade (subpixel)</value>
   </data>
   <data name="SubpixelTip" xml:space="preserve">
-    <value>Ligado (padrão): a mudança estéreo mantém sua parte fracionária, de modo que superfícies recuadas suavemente, como grama, estradas e paredes, parecem suaves. Desligado: deslocamentos de pixel inteiro, que quantizam a cena em cerca de 25 faixas de profundidade e podem mostrar cristas como um campo arado. Desligado é um pouco mais nítido. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Ligado (padrão): o deslocamento estéreo mantém a parte fracionária, então superfícies que se afastam suavemente, como grama, estradas e paredes, parecem lisas. Desligado: deslocamentos de pixels inteiros, que dividem a cena em cerca de 25 faixas de profundidade e podem mostrar sulcos como um campo arado. Desligado fica um pouquinho mais nítido. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="EdgeFlatten" xml:space="preserve">
-    <value>Achate as bordas esquerda e direita</value>
+    <value>Achatar as bordas esquerda e direita</value>
   </data>
   <data name="EdgeFlattenTip" xml:space="preserve">
-    <value>Traz a profundidade suavemente para a própria distância da tela em toda a largura da imagem nas bordas esquerda e direita, para que ambos os olhos vejam as mesmas bordas. Com a profundidade na borda, um olho vê uma borda mais larga do que o outro, o que é cansativo de olhar (um navegador de tela inteira mostra isso melhor). Qualquer coisa dentro dessa faixa parece mais plana, por isso está desativada por padrão (as bordas indicam a profundidade); cerca de 4% são adequados para uso em desktop. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Leva a profundidade suavemente até a distância da própria tela nesta fração da largura da imagem, nas bordas esquerda e direita, para os dois olhos verem as mesmas bordas. Com profundidade bem na borda, um olho vê uma borda mais larga que o outro, o que cansa a vista (um navegador em tela cheia mostra isso mais). Tudo dentro dessa faixa fica mais plano, por isso vem Desligado por padrão (bordas como a profundidade indica); cerca de 4 % é bom para uso na área de trabalho. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="EdgeSteps" xml:space="preserve">
-    <value>Corte limpo nas bordas profundas da imagem (desligado: inclinação)</value>
+    <value>Cortar limpo nas bordas de profundidade (desligado: inclinar)</value>
   </data>
   <data name="EdgeStepsTip" xml:space="preserve">
-    <value>A imagem só pode ser movida lateralmente para cada olho, portanto, na borda superior ou inferior de qualquer coisa mais próxima do que está atrás dela, há duas maneiras de desenhá-la. Ativado: a imagem é cortada na borda, para que os itens próximos a ela permaneçam na posição vertical (ícones da área de trabalho logo acima de uma janela); onde o corte fica ligeiramente fora da borda real, um pequeno fragmento pode se mover para o lado errado, como uma bolha acima da cabeça de um personagem. Desligado: sem corte, mas o que fica próximo à borda está inclinado, em direções opostas nos dois olhos. Desativado por padrão. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>A imagem só pode ser deslocada para os lados para cada olho, então na borda de cima ou de baixo de qualquer coisa mais próxima do que o que está atrás há duas formas de desenhá-la. Ligado: a imagem é cortada na borda, então o que está ao lado fica em pé (ícones da área de trabalho logo acima de uma janela); onde o corte cai um pouco fora da borda real, um pequeno fragmento pode se mover com o lado errado, como uma mancha acima da cabeça de um personagem. Desligado: sem corte, mas o que está junto à borda fica inclinado, em sentidos opostos nos dois olhos. Desligado por padrão. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="EdgeStepMin" xml:space="preserve">
-    <value>Corte apenas as bordas com pelo menos esta profundidade</value>
+    <value>Cortar só bordas com pelo menos esta profundidade</value>
   </data>
   <data name="EdgeStepMinTip" xml:space="preserve">
-    <value>Quão grande deve ser a mudança de profundidade em uma aresta antes de ela ser cortada, como uma parcela de toda a faixa de profundidade. Lower corta mais bordas, inclusive as rasas; mais alto corta apenas o mais forte (uma janela sobre a área de trabalho tem cerca de 60%) e deixa o resto inclinado. 12% por padrão. Precisa do corte. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>O tamanho da mudança de profundidade numa borda para que ela seja cortada, como fração de toda a faixa de profundidade. Mais baixo corta mais bordas, inclusive as rasas; mais alto corta só as mais fortes (uma janela sobre a área de trabalho fica em cerca de 60 %) e deixa o resto inclinado. 12 % por padrão. Precisa do corte ligado. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="WidenNear" xml:space="preserve">
-    <value>Amplie perto de objetos para cima e para baixo</value>
+    <value>Estender objetos próximos para cima e para baixo</value>
   </data>
   <data name="WidenNearTip" xml:space="preserve">
-    <value>Até que ponto a profundidade de um objeto próximo está espalhada acima e abaixo dele, em comparação com o valor do próprio modelo de profundidade (100%). More mantém as linhas superior e inferior do objeto se movendo com ele, mas carrega a inclinação ainda mais para o que está próximo a ele; 0% mantém a inclinação na própria borda do objeto. Quando uma borda é cortada de forma limpa, nada se espalha pelo corte. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Até onde a profundidade de um objeto próximo é espalhada acima e abaixo dele, comparado com a quantidade do próprio modelo de profundidade (100 %). Mais faz as linhas de cima e de baixo do objeto se moverem junto com ele, mas leva a inclinação mais longe para o que está ao lado; 0 % deixa a inclinação na própria borda do objeto. Onde uma borda é cortada limpo, nada é espalhado através do corte. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="ThinParts" xml:space="preserve">
-    <value>Mantenha as peças finas na vertical</value>
+    <value>Manter partes finas em pé</value>
   </data>
   <data name="ThinPartsTip" xml:space="preserve">
-    <value>Uma parte vertical fina de algo - uma torre em um telhado, um mastro, um poste - muitas vezes passa despercebida pelo modelo de profundidade, por isso permanece no fundo enquanto seu pé é arrastado junto com o que está apoiado e se curva em direções opostas nos dois olhos. Ligado: tais peças são encontradas na imagem e dada a profundidade do que estão apoiadas, então elas se movem com ela como uma só peça. Ele adiciona trabalho a cada passagem de profundidade (o registro da sessão informa isso), pode perder partes ou tremer em imagens em movimento e pode deixar uma mancha levemente manchada ao lado de uma parte. Desativado por padrão. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Uma parte fina e vertical de algo - uma torre num telhado, um mastro, um poste - muitas vezes escapa ao modelo de profundidade, então fica com o fundo enquanto a base é arrastada junto com o que a sustenta, e ela se curva em sentidos opostos nos dois olhos. Ligado: essas partes são encontradas na imagem e recebem a profundidade do que as sustenta, então se movem junto como uma peça só. Acrescenta trabalho a cada passada de profundidade (o registro da sessão informa), pode deixar partes de fora ou tremer em imagens em movimento e pode deixar uma área levemente pontilhada ao lado de uma parte. Desligado por padrão. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="SharpenEdges" xml:space="preserve">
-    <value>Aumente as bordas de profundidade com a imagem</value>
+    <value>Ajustar as bordas de profundidade à imagem</value>
   </data>
   <data name="SharpenEdgesTip" xml:space="preserve">
-    <value>O mapa de profundidade é muito mais grosseiro do que a imagem e suas bordas são suaves, de modo que a imagem ao redor do contorno de um objeto é movida em uma quantidade intermediária: bordas inclinadas, halos, pedaços de fundo viajando com um objeto. Ativado, cada pixel obtém sua profundidade das amostras de profundidade próximas que se parecem com ele, em cada quadro, de modo que a profundidade de um objeto termina onde o objeto termina. Enquanto ativado, substitui o alargamento de objetos próximos e o corte limpo acima. Custa cerca de meio milissegundo do tempo GPU por quadro. Ainda não avaliado no fone de ouvido: ele pode piscar nas bordas em vídeos barulhentos.</value>
+    <value>O mapa de profundidade é bem mais grosseiro que a imagem e tem bordas suaves, então a imagem em volta do contorno de um objeto é deslocada por uma quantidade intermediária: bordas inclinadas, halos, pedaços do fundo indo junto com um objeto. Ligado, cada pixel pega a profundidade das amostras de profundidade próximas que se parecem com ele, a cada quadro, então a profundidade de um objeto termina onde o objeto termina. Enquanto ligado, substitui a extensão de objetos próximos e o corte limpo acima. Custa cerca de meio milissegundo de GPU por quadro. Ainda não avaliado no headset: pode tremer nas bordas em vídeos com ruído.</value>
   </data>
   <data name="BackLayer" xml:space="preserve">
-    <value>Preencher atrás dos objetos de uma camada de fundo</value>
+    <value>Preencher atrás dos objetos com uma camada de fundo</value>
   </data>
   <data name="BackLayerTip" xml:space="preserve">
-    <value>Quando um objeto próximo é movido lateralmente para um olho, uma faixa do que estava atrás dele aparece ao lado dele, apenas naquele olho. Normalmente essa faixa é preenchida linha por linha com o fundo próximo a ela, espelhado. Ligado, o fundo atrás dos objetos próximos é feito uma vez para ambos os olhos, a partir do fundo de cada lado, e a faixa mostra que: a mesma superfície oculta em ambos os olhos, as linhas coincidem, e é suave onde a imagem não tinha nada. Funciona melhor com bordas de profundidade nítidas. Mais suave que a imagem espelhada; ainda não julgado no fone de ouvido.</value>
+    <value>Quando um objeto próximo é deslocado para o lado para um olho, uma faixa do que estava atrás dele aparece ao lado, só naquele olho. Normalmente essa faixa é preenchida linha por linha com o fundo vizinho, espelhado. Ligado, o fundo atrás dos objetos próximos é criado uma vez para os dois olhos, a partir do fundo dos dois lados, e a faixa mostra esse fundo: a mesma superfície oculta nos dois olhos, as linhas batem, e fica suave onde a imagem não tinha nada. Funciona melhor com as bordas de profundidade ajustadas. Mais suave que a imagem espelhada; ainda não avaliado no headset.</value>
   </data>
   <data name="ShowDepthMap" xml:space="preserve">
     <value>Mostrar mapa de profundidade em vez do jogo</value>
   </data>
   <data name="ShowDepthMapTip" xml:space="preserve">
-    <value>Mostre a profundidade usada para 3D como uma imagem plana em escala de cinza: o branco está próximo, o preto está distante. É a profundidade após cada configuração acima, incluindo bordas afiadas. Aplica-se imediatamente. Um mapa de profundidade indisponível aparece em preto. Desmarque para retornar ao jogo.</value>
+    <value>Mostra a profundidade usada no 3D como uma imagem plana em tons de cinza: branco é perto, preto é longe. É a profundidade depois de todas as configurações acima, incluindo as bordas ajustadas. Aplica na hora. Um mapa de profundidade indisponível aparece preto. Desmarque para voltar ao jogo.</value>
   </data>
   <data name="Steady" xml:space="preserve">
-    <value>Profundidade constante — vetores de movimento</value>
+    <value>Profundidade estável — vetores de movimento</value>
   </data>
   <data name="SteadyTip" xml:space="preserve">
-    <value>Reduz o brilho de profundidade: cada nova estimativa de profundidade é combinada com a anterior, movida para onde as coisas estão agora pelo estimador de movimento do hardware da placa gráfica (seu mecanismo de vídeo, não os núcleos de shader). Somente onde o movimento é verificado, portanto as bordas móveis não devem deixar rastros. As partes da imagem que não mudaram mantêm sua profundidade quase inteiramente, portanto, uma mudança em outro lugar não as faz se contorcer. Ativado por padrão; funciona em qualquer GPU com um estimador de movimento de hardware. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Reduz a tremulação da profundidade: cada nova estimativa de profundidade é misturada com a anterior, deslocada para onde as coisas estão agora pelo estimador de movimento por hardware da placa de vídeo (o motor de vídeo, não os núcleos de shader). Só onde o movimento é confirmado, então bordas em movimento não devem deixar rastro. Partes da imagem que não mudaram mantêm quase toda a profundidade, então uma mudança em outro lugar não as faz tremer. Ligado por padrão; funciona em qualquer GPU com estimador de movimento por hardware. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="Fuse" xml:space="preserve">
-    <value>Fusível com Depth Anything V2</value>
+    <value>Fundir com o Depth Anything V2</value>
   </data>
   <data name="FuseTip" xml:space="preserve">
-    <value>Executa Depth Anything V2 junto com ZipDepth: ZipDepth mantém a profundidade rápida, Depth Anything fornece camadas mais detalhadas, movidas para o quadro atual com vetores de movimento. Melhor com outro GPU escolhido como profundidade GPU; em um GPU ele funciona no máximo 10 vezes por segundo. Precisa do modelo de profundidade rápida. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Executa o Depth Anything V2 junto com o ZipDepth: o ZipDepth mantém a profundidade rápida e o Depth Anything traz camadas mais detalhadas, deslocadas para o quadro atual com vetores de movimento. Melhor com outra GPU escolhida como GPU de profundidade; em uma GPU só, ele roda no máximo 10 vezes por segundo. Precisa do modelo de profundidade rápido. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="FuseHint" xml:space="preserve">
-    <value>A fusão é melhor com um GPU de segunda profundidade. Ambos podem ser usados ​​juntos.</value>
+    <value>A fusão funciona melhor com uma segunda GPU de profundidade. As duas podem ser usadas juntas.</value>
   </data>
   <data name="DepthGpu" xml:space="preserve">
-    <value>Profundidade GPU</value>
+    <value>GPU de profundidade</value>
   </data>
   <data name="DepthGpuTip" xml:space="preserve">
-    <value>Qual placa gráfica executa o modelo de profundidade. Outra placa impede a competição de profundidade com o jogo pelo tempo GPU; a etapa de captura envia cada quadro automaticamente. Caso falte a carta escolhida, VRX utiliza a GPU do jogo. Entra em vigor na próxima vez que você pressionar Anexar/Reproduzir; salvo por jogo.</value>
+    <value>Qual placa de vídeo executa o modelo de profundidade. Outra placa evita que a profundidade dispute tempo de GPU com o jogo; a etapa de captura envia cada quadro para ela automaticamente. Se a placa escolhida não estiver presente, o VRX usa a GPU do jogo. Vale a partir da próxima vez que você pressionar Conectar / Jogar; salvo por jogo.</value>
   </data>
   <data name="DepthGpuHint" xml:space="preserve">
-    <value>Outro GPU mantém a profundidade rápida enquanto o jogo usa totalmente sua própria placa. Aplica-se no próximo Attach/Play.</value>
+    <value>Outra GPU mantém a profundidade rápida enquanto o jogo usa a própria placa por inteiro. Vale no próximo Conectar / Jogar.</value>
   </data>
   <data name="GpuSame" xml:space="preserve">
-    <value>Mesmo GPU do jogo (padrão)</value>
+    <value>Mesma GPU do jogo (padrão)</value>
   </data>
   <data name="GpuAuto" xml:space="preserve">
-    <value>Qualquer outro GPU (automático)</value>
+    <value>Qualquer outra GPU (automático)</value>
   </data>
   <data name="GpuLabel" xml:space="preserve">
     <value>{0} ({1})</value>
@@ -568,50 +568,50 @@
     <comment>{0} = megabytes</comment>
   </data>
   <data name="GpuNotFound" xml:space="preserve">
-    <value>Não encontrado: {0} (o GPU do jogo é usado)</value>
+    <value>Não encontrada: {0} (a GPU do jogo é usada)</value>
     <comment>{0} = GPU name</comment>
   </data>
   <data name="ForegroundPasses" xml:space="preserve">
-    <value>Passagens extras de profundidade de primeiro plano</value>
+    <value>Passadas extras de profundidade no primeiro plano</value>
   </data>
   <data name="ForegroundTip" xml:space="preserve">
-    <value>Fornece às regiões próximas persistentes uma passagem de detalhes extra quando o tempo permite. Usa mais tempo GPU; a melhoria varia de acordo com a cena. Alterne durante a reprodução para comparar.</value>
+    <value>Dá às regiões próximas e persistentes uma passada extra de detalhe quando há tempo. Usa mais tempo de GPU; a melhora varia com a cena. Ligue e desligue durante a reprodução para comparar.</value>
   </data>
   <data name="FrameTiming" xml:space="preserve">
-    <value>Tempo de frame do jogo</value>
+    <value>Sincronia de quadros do jogo</value>
   </data>
   <data name="FrameTimingTip" xml:space="preserve">
-    <value>Qual quadro do jogo é mostrado com a profundidade. Quadro mais recente (padrão): suave e imediato; a profundidade fica um pouco atrás das coisas em movimento. Atraso na profundidade: a imagem do jogo é retida pelo atraso na profundidade para que elas se alinhem muito melhor e o movimento permaneça suave. Correspondido à profundidade: cada estimativa de profundidade com o quadro exato de onde veio; melhor alinhamento, mas o movimento do jogo só é atualizado na taxa de profundidade. Atraso de adição atrasado e correspondente. Aplica-se ao vivo; salvo por jogo.</value>
+    <value>Qual quadro do jogo é mostrado com a profundidade. Quadro mais recente (padrão): suave e imediato; a profundidade fica um pouco atrás das coisas em movimento. Atrasado até a profundidade: a imagem do jogo é segurada pelo atraso da profundidade para as duas se alinharem bem melhor, e o movimento continua suave. Sincronizado com a profundidade: cada estimativa de profundidade com o quadro exato de onde veio; melhor alinhamento, mas o movimento do jogo só atualiza no ritmo da profundidade. Atrasado e Sincronizado acrescentam atraso. Aplica na hora; salvo por jogo.</value>
   </data>
   <data name="TimingLatest" xml:space="preserve">
     <value>Quadro mais recente (padrão)</value>
   </data>
   <data name="TimingDelayed" xml:space="preserve">
-    <value>Atrasado na profundidade – suave, ligeiramente atrás</value>
+    <value>Atrasado até a profundidade — suave, um pouco atrás</value>
   </data>
   <data name="TimingMatched" xml:space="preserve">
-    <value>Correspondido à profundidade — exato, atualizações na taxa de profundidade</value>
+    <value>Sincronizado com a profundidade — exato, no ritmo da profundidade</value>
   </data>
   <data name="ExperimentalHint" xml:space="preserve">
-    <value>Opções ainda sendo testadas. Eles podem custar tempo ao GPU, parecer errados em alguns jogos ou mudar em uma versão posterior. Todos se aplicam ao vivo e são salvos por jogo.</value>
+    <value>Opções ainda em teste. Podem consumir tempo de GPU, ficar estranhas em alguns jogos ou mudar em uma versão futura. Todas valem na hora e são salvas por jogo.</value>
   </data>
   <data name="TimingHint" xml:space="preserve">
-    <value>Atrasado e combinado, alinhe melhor a profundidade com o jogo, mas mostre o jogo mais tarde.</value>
+    <value>Atrasado e Sincronizado alinham melhor a profundidade com o jogo, mas mostram o jogo mais tarde.</value>
   </data>
   <data name="DismissOnStart" xml:space="preserve">
-    <value>Ignorar o menu SteamVR quando a reprodução começar</value>
+    <value>Fechar o menu do SteamVR quando a reprodução começar</value>
   </data>
   <data name="KeyboardShortcuts" xml:space="preserve">
     <value>Atalhos de teclado</value>
   </data>
   <data name="ShortcutRecenter" xml:space="preserve">
-    <value>Recentrador</value>
+    <value>Recentralizar</value>
   </data>
   <data name="ShortcutDismiss" xml:space="preserve">
-    <value>Ignorar menu SteamVR</value>
+    <value>Fechar menu do SteamVR</value>
   </data>
   <data name="ShortcutsHint" xml:space="preserve">
-    <value>Os atalhos funcionam durante a reprodução de VR e também chegam ao jogo. Escolha teclas que não entrem em conflito com os controles do jogo.</value>
+    <value>Os atalhos funcionam durante a reprodução em VR e também chegam ao jogo. Escolha teclas que não conflitem com os controles do seu jogo.</value>
   </data>
   <data name="KeyHome" xml:space="preserve">
     <value>Home</value>
@@ -630,14 +630,14 @@
     <comment>Keyboard key name</comment>
   </data>
   <data name="ProfileHint" xml:space="preserve">
-    <value>As configurações são salvas para cada jogo conforme você as altera. Esses botões os copiam entre os jogos.</value>
+    <value>As configurações de cada jogo são salvas conforme você as altera. Estes botões as copiam entre jogos.</value>
   </data>
   <data name="StatusSeparator" xml:space="preserve">
     <value> · </value>
     <comment>Joins independent status messages; keep the spaces.</comment>
   </data>
   <data name="StatusReady" xml:space="preserve">
-    <value>Pronto · somente controles de desktop</value>
+    <value>Pronto · apenas controles no PC</value>
   </data>
   <data name="StatusPlaying" xml:space="preserve">
     <value>Jogando · {0}</value>
@@ -647,11 +647,11 @@
     <value>Parado · suas configurações foram salvas</value>
   </data>
   <data name="StatusEngineFailed" xml:space="preserve">
-    <value>VRX não pôde continuar. {0}</value>
+    <value>O VRX não pôde continuar. {0}</value>
     <comment>{0} = the reason (English, from the renderer) or SeeSessionDetails</comment>
   </data>
   <data name="SeeSessionDetails" xml:space="preserve">
-    <value>Veja os detalhes da sessão abaixo.</value>
+    <value>Veja Detalhes da sessão abaixo.</value>
   </data>
   <data name="StatusRefreshFailed" xml:space="preserve">
     <value>Não foi possível atualizar os aplicativos: {0}</value>
@@ -666,7 +666,7 @@
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusSavedPlaying" xml:space="preserve">
-    <value>Reproduzindo · salvo para {0}</value>
+    <value>Jogando · salvo para {0}</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusSaved" xml:space="preserve">
@@ -678,35 +678,35 @@
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStopping" xml:space="preserve">
-    <value>Parando a RV…</value>
+    <value>Parando VR…</value>
   </data>
   <data name="StatusStopFailed" xml:space="preserve">
-    <value>Não foi possível parar a VR: {0}</value>
+    <value>Não foi possível parar o VR: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusStillStopping" xml:space="preserve">
-    <value>VRX ainda está parando. Feche novamente depois de parar.</value>
+    <value>O VRX ainda está parando. Feche de novo depois que ele parar.</value>
   </data>
   <data name="StatusRecenter" xml:space="preserve">
-    <value>Recentralizador solicitado · usa a direção atual do fone de ouvido</value>
+    <value>Recentralização solicitada · usa a direção atual do headset</value>
   </data>
   <data name="StatusDismiss" xml:space="preserve">
-    <value>Solicitação de dispensa do menu SteamVR</value>
+    <value>Fechamento do menu do SteamVR solicitado</value>
   </data>
   <data name="StatusResetBase" xml:space="preserve">
-    <value>Redefinir para suas configurações básicas</value>
+    <value>Redefinido para suas configurações base</value>
   </data>
   <data name="StatusResetDefault" xml:space="preserve">
-    <value>Redefinir para as configurações padrão do VRX</value>
+    <value>Redefinido para as configurações padrão do VRX</value>
   </data>
   <data name="StatusBaseSelectFirst" xml:space="preserve">
-    <value>Selecione um jogo primeiro e depois salve suas configurações como base.</value>
+    <value>Selecione um jogo primeiro e depois salve as configurações dele como base.</value>
   </data>
   <data name="StatusBaseSaved" xml:space="preserve">
-    <value>Configurações básicas salvas · jogos que você ainda não configurou serão iniciados a partir destes</value>
+    <value>Configurações base salvas · os jogos que você ainda não configurou começarão por elas</value>
   </data>
   <data name="StatusBaseFailed" xml:space="preserve">
-    <value>Não foi possível salvar as configurações básicas: {0}</value>
+    <value>Não foi possível salvar as configurações base: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusAppSettingsFailed" xml:space="preserve">
@@ -714,64 +714,64 @@
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusApplyAllSelectFirst" xml:space="preserve">
-    <value>Selecione primeiro um jogo e depois aplique suas configurações a todos os jogos.</value>
+    <value>Selecione um jogo primeiro e depois aplique as configurações dele a todos os jogos.</value>
   </data>
   <data name="StatusApplyAllCancelled" xml:space="preserve">
-    <value>Aplicar a todos cancelados · nada foi alterado</value>
+    <value>Aplicar a todos cancelado · nada foi alterado</value>
   </data>
   <data name="StatusApplyAllFailed" xml:space="preserve">
     <value>Não foi possível aplicar a todos os jogos: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="AppliedAllOne" xml:space="preserve">
-    <value>Configurações aplicadas ao jogo salvo do {0}</value>
+    <value>Configurações aplicadas ao seu jogo salvo ({0})</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="AppliedAllOther" xml:space="preserve">
-    <value>Configurações aplicadas a todos os jogos salvos do {0}</value>
+    <value>Configurações aplicadas a todos os {0} jogos salvos</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="AppliedSomeOne" xml:space="preserve">
-    <value>Configurações aplicadas ao jogo salvo {0}</value>
+    <value>Configurações aplicadas a {0} jogo salvo</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="AppliedSomeOther" xml:space="preserve">
-    <value>Configurações aplicadas aos jogos salvos do {0}</value>
+    <value>Configurações aplicadas a {0} jogos salvos</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="SkippedOne" xml:space="preserve">
-    <value>Perfil ilegível {0} deixado inalterado</value>
+    <value>{0} perfil ilegível não foi alterado</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="SkippedOther" xml:space="preserve">
-    <value>Perfis ilegíveis {0} deixados inalterados</value>
+    <value>{0} perfis ilegíveis não foram alterados</value>
     <comment>{0} = number of profiles</comment>
   </data>
   <data name="FailedWrite" xml:space="preserve">
-    <value>{0} não pôde ser gravado (somente leitura ou em uso) e manter suas configurações antigas</value>
+    <value>{0} não puderam ser gravados (somente leitura ou em uso) e mantêm as configurações antigas</value>
     <comment>{0} = number of profiles</comment>
   </data>
   <data name="ApplyAllTitle" xml:space="preserve">
     <value>Aplicar a todos os jogos</value>
   </data>
   <data name="ApplyAllQuestionOne" xml:space="preserve">
-    <value>Aplicar as configurações mostradas aqui ao jogo salvo do {0}?
+    <value>Aplicar as configurações mostradas aqui ao seu jogo salvo ({0})?
 
-O posicionamento da tela de cada jogo, força 3D, opções de profundidade, profundidade GPU e teclas de atalho serão substituídos por estes. Cada jogo mantém seu próprio caminho e janela.
+A posição da tela, a intensidade 3D, as opções de profundidade, a GPU de profundidade e as teclas de atalho de cada jogo serão substituídas por estas. Cada jogo mantém o próprio caminho e janela.
 
-Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda iniciam nas configurações básicas.</value>
+Isso não pode ser desfeito. Os jogos que você ainda não configurou continuam começando pelas configurações base.</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="ApplyAllQuestionOther" xml:space="preserve">
-    <value>Aplicar as configurações mostradas aqui a todos os jogos salvos do {0}?
+    <value>Aplicar as configurações mostradas aqui a todos os {0} jogos salvos?
 
-O posicionamento da tela de cada jogo, força 3D, opções de profundidade, profundidade GPU e teclas de atalho serão substituídos por estes. Cada jogo mantém seu próprio caminho e janela.
+A posição da tela, a intensidade 3D, as opções de profundidade, a GPU de profundidade e as teclas de atalho de cada jogo serão substituídas por estas. Cada jogo mantém o próprio caminho e janela.
 
-Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda iniciam nas configurações básicas.</value>
+Isso não pode ser desfeito. Os jogos que você ainda não configurou continuam começando pelas configurações base.</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="AutoCountdown" xml:space="preserve">
-    <value>Anexando VRX a {0} em {1} - alterne a janela para cancelar</value>
+    <value>Conectando o VRX a {0} em {1} - troque de janela para cancelar</value>
     <comment>{0} = game title, {1} = seconds left</comment>
   </data>
   <data name="AutoTheGame" xml:space="preserve">
@@ -779,11 +779,11 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <comment>Used as {0} in AutoCountdown when the game has no name</comment>
   </data>
   <data name="StatusAutoListFailed" xml:space="preserve">
-    <value>A anexação automática não pôde listar os aplicativos: {0}</value>
+    <value>A conexão automática não conseguiu listar os aplicativos: {0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusAutoGone" xml:space="preserve">
-    <value>Anexação automática: {0} não está mais disponível</value>
+    <value>Conexão automática: {0} não está mais disponível</value>
     <comment>{0} = game name</comment>
   </data>
   <data name="StatusAutoStarted" xml:space="preserve">
@@ -791,81 +791,81 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <comment>{0} = game name</comment>
   </data>
   <data name="OverlayTitle" xml:space="preserve">
-    <value>VRX conexão automática</value>
+    <value>Conexão automática do VRX</value>
   </data>
   <data name="ErrorSelectGame" xml:space="preserve">
     <value>Selecione um jogo primeiro.</value>
   </data>
   <data name="ErrorWorldColour" xml:space="preserve">
-    <value>A cor do mundo deve ter seis dígitos hexadecimais, como #1C1C1E. As alterações não são salvas até que sejam.</value>
+    <value>A cor do mundo deve ter seis dígitos hexadecimais, como #1C1C1E. As alterações só serão salvas quando ela estiver correta.</value>
   </data>
   <data name="ErrorShortcutsConflict" xml:space="preserve">
-    <value>Escolha duas teclas de atalho diferentes. As alterações não são salvas até que as configurações sejam válidas.</value>
+    <value>Escolha duas teclas de atalho diferentes. As alterações só serão salvas quando as configurações forem válidas.</value>
   </data>
   <data name="ErrorSettingsInvalid" xml:space="preserve">
-    <value>As configurações estão fora do intervalo permitido ou há conflito de teclas de atalho.</value>
+    <value>As configurações estão fora do intervalo permitido ou há teclas de atalho em conflito.</value>
   </data>
   <data name="ErrorProfileInvalid" xml:space="preserve">
-    <value>As configurações salvas deste jogo são inválidas. Eles não foram substituídos.</value>
+    <value>As configurações salvas deste jogo são inválidas. Elas não foram sobrescritas.</value>
   </data>
   <data name="ErrorStopFirst" xml:space="preserve">
     <value>Pare a sessão atual primeiro.</value>
   </data>
   <data name="ErrorAnotherSession" xml:space="preserve">
-    <value>Outra sessão do VRX está em execução. Feche essa sessão antes de anexar aqui.</value>
+    <value>Outra sessão do VRX está em execução. Feche essa sessão antes de conectar aqui.</value>
   </data>
   <data name="DesktopWhenAway" xml:space="preserve">
     <value>Mostrar a área de trabalho ao sair do jogo</value>
   </data>
   <data name="DesktopWhenAwayHint" xml:space="preserve">
-    <value>Enquanto o jogo não estiver na frente - após Ctrl+Esc, a tecla Windows ou Alt+Tab - VR mostra o display em que está. De volta ao jogo, VR mostra o jogo novamente. Se o jogo fechar, o VR continua na área de trabalho até você pressionar Stop VR. Aplica-se em Attach/Play.</value>
+    <value>Enquanto o jogo não estiver em primeiro plano - depois de Ctrl+Esc, da tecla Windows ou de Alt+Tab - o VR mostra o monitor em que ele está. De volta ao jogo, o VR mostra o jogo de novo. Se o jogo fechar, o VR continua com a área de trabalho até você pressionar Parar VR. Vale a partir de Conectar / Jogar.</value>
   </data>
   <data name="CardDesktop" xml:space="preserve">
     <value>Área de trabalho</value>
     <comment>The game card while VR shows the display instead of the game.</comment>
   </data>
   <data name="CardShowingDesktop" xml:space="preserve">
-    <value>Mostrando a área de trabalho · de volta ao {0} quando está na frente</value>
+    <value>Mostrando a área de trabalho · volta para {0} quando ele estiver em primeiro plano</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="CardGameClosed" xml:space="preserve">
-    <value>{0} fechou · mostrando a área de trabalho até você pressionar Stop VR</value>
+    <value>{0} foi fechado · mostrando a área de trabalho até você pressionar Parar VR</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="StatusGameClosedDesktop" xml:space="preserve">
-    <value>{0} foi fechado. VR mostra a área de trabalho até você pressionar Stop VR.</value>
+    <value>{0} foi fechado. O VR mostra a área de trabalho até você pressionar Parar VR.</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="ErrorScreenChanged" xml:space="preserve">
-    <value>As exibições mudaram desde que a lista foi feita. Escolha novamente.</value>
+    <value>Os monitores mudaram desde que a lista foi criada. Escolha novamente.</value>
   </data>
   <data name="ChooseButton" xml:space="preserve">
     <value>Escolher…</value>
     <comment>Opens the chooser: pictures of every window and display.</comment>
   </data>
   <data name="ChooseTip" xml:space="preserve">
-    <value>Escolha uma janela ou tela inteira de imagens ao vivo e reproduza em VR</value>
+    <value>Escolha uma janela ou uma tela inteira a partir de imagens ao vivo e jogue em VR</value>
   </data>
   <data name="ChooserTitle" xml:space="preserve">
     <value>Escolha o que jogar</value>
   </data>
   <data name="ChooserIntro" xml:space="preserve">
-    <value>Clique em uma janela ou tela para reproduzi-lo em VR.</value>
+    <value>Clique em uma janela ou tela para jogá-la em VR.</value>
   </data>
   <data name="ChooserWindows" xml:space="preserve">
     <value>Janelas</value>
   </data>
   <data name="ChooserNoWindows" xml:space="preserve">
-    <value>Não há janelas para mostrar. Comece o jogo e escolha novamente.</value>
+    <value>Nenhuma janela para mostrar. Inicie seu jogo e escolha novamente.</value>
   </data>
   <data name="ChooserScreens" xml:space="preserve">
     <value>Tela inteira</value>
   </data>
   <data name="ChooserScreensHint" xml:space="preserve">
-    <value>Tudo o que é mostrado nessa tela, como sua área de trabalho ou um player de vídeo. Ele é reproduzido até você pressionar Stop VR.</value>
+    <value>Tudo o que aparece nesse monitor, como sua área de trabalho ou um reprodutor de vídeo. Continua até você pressionar Parar VR.</value>
   </data>
   <data name="ChooserMainDisplay" xml:space="preserve">
-    <value>Tela principal</value>
+    <value>Monitor principal</value>
   </data>
   <data name="ChooserMinimized" xml:space="preserve">
     <value>{0} · minimizado</value>
@@ -879,42 +879,42 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <comment>{0} = display number, {1} x {2} = resolution in pixels</comment>
   </data>
   <data name="ScreenTitlePrimary" xml:space="preserve">
-    <value>Display {0} · {1} × {2} · principal</value>
+    <value>Monitor {0} · {1} × {2} · principal</value>
     <comment>{0} = display number, {1} x {2} = resolution in pixels</comment>
   </data>
   <data name="ScreenDescriptionOne" xml:space="preserve">
-    <value>1 exibição</value>
+    <value>1 monitor</value>
   </data>
   <data name="ScreenDescriptionOther" xml:space="preserve">
-    <value>Monitores {0}</value>
+    <value>{0} monitores</value>
     <comment>{0} = number of displays</comment>
   </data>
   <data name="PathWholeScreen" xml:space="preserve">
-    <value>Tudo mostrado no display. Um conjunto de configurações é compartilhado por todos os monitores.</value>
+    <value>Tudo o que aparece no monitor. Um único conjunto de configurações é compartilhado por todos os monitores.</value>
   </data>
   <data name="StatusChoiceGone" xml:space="preserve">
-    <value>Essa janela ou display não está mais lá. Escolha novamente.</value>
+    <value>Essa janela ou monitor não existe mais. Escolha novamente.</value>
   </data>
   <data name="ErrorEngineBlockedPolicy" xml:space="preserve">
-    <value>O Windows bloqueou o mecanismo 3D do VRX (engine\xrplayer.exe). Geralmente é o Smart App Control, que interrompe novos programas que ainda não foram assinados digitalmente e os programas do VRX ainda não foram assinados. Para jogar agora, desative o Smart App Control em Segurança do Windows &gt; Controle de aplicativos e navegador &gt; Configurações do Smart App Control; O Windows pode não permitir que você o ligue novamente sem redefini-lo. Em um PC do trabalho ou da escola, pergunte ao administrador.</value>
+    <value>O Windows bloqueou o motor 3D do VRX (engine\xrplayer.exe). Normalmente é o Smart App Control, que bloqueia programas novos que ainda não têm assinatura digital, e os programas do VRX ainda não são assinados. Para jogar agora, desative o Smart App Control em Segurança do Windows &gt; Controle de aplicativos e do navegador &gt; Configurações do Smart App Control; o Windows pode não deixar você reativá-lo sem redefinir o PC. Em um PC do trabalho ou da escola, peça ao administrador.</value>
   </data>
   <data name="ErrorEngineBlockedAntivirus" xml:space="preserve">
-    <value>Seu antivírus interrompeu a execução do mecanismo 3D do VRX (engine\xrplayer.exe). Se você baixou o VRX de sua versão do GitHub, você pode verificar o download em relação ao SHA256SUMS.txt, permitir o arquivo em seu antivírus e relatá-lo como um falso positivo.</value>
+    <value>Seu antivírus impediu a execução do motor 3D do VRX (engine\xrplayer.exe). Se você baixou o VRX da página de versões no GitHub, pode conferir o download com o SHA256SUMS.txt, depois liberar o arquivo no antivírus e informá-lo como falso positivo.</value>
   </data>
   <data name="ErrorProcessChanged" xml:space="preserve">
     <value>O processo selecionado foi fechado ou alterado. Atualize a lista.</value>
   </data>
   <data name="ErrorRendererMissing" xml:space="preserve">
-    <value>O renderizador VRX está ausente. Reinstale o VRX ou construa o projeto.</value>
+    <value>O renderizador do VRX não foi encontrado. Reinstale o VRX ou compile o projeto.</value>
   </data>
   <data name="ErrorBuildRenderer" xml:space="preserve">
-    <value>Crie primeiro o renderizador de desktop usando bench/native/openxr/build.bat --desktop.</value>
+    <value>Compile primeiro o renderizador desktop usando bench/native/openxr/build.bat --desktop.</value>
   </data>
   <data name="LogStopTimeout" xml:space="preserve">
-    <value>VRX não parou no tempo; encerrando seu renderizador. O jogo não é afetado.</value>
+    <value>O VRX não parou a tempo; encerrando o renderizador. O jogo não é afetado.</value>
   </data>
   <data name="Controllers" xml:space="preserve">
-    <value>Controladores</value>
+    <value>Controles</value>
   </data>
   <data name="ControllersOff" xml:space="preserve">
     <value>Desligado</value>
@@ -923,37 +923,37 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Ligado</value>
   </data>
   <data name="ControllersTip" xml:space="preserve">
-    <value>Configurações opcionais do controlador de movimento. Pressione o botão Menu do controlador para mostrar ou ocultar o painel para onde você está olhando. Aponte e aperte o gatilho para selecionar ou arrastar a barra de título; use o polegar para rolar. Controladores de índice/genéricos usam clique do polegar. Requer modo de controlador VR e foco de entrada XR.</value>
+    <value>Configurações opcionais para controles de movimento. Pressione o botão Menu do controle para mostrar ou ocultar o painel onde você está olhando. Aponte e aperte o gatilho para selecionar ou arrastar a barra de título; use o analógico para rolar. Controles Index/genéricos usam o clique do analógico. Requer o modo de controles de VR e o foco de entrada XR.</value>
   </data>
   <data name="ControllerMenuTitle" xml:space="preserve">
     <value>Configurações do VRX</value>
   </data>
   <data name="ControllerMenuHint" xml:space="preserve">
-    <value>Menu: mostrar ou ocultar · Apontar + disparar: selecionar · Polegar: rolar</value>
+    <value>Menu: mostrar ou ocultar · Apontar + gatilho: selecionar · Analógico: rolar</value>
   </data>
   <data name="ControllerMenuDrag" xml:space="preserve">
-    <value>Segure o gatilho aqui para mover o painel</value>
+    <value>Segure o gatilho aqui para mover</value>
   </data>
   <data name="ControllerMenuBack" xml:space="preserve">
     <value>Voltar / seções</value>
   </data>
   <data name="ControllerMenuControlScreen" xml:space="preserve">
-    <value>Controlar tela</value>
+    <value>Controlar a tela</value>
   </data>
   <data name="ControllerMenuStopControlScreen" xml:space="preserve">
     <value>Parar de controlar a tela</value>
   </data>
   <data name="ControllerMenuScreenHint" xml:space="preserve">
-    <value>Gatilho direito: clique com o botão esquerdo / arraste · Punho direito: clique com o botão direito · Menu: ocultar configurações</value>
+    <value>Gatilho direito: clique esquerdo / arrastar · Botão lateral direito: clique direito · Menu: ocultar configurações</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
-    <value>Instantâneo</value>
+    <value>Captura</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
-    <value>Abra a pasta de imagens</value>
+    <value>Abrir pasta de imagens</value>
   </data>
   <data name="SnapshotTitle" xml:space="preserve">
-    <value>Instantâneo · segure o título para mover</value>
+    <value>Captura · segure o título para mover</value>
   </data>
   <data name="SnapshotSave" xml:space="preserve">
     <value>Salvar</value>
@@ -977,7 +977,7 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Navegador · segure o título para mover</value>
   </data>
   <data name="BrowserGo" xml:space="preserve">
-    <value>Vá</value>
+    <value>Ir</value>
   </data>
   <data name="BrowserNew" xml:space="preserve">
     <value>Novo navegador</value>
@@ -1028,25 +1028,25 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Toque nas teclas ou segure o gatilho e deslize pelas letras. Solte para digitar; escolha outra sugestão para substituir a palavra.</value>
   </data>
   <data name="KeyboardChooseTarget" xml:space="preserve">
-    <value>Selecione um campo do navegador ou ative a tela Controle e clique em um campo de jogo/Windows.</value>
+    <value>Selecione um campo do navegador, ou ative Controlar a tela e clique em um campo do jogo/Windows.</value>
   </data>
   <data name="KeyboardBrowserTarget" xml:space="preserve">
     <value>Digitando no navegador: {0}</value>
   </data>
   <data name="KeyboardWindowsTarget" xml:space="preserve">
-    <value>Digitando no jogo selecionado/janela do Windows</value>
+    <value>Digitando na janela selecionada do jogo/Windows</value>
   </data>
   <data name="KeyboardAddWord" xml:space="preserve">
     <value>Adicionar palavra: {0}</value>
   </data>
   <data name="SnapshotFailed" xml:space="preserve">
-    <value>Não foi possível capturar o instantâneo. Tente novamente.</value>
+    <value>Não foi possível fazer a captura. Tente novamente.</value>
   </data>
   <data name="SnapshotFileError" xml:space="preserve">
     <value>Imagem: {0}</value>
   </data>
   <data name="ControllerMenuSelect" xml:space="preserve">
-    <value>Escolher uma opção</value>
+    <value>Selecione uma opção</value>
   </data>
   <data name="ControllerMenuDelete" xml:space="preserve">
     <value>Apagar dígito</value>
@@ -1061,19 +1061,19 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Substituir as configurações em todos os perfis de jogo salvos pelas configurações atuais? O caminho e a janela de cada jogo são mantidos.</value>
   </data>
   <data name="ControllerMenuFailed" xml:space="preserve">
-    <value>Menu de configurações do controlador indisponível: {0}</value>
+    <value>Menu de configurações dos controles indisponível: {0}</value>
   </data>
   <data name="RoomLife" xml:space="preserve">
-    <value>Vida e música no quarto</value>
+    <value>Vida na sala e música</value>
   </data>
   <data name="RoomLifeHint" xml:space="preserve">
-    <value>Precisa de uma tela fixa e sala. Listen captura o mix de reprodução do Windows, incluindo outros aplicativos na saída de reprodução padrão; sem microfone ou gravação. Todos os efeitos são aplicados ao vivo e salvos por jogo. As sombras traçam a geometria da criatura e do assento; este não é o hardware DXR.</value>
+    <value>Precisa da tela fixa e da sala. “Ouvir o áudio reproduzido” capta a mixagem de reprodução do Windows, incluindo outros aplicativos na saída de áudio padrão; sem microfone nem gravação. Todos os efeitos valem na hora e são salvos por jogo. As sombras são traçadas sobre a geometria das criaturas e das poltronas; não é DXR por hardware.</value>
   </data>
   <data name="ListenAudio" xml:space="preserve">
-    <value>Ouça a reprodução do áudio</value>
+    <value>Ouvir o áudio reproduzido</value>
   </data>
   <data name="MusicVisuals" xml:space="preserve">
-    <value>Animações musicais de parede e teto</value>
+    <value>Animações musicais nas paredes e no teto</value>
   </data>
   <data name="Creatures" xml:space="preserve">
     <value>Criaturas animadas</value>
@@ -1082,10 +1082,10 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Poeira 3D colorida</value>
   </data>
   <data name="DiscoLights" xml:space="preserve">
-    <value>Holofotes de discoteca móveis</value>
+    <value>Holofotes de discoteca em movimento</value>
   </data>
   <data name="TracedShadows" xml:space="preserve">
-    <value>Sombras com Ray Tracing (custo extra de GPU)</value>
+    <value>Sombras com ray tracing (custo extra de GPU)</value>
   </data>
   <data name="CreatureCount" xml:space="preserve">
     <value>População de criaturas (até 24)</value>
@@ -1100,13 +1100,13 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Tubarões holográficos</value>
   </data>
   <data name="CreatureFish" xml:space="preserve">
-    <value>Peixe pequeno</value>
+    <value>Peixinhos</value>
   </data>
   <data name="CreatureRobot" xml:space="preserve">
-    <value>Robôs ambulantes</value>
+    <value>Robôs andantes</value>
   </data>
   <data name="CreatureJelly" xml:space="preserve">
-    <value>Água-viva</value>
+    <value>Águas-vivas</value>
   </data>
   <data name="CreatureManta" xml:space="preserve">
     <value>Raias manta</value>
@@ -1118,7 +1118,7 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Tartarugas</value>
   </data>
   <data name="CreatureDrone" xml:space="preserve">
-    <value>Drones de pesquisa</value>
+    <value>Drones de reconhecimento</value>
   </data>
   <data name="VisualSpectrum" xml:space="preserve">
     <value>Espectro</value>
@@ -1139,13 +1139,13 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Grade de néon</value>
   </data>
   <data name="VisualAurora" xml:space="preserve">
-    <value>aurora</value>
+    <value>Aurora</value>
   </data>
   <data name="VisualVortex" xml:space="preserve">
     <value>Vórtice</value>
   </data>
   <data name="VisualLava" xml:space="preserve">
-    <value>lava</value>
+    <value>Lava</value>
   </data>
   <data name="VisualStars" xml:space="preserve">
     <value>Estrelas</value>
@@ -1157,31 +1157,31 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Lissajous</value>
   </data>
   <data name="AudioOff" xml:space="preserve">
-    <value>A audição da reprodução está desativada.</value>
+    <value>A escuta da reprodução está desligada.</value>
   </data>
   <data name="AudioReady" xml:space="preserve">
-    <value>A audição da reprodução começa com VR.</value>
+    <value>A escuta da reprodução começa com o VR.</value>
   </data>
   <data name="AudioConnecting" xml:space="preserve">
     <value>Conectando à saída de reprodução do Windows...</value>
   </data>
   <data name="AudioListening" xml:space="preserve">
-    <value>Ouvindo o mix de reprodução do Windows.</value>
+    <value>Ouvindo a mixagem de reprodução do Windows.</value>
   </data>
   <data name="AudioUnavailable" xml:space="preserve">
-    <value>Captura de reprodução indisponível. Verifique o dispositivo de saída padrão do Windows; VRX tentará novamente.</value>
+    <value>Captura da reprodução indisponível. Verifique o dispositivo de saída padrão do Windows; o VRX tentará novamente.</value>
   </data>
   <data name="VisualLayers" xml:space="preserve">
-    <value>Camadas do visualizador — combine qualquer</value>
+    <value>Camadas do visualizador — combine à vontade</value>
   </data>
   <data name="MusicReactivity" xml:space="preserve">
     <value>Reatividade musical</value>
   </data>
   <data name="BeamReactions" xml:space="preserve">
-    <value>Criaturas reagem aos feixes do controlador</value>
+    <value>Criaturas reagem aos feixes dos controles</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex – companheiro robô jetpack</value>
+    <value>Vrex — robô companheiro com jetpack</value>
   </data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>Padrão</value>
@@ -1199,13 +1199,13 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Inferno</value>
   </data>
   <data name="ThemeHeaven" xml:space="preserve">
-    <value>Céu</value>
+    <value>Paraíso</value>
   </data>
   <data name="ThemeDark" xml:space="preserve">
     <value>Escuro</value>
   </data>
   <data name="ThemeLight" xml:space="preserve">
-    <value>Luz</value>
+    <value>Claro</value>
   </data>
   <data name="ThemeGrape" xml:space="preserve">
     <value>Uva</value>
@@ -1220,16 +1220,16 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Opacidade do fundo do painel flutuante</value>
   </data>
   <data name="DesktopThemeLabel" xml:space="preserve">
-    <value>Tema da área de trabalho</value>
+    <value>Tema da janela principal</value>
   </data>
   <data name="AppearanceHint" xml:space="preserve">
-    <value>Os temas do painel e a transparência se aplicam às configurações de VR, teclado, cromo do navegador e instantâneos. As cores da área de trabalho são separadas. O conteúdo permanece legível.</value>
+    <value>Os temas e a transparência dos painéis valem para as configurações em VR, o teclado, a moldura do navegador e as capturas. As cores da janela principal são separadas. O conteúdo continua legível.</value>
   </data>
   <data name="Quick3D" xml:space="preserve">
     <value>3D</value>
   </data>
   <data name="Quick3DTip" xml:space="preserve">
-    <value>Ative ou desative o 3D estéreo. Aplica-se imediatamente.</value>
+    <value>Liga ou desliga o 3D estéreo. Aplica na hora.</value>
   </data>
   <data name="DictationDefaultMic" xml:space="preserve">
     <value>Microfone padrão do Windows</value>
@@ -1250,10 +1250,10 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Iniciando o reconhecimento de fala do Windows…</value>
   </data>
   <data name="DictationListening" xml:space="preserve">
-    <value>Ouvindo – {0}. Fale no microfone selecionado.</value>
+    <value>Ouvindo — {0}. Fale no microfone selecionado.</value>
   </data>
   <data name="DictationHearing" xml:space="preserve">
-    <value>Audição: {0}</value>
+    <value>Reconhecendo: {0}</value>
   </data>
   <data name="DictationHeard" xml:space="preserve">
     <value>Inserido: {0}</value>
@@ -1262,7 +1262,7 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Entrada de voz: {0}</value>
   </data>
   <data name="DictationNoRecognizer" xml:space="preserve">
-    <value>Nenhum reconhecedor de fala da área de trabalho do Windows está instalado. Adicione um pacote de idiomas de fala do Windows para usar a entrada de voz.</value>
+    <value>Nenhum reconhecimento de fala do Windows para desktop está instalado. Adicione um pacote de idioma de fala do Windows para usar a entrada de voz.</value>
   </data>
   <data name="DictationOverrun" xml:space="preserve">
     <value>A captura de áudio não conseguiu acompanhar. Pare e reinicie a entrada de voz.</value>
@@ -1295,7 +1295,7 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Criaturas</value>
   </data>
   <data name="RoomCategoryAtmosphere" xml:space="preserve">
-    <value>Efeitos da atmosfera</value>
+    <value>Efeitos de atmosfera</value>
   </data>
   <data name="RoomCategoryVrex" xml:space="preserve">
     <value>Vrex</value>
@@ -1307,13 +1307,13 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Solicitação de permissão</value>
   </data>
   <data name="BrowserPermissionOrigin" xml:space="preserve">
-    <value>{0} deseja acesso a:</value>
+    <value>{0} quer acesso a:</value>
   </data>
   <data name="BrowserPermissionEmbedded" xml:space="preserve">
-    <value>{0} deseja acesso enquanto você estiver no {1}:</value>
+    <value>{0} quer acesso enquanto você está em {1}:</value>
   </data>
   <data name="BrowserPermissionRemember" xml:space="preserve">
-    <value>Sua escolha Permitir ou Negar será lembrada neste site. Revise ou redefina-o usando o acesso ao site.</value>
+    <value>Sua escolha de Permitir ou Negar fica lembrada para este site. Revise ou redefina em Acesso ao site.</value>
   </data>
   <data name="BrowserPermissionAllow" xml:space="preserve">
     <value>Permitir</value>
@@ -1346,13 +1346,13 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>{0}</value>
   </data>
   <data name="BrowserPermissionSaveFailed" xml:space="preserve">
-    <value>A escolha se aplica agora, mas não pode ser salva para a próxima vez.</value>
+    <value>A escolha vale agora, mas não pôde ser salva para a próxima vez.</value>
   </data>
   <data name="BrowserPermissionNoSite" xml:space="preserve">
     <value>Nenhum site está carregado.</value>
   </data>
   <data name="BrowserPermissionNoSaved" xml:space="preserve">
-    <value>Nenhuma opção de permissão salva para este site.</value>
+    <value>Nenhuma escolha de permissão salva para este site.</value>
   </data>
   <data name="BrowserPermissionSaved" xml:space="preserve">
     <value>{0}: {1} — {2}</value>
@@ -1364,40 +1364,40 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>As permissões salvas do site não puderam ser redefinidas.</value>
   </data>
   <data name="GameHelpStart" xml:space="preserve">
-    <value>Ajuda para este jogo</value>
+    <value>Ajuda com este jogo</value>
   </data>
   <data name="GameHelpSettings" xml:space="preserve">
-    <value>Configurações de ajuda do jogo</value>
+    <value>Configurações da ajuda do jogo</value>
   </data>
   <data name="GameHelpSharingHint" xml:space="preserve">
-    <value>Escolha um serviço. Ajudar com a tela atual envia uma imagem da tela VRX e uma pergunta para esse serviço. Nada é compartilhado até que você permita.</value>
+    <value>Escolha um serviço. Pedir ajuda com a tela atual envia uma imagem da tela do VRX e uma pergunta para esse serviço. Nada é compartilhado até você permitir.</value>
   </data>
   <data name="GameHelpSharingWith" xml:space="preserve">
-    <value>O compartilhamento de captura de tela com {0} é lembrado separadamente das permissões de microfone ou câmera.</value>
+    <value>O compartilhamento de capturas de tela com {0} é lembrado separadamente das permissões de microfone e câmera.</value>
   </data>
   <data name="GameHelpStopSharing" xml:space="preserve">
-    <value>Pare de compartilhar capturas de tela</value>
+    <value>Parar de compartilhar capturas de tela</value>
   </data>
   <data name="GameHelpAllowAndStart" xml:space="preserve">
     <value>Permitir capturas de tela e obter ajuda</value>
   </data>
   <data name="GameHelpSaveFailed" xml:space="preserve">
-    <value>Não foi possível salvar as preferências de compartilhamento de captura de tela.</value>
+    <value>Não foi possível salvar as preferências de compartilhamento de capturas de tela.</value>
   </data>
   <data name="GameHelpNeedsSession" xml:space="preserve">
-    <value>Inicie uma sessão VRX e permita que os controladores capturem a tela atual.</value>
+    <value>Inicie uma sessão do VRX e ative os controles para capturar a tela atual.</value>
   </data>
   <data name="GameHelpCapturing" xml:space="preserve">
-    <value>Capturando a tela atual do VRX para ajuda do jogo…</value>
+    <value>Capturando a tela atual do VRX para a ajuda do jogo…</value>
   </data>
   <data name="GameHelpCaptureFailed" xml:space="preserve">
-    <value>A captura de tela não foi concluída. Por favor, tente a ajuda do jogo novamente.</value>
+    <value>A captura da tela não foi concluída. Tente pedir ajuda do jogo novamente.</value>
   </data>
   <data name="GameHelpImageTooLarge" xml:space="preserve">
-    <value>A imagem de ajuda do jogo é muito grande para ser carregada.</value>
+    <value>A imagem da ajuda do jogo é grande demais para enviar.</value>
   </data>
   <data name="GameHelpRetry" xml:space="preserve">
-    <value>Tentar ajuda novamente</value>
+    <value>Tentar ajuda de novo</value>
   </data>
   <data name="GameHelpProgress" xml:space="preserve">
     <value>{0}: {1}</value>
@@ -1409,24 +1409,24 @@ Isto não pode ser desfeito. Os jogos que você ainda não configurou ainda inic
     <value>Anexando a tela atual…</value>
   </data>
   <data name="GameHelpPreparingQuestion" xml:space="preserve">
-    <value>Preparando a pergunta de ajuda do jogo…</value>
+    <value>Preparando a pergunta da ajuda do jogo…</value>
   </data>
   <data name="GameHelpSearching" xml:space="preserve">
-    <value>Pergunta enviada. Você pode fazer perguntas de acompanhamento aqui.</value>
+    <value>Pergunta enviada. Você pode fazer mais perguntas aqui.</value>
   </data>
   <data name="GameHelpNeedsSetup" xml:space="preserve">
-    <value>Conclua o consentimento do site ou o prompt de login; a ajuda continuará automaticamente.</value>
+    <value>Conclua o consentimento ou o login pedido pelo site; a ajuda continuará automaticamente.</value>
   </data>
   <data name="GameHelpNoConsent" xml:space="preserve">
-    <value>O compartilhamento de captura de tela está desativado. Ative-o nas configurações de ajuda do jogo.</value>
+    <value>O compartilhamento de capturas de tela está desligado. Ative-o em Configurações da ajuda do jogo.</value>
   </data>
   <data name="GameHelpExistingDraft" xml:space="preserve">
-    <value>O site já tem um rascunho. Limpe-o e escolha Repetir ajuda.</value>
+    <value>O site já tem um rascunho. Apague-o e escolha Tentar ajuda de novo.</value>
   </data>
   <data name="GameHelpRetryNeeded" xml:space="preserve">
-    <value>O site não está pronto. Conclua todas as solicitações do site e escolha Repetir ajuda.</value>
+    <value>O site não está pronto. Conclua os avisos do site e escolha Tentar ajuda de novo.</value>
   </data>
   <data name="GameHelpPrompt" xml:space="preserve">
-    <value>Identifique o jogo e a cena exata nesta captura de tela. Dê-me uma dica útil sobre o que fazer a seguir, evitando grandes spoilers, e inclua links para orientações ou guias relevantes. Se você não conseguir identificá-lo com segurança, faça-me uma pergunta em vez de adivinhar.</value>
+    <value>Identifique o jogo e a cena exata nesta captura de tela. Me dê uma dica útil sobre o que fazer a seguir, evitando spoilers importantes, e inclua links para detonados ou guias relevantes. Se não conseguir identificar com segurança, me faça uma pergunta em vez de chutar.</value>
   </data>
 </root>

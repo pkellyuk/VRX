@@ -7,7 +7,7 @@
     <value>自动 — Windows 显示语言</value>
   </data>
   <data name="LanguageRestartHint" xml:space="preserve">
-    <value>下次启动 VRX 时应用。数字和日期格式仍然遵循您的 Windows 区域设置。</value>
+    <value>下次启动 VRX 时生效。数字和日期格式仍遵循 Windows 区域设置。</value>
   </data>
   <resheader name="resmimetype">
     <value>text/microsoft-resx</value>
@@ -30,10 +30,10 @@
     <comment>{0} = version, e.g. v1.7.1</comment>
   </data>
   <data name="SubtitleEasy" xml:space="preserve">
-    <value>在 VR 中玩游戏。 VRX 进行设置。</value>
+    <value>在 VR 里玩游戏，设置交给 VRX。</value>
   </data>
   <data name="SubtitleExpert" xml:space="preserve">
-    <value>选择一个游戏。设置您的屏幕。</value>
+    <value>选择游戏，设置屏幕。</value>
   </data>
   <data name="ModeEasy" xml:space="preserve">
     <value>简易</value>
@@ -42,16 +42,16 @@
     <value>自动</value>
   </data>
   <data name="ModeEasyTip" xml:space="preserve">
-    <value>简单：VRX 使用游戏保存的设置（或新游戏的基本设置）自行附加到前面的游戏。几乎所有其他内容都被隐藏了。</value>
+    <value>简易：VRX 会自动接入最前面的游戏，并使用该游戏保存的设置（新游戏则使用你的基础设置）。其他选项几乎全部隐藏。</value>
   </data>
   <data name="ModeExpert" xml:space="preserve">
     <value>专家</value>
   </data>
   <data name="ModeExpertCaption" xml:space="preserve">
-    <value>所有设置</value>
+    <value>全部设置</value>
   </data>
   <data name="ModeExpertTip" xml:space="preserve">
-    <value>专家：每个设置都分组为可以打开和关闭的部分。</value>
+    <value>专家：显示全部设置，按分组排列，各分组可展开或收起。</value>
   </data>
   <data name="TitleMenu" xml:space="preserve">
     <value>窗口菜单</value>
@@ -66,7 +66,7 @@
     <comment>Title bar button (Expert only), as in Windows.</comment>
   </data>
   <data name="TitleRestore" xml:space="preserve">
-    <value>恢复下来</value>
+    <value>向下还原</value>
     <comment>The maximize button while the window is maximized, as in Windows.</comment>
   </data>
   <data name="TitleClose" xml:space="preserve">
@@ -74,13 +74,13 @@
     <comment>Title bar button, as in Windows.</comment>
   </data>
   <data name="EasyIntro" xml:space="preserve">
-    <value>开始您的游戏并将其带到最前面 - VRX 在短暂的倒计时后连接。</value>
+    <value>启动游戏并切到最前面 - 短暂倒计时后 VRX 就会接入。</value>
   </data>
   <data name="EasyHintSettings" xml:space="preserve">
-    <value>VRX 使用游戏已保存的设置，或者以前从未见过的游戏的基本设置。切换到专家来更改它们。</value>
+    <value>VRX 使用游戏已保存的设置；没见过的游戏则使用你的基础设置。切换到“专家”即可修改。</value>
   </data>
   <data name="EasyHintSteamVr" xml:space="preserve">
-    <value>玩之前先启动 SteamVR。按“停止 VR”或关闭游戏即可完成。</value>
+    <value>开始游戏前请先启动 SteamVR。按“停止 VR”或关闭游戏即可结束。</value>
   </data>
   <data name="CardCaption" xml:space="preserve">
     <value>游戏</value>
@@ -89,35 +89,35 @@
     <value>还没有游戏</value>
   </data>
   <data name="CardWaiting" xml:space="preserve">
-    <value>等待 · 将您的游戏带到前台</value>
+    <value>等待中 · 请把游戏切到最前面</value>
   </data>
   <data name="CardCountdown" xml:space="preserve">
-    <value>{0}中的附加·切换窗口取消</value>
+    <value>{0} 秒后接入 · 切换窗口可取消</value>
     <comment>{0} = seconds left</comment>
   </data>
   <data name="CardStarting" xml:space="preserve">
-    <value>开始虚拟现实…</value>
+    <value>正在启动 VR…</value>
   </data>
   <data name="CardPlaying" xml:space="preserve">
-    <value>演奏</value>
+    <value>运行中</value>
   </data>
   <data name="CardStopping" xml:space="preserve">
-    <value>停止虚拟现实……</value>
+    <value>正在停止 VR…</value>
   </data>
   <data name="CardSpent" xml:space="preserve">
-    <value>已停止 · 切换到另一个窗口并返回以再次附加</value>
+    <value>已停止 · 切到其他窗口再切回来即可重新接入</value>
   </data>
   <data name="CardReady" xml:space="preserve">
-    <value>准备就绪 · 按附加/播放</value>
+    <value>就绪 · 请按“接入 / 开始”</value>
   </data>
   <data name="CardChooseWindow" xml:space="preserve">
-    <value>在“游戏和窗口”下选择要捕获的窗口</value>
+    <value>请在“游戏与窗口”中选择要捕获的窗口</value>
   </data>
   <data name="CardPickGame" xml:space="preserve">
-    <value>在“游戏和窗口”下选择一个游戏，或打开自动附加</value>
+    <value>请在“游戏与窗口”中选择游戏，或开启自动接入</value>
   </data>
   <data name="AttachPlay" xml:space="preserve">
-    <value>连接 / 播放</value>
+    <value>接入 / 开始</value>
   </data>
   <data name="StopVr" xml:space="preserve">
     <value>停止 VR</value>
@@ -126,7 +126,7 @@
     <value>重新居中</value>
   </data>
   <data name="RecenterTip" xml:space="preserve">
-    <value>将屏幕直接放在耳机当前所看到的位置的正前方。</value>
+    <value>把屏幕摆到头显当前朝向的正前方。</value>
   </data>
   <data name="RecenterNow" xml:space="preserve">
     <value>立即重新居中</value>
@@ -139,25 +139,25 @@
     <comment>Refresh button symbol; normally not translated.</comment>
   </data>
   <data name="RefreshTip" xml:space="preserve">
-    <value>刷新正在运行的应用程序</value>
+    <value>刷新正在运行的程序</value>
   </data>
   <data name="ResetProfile" xml:space="preserve">
-    <value>重置此配置文件</value>
+    <value>重置此配置</value>
   </data>
   <data name="ResetProfileTip" xml:space="preserve">
-    <value>将此游戏恢复为基本设置（如果未保存基本设置，则为 VRX 的默认设置）。</value>
+    <value>将此游戏恢复为基础设置（如果尚未保存基础设置，则恢复为 VRX 默认值）。</value>
   </data>
   <data name="MakeBase" xml:space="preserve">
-    <value>进行基本设置</value>
+    <value>设为基础设置</value>
   </data>
   <data name="MakeBaseTip" xml:space="preserve">
-    <value>将此处显示的设置保存为您尚未设置的游戏的起点。屏幕放置、3D 强度、深度选项和快捷方式都包含在内；游戏本身的路径和窗口都没有。您已经设置的游戏保留其自己的设置。</value>
+    <value>将这里显示的设置保存为基础设置，作为尚未设置过的游戏的起点。包括屏幕位置、3D 强度、深度选项和快捷键；不包括游戏本身的路径和窗口。已设置过的游戏仍保留各自的设置。</value>
   </data>
   <data name="ApplyAll" xml:space="preserve">
-    <value>适用于所有</value>
+    <value>应用到全部</value>
   </data>
   <data name="ApplyAllTip" xml:space="preserve">
-    <value>在要求您确认后，将此处显示的设置复制到您已设置的每个游戏。屏幕放置、3D强度、深度选项、深度GPU和快捷键都包含在内；每个游戏都有自己的路径和窗口。您尚未设置的游戏仍然从基本设置开始。</value>
+    <value>经你确认后，将这里显示的设置复制到所有已设置过的游戏。包括屏幕位置、3D 强度、深度选项、深度 GPU 和快捷键；每个游戏保留自己的路径和窗口。尚未设置过的游戏仍从基础设置开始。</value>
   </data>
   <data name="SectionGame" xml:space="preserve">
     <value>游戏与窗口</value>
@@ -172,70 +172,70 @@
     <value>房间</value>
   </data>
   <data name="SectionDepth" xml:space="preserve">
-    <value>3D 和深度</value>
+    <value>3D 与深度</value>
   </data>
   <data name="SectionExperimental" xml:space="preserve">
-    <value>实验性的</value>
+    <value>实验功能</value>
   </data>
   <data name="SectionSteamVr" xml:space="preserve">
-    <value>SteamVR &amp; 快捷键</value>
+    <value>SteamVR 与快捷键</value>
   </data>
   <data name="SectionProfile" xml:space="preserve">
-    <value>公司简介</value>
+    <value>配置</value>
   </data>
   <data name="SectionSession" xml:space="preserve">
-    <value>会议详情</value>
+    <value>会话详情</value>
   </data>
   <data name="RunningApplications" xml:space="preserve">
-    <value>运行应用程序</value>
+    <value>正在运行的程序</value>
   </data>
   <data name="ShowAllProcesses" xml:space="preserve">
     <value>显示所有进程</value>
   </data>
   <data name="WindowToCapture" xml:space="preserve">
-    <value>捕捉窗口</value>
+    <value>要捕获的窗口</value>
   </data>
   <data name="PathChoose" xml:space="preserve">
-    <value>选择一个应用程序即可开始。</value>
+    <value>选择一个程序即可开始。</value>
   </data>
   <data name="PathNoAccess" xml:space="preserve">
-    <value>没有可访问的可执行文件/窗口。选择一个正在运行的游戏。</value>
+    <value>没有可访问的程序/窗口。请选择一个正在运行的游戏。</value>
   </data>
   <data name="GameHint" xml:space="preserve">
-    <value>为每个可执行文件单独保存设置。玩之前先启动 SteamVR。</value>
+    <value>每个程序的设置单独保存。开始游戏前请先启动 SteamVR。</value>
   </data>
   <data name="AutoAttachCheck" xml:space="preserve">
-    <value>自动附加到前面的游戏</value>
+    <value>自动接入最前面的游戏</value>
   </data>
   <data name="AutoAttachCountdown" xml:space="preserve">
     <value>倒计时</value>
   </data>
   <data name="AutoAttachTip" xml:space="preserve">
-    <value>当游戏在前面时，VRX 会倒计时，然后附加到它，就像您选择它并按下附加/播放一样。当窗口是全屏或无边框，或者是您之前设置过的游戏（已保存设置；网络浏览器仅计算全屏）时，窗口才算作窗口。 Steam、SteamVR、Windows 本身、终端和 VRX 从未附加。在倒计时期间切换到另一个窗口以取消倒计时。停止 VR 后，或者如果连接失败，该窗口将保持不变，直到您离开它并返回。当 VRX 本身在前面时，倒计时永远不会开始。简单模式始终开启。</value>
+    <value>当有游戏位于最前面时，VRX 会倒计时，然后接入该游戏，效果与你手动选择它并按下“接入 / 开始”完全相同。符合条件的窗口：全屏或无边框窗口，或者你以前设置过的游戏（已有保存的设置；网页浏览器仅在全屏时算数）。Steam、SteamVR、Windows 本身、终端和 VRX 永远不会被接入。倒计时期间切到其他窗口即可取消。停止 VR 后或接入失败时，该窗口会被忽略，直到你切走再切回来。VRX 自身位于最前面时不会开始倒计时。简易模式下此功能始终开启。</value>
   </data>
   <data name="AppDescriptionOne" xml:space="preserve">
     <value>PID {0} · 1 个窗口</value>
     <comment>{0} = process id</comment>
   </data>
   <data name="AppDescriptionOther" xml:space="preserve">
-    <value>PID {0} · {1} 窗口</value>
+    <value>PID {0} · {1} 个窗口</value>
     <comment>{0} = process id, {1} = number of windows</comment>
   </data>
   <data name="AppNoGameWindow" xml:space="preserve">
-    <value>无法访问游戏窗口</value>
+    <value>没有可访问的游戏窗口</value>
   </data>
   <data name="WindowUntitled" xml:space="preserve">
-    <value>窗户 {0}</value>
+    <value>窗口 {0}</value>
     <comment>{0} = window handle in hex</comment>
   </data>
   <data name="ScreenHint" xml:space="preserve">
-    <value>更改实时生效。位置是相对于您上次最近访问的位置而言的。</value>
+    <value>更改实时生效。位置以你上次重新居中时为准。</value>
   </data>
   <data name="PreviewLabel" xml:space="preserve">
-    <value>俯视图·拖动屏幕</value>
+    <value>俯视图 · 拖动屏幕</value>
   </data>
   <data name="PreviewTip" xml:space="preserve">
-    <value>拖动屏幕可改变水平位置和距离</value>
+    <value>拖动屏幕可调整水平位置和距离</value>
   </data>
   <data name="ScreenWidth" xml:space="preserve">
     <value>屏幕宽度</value>
@@ -250,13 +250,13 @@
     <value>左/右偏移</value>
   </data>
   <data name="ScreenCurve" xml:space="preserve">
-    <value>屏幕曲线</value>
+    <value>屏幕曲率</value>
   </data>
   <data name="ScreenCurveTip" xml:space="preserve">
-    <value>像曲面电视一样将屏幕包裹在您周围。曲面屏幕对于每只眼睛来说都是一个真实的圆柱体，因此它的轮廓、透视和头部运动视差是正确的；上面的俯视图显示了形状。 0% 持平。适用于固定屏幕和头部跟随。适用于现场；每场比赛保存。</value>
+    <value>让屏幕像曲面电视一样环绕你。曲面屏幕会为每只眼睛绘制成真实的圆柱面，因此轮廓、透视和头部移动视差都正确；上方的俯视图会显示其形状。0 % 为平面。固定屏幕和跟随头部模式均可用。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="FollowHead" xml:space="preserve">
-    <value>屏幕跟随我的头</value>
+    <value>屏幕跟随头部</value>
   </data>
   <data name="ValueMetres" xml:space="preserve">
     <value>{0:F2} m</value>
@@ -275,34 +275,34 @@
     <comment>{0} = seconds</comment>
   </data>
   <data name="Ambilight" xml:space="preserve">
-    <value>流光溢彩 — 在屏幕周围发光</value>
+    <value>氛围光 — 屏幕周围的光晕</value>
   </data>
   <data name="AmbilightTip" xml:space="preserve">
-    <value>将图片边缘的颜色柔和地散布到屏幕周围的黑暗中，就像电视后面的偏光一样。发光的每个点都会融合整个边界，最接近的部分，因此它会跟随局部颜色靠近并进一步柔化。它环绕着弧形屏幕，平滑地跟随场景而不是闪烁。适用于现场；每场比赛保存。</value>
+    <value>把画面边缘的颜色柔和地扩散到屏幕周围的黑暗中，就像电视背后的背光灯。光晕的每一点都融合整个边框的颜色，离得越近的部分权重越大，因此靠近屏幕处跟随局部颜色，越往外越柔和。它会沿曲面屏幕环绕，并平滑地跟随画面变化，不会闪烁。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="AmbilightStrength" xml:space="preserve">
-    <value>流光溢彩的实力</value>
+    <value>氛围光强度</value>
   </data>
   <data name="AmbilightStrengthTip" xml:space="preserve">
-    <value>屏幕旁边的辉光有多亮；它总是向其边缘淡出。适用于现场；每场比赛保存。</value>
+    <value>屏幕旁光晕的亮度；光晕总是向外缘逐渐消失。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="WorldColour" xml:space="preserve">
-    <value>世界色彩</value>
+    <value>世界颜色</value>
   </data>
   <data name="WorldListTip" xml:space="preserve">
-    <value>屏幕周围空间的颜色，而不是黑色。深色保持图片的对比度；流光溢彩的光芒在它上面闪烁。适用于现场；每场比赛保存。</value>
+    <value>屏幕周围空间的颜色（代替黑色）。深色能保持画面对比度；氛围光会叠加在上面。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="WorldHexTip" xml:space="preserve">
-    <value>#RRGGBB 等任何颜色。将盒子中的一半颜色留在里面，最后一个完整的颜色就会放回去。</value>
+    <value>可输入任意 #RRGGBB 颜色。如果离开输入框时颜色只输入了一半，会恢复为上一个完整的颜色。</value>
   </data>
   <data name="WorldBlack" xml:space="preserve">
     <value>黑色（默认）</value>
   </data>
   <data name="WorldCharcoal" xml:space="preserve">
-    <value>木炭</value>
+    <value>炭灰</value>
   </data>
   <data name="WorldSlate" xml:space="preserve">
-    <value>板岩</value>
+    <value>石板灰</value>
   </data>
   <data name="WorldMidnight" xml:space="preserve">
     <value>午夜蓝</value>
@@ -314,7 +314,7 @@
     <value>森林</value>
   </data>
   <data name="WorldWarm" xml:space="preserve">
-    <value>暖暗</value>
+    <value>暖暗色</value>
   </data>
   <data name="WorldCinemaRed" xml:space="preserve">
     <value>影院红</value>
@@ -326,16 +326,16 @@
     <value>黄昏</value>
   </data>
   <data name="WorldOvercast" xml:space="preserve">
-    <value>阴</value>
+    <value>阴天</value>
   </data>
   <data name="WorldCustom" xml:space="preserve">
-    <value>定制</value>
+    <value>自定义</value>
   </data>
   <data name="Environment" xml:space="preserve">
     <value>环境</value>
   </data>
   <data name="EnvironmentTip" xml:space="preserve">
-    <value>屏幕在哪里。房间（默认）：朴素的房间，干净、平静，有玻璃墙、反射和下面可供选择的灯光。露天：夜晚星空下矗立在田野中的屏幕，地平线上有低矮的山丘；屏幕照亮了它前面的地面。休息室：家庭影院 - 铺有地毯的橡木地板、每侧各有两盏灯的镶板墙、天花板上的筒灯（均由室内灯光照亮）和屏幕后面的木板条。有座位的电影院：电影院周围有一排排座位——天鹅绒窗帘、屏幕周围的黑色遮光罩、过道上有图案的地毯和台阶灯，墙壁上的壁灯被房间的灯光照亮；在下面选择您的座位，这会设置屏幕的距离。地牢：风化的石头、栅栏拱门、锁链、地板格栅和火把。地狱：黑色玄武岩、炉拱、发光铭文和熔岩裂缝。赛博朋克霓虹灯电影院：分层座椅、青色和洋红色灯光、隔音板和城市显示屏。星舰电影院：金属舱壁中的分层座椅、发光的肋骨以及观看星星和蓝色星球的视口。每个房间都像房间一样被图片照亮，房间滑块设置其表面反射的程度。在房间关闭时选择一个会打开房间。不是“屏幕跟随我的头脑”。适用于现场；每场比赛保存。</value>
+    <value>屏幕所处的环境。房间（默认）：简洁安静的普通房间，带玻璃墙、反射和可在下方选择的灯光。夜晚露天：夜空繁星下立在田野中的屏幕，地平线上有低矮的山丘；屏幕会照亮前方的地面。影音室：家庭影院 - 铺着地毯的橡木地板、两侧各有两盏灯的护墙板、天花板上的筒灯（都由房间灯光控制）以及屏幕后方的木条墙。有座位的电影院：阶梯式座位环绕你的影厅 - 丝绒幕布、屏幕四周的黑色遮幅、过道带踏步灯的花纹地毯，以及由房间灯光控制的壁灯；可在下方选择座位，座位决定屏幕的距离。地下城：风化的石墙、带铁栅的拱门、锁链、地面格栅和火把光。地狱：黑色玄武岩、熔炉拱门、发光的铭文和熔岩裂缝。赛博朋克霓虹电影院：阶梯座位、青色与洋红色灯光、吸音板和城市显示屏。星舰电影院：金属舱壁中的阶梯座位、发光的肋梁，以及可看到星空和蓝色行星的舷窗。每个环境都像房间一样被画面照亮，“房间”滑块决定其表面的反射程度。在房间关闭时选择任一环境会开启房间。不能与“屏幕跟随头部”同时使用。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="EnvironmentRoom" xml:space="preserve">
     <value>房间（默认）</value>
@@ -344,10 +344,10 @@
     <value>电影院</value>
   </data>
   <data name="EnvironmentOpenAir" xml:space="preserve">
-    <value>晚上露天</value>
+    <value>夜晚露天</value>
   </data>
   <data name="EnvironmentLounge" xml:space="preserve">
-    <value>休息室</value>
+    <value>影音室</value>
   </data>
   <data name="EnvironmentTheatre" xml:space="preserve">
     <value>有座位的电影院</value>
@@ -368,7 +368,7 @@
     <value>座位</value>
   </data>
   <data name="SeatTip" xml:space="preserve">
-    <value>你在电影院里坐在有座位的地方。设置屏幕距离多远：前排4.6m，中间7.5m，后排11.4m。无论屏幕宽度如何，大厅都保持不变，因此“宽度”使屏幕从您的座位上看起来更大或更小，就像同一家电影院中更大或更小的屏幕一样（默认 5.7 m 时，各行之间的距离约为 0.8、1.3 和 2 个屏幕宽度）。座位排在你身后，这样你就可以看到前面的座位。靠后的座位也能更柔和地显示图片的深度。当您坐下时，距离滑块会静止并保持其值。适用于现场；每场比赛保存。</value>
+    <value>在有座位的电影院中你坐在哪里。它决定屏幕的距离：前排 4.6 m，中间 7.5 m，后排 11.4 m。无论屏幕宽度如何，影厅都保持不变，因此“屏幕宽度”会让屏幕从你的座位看起来更大或更小，就像同一个影厅里换了更大或更小的银幕（默认 5.7 m 时，三排分别约为 0.8、1.3 和 2 个屏幕宽度远）。座位在你身后逐排升高，所以你能越过前排看屏幕。座位越靠后，画面的深度也显得越柔和。就座期间“距离”滑块暂停使用并保留其数值。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="SeatFront" xml:space="preserve">
     <value>前排</value>
@@ -380,54 +380,54 @@
     <value>后排</value>
   </data>
   <data name="SeatDistance" xml:space="preserve">
-    <value>{0:F1}米距屏</value>
+    <value>距屏幕 {0:F1} m</value>
     <comment>{0} = metres</comment>
   </data>
   <data name="ValueSeatDistance" xml:space="preserve">
-    <value>{0:F2} m（您的座位）</value>
+    <value>{0:F2} m（你的座位）</value>
     <comment>{0} = metres; the screen's distance set by the cinema seat</comment>
   </data>
   <data name="NeedsRoomEnvironment" xml:space="preserve">
-    <value>仅房间环境</value>
+    <value>仅限“房间”环境</value>
   </data>
   <data name="NotInOpenAir" xml:space="preserve">
-    <value>不在露天</value>
+    <value>露天环境不可用</value>
   </data>
   <data name="RoomLabel" xml:space="preserve">
-    <value>房间——屏幕照亮的墙壁</value>
+    <value>房间 — 屏幕照亮墙壁</value>
   </data>
   <data name="RoomTip" xml:space="preserve">
-    <value>将您置于一个黑暗的房间中，墙壁、地板和天花板都被图片和环境光照亮，就像暗室中的电视或电影屏幕一样。 0 关闭；值越高，墙壁越苍白，因此反射得越多； 30-60%看起来像电影院。当房间打开时，世界颜色变成它的房子灯光，并且屏幕保持水平（倾斜的地板会感觉不对）。不是“屏幕跟随我的头脑”。上面的环境将其装扮成电影院、露天场所或休息室。下面是玻璃、反射和室内灯。适用于现场；每场比赛保存。</value>
+    <value>让你置身于一个黑暗的房间，墙壁、地板和天花板都被画面和氛围光照亮，就像暗室中的电视或影院银幕。0 为关闭；数值越高，墙壁颜色越浅，反射越多；30-60 % 看起来像电影院。开启房间后，世界颜色会变成场灯，屏幕会保持水平（倾斜的地板会让人不舒服）。不能与“屏幕跟随头部”同时使用。上方的“环境”可把它布置成电影院、露天或影音室。玻璃、反射和房间灯光在下方。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="GlassWalls" xml:space="preserve">
     <value>玻璃墙</value>
   </data>
   <data name="GlassTip" xml:space="preserve">
-    <value>将侧壁、后墙和天花板变成细长框架中的玻璃，这样您就可以看到地面一直延伸到地平线的世界色彩。黑色的世界颜色是夜晚的玻璃房间：你只能看到框架和反射。 0 是实心墙，100 是透明玻璃。带屏幕的墙壁和地板保持坚固。玻璃或反射还显示 1 m 的地砖，因此您可以以米为单位计算屏幕的大小。透明玻璃的光线较少，因此房间会变得更暗。仅在房间环境中。适用于现场；每场比赛保存。</value>
+    <value>把侧墙、后墙和天花板变成细框玻璃，让你可以眺望一直延伸到地平线的地面，地面为世界颜色。若世界颜色为黑色，就是夜晚的玻璃房：你只能看到框架和反射。0 为实心墙，100 为全透明玻璃。屏幕所在的墙和地板始终为实心。开启玻璃或反射时还会显示 1 m 的地砖，方便你以米为单位估算屏幕大小。透明玻璃留住的光较少，房间会稍暗一些。仅限“房间”环境。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="Reflections" xml:space="preserve">
-    <value>反思</value>
+    <value>反射</value>
   </data>
   <data name="ReflectTip" xml:space="preserve">
-    <value>玻璃、墙壁和抛光地板的反射程度：屏幕、其发光和房间光线呈镜面反射，这表明屏幕有多大以及有多远。掠射角的反射更强。 0 表示没有。仅在房间环境中。适用于现场；每场比赛保存。</value>
+    <value>玻璃、墙壁和抛光地板的反射程度：屏幕、光晕和房间灯光会形成倒影，让你看出屏幕有多大、有多远。视角越斜，反射越强。0 为无反射。仅限“房间”环境。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="RoomLight" xml:space="preserve">
-    <value>房间灯</value>
+    <value>房间灯光</value>
   </data>
   <data name="RoomLightTip" xml:space="preserve">
-    <value>天花板上有一个柔和的光板，位于您上方和后方，因此当图片较暗时，房间仍然可见。墙壁吸收的程度取决于它们的苍白程度（房间滑块）。在电影院中，它控制壁灯和过道灯；休息室里有筒灯和壁灯。在主题房间中，它还会使火焰、熔岩、霓虹灯和显示器变暗。这些装饰灯也会响应房间滑块。露天没有室内光线。 0 关闭。适用于现场；每场比赛保存。</value>
+    <value>天花板上位于你上方偏后的一块柔光灯板，让画面较暗时房间仍然可见。墙壁接收多少光取决于墙壁的颜色深浅（“房间”滑块）。在电影院中，它控制壁灯和过道灯；在影音室中，控制筒灯和壁灯。在主题环境中，它还会调暗火焰、熔岩、霓虹灯和显示屏。这些装饰灯也会响应“房间”滑块。露天环境没有房间灯光。0 为关闭。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="LightColour" xml:space="preserve">
-    <value>浅色</value>
+    <value>灯光颜色</value>
   </data>
   <data name="LightColourTip" xml:space="preserve">
-    <value>房间灯光的颜色，从暖色（2700 K，如台灯）到日光（6500 K）。适用于现场；每场比赛保存。</value>
+    <value>房间灯光的颜色，从暖光（2700 K，类似台灯）到日光（6500 K）。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="LightWarm" xml:space="preserve">
-    <value>暖色 (2700 K)</value>
+    <value>暖光 (2700 K)</value>
   </data>
   <data name="LightSoftWhite" xml:space="preserve">
-    <value>柔和的白色 (3000 K)</value>
+    <value>柔白 (3000 K)</value>
   </data>
   <data name="LightNeutral" xml:space="preserve">
     <value>中性 (4000 K)</value>
@@ -436,14 +436,14 @@
     <value>日光 (6500 K)</value>
   </data>
   <data name="LightCustom" xml:space="preserve">
-    <value>定制 ({0})</value>
+    <value>自定义 ({0})</value>
     <comment>{0} = a colour like #123456</comment>
   </data>
   <data name="ValueOff" xml:space="preserve">
     <value>关</value>
   </data>
   <data name="ValueSolid" xml:space="preserve">
-    <value>不透明</value>
+    <value>实心</value>
   </data>
   <data name="ValueClearPercent" xml:space="preserve">
     <value>{0} % 透明</value>
@@ -453,10 +453,10 @@
     <value>需要固定屏幕</value>
   </data>
   <data name="NeedsRoom" xml:space="preserve">
-    <value>需要房间</value>
+    <value>需要开启房间</value>
   </data>
   <data name="Strength3D" xml:space="preserve">
-    <value>3D强度</value>
+    <value>3D 强度</value>
   </data>
   <data name="EnableStereo" xml:space="preserve">
     <value>启用立体 3D</value>
@@ -465,88 +465,88 @@
     <value>快速深度模型 — ZipDepth</value>
   </data>
   <data name="FastModelTip" xml:space="preserve">
-    <value>开启（默认）：ZipDepth，GPU 每个深度估计的时间比 Depth Anything V2 少大约 6 倍（RTX 3090 上为 2.0 毫秒 vs 13.1 毫秒），因此深度可以更好地跟上游戏。关：Depth Anything V2，原型号；它们之间的深度细节略有不同。实时应用（模型加载时深度暂停不到一秒）；每场比赛保存。</value>
+    <value>开启（默认）：ZipDepth，每次深度估算的 GPU 耗时约为 Depth Anything V2 的 1/6（RTX 3090 上为 2.0 ms 对 13.1 ms），深度能更好地跟上游戏。关闭：Depth Anything V2，即原始模型；两者的深度细节略有不同。实时生效（加载模型时深度会暂停不到一秒）；每个游戏单独保存。</value>
   </data>
   <data name="Subpixel" xml:space="preserve">
-    <value>平滑的深度步骤（子像素扭曲）</value>
+    <value>平滑深度层次（亚像素偏移）</value>
   </data>
   <data name="SubpixelTip" xml:space="preserve">
-    <value>开启（默认）：立体声移位保留其小数部分，因此平滑后退的表面（例如草地、道路和墙壁）看起来很平滑。关闭：全像素移位，将场景量化为大约 25 个深度带，并可以显示像犁过的田地一样的山脊。 Off 则稍微锐利一些。适用于现场；每场比赛保存。</value>
+    <value>开启（默认）：立体偏移保留小数部分，因此草地、道路和墙壁等平滑延伸的表面看起来很平滑。关闭：按整像素偏移，会把场景量化为约 25 个深度层，可能出现像犁过的田地一样的条纹。关闭时画面会略微锐利一点。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="EdgeFlatten" xml:space="preserve">
-    <value>将左右边缘压平</value>
+    <value>压平左右边缘</value>
   </data>
   <data name="EdgeFlattenTip" xml:space="preserve">
-    <value>在图片左右边缘的大部分宽度上，将深度平滑地调整到屏幕自身的距离，以便双眼看到相同的边缘。由于深度位于边缘，一只眼睛看到的边缘比另一只眼睛更宽，这看起来很累（全屏浏览器最能显示这一点）。该带内的任何内容看起来都更平坦，因此默认情况下处于“关闭”状态（边缘如深度所示）；大约 4% 适合桌面使用。适用于现场；每场比赛保存。</value>
+    <value>在画面左右边缘的这一宽度范围内，把深度平滑过渡到屏幕本身的距离，让双眼看到相同的边缘。如果深度一直延伸到边缘，一只眼睛看到的边缘会比另一只宽，看久了会累（全屏浏览器最明显）。该范围内的内容会显得更平，因此默认关闭（边缘按深度显示）；桌面使用约 4 % 比较合适。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="EdgeSteps" xml:space="preserve">
-    <value>在图片的深度边缘处干净地切割（关闭：倾斜）</value>
+    <value>在画面中的深度边缘处干净切开（关闭：倾斜）</value>
   </data>
   <data name="EdgeStepsTip" xml:space="preserve">
-    <value>对于每只眼睛来说，图片只能向侧面移动，因此在比其后面更近的任何东西的顶部或底部边缘处，有两种方法可以绘制它。开：图片在边缘被剪切，因此旁边的东西保持直立（窗口上方的桌面图标）；当剪切稍微偏离真实边缘时，小碎片可能会向错误的一侧移动，例如角色头部上方的斑点。关闭：没有切割，但靠近边缘的部分是倾斜的，在两眼中方向相反。默认关闭。适用于现场；每场比赛保存。</value>
+    <value>画面只能为每只眼睛左右平移，所以在比后方更近的物体的上下边缘处，有两种绘制方式。开启：在边缘处切开画面，旁边的内容保持竖直（例如窗口正上方的桌面图标）；如果切口略微偏离真实边缘，可能有一小块碎片跟着错误的一侧移动，比如角色头顶上的一团色块。关闭：不切开，但边缘旁的内容会倾斜，两只眼睛中方向相反。默认关闭。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="EdgeStepMin" xml:space="preserve">
-    <value>只切割边缘至少这个深度</value>
+    <value>只切开深度差至少为此值的边缘</value>
   </data>
   <data name="EdgeStepMinTip" xml:space="preserve">
-    <value>切割前边缘的深度变化必须有多大，作为整个深度范围的份额。较低可切割更多边缘，包括浅边缘；较高的仅切割最强的部分（桌面上方的窗口约为 60%），而其余部分则倾斜。默认为 12%。需要切开。适用于现场；每场比赛保存。</value>
+    <value>边缘两侧的深度变化需达到多大（占整个深度范围的比例）才会被切开。数值越低，切开的边缘越多，包括较浅的边缘；数值越高，只切开最明显的边缘（桌面上的窗口约为 60 %），其余边缘保持倾斜。默认为 12 %。需开启切开功能。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="WidenNear" xml:space="preserve">
-    <value>上下加宽附近物体</value>
+    <value>上下扩展近处物体</value>
   </data>
   <data name="WidenNearTip" xml:space="preserve">
-    <value>与深度模型本身的量 (100%) 相比，近处物体的深度在其上方和下方扩散的程度。 More 使对象自身的顶部和底部行与其一起移动，但将倾斜进一步带到其旁边的对象上； 0 % 保持对象自身边缘的倾斜。如果边缘被干净地切割，则切口上不会散布任何东西。适用于现场；每场比赛保存。</value>
+    <value>近处物体的深度向其上方和下方扩展的范围，相对于深度模型本身的扩展量（100 %）。数值越大，物体自身最上和最下几行越能跟着物体一起移动，但倾斜也会更多地带到旁边的内容上；0 % 则让倾斜留在物体自身的边缘。在干净切开的边缘处，不会跨越切口扩展。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="ThinParts" xml:space="preserve">
-    <value>保持薄部件直立</value>
+    <value>保持细长部分竖直</value>
   </data>
   <data name="ThinPartsTip" xml:space="preserve">
-    <value>物体的一个细长的直立部分——屋顶上的尖塔、桅杆、柱子——经常被深度模型忽略，因此它留在背景中，而它的脚则随着它所站立的物体被拖动，并且在两只眼睛中以相反的方式弯曲。上：这些部件在图片中被发现，并且考虑到它们所站立的深度，因此它们作为一个整体一起移动。它增加了每个深度通道的工作量（会话日志报告了这一点），可能会遗漏部分或在运动图像上闪烁，并且可能会在部分旁边留下轻微斑点的补丁。默认关闭。适用于现场；每场比赛保存。</value>
+    <value>物体上细长的竖直部分（屋顶上的尖塔、桅杆、柱子）常被深度模型漏掉，于是它停留在背景里，而底部却被它所立足的物体带着走，在两只眼睛中朝相反方向弯曲。开启：在画面中找出这类部分，并赋予它们所立足物体的深度，使它们作为一个整体一起移动。这会增加每次深度计算的工作量（会话日志中有记录），可能会漏掉某些部分或在动态画面上闪烁，也可能在其旁边留下轻微的斑点。默认关闭。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="SharpenEdges" xml:space="preserve">
-    <value>用图片锐化深度边缘</value>
+    <value>按画面锐化深度边缘</value>
   </data>
   <data name="SharpenEdgesTip" xml:space="preserve">
-    <value>深度图比图片粗糙得多，而且其边缘也很柔和，因此物体轮廓周围的图片会移动一些中间量：倾斜的边缘、光晕、随物体移动的背景位。打开后，每个像素每帧都会从与其相似的附近深度样本中获取其深度，因此对象的深度在该对象所在的位置结束。启用后，它会取代附近物体的加宽和上方的干净切割。每帧花费 GPU 约半毫秒的时间。尚未在耳机中进行判断：在嘈杂的视频中，它可能会沿边缘闪烁。</value>
+    <value>深度图比画面粗糙得多，边缘也很模糊，所以物体轮廓周围的画面会被移动一个介于两者之间的量：边缘倾斜、出现光环、背景碎块跟着物体移动。开启后，每个像素每帧都从附近与它相似的深度样本中取得深度，使物体的深度恰好在物体边界处结束。开启时，它会取代“上下扩展近处物体”和上面的“干净切开”。每帧约消耗半毫秒 GPU 时间。尚未在头显中评估：在噪点多的视频中，边缘可能会闪烁。</value>
   </data>
   <data name="BackLayer" xml:space="preserve">
-    <value>填充背景图层中的对象后面</value>
+    <value>用背景层填充物体后方</value>
   </data>
   <data name="BackLayerTip" xml:space="preserve">
-    <value>当一个近处的物体向一侧移动时，它后面的一条东西就会出现在它旁边，只有那只眼睛才能看到。通常，该条带与旁边的背景成镜像地逐行填充。打开后，从两侧背景为双眼制作一次近处物体后面的背景，条带显示：双眼隐藏表面相同，行一致，图片没有的地方很柔和。最适合锐化深度边缘。比镜面图片更柔和；尚未在耳机中进行判断。</value>
+    <value>当近处物体为某只眼睛向侧面移动时，它身后被遮挡的一条区域会在旁边露出来，只有那只眼睛能看到。通常这条区域会逐行用旁边的背景镜像填充。开启后，会根据两侧的背景为双眼统一生成一次近处物体后方的背景，并用它填充这条区域：两只眼睛看到相同的被遮挡表面，各行一致，画面中缺失的地方会显得柔和。配合“按画面锐化深度边缘”效果最好。比镜像填充更柔和；尚未在头显中评估。</value>
   </data>
   <data name="ShowDepthMap" xml:space="preserve">
-    <value>显示深度图而不是游戏</value>
+    <value>显示深度图而非游戏</value>
   </data>
   <data name="ShowDepthMapTip" xml:space="preserve">
-    <value>将 3D 使用的深度显示为平面灰度图像：白色为近，黑色为远。它是上述每个设置后的深度，包括锐化边缘。立即适用。不可用的深度图显示黑色。取消勾选即可返回游戏。</value>
+    <value>将用于 3D 的深度显示为平面灰度图：白色为近，黑色为远。显示的是经过上述所有设置（包括边缘锐化）后的深度。立即生效。深度图不可用时显示黑色。取消勾选即可返回游戏。</value>
   </data>
   <data name="Steady" xml:space="preserve">
     <value>稳定深度 — 运动向量</value>
   </data>
   <data name="SteadyTip" xml:space="preserve">
-    <value>减少深度闪烁：每个新的深度估计都会与前一个深度估计混合，并由显卡的硬件运动估计器（其视频引擎，而不是着色器核心）移动到现在的位置。仅在验证运动的情况下，移动边缘不应拖尾。图片中未更改的部分几乎完全保持其深度，因此其他地方的更改不会使它们抽搐。默认开启；适用于任何带有硬件运动估计器的 GPU。适用于现场；每场比赛保存。</value>
+    <value>减少深度闪烁：每次新的深度估算都会与上一次混合，并由显卡的硬件运动估计器（显卡的视频引擎，而非着色器核心）移动到物体当前的位置。只在运动得到验证的地方混合，因此移动的边缘不会拖影。画面中未变化的部分几乎完全保留原来的深度，其他地方的变化不会让它们抖动。默认开启；适用于任何带硬件运动估计器的 GPU。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="Fuse" xml:space="preserve">
-    <value>带 Depth Anything V2 的保险丝</value>
+    <value>与 Depth Anything V2 融合</value>
   </data>
   <data name="FuseTip" xml:space="preserve">
-    <value>与 ZipDepth 一起运行 Depth Anything V2：ZipDepth 保持深度快速，Depth Anything 提供更详细的分层，通过运动矢量移动到当前帧。最好选择另一个 GPU 作为深度 GPU；在一台 GPU 上，它每秒最多运行 10 次。需要快速的深度模型。适用于现场；每场比赛保存。</value>
+    <value>在 ZipDepth 之外同时运行 Depth Anything V2：ZipDepth 保证深度的速度，Depth Anything 提供更细致的层次，并通过运动向量对齐到当前帧。最好另选一块 GPU 作为深度 GPU；只有一块 GPU 时，它每秒最多运行 10 次。需要开启快速深度模型。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="FuseHint" xml:space="preserve">
-    <value>融合效果最好采用第二深度 GPU。两者可以一起使用。</value>
+    <value>融合最好配合第二块深度 GPU 使用。两者可以同时使用。</value>
   </data>
   <data name="DepthGpu" xml:space="preserve">
     <value>深度 GPU</value>
   </data>
   <data name="DepthGpuTip" xml:space="preserve">
-    <value>哪个显卡运行深度模型。另一张卡停止与游戏深度竞争 GPU 时间；捕获步骤自动发送每一帧。如果所选卡丢失，VRX 将使用游戏的 GPU。下次按 Attach / Play 时生效；每场比赛保存。</value>
+    <value>由哪块显卡运行深度模型。换用另一块显卡可以避免深度计算与游戏争抢 GPU 时间；捕获步骤会自动把每一帧传过去。如果所选显卡不存在，VRX 会使用游戏所用的 GPU。下次按“接入 / 开始”时生效；每个游戏单独保存。</value>
   </data>
   <data name="DepthGpuHint" xml:space="preserve">
-    <value>另一款 GPU 在游戏完全使用自己的卡的同时保持快速的深度。适用于下一次附加/播放。</value>
+    <value>另一块 GPU 能让深度保持快速，同时游戏可以独占自己的显卡。下次按“接入 / 开始”时生效。</value>
   </data>
   <data name="GpuSame" xml:space="preserve">
-    <value>与游戏相同的GPU（默认）</value>
+    <value>与游戏相同的 GPU（默认）</value>
   </data>
   <data name="GpuAuto" xml:space="preserve">
     <value>任何其他 GPU（自动）</value>
@@ -568,35 +568,35 @@
     <comment>{0} = megabytes</comment>
   </data>
   <data name="GpuNotFound" xml:space="preserve">
-    <value>未找到：{0}（使用游戏的GPU）</value>
+    <value>未找到：{0}（改用游戏的 GPU）</value>
     <comment>{0} = GPU name</comment>
   </data>
   <data name="ForegroundPasses" xml:space="preserve">
-    <value>额外的前景深度通道</value>
+    <value>额外的前景深度计算</value>
   </data>
   <data name="ForegroundTip" xml:space="preserve">
-    <value>当时间允许时，为持久的附近区域提供额外的细节通道。使用更多 GPU 时间；改善因场景而异。在播放期间切换进行比较。</value>
+    <value>时间允许时，对持续存在的近处区域额外进行一次细节计算。会占用更多 GPU 时间；改善效果因场景而异。可在播放时切换开关进行对比。</value>
   </data>
   <data name="FrameTiming" xml:space="preserve">
     <value>游戏帧时序</value>
   </data>
   <data name="FrameTimingTip" xml:space="preserve">
-    <value>哪个游戏帧以深度显示。最新帧（默认）：流畅、即时；深度稍微落后于移动的物体。深度延迟：游戏图像受到深度延迟的抑制，因此它们排列得更好，并且运动保持平滑。与深度匹配：每个深度估计与其来源的精确帧有关；最佳对齐，但游戏运动仅以深度速率更新。延迟和匹配添加延迟。适用于现场；每场比赛保存。</value>
+    <value>与深度一起显示哪一帧游戏画面。最新帧（默认）：流畅、即时；深度会略微落后于移动的物体。延迟对齐深度：游戏画面按深度的延迟推迟显示，两者对得更准，动作依然流畅。与深度匹配：每次深度估算都配上它所对应的那一帧；对齐最好，但游戏画面只按深度的频率更新。延迟和匹配都会增加延迟。实时生效；每个游戏单独保存。</value>
   </data>
   <data name="TimingLatest" xml:space="preserve">
     <value>最新帧（默认）</value>
   </data>
   <data name="TimingDelayed" xml:space="preserve">
-    <value>深度延迟——平滑，稍微落后</value>
+    <value>延迟对齐深度 — 流畅，略有延迟</value>
   </data>
   <data name="TimingMatched" xml:space="preserve">
-    <value>与深度匹配 — 精确，按深度速率更新</value>
+    <value>与深度匹配 — 精确，按深度频率更新</value>
   </data>
   <data name="ExperimentalHint" xml:space="preserve">
-    <value>选项仍在尝试中。它们可能会花费 GPU 时间，在某些游戏中看起来不正确，或者在更高版本中发生变化。所有内容均实时适用并按游戏保存。</value>
+    <value>仍在试验中的选项。它们可能占用 GPU 时间，在某些游戏中显示不正常，或在以后的版本中改变。全部实时生效，并为每个游戏单独保存。</value>
   </data>
   <data name="TimingHint" xml:space="preserve">
-    <value>延迟和匹配可以更好地配合比赛的深度，但稍后展示比赛。</value>
+    <value>延迟和匹配能让深度与游戏对得更准，但游戏画面会晚一点显示。</value>
   </data>
   <data name="DismissOnStart" xml:space="preserve">
     <value>播放开始时关闭 SteamVR 菜单</value>
@@ -605,13 +605,13 @@
     <value>键盘快捷键</value>
   </data>
   <data name="ShortcutRecenter" xml:space="preserve">
-    <value>近期中心</value>
+    <value>重新居中</value>
   </data>
   <data name="ShortcutDismiss" xml:space="preserve">
     <value>关闭 SteamVR 菜单</value>
   </data>
   <data name="ShortcutsHint" xml:space="preserve">
-    <value>快捷键在 VR 播放期间起作用，也可以到达游戏。选择与您的游戏控制不冲突的按键。</value>
+    <value>快捷键在 VR 播放时有效，按键也会传给游戏。请选择不会与游戏操作冲突的按键。</value>
   </data>
   <data name="KeyHome" xml:space="preserve">
     <value>Home</value>
@@ -630,148 +630,148 @@
     <comment>Keyboard key name</comment>
   </data>
   <data name="ProfileHint" xml:space="preserve">
-    <value>当您更改每个游戏的设置时，都会保存这些设置。这些按钮在游戏之间复制它们。</value>
+    <value>你修改设置时，会自动为每个游戏分别保存。这些按钮用于在游戏之间复制设置。</value>
   </data>
   <data name="StatusSeparator" xml:space="preserve">
     <value> · </value>
     <comment>Joins independent status messages; keep the spaces.</comment>
   </data>
   <data name="StatusReady" xml:space="preserve">
-    <value>就绪·仅限桌面控件</value>
+    <value>就绪 · 仅桌面控制</value>
   </data>
   <data name="StatusPlaying" xml:space="preserve">
-    <value>演奏·{0}</value>
+    <value>运行中 · {0}</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStopped" xml:space="preserve">
-    <value>已停止·您的设置已保存</value>
+    <value>已停止 · 设置已保存</value>
   </data>
   <data name="StatusEngineFailed" xml:space="preserve">
-    <value>VRX 无法继续。 {0}</value>
+    <value>VRX 无法继续。{0}</value>
     <comment>{0} = the reason (English, from the renderer) or SeeSessionDetails</comment>
   </data>
   <data name="SeeSessionDetails" xml:space="preserve">
-    <value>请参阅下面的会话详细信息。</value>
+    <value>请查看下方的“会话详情”。</value>
   </data>
   <data name="StatusRefreshFailed" xml:space="preserve">
-    <value>无法刷新应用程序：{0}</value>
+    <value>无法刷新程序列表：{0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusChooseWindow" xml:space="preserve">
-    <value>选择要捕获 {0} 的窗口</value>
+    <value>请选择 {0} 要捕获的窗口</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusReadyFor" xml:space="preserve">
-    <value>准备就绪 · {0} 的设置</value>
+    <value>就绪 · {0} 的设置</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusSavedPlaying" xml:space="preserve">
-    <value>播放·已保存为 {0}</value>
+    <value>运行中 · 已为 {0} 保存</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusSaved" xml:space="preserve">
-    <value>为 {0} 保存</value>
+    <value>已为 {0} 保存</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStarting" xml:space="preserve">
-    <value>启动VR·{0}</value>
+    <value>正在启动 VR · {0}</value>
     <comment>{0} = game executable</comment>
   </data>
   <data name="StatusStopping" xml:space="preserve">
-    <value>停止虚拟现实……</value>
+    <value>正在停止 VR…</value>
   </data>
   <data name="StatusStopFailed" xml:space="preserve">
     <value>无法停止 VR：{0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusStillStopping" xml:space="preserve">
-    <value>VRX 仍在停止。停止后再次关闭。</value>
+    <value>VRX 仍在停止中。请在停止后再关闭。</value>
   </data>
   <data name="StatusRecenter" xml:space="preserve">
-    <value>最近请求·使用当前耳机方向</value>
+    <value>已请求重新居中 · 使用头显当前朝向</value>
   </data>
   <data name="StatusDismiss" xml:space="preserve">
-    <value>SteamVR 菜单取消请求</value>
+    <value>已请求关闭 SteamVR 菜单</value>
   </data>
   <data name="StatusResetBase" xml:space="preserve">
-    <value>重置为您的基本设置</value>
+    <value>已重置为你的基础设置</value>
   </data>
   <data name="StatusResetDefault" xml:space="preserve">
-    <value>重置为 VRX 的默认设置</value>
+    <value>已重置为 VRX 默认设置</value>
   </data>
   <data name="StatusBaseSelectFirst" xml:space="preserve">
-    <value>首先选择一个游戏，然后将其设置保存为基础。</value>
+    <value>请先选择一个游戏，再将其设置保存为基础设置。</value>
   </data>
   <data name="StatusBaseSaved" xml:space="preserve">
-    <value>基本设置已保存·您尚未设置的游戏将从这些开始</value>
+    <value>基础设置已保存 · 尚未设置过的游戏将以此为起点</value>
   </data>
   <data name="StatusBaseFailed" xml:space="preserve">
-    <value>无法保存基本设置：{0}</value>
+    <value>无法保存基础设置：{0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusAppSettingsFailed" xml:space="preserve">
-    <value>无法保存应用程序设置：{0}</value>
+    <value>无法保存应用设置：{0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusApplyAllSelectFirst" xml:space="preserve">
-    <value>首先选择一个游戏，然后将其设置应用于所有游戏。</value>
+    <value>请先选择一个游戏，再将其设置应用到所有游戏。</value>
   </data>
   <data name="StatusApplyAllCancelled" xml:space="preserve">
-    <value>适用于所有取消的内容 · 没有任何改变</value>
+    <value>已取消“应用到全部” · 未做任何更改</value>
   </data>
   <data name="StatusApplyAllFailed" xml:space="preserve">
-    <value>无法适用于所有游戏：{0}</value>
+    <value>无法应用到所有游戏：{0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="AppliedAllOne" xml:space="preserve">
-    <value>应用于 {0} 已保存游戏的设置</value>
+    <value>设置已应用到你保存的 {0} 个游戏</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="AppliedAllOther" xml:space="preserve">
-    <value>设置应用于所有 {0} 保存的游戏</value>
+    <value>设置已应用到全部 {0} 个已保存的游戏</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="AppliedSomeOne" xml:space="preserve">
-    <value>应用于 {0} 已保存游戏的设置</value>
+    <value>设置已应用到 {0} 个已保存的游戏</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="AppliedSomeOther" xml:space="preserve">
-    <value>应用于 {0} 已保存游戏的设置</value>
+    <value>设置已应用到 {0} 个已保存的游戏</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="SkippedOne" xml:space="preserve">
-    <value>{0} 不可读的配置文件保持不变</value>
+    <value>{0} 个无法读取的配置保持不变</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="SkippedOther" xml:space="preserve">
-    <value>{0} 不可读的配置文件保持不变</value>
+    <value>{0} 个无法读取的配置保持不变</value>
     <comment>{0} = number of profiles</comment>
   </data>
   <data name="FailedWrite" xml:space="preserve">
-    <value>{0} 无法写入（只读或正在使用）并保留旧设置</value>
+    <value>{0} 个无法写入（只读或正在使用），保留原有设置</value>
     <comment>{0} = number of profiles</comment>
   </data>
   <data name="ApplyAllTitle" xml:space="preserve">
-    <value>适用于所有游戏</value>
+    <value>应用到所有游戏</value>
   </data>
   <data name="ApplyAllQuestionOne" xml:space="preserve">
-    <value>将此处显示的设置应用于您保存的 {0} 游戏吗？
+    <value>要将这里显示的设置应用到你保存的 {0} 个游戏吗？
 
-每个游戏的屏幕布局、3D强度、深度选项、深度GPU和快捷键都会被这些取代。每个游戏都有自己的路径和窗口。
+每个游戏的屏幕位置、3D 强度、深度选项、深度 GPU 和快捷键都会被替换为这些设置。每个游戏保留自己的路径和窗口。
 
-此操作无法撤消。您尚未设置的游戏仍然从基本设置开始。</value>
+此操作无法撤销。尚未设置过的游戏仍从基础设置开始。</value>
     <comment>{0} = 1</comment>
   </data>
   <data name="ApplyAllQuestionOther" xml:space="preserve">
-    <value>将此处显示的设置应用于所有 {0} 保存的游戏吗？
+    <value>要将这里显示的设置应用到全部 {0} 个已保存的游戏吗？
 
-每个游戏的屏幕布局、3D强度、深度选项、深度GPU和快捷键都会被这些取代。每个游戏都有自己的路径和窗口。
+每个游戏的屏幕位置、3D 强度、深度选项、深度 GPU 和快捷键都会被替换为这些设置。每个游戏保留自己的路径和窗口。
 
-此操作无法撤消。您尚未设置的游戏仍然从基本设置开始。</value>
+此操作无法撤销。尚未设置过的游戏仍从基础设置开始。</value>
     <comment>{0} = number of games</comment>
   </data>
   <data name="AutoCountdown" xml:space="preserve">
-    <value>将 VRX 附加到 {1} 中的 {0} - 切换窗口取消</value>
+    <value>VRX 将在 {1} 秒后接入 {0} - 切换窗口可取消</value>
     <comment>{0} = game title, {1} = seconds left</comment>
   </data>
   <data name="AutoTheGame" xml:space="preserve">
@@ -779,139 +779,139 @@
     <comment>Used as {0} in AutoCountdown when the game has no name</comment>
   </data>
   <data name="StatusAutoListFailed" xml:space="preserve">
-    <value>自动附加无法列出应用程序：{0}</value>
+    <value>自动接入无法列出程序：{0}</value>
     <comment>{0} = error message</comment>
   </data>
   <data name="StatusAutoGone" xml:space="preserve">
-    <value>自动附加：{0} 不再可用</value>
+    <value>自动接入：{0} 已不可用</value>
     <comment>{0} = game name</comment>
   </data>
   <data name="StatusAutoStarted" xml:space="preserve">
-    <value>自动连接·启动VR·{0}</value>
+    <value>已自动接入 · 正在启动 VR · {0}</value>
     <comment>{0} = game name</comment>
   </data>
   <data name="OverlayTitle" xml:space="preserve">
-    <value>VRX 自动附加</value>
+    <value>VRX 自动接入</value>
   </data>
   <data name="ErrorSelectGame" xml:space="preserve">
-    <value>首先选择一个游戏。</value>
+    <value>请先选择一个游戏。</value>
   </data>
   <data name="ErrorWorldColour" xml:space="preserve">
-    <value>世界颜色必须是六位十六进制数字，例如#1C1C1E。直到保存更改后才会保存。</value>
+    <value>世界颜色必须是六位十六进制数，例如 #1C1C1E。修正之前不会保存更改。</value>
   </data>
   <data name="ErrorShortcutsConflict" xml:space="preserve">
-    <value>选择两个不同的快捷键。在设置生效之前，不会保存更改。</value>
+    <value>请选择两个不同的快捷键。设置有效之前不会保存更改。</value>
   </data>
   <data name="ErrorSettingsInvalid" xml:space="preserve">
     <value>设置超出允许范围或快捷键冲突。</value>
   </data>
   <data name="ErrorProfileInvalid" xml:space="preserve">
-    <value>该游戏保存的设置无效。它们没有被覆盖。</value>
+    <value>此游戏保存的设置无效，未被覆盖。</value>
   </data>
   <data name="ErrorStopFirst" xml:space="preserve">
-    <value>首先停止当前会话。</value>
+    <value>请先停止当前会话。</value>
   </data>
   <data name="ErrorAnotherSession" xml:space="preserve">
-    <value>另一个 VRX 会话正在运行。在附加到此处之前关闭该会话。</value>
+    <value>另一个 VRX 会话正在运行。请先关闭那个会话再在这里接入。</value>
   </data>
   <data name="DesktopWhenAway" xml:space="preserve">
     <value>离开游戏时显示桌面</value>
   </data>
   <data name="DesktopWhenAwayHint" xml:space="preserve">
-    <value>虽然游戏不在前面 - 在 Ctrl+Esc、Windows 键或 Alt+Tab 之后 - VR 显示其所在的显示屏。回到游戏中，VR再次展示游戏过程。如果游戏关闭，VR 会继续在桌面上运行，直到您按“停止 VR”为止。适用于附加/播放。</value>
+    <value>当游戏不在最前面时（按 Ctrl+Esc、Windows 键或 Alt+Tab 之后），VR 会显示游戏所在的显示器。回到游戏后，VR 会重新显示游戏。如果游戏关闭，VR 会继续显示桌面，直到你按“停止 VR”。在按“接入 / 开始”时生效。</value>
   </data>
   <data name="CardDesktop" xml:space="preserve">
     <value>桌面</value>
     <comment>The game card while VR shows the display instead of the game.</comment>
   </data>
   <data name="CardShowingDesktop" xml:space="preserve">
-    <value>正在显示桌面 · {0} 回到前台时将恢复游戏画面</value>
+    <value>正在显示桌面 · {0} 回到最前面时恢复</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="CardGameClosed" xml:space="preserve">
-    <value>{0} 已关闭·显示桌面，直到您按停止 VR</value>
+    <value>{0} 已关闭 · 显示桌面，直到你按“停止 VR”</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="StatusGameClosedDesktop" xml:space="preserve">
-    <value>{0} 已关闭。 VR 会显示桌面，直到您按停止 VR。</value>
+    <value>{0} 已关闭。VR 会显示桌面，直到你按“停止 VR”。</value>
     <comment>{0} = the game's name</comment>
   </data>
   <data name="ErrorScreenChanged" xml:space="preserve">
-    <value>自列表制定以来，显示内容已发生变化。再次选择。</value>
+    <value>显示器在生成列表后发生了变化。请重新选择。</value>
   </data>
   <data name="ChooseButton" xml:space="preserve">
     <value>选择…</value>
     <comment>Opens the chooser: pictures of every window and display.</comment>
   </data>
   <data name="ChooseTip" xml:space="preserve">
-    <value>从实时图片中选择一个窗口或整个屏幕并在 VR 中播放</value>
+    <value>从实时画面中选择一个窗口或整个屏幕，在 VR 中播放</value>
   </data>
   <data name="ChooserTitle" xml:space="preserve">
-    <value>选择要玩的内容</value>
+    <value>选择要播放的内容</value>
   </data>
   <data name="ChooserIntro" xml:space="preserve">
-    <value>单击窗口或屏幕即可在 VR 中播放。</value>
+    <value>点击一个窗口或屏幕，在 VR 中播放。</value>
   </data>
   <data name="ChooserWindows" xml:space="preserve">
-    <value>窗户</value>
+    <value>窗口</value>
   </data>
   <data name="ChooserNoWindows" xml:space="preserve">
-    <value>没有窗口可显示。开始游戏，然后再次选择。</value>
+    <value>没有可显示的窗口。请先启动游戏，再重新选择。</value>
   </data>
   <data name="ChooserScreens" xml:space="preserve">
-    <value>全屏</value>
+    <value>整个屏幕</value>
   </data>
   <data name="ChooserScreensHint" xml:space="preserve">
-    <value>该显示器上显示的所有内容，例如桌面或视频播放器。它会一直播放，直到您按下“停止 VR”为止。</value>
+    <value>该显示器上显示的所有内容，例如桌面或视频播放器。会一直播放，直到你按“停止 VR”。</value>
   </data>
   <data name="ChooserMainDisplay" xml:space="preserve">
-    <value>主显示</value>
+    <value>主显示器</value>
   </data>
   <data name="ChooserMinimized" xml:space="preserve">
-    <value>{0}·最小化</value>
+    <value>{0} · 已最小化</value>
     <comment>{0} = executable name</comment>
   </data>
   <data name="WholeScreen" xml:space="preserve">
-    <value>全屏</value>
+    <value>整个屏幕</value>
   </data>
   <data name="ScreenTitle" xml:space="preserve">
     <value>显示器 {0} · {1} × {2}</value>
     <comment>{0} = display number, {1} x {2} = resolution in pixels</comment>
   </data>
   <data name="ScreenTitlePrimary" xml:space="preserve">
-    <value>显示屏 {0} · {1} × {2} · 主</value>
+    <value>显示器 {0} · {1} × {2} · 主</value>
     <comment>{0} = display number, {1} x {2} = resolution in pixels</comment>
   </data>
   <data name="ScreenDescriptionOne" xml:space="preserve">
-    <value>1 个显示屏</value>
+    <value>1 个显示器</value>
   </data>
   <data name="ScreenDescriptionOther" xml:space="preserve">
-    <value>{0} 显示器</value>
+    <value>{0} 个显示器</value>
     <comment>{0} = number of displays</comment>
   </data>
   <data name="PathWholeScreen" xml:space="preserve">
-    <value>一切都显示在显示屏上。所有显示器共享一组设置。</value>
+    <value>显示器上显示的所有内容。所有显示器共用一套设置。</value>
   </data>
   <data name="StatusChoiceGone" xml:space="preserve">
-    <value>那个窗口或显示器不再存在。再次选择。</value>
+    <value>该窗口或显示器已不存在。请重新选择。</value>
   </data>
   <data name="ErrorEngineBlockedPolicy" xml:space="preserve">
-    <value>Windows 阻止了 VRX 的 3D 引擎 (engine\xrplayer.exe)。这通常是智能应用程序控制，它会阻止尚未进行数字签名的新程序，而 VRX 的程序尚未进行签名。要立即播放，请在 Windows 安全 &gt; 应用程序和浏览器控制 &gt; 智能应用程序控制设置中关闭智能应用程序控制； Windows 可能不允许您在不重置的情况下将其重新打开。在工作或学校电脑上，询问其管理员。</value>
+    <value>Windows 阻止了 VRX 的 3D 引擎 (engine\xrplayer.exe)。这通常是 Smart App Control（智能应用控制）所致，它会阻止尚未数字签名的新程序，而 VRX 的程序目前还没有签名。要立即使用，请在“Windows 安全中心 &gt; 应用和浏览器控制 &gt; 智能应用控制设置”中关闭它；关闭后 Windows 可能不允许你在不重置系统的情况下重新开启。如果是工作或学校的电脑，请询问管理员。</value>
   </data>
   <data name="ErrorEngineBlockedAntivirus" xml:space="preserve">
-    <value>您的防病毒软件阻止了 VRX 的 3D 引擎 (engine\xrplayer.exe) 运行。如果您从 GitHub 版本下载了 VRX，则可以根据 SHA256SUMS.txt 检查下载内容，然后在防病毒软件中允许该文件并将其报告为误报。</value>
+    <value>你的杀毒软件阻止了 VRX 的 3D 引擎 (engine\xrplayer.exe) 运行。如果你是从 GitHub 发布页下载的 VRX，可以用 SHA256SUMS.txt 校验下载的文件，然后在杀毒软件中允许该文件，并将其报告为误报。</value>
   </data>
   <data name="ErrorProcessChanged" xml:space="preserve">
-    <value>所选进程已关闭或更改。刷新列表。</value>
+    <value>所选进程已关闭或已改变。请刷新列表。</value>
   </data>
   <data name="ErrorRendererMissing" xml:space="preserve">
-    <value>VRX 渲染器丢失。重新安装 VRX 或构建项目。</value>
+    <value>找不到 VRX 渲染器。请重新安装 VRX 或构建项目。</value>
   </data>
   <data name="ErrorBuildRenderer" xml:space="preserve">
-    <value>首先使用 bench/native/openxr/build.bat --desktop 构建桌面渲染器。</value>
+    <value>请先用 bench/native/openxr/build.bat --desktop 构建桌面渲染器。</value>
   </data>
   <data name="LogStopTimeout" xml:space="preserve">
-    <value>VRX没有及时停车；终止其渲染器。游戏不受影响。</value>
+    <value>VRX 未能及时停止，正在终止其渲染器。游戏不受影响。</value>
   </data>
   <data name="Controllers" xml:space="preserve">
     <value>控制器</value>
@@ -923,19 +923,19 @@
     <value>开</value>
   </data>
   <data name="ControllersTip" xml:space="preserve">
-    <value>可选运动控制器设置。按控制器菜单按钮可显示或隐藏您正在查看的面板。指向并扣动扳机来选择或拖动标题栏；使用拇指操纵杆滚动。索引/通用控制器使用拇指操纵杆点击。需要 VR 控制器模式和 XR 输入焦点。</value>
+    <value>可选的运动控制器设置。按控制器的菜单键可在你注视的位置显示或隐藏面板。指向目标并扣下扳机可选择或拖动标题栏；用摇杆滚动。Index/通用控制器使用摇杆按下。需要 VR 控制器模式和 XR 输入焦点。</value>
   </data>
   <data name="ControllerMenuTitle" xml:space="preserve">
-    <value>VRX设置</value>
+    <value>VRX 设置</value>
   </data>
   <data name="ControllerMenuHint" xml:space="preserve">
-    <value>菜单：显示或隐藏 · 指针 + 触发器：选择 · 摇杆：滚动</value>
+    <value>菜单键：显示或隐藏 · 指向 + 扳机：选择 · 摇杆：滚动</value>
   </data>
   <data name="ControllerMenuDrag" xml:space="preserve">
     <value>在此按住扳机移动面板</value>
   </data>
   <data name="ControllerMenuBack" xml:space="preserve">
-    <value>返回 / 设置分类</value>
+    <value>返回 / 分组</value>
   </data>
   <data name="ControllerMenuControlScreen" xml:space="preserve">
     <value>控制屏幕</value>
@@ -944,16 +944,16 @@
     <value>停止控制屏幕</value>
   </data>
   <data name="ControllerMenuScreenHint" xml:space="preserve">
-    <value>右扳机：左键单击/拖动·右握：右键单击·菜单：隐藏设置</value>
+    <value>右扳机：左键单击/拖动 · 右握把：右键单击 · 菜单键：隐藏设置</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
     <value>快照</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
-    <value>打开图像文件夹</value>
+    <value>打开图片文件夹</value>
   </data>
   <data name="SnapshotTitle" xml:space="preserve">
-    <value>快照·按住标题移动</value>
+    <value>快照 · 按住标题可移动</value>
   </data>
   <data name="SnapshotSave" xml:space="preserve">
     <value>保存</value>
@@ -965,22 +965,22 @@
     <value>关闭</value>
   </data>
   <data name="SnapshotSaved" xml:space="preserve">
-    <value>保存在 VRX / 图片中</value>
+    <value>已保存到 VRX / images</value>
   </data>
   <data name="SnapshotLimit" xml:space="preserve">
-    <value>关闭一个浮动窗口，为另一个浮动窗口腾出空间。</value>
+    <value>请关闭一个浮动窗口，为新窗口腾出位置。</value>
   </data>
   <data name="BrowserOpen" xml:space="preserve">
     <value>浏览器</value>
   </data>
   <data name="BrowserTitle" xml:space="preserve">
-    <value>浏览器·按住标题移动</value>
+    <value>浏览器 · 按住标题可移动</value>
   </data>
   <data name="BrowserGo" xml:space="preserve">
-    <value>去</value>
+    <value>前往</value>
   </data>
   <data name="BrowserNew" xml:space="preserve">
-    <value>新浏览器</value>
+    <value>新建浏览器</value>
   </data>
   <data name="BrowserLicenses" xml:space="preserve">
     <value>许可证</value>
@@ -992,7 +992,7 @@
     <value>重新加载</value>
   </data>
   <data name="BrowserLoading" xml:space="preserve">
-    <value>加载中...</value>
+    <value>加载中…</value>
   </data>
   <data name="BrowserOpenLink" xml:space="preserve">
     <value>在新窗口中打开链接</value>
@@ -1013,7 +1013,7 @@
     <value>排列窗口</value>
   </data>
   <data name="KeyboardTitle" xml:space="preserve">
-    <value>键盘·按住标题移动</value>
+    <value>键盘 · 按住标题可移动</value>
   </data>
   <data name="KeyboardShift" xml:space="preserve">
     <value>Shift</value>
@@ -1025,31 +1025,31 @@
     <value>回车</value>
   </data>
   <data name="KeyboardHint" xml:space="preserve">
-    <value>点击按键，或按住扳机并在字母上滑动。释放打字；选择另一个建议来替换该单词。</value>
+    <value>点按按键，或按住扳机在字母上滑过。松开即输入；选择其他候选词可替换该词。</value>
   </data>
   <data name="KeyboardChooseTarget" xml:space="preserve">
-    <value>选择浏览器字段，或启用控制屏幕并单击游戏/Windows 字段。</value>
+    <value>请选择浏览器中的输入框，或开启“控制屏幕”后点击游戏/Windows 中的输入框。</value>
   </data>
   <data name="KeyboardBrowserTarget" xml:space="preserve">
-    <value>在浏览器中输入：{0}</value>
+    <value>正在输入到浏览器：{0}</value>
   </data>
   <data name="KeyboardWindowsTarget" xml:space="preserve">
-    <value>在选定的游戏/Windows 窗口中输入内容</value>
+    <value>正在输入到所选的游戏/Windows 窗口</value>
   </data>
   <data name="KeyboardAddWord" xml:space="preserve">
-    <value>加字：{0}</value>
+    <value>添加词语：{0}</value>
   </data>
   <data name="SnapshotFailed" xml:space="preserve">
-    <value>无法捕捉快照。再试一次。</value>
+    <value>无法截取快照。请重试。</value>
   </data>
   <data name="SnapshotFileError" xml:space="preserve">
     <value>图片：{0}</value>
   </data>
   <data name="ControllerMenuSelect" xml:space="preserve">
-    <value>选择选项</value>
+    <value>选择一个选项</value>
   </data>
   <data name="ControllerMenuDelete" xml:space="preserve">
-    <value>删除一位</value>
+    <value>删除一位数字</value>
   </data>
   <data name="ControllerMenuApply" xml:space="preserve">
     <value>应用</value>
@@ -1058,43 +1058,43 @@
     <value>取消</value>
   </data>
   <data name="ControllerMenuApplyAllQuestion" xml:space="preserve">
-    <value>将每个保存的游戏配置文件中的设置替换为当前设置？每个游戏的路径和窗口都会被保留。</value>
+    <value>要用当前设置替换所有已保存游戏配置中的设置吗？每个游戏的路径和窗口会保留。</value>
   </data>
   <data name="ControllerMenuFailed" xml:space="preserve">
     <value>控制器设置菜单不可用：{0}</value>
   </data>
   <data name="RoomLife" xml:space="preserve">
-    <value>房间生活和音乐</value>
+    <value>房间氛围与音乐</value>
   </data>
   <data name="RoomLifeHint" xml:space="preserve">
-    <value>需要固定的屏幕和房间。 Listen 捕获 Windows 播放混音，包括默认播放输出上的其他应用程序；没有麦克风或录音。所有效果均适用于每场比赛并保存。阴影追踪生物和座位的几何形状；这不是硬件 DXR。</value>
+    <value>需要固定屏幕和房间。“收听播放音频”会捕获 Windows 播放混音，包括默认播放设备上其他程序的声音；不使用麦克风，也不录音。所有效果实时生效，并为每个游戏单独保存。阴影基于生物和座椅的几何体追踪；这不是硬件 DXR。</value>
   </data>
   <data name="ListenAudio" xml:space="preserve">
     <value>收听播放音频</value>
   </data>
   <data name="MusicVisuals" xml:space="preserve">
-    <value>墙壁和天花板音乐动画</value>
+    <value>墙面与天花板音乐动画</value>
   </data>
   <data name="Creatures" xml:space="preserve">
     <value>动画生物</value>
   </data>
   <data name="RoomParticles" xml:space="preserve">
-    <value>多彩3D灰尘</value>
+    <value>彩色 3D 尘埃</value>
   </data>
   <data name="DiscoLights" xml:space="preserve">
-    <value>移动迪斯科聚光灯</value>
+    <value>移动的迪斯科聚光灯</value>
   </data>
   <data name="TracedShadows" xml:space="preserve">
-    <value>光线追踪阴影（额外 GPU 成本）</value>
+    <value>光线追踪阴影（额外 GPU 开销）</value>
   </data>
   <data name="CreatureCount" xml:space="preserve">
-    <value>生物数量（最多 24 个）</value>
+    <value>生物数量（最多 24）</value>
   </data>
   <data name="EffectsBrightness" xml:space="preserve">
     <value>效果亮度 (%)</value>
   </data>
   <data name="ParticleDensity" xml:space="preserve">
-    <value>灰尘颗粒（最多 100 个）</value>
+    <value>尘埃粒子（最多 100）</value>
   </data>
   <data name="CreatureShark" xml:space="preserve">
     <value>全息鲨鱼</value>
@@ -1103,7 +1103,7 @@
     <value>小鱼</value>
   </data>
   <data name="CreatureRobot" xml:space="preserve">
-    <value>行走机器人</value>
+    <value>行走的机器人</value>
   </data>
   <data name="CreatureJelly" xml:space="preserve">
     <value>水母</value>
@@ -1121,7 +1121,7 @@
     <value>勘测无人机</value>
   </data>
   <data name="VisualSpectrum" xml:space="preserve">
-    <value>光谱</value>
+    <value>频谱</value>
   </data>
   <data name="VisualOscilloscope" xml:space="preserve">
     <value>示波器</value>
@@ -1136,7 +1136,7 @@
     <value>万花筒</value>
   </data>
   <data name="VisualNeonGrid" xml:space="preserve">
-    <value>霓虹灯网格</value>
+    <value>霓虹网格</value>
   </data>
   <data name="VisualAurora" xml:space="preserve">
     <value>极光</value>
@@ -1151,37 +1151,37 @@
     <value>星星</value>
   </data>
   <data name="VisualRibbons" xml:space="preserve">
-    <value>丝带</value>
+    <value>彩带</value>
   </data>
   <data name="VisualLissajous" xml:space="preserve">
-    <value>利萨如</value>
+    <value>李萨如图形</value>
   </data>
   <data name="AudioOff" xml:space="preserve">
-    <value>播放聆听已关闭。</value>
+    <value>播放音频收听已关闭。</value>
   </data>
   <data name="AudioReady" xml:space="preserve">
-    <value>播放聆听从 VR 开始。</value>
+    <value>启动 VR 时开始收听播放音频。</value>
   </data>
   <data name="AudioConnecting" xml:space="preserve">
-    <value>正在连接到 Windows 播放输出...</value>
+    <value>正在连接 Windows 播放输出…</value>
   </data>
   <data name="AudioListening" xml:space="preserve">
-    <value>聆听 Windows 播放混音。</value>
+    <value>正在收听 Windows 播放混音。</value>
   </data>
   <data name="AudioUnavailable" xml:space="preserve">
-    <value>回放捕获不可用。检查Windows默认输出设备； VRX 将重试。</value>
+    <value>无法捕获播放音频。请检查 Windows 默认输出设备；VRX 会自动重试。</value>
   </data>
   <data name="VisualLayers" xml:space="preserve">
-    <value>可视化器层 - 组合任何</value>
+    <value>可视化图层 — 可任意组合</value>
   </data>
   <data name="MusicReactivity" xml:space="preserve">
-    <value>音乐反应性</value>
+    <value>音乐响应强度</value>
   </data>
   <data name="BeamReactions" xml:space="preserve">
-    <value>生物对控制器光束做出反应</value>
+    <value>生物会对控制器光束做出反应</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex — 喷气背包机器人伴侣</value>
+    <value>Vrex — 喷气背包机器人伙伴</value>
   </data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>默认</value>
@@ -1202,10 +1202,10 @@
     <value>天堂</value>
   </data>
   <data name="ThemeDark" xml:space="preserve">
-    <value>黑暗</value>
+    <value>深色</value>
   </data>
   <data name="ThemeLight" xml:space="preserve">
-    <value>光</value>
+    <value>浅色</value>
   </data>
   <data name="ThemeGrape" xml:space="preserve">
     <value>葡萄</value>
@@ -1223,13 +1223,13 @@
     <value>桌面主题</value>
   </data>
   <data name="AppearanceHint" xml:space="preserve">
-    <value>面板主题和透明度适用于 VR 设置、键盘、浏览器镶边和快照。桌面颜色是分开的。内容保持可读。</value>
+    <value>面板主题和透明度适用于 VR 设置、键盘、浏览器外框和快照。桌面配色单独设置。内容始终保持清晰可读。</value>
   </data>
   <data name="Quick3D" xml:space="preserve">
     <value>3D</value>
   </data>
   <data name="Quick3DTip" xml:space="preserve">
-    <value>打开或关闭立体 3D。立即适用。</value>
+    <value>开启或关闭立体 3D。立即生效。</value>
   </data>
   <data name="DictationDefaultMic" xml:space="preserve">
     <value>Windows 默认麦克风</value>
@@ -1238,7 +1238,7 @@
     <value>语音输入</value>
   </data>
   <data name="DictationStop" xml:space="preserve">
-    <value>停止聆听</value>
+    <value>停止收听</value>
   </data>
   <data name="DictationMicrophone" xml:space="preserve">
     <value>麦克风：{0} ▾</value>
@@ -1247,13 +1247,13 @@
     <value>语音输入已关闭。</value>
   </data>
   <data name="DictationStarting" xml:space="preserve">
-    <value>启动 Windows 语音识别...</value>
+    <value>正在启动 Windows 语音识别…</value>
   </data>
   <data name="DictationListening" xml:space="preserve">
-    <value>听力 — {0}。对着选定的麦克风讲话。</value>
+    <value>正在收听 — {0}。请对着所选麦克风说话。</value>
   </data>
   <data name="DictationHearing" xml:space="preserve">
-    <value>听力：{0}</value>
+    <value>识别中：{0}</value>
   </data>
   <data name="DictationHeard" xml:space="preserve">
     <value>已插入：{0}</value>
@@ -1262,31 +1262,31 @@
     <value>语音输入：{0}</value>
   </data>
   <data name="DictationNoRecognizer" xml:space="preserve">
-    <value>未安装 Windows 桌面语音识别器。添加 Windows 语音语言包以使用语音输入。</value>
+    <value>未安装 Windows 桌面语音识别器。请添加 Windows 语音语言包以使用语音输入。</value>
   </data>
   <data name="DictationOverrun" xml:space="preserve">
-    <value>音频捕获无法跟上。停止并重新启动语音输入。</value>
+    <value>音频捕获跟不上。请停止并重新开始语音输入。</value>
   </data>
   <data name="DictationNoMicrophones" xml:space="preserve">
-    <value>没有可用的麦克风。连接麦克风并检查 Windows 麦克风访问。</value>
+    <value>没有可用的麦克风。请连接麦克风，并检查 Windows 的麦克风访问权限。</value>
   </data>
   <data name="DictationMicRemoved" xml:space="preserve">
-    <value>所选麦克风不再可用。选择另一个麦克风。</value>
+    <value>所选麦克风已不可用。请选择其他麦克风。</value>
   </data>
   <data name="ControllerMenuCollapse" xml:space="preserve">
-    <value>折叠快速控件</value>
+    <value>收起快捷控制</value>
   </data>
   <data name="ControllerMenuExpand" xml:space="preserve">
-    <value>显示快速控件</value>
+    <value>显示快捷控制</value>
   </data>
   <data name="BrowserClearAddress" xml:space="preserve">
-    <value>明确地址</value>
+    <value>清除地址</value>
   </data>
   <data name="RoomCategoryEnvironment" xml:space="preserve">
     <value>环境与座位</value>
   </data>
   <data name="RoomCategorySurfaces" xml:space="preserve">
-    <value>表面和照明</value>
+    <value>表面与灯光</value>
   </data>
   <data name="RoomCategoryMusic" xml:space="preserve">
     <value>音乐可视化</value>
@@ -1295,25 +1295,25 @@
     <value>生物</value>
   </data>
   <data name="RoomCategoryAtmosphere" xml:space="preserve">
-    <value>气氛效果</value>
+    <value>氛围效果</value>
   </data>
   <data name="RoomCategoryVrex" xml:space="preserve">
     <value>Vrex</value>
   </data>
   <data name="BrowserSiteAccess" xml:space="preserve">
-    <value>站点访问</value>
+    <value>网站权限</value>
   </data>
   <data name="BrowserPermissionTitle" xml:space="preserve">
-    <value>许可请求</value>
+    <value>权限请求</value>
   </data>
   <data name="BrowserPermissionOrigin" xml:space="preserve">
-    <value>{0} 想要访问：</value>
+    <value>{0} 请求访问：</value>
   </data>
   <data name="BrowserPermissionEmbedded" xml:space="preserve">
-    <value>当您使用 {1} 时，{0} 想要访问：</value>
+    <value>你在 {1} 上时，{0} 请求访问：</value>
   </data>
   <data name="BrowserPermissionRemember" xml:space="preserve">
-    <value>该网站会记住您的允许或拒绝选择。使用站点访问权限查看或重置它。</value>
+    <value>你对此网站的“允许”或“拒绝”选择会被记住。可在“网站权限”中查看或重置。</value>
   </data>
   <data name="BrowserPermissionAllow" xml:space="preserve">
     <value>允许</value>
@@ -1325,16 +1325,16 @@
     <value>麦克风</value>
   </data>
   <data name="BrowserPermissionCamera" xml:space="preserve">
-    <value>相机</value>
+    <value>摄像头</value>
   </data>
   <data name="BrowserPermissionDesktopAudio" xml:space="preserve">
-    <value>屏幕音频捕捉</value>
+    <value>屏幕音频捕获</value>
   </data>
   <data name="BrowserPermissionDesktopVideo" xml:space="preserve">
-    <value>屏幕截图</value>
+    <value>屏幕捕获</value>
   </data>
   <data name="BrowserPermissionLocation" xml:space="preserve">
-    <value>地点</value>
+    <value>位置</value>
   </data>
   <data name="BrowserPermissionNotifications" xml:space="preserve">
     <value>通知</value>
@@ -1346,16 +1346,16 @@
     <value>{0}</value>
   </data>
   <data name="BrowserPermissionSaveFailed" xml:space="preserve">
-    <value>该选择现在适用，但无法保存以供下次使用。</value>
+    <value>该选择现在已生效，但无法保存供下次使用。</value>
   </data>
   <data name="BrowserPermissionNoSite" xml:space="preserve">
-    <value>没有加载任何网站。</value>
+    <value>未加载任何网站。</value>
   </data>
   <data name="BrowserPermissionNoSaved" xml:space="preserve">
-    <value>没有保存此站点的权限选择。</value>
+    <value>此网站没有已保存的权限选择。</value>
   </data>
   <data name="BrowserPermissionSaved" xml:space="preserve">
-    <value>{0}: {1} — {2}</value>
+    <value>{0}：{1} — {2}</value>
   </data>
   <data name="BrowserPermissionReset" xml:space="preserve">
     <value>重置并重新加载</value>
@@ -1364,69 +1364,69 @@
     <value>无法重置已保存的网站权限。</value>
   </data>
   <data name="GameHelpStart" xml:space="preserve">
-    <value>此游戏的帮助</value>
+    <value>获取此游戏的帮助</value>
   </data>
   <data name="GameHelpSettings" xml:space="preserve">
     <value>游戏帮助设置</value>
   </data>
   <data name="GameHelpSharingHint" xml:space="preserve">
-    <value>选择一项服务。帮助当前屏幕会向该服务发送一张 VRX 屏幕图像和一个问题。在您允许之前，不会共享任何内容。</value>
+    <value>选择一项服务。获取当前画面的帮助时，会向该服务发送一张 VRX 屏幕截图和一个问题。在你允许之前，不会分享任何内容。</value>
   </data>
   <data name="GameHelpSharingWith" xml:space="preserve">
-    <value>与 {0} 共享的屏幕截图与麦克风或摄像头权限分开记录。</value>
+    <value>与 {0} 分享截图的选择会单独记录，与麦克风或摄像头权限无关。</value>
   </data>
   <data name="GameHelpStopSharing" xml:space="preserve">
-    <value>停止分享屏幕截图</value>
+    <value>停止分享截图</value>
   </data>
   <data name="GameHelpAllowAndStart" xml:space="preserve">
-    <value>允许屏幕截图并获取帮助</value>
+    <value>允许截图并获取帮助</value>
   </data>
   <data name="GameHelpSaveFailed" xml:space="preserve">
-    <value>无法保存屏幕截图共享首选项。</value>
+    <value>无法保存截图分享偏好。</value>
   </data>
   <data name="GameHelpNeedsSession" xml:space="preserve">
-    <value>启动 VRX 会话并使控制器能够捕获当前屏幕。</value>
+    <value>请启动 VRX 会话并开启控制器，才能捕获当前屏幕。</value>
   </data>
   <data name="GameHelpCapturing" xml:space="preserve">
-    <value>捕获当前 VRX 屏幕以获取游戏帮助...</value>
+    <value>正在捕获当前 VRX 屏幕用于游戏帮助…</value>
   </data>
   <data name="GameHelpCaptureFailed" xml:space="preserve">
-    <value>屏幕捕获未完成。请再次尝试游戏帮助。</value>
+    <value>屏幕捕获未完成。请重新尝试游戏帮助。</value>
   </data>
   <data name="GameHelpImageTooLarge" xml:space="preserve">
-    <value>游戏帮助图片太大，无法上传。</value>
+    <value>游戏帮助图片过大，无法上传。</value>
   </data>
   <data name="GameHelpRetry" xml:space="preserve">
     <value>重试帮助</value>
   </data>
   <data name="GameHelpProgress" xml:space="preserve">
-    <value>{0}: {1}</value>
+    <value>{0}：{1}</value>
   </data>
   <data name="GameHelpOpening" xml:space="preserve">
-    <value>打开帮助服务...</value>
+    <value>正在打开帮助服务…</value>
   </data>
   <data name="GameHelpUploading" xml:space="preserve">
-    <value>连接当前屏幕...</value>
+    <value>正在附加当前屏幕画面…</value>
   </data>
   <data name="GameHelpPreparingQuestion" xml:space="preserve">
-    <value>准备游戏帮助问题...</value>
+    <value>正在准备游戏帮助问题…</value>
   </data>
   <data name="GameHelpSearching" xml:space="preserve">
-    <value>问题已提交。您可以在这里提出后续问题。</value>
+    <value>问题已提交。你可以在这里继续追问。</value>
   </data>
   <data name="GameHelpNeedsSetup" xml:space="preserve">
-    <value>完成网站的同意或登录提示；帮助将自动继续。</value>
+    <value>请完成网站的同意或登录提示；帮助会自动继续。</value>
   </data>
   <data name="GameHelpNoConsent" xml:space="preserve">
-    <value>屏幕截图共享已关闭。在游戏帮助设置中启用它。</value>
+    <value>截图分享已关闭。请在“游戏帮助设置”中开启。</value>
   </data>
   <data name="GameHelpExistingDraft" xml:space="preserve">
-    <value>该网站已经有了草稿。清除它，然后选择重试帮助。</value>
+    <value>网站上已有草稿。请清除后选择“重试帮助”。</value>
   </data>
   <data name="GameHelpRetryNeeded" xml:space="preserve">
-    <value>该网站尚未准备好。完成所有站点提示，然后选择重试帮助。</value>
+    <value>网站尚未就绪。请完成网站上的所有提示，然后选择“重试帮助”。</value>
   </data>
   <data name="GameHelpPrompt" xml:space="preserve">
-    <value>在此屏幕截图中识别游戏和确切场景。给我一个关于下一步该做什么的有用提示，避免严重剧透，并包含相关演练或指南的链接。如果您不能自信地识别它，请向我提问而不是猜测。</value>
+    <value>请识别这张截图中的游戏和具体场景。给我一个关于下一步该做什么的实用提示，避免严重剧透，并附上相关攻略或指南的链接。如果你无法确定是哪款游戏，请先问我一个问题，不要猜测。</value>
   </data>
 </root>
