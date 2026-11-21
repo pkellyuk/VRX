@@ -12,6 +12,17 @@ static bool Near(float a, float b) { return std::fabs(a-b) < 1e-4f; }
 int main()
 {
     using namespace vrxmenu;
+    const XrPosef chat{{0, std::sin(.4f), 0, std::cos(.4f)}, {1.4f, .9f, -2.f}};
+    const XrExtent2Df chatSize{.85f,.68f}, replySize{.64f,.512f};
+    const auto reply = ChatReplyPose(chat, chatSize, replySize);
+    const auto offset = Rotate(Inverse(chat.orientation), Sub(reply.position, chat.position));
+    assert(Near(offset.x, 0) && Near(offset.y, (chatSize.height + replySize.height)*.5f + .025f) && Near(offset.z, .025f));
+    XrPosef movedChat = chat;
+    movedChat.position.x += .75f;
+    const auto moved = ChatReplyPose(movedChat, chatSize, replySize);
+    assert(Near(moved.position.x - reply.position.x, .75f) && Near(moved.orientation.y, chat.orientation.y));
+    assert(VrexCaption(VrexChoicePanel) && PanelAcceptsPointer(VrexChoicePanel));
+    assert(VrexCaption(VrexBubblePanel) && !PanelAcceptsPointer(VrexBubblePanel));
     PointerAim steady;
     XrPosef raw{{0,0,0,1},{0,0,0}};
     steady.Step(raw,1.0f/90,false);
@@ -69,6 +80,10 @@ int main()
         XrQuaternionf heading{0,std::sin(yaw/2),0,std::cos(yaw/2)};
         heading = Multiply(heading,{std::sin(pitch/2),0,0,std::cos(pitch/2)});
         auto pose = Place({heading,eye});
+        const XrFovf fov{-.7f,.7f,.65f,-.65f};
+        assert(MenuCenterInView({heading,eye},pose.position,fov));
+        assert(!MenuCenterInView({heading,eye},Add(eye,Rotate(heading,{0,0,1.2f})),fov));
+        assert(!MenuCenterInView({heading,eye},Add(eye,Rotate(heading,{2,0,-1.2f})),fov));
         auto centre = Rotate(Inverse(heading),Sub(pose.position,eye));
         assert(Near(centre.x,0) && Near(centre.y,0) && Near(centre.z,-1.2f));
         XrPosef pointer{pose.orientation,eye};

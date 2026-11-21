@@ -9,6 +9,7 @@ namespace VRX.Desktop;
 internal sealed class SwipePredictor
 {
     private static readonly string[] Rows = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
+    private static readonly Lazy<string[]> BuiltInWords = new(LoadVocabulary);
     private readonly Dictionary<string, int> learned = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Point[]> shapes = new(StringComparer.Ordinal);
     private readonly string? path;
@@ -16,15 +17,29 @@ internal sealed class SwipePredictor
     internal SwipePredictor(string? path = null)
     {
         this.path = path;
-        words = Vocabulary.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Distinct().ToList();
+        words = new(BuiltInWords.Value);
         try
         {
             if (path != null && File.Exists(path))
                 foreach (var pair in JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(path)) ?? [])
-                    if (Valid(pair.Key)) { learned[pair.Key] = pair.Value; if (!words.Contains(pair.Key)) words.Add(pair.Key); }
+                    if (Valid(pair.Key)) learned[pair.Key] = pair.Value;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
         foreach (string word in words) shapes[word] = Shape(word);
+        foreach (string word in learned.Keys)
+            if (shapes.TryAdd(word, Shape(word))) words.Add(word);
+    }
+
+    private static string[] LoadVocabulary()
+    {
+        var words = Vocabulary.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Distinct().ToList();
+        var seen = new HashSet<string>(words, StringComparer.Ordinal);
+        using var resource = typeof(SwipePredictor).Assembly.GetManifestResourceStream("VRX.Desktop.SwipeEnglish")
+            ?? throw new InvalidOperationException("The built-in English keyboard dictionary is missing.");
+        using var reader = new StreamReader(resource);
+        while (reader.ReadLine() is { } word)
+            if (Valid(word) && seen.Add(word)) words.Add(word);
+        return words.ToArray();
     }
     internal static Point KeyPoint(char letter)
     {
@@ -79,20 +94,27 @@ internal sealed class SwipePredictor
     }
     private static double Distance(Point[] a, Point[] b)
     {
-        var previous = Enumerable.Repeat(double.PositiveInfinity, b.Length + 1).ToArray(); previous[0] = 0;
+        Span<double> previous = stackalloc double[b.Length + 1];
+        Span<double> current = stackalloc double[b.Length + 1];
+        previous.Fill(double.PositiveInfinity);
+        previous[0] = 0;
         for (int i = 1; i <= a.Length; i++)
         {
-            var current = Enumerable.Repeat(double.PositiveInfinity, b.Length + 1).ToArray();
+            current.Fill(double.PositiveInfinity);
             for (int j = Math.Max(1, i - 6); j <= Math.Min(b.Length, i + 6); j++)
                 current[j] = (a[i - 1] - b[j - 1]).LengthSquared + Math.Min(previous[j], Math.Min(previous[j - 1], current[j - 1]));
+            var next = previous;
             previous = current;
+            current = next;
         }
         return previous[^1] / a.Length;
     }
     internal static void SmokeTest()
     {
         var predictor = new SwipePredictor();
-        foreach (string word in new[] { "hello", "world", "browser", "keyboard", "please", "thanks", "screen" })
+        if (BuiltInWords.Value.Length < 10000 || !predictor.IsKnown("neighbourhood") ||
+            !predictor.Prefix("neighbourho").Contains("neighbourhood")) throw new Exception("The expanded keyboard dictionary was not loaded");
+        foreach (string word in new[] { "hello", "world", "browser", "keyboard", "please", "thanks", "screen", "neighbourhood", "neighborhood", "adventure" })
             if (!predictor.Predict(Shape(word)).Contains(word)) throw new Exception($"Swipe prediction missed {word}");
         predictor.Learn("vrxcontroller");
         if (!predictor.Predict(Shape("vrxcontroller")).Contains("vrxcontroller")) throw new Exception("Keyboard did not learn a new word");

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -36,12 +37,28 @@ internal static class FloatingPanelChrome
     {
         var label = close.Content?.ToString() ?? Loc.Get("SnapshotClose");
         close.ToolTip = label; System.Windows.Automation.AutomationProperties.SetName(close, label);
-        close.Content = "×"; close.Tag = ""; close.FontSize = 28; close.Padding = new Thickness(0);
-        close.HorizontalContentAlignment = HorizontalAlignment.Center;
+        SetTitleIcon(close, "M4,4 L20,20 M20,4 L4,20");
         close.Width = 80; close.Height = 48; close.Margin = new Thickness(4);
         var row = new DockPanel(); DockPanel.SetDock(close, Dock.Right);
         row.Children.Add(close); row.Children.Add(heading);
         return row;
+    }
+
+    internal static void SetTitleIcon(Button button, string geometry)
+    {
+        var icon = new Grid { Width = 24, Height = 24, IsHitTestVisible = false };
+        var stroke = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse(geometry), StrokeThickness = 2.75,
+            StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round
+        };
+        stroke.SetBinding(System.Windows.Shapes.Shape.StrokeProperty, new Binding(nameof(Control.Foreground)) { Source = button });
+        icon.Children.Add(stroke);
+        button.Content = icon;
+        button.Tag = null;
+        button.Padding = new Thickness(0);
+        button.HorizontalContentAlignment = HorizontalAlignment.Center;
     }
     internal static Grid Wrap(UIElement content)
     {
@@ -83,9 +100,9 @@ internal sealed class FloatingSnapshot : IFloatingPanel
     private int appearanceRevision = -1;
     private bool dirty = true;
     public bool Dirty { get => dirty || appearanceRevision != Appearance.Revision; private set => dirty = value; }
-    internal FloatingSnapshot(BitmapSource image, string imagesFolder)
+    internal FloatingSnapshot(BitmapSource image, string imagesFolder, string? savedPath = null)
     {
-        original = image; this.imagesFolder = imagesFolder;
+        original = image; this.imagesFolder = imagesFolder; SavedPath = savedPath;
         var root = new DockPanel { Margin = new Thickness(48) };
         var title = new Border { Height = 56, CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromRgb(37, 50, 72)),
             Child = FloatingPanelChrome.Title(new TextBlock { Text = Loc.Get("SnapshotTitle"), Foreground = Brushes.White, FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }, CloseButton()) };
@@ -138,11 +155,15 @@ internal sealed class FloatingSnapshot : IFloatingPanel
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { status.Text = Loc.Format("SnapshotFileError", ex.Message); Dirty = true; }
     }
+    private readonly PanelFeedback.Hover beamHover = new();
     public void Pointer(int kind, float x, float y, float value = 0)
     {
+        if (kind is 4 or PanelFeedback.Leave) beamHover.Set(null, () => Dirty = true);
+        if (kind == PanelFeedback.Leave) return;
         if (kind == 4) { PanelFeedback.Cancel(held, () => Dirty = true); held = null; return; }
         var point = new Point(x * ControllerMenu.Width, y * ControllerMenu.Height);
         var hit = actions.Keys.FirstOrDefault(b => b.IsEnabled && new Rect(b.TranslatePoint(new Point(), surface), b.RenderSize).Contains(point));
+        if (kind == 0) beamHover.Set(hit, () => Dirty = true);
         if (kind == 1) { held = hit; PanelFeedback.Down(held, () => Dirty = true); }
         if (kind == 2)
         {

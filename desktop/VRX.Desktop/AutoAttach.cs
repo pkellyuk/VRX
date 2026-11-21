@@ -16,6 +16,8 @@ public sealed class AppSettings
     public const int MinSeconds = 3;
     public const int MaxSeconds = 30;
     public const int DefaultSeconds = 5;
+    internal const int DefaultFloatingTheme = 6;
+    internal const int DefaultFloatingOpacity = 74;
 
     // Auto-attach: count down, then attach to the game in front. Off by default (Easy mode
     // turns it on).
@@ -24,8 +26,9 @@ public sealed class AppSettings
     public bool MotionControllers { get; set; }
     // Empty follows the Windows display language; explicit choices apply on next startup.
     public string UiLanguage { get; set; } = "";
-    public int FloatingTheme { get; set; }
-    public int FloatingOpacity { get; set; } = 95;
+    public int FloatingTheme { get; set; } = DefaultFloatingTheme;
+    public int FloatingOpacity { get; set; } = DefaultFloatingOpacity;
+    public bool FloatingAntialiasing { get; set; }
     public int DesktopTheme { get; set; }
     public int AutoAttachSeconds { get; set; } = DefaultSeconds;
 

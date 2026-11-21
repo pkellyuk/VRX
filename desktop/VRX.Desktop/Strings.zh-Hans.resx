@@ -947,7 +947,7 @@
     <value>右扳机：左键单击/拖动 · 右握把：右键单击 · 菜单键：隐藏设置</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
-    <value>快照</value>
+    <value>游戏截图</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
     <value>打开图片文件夹</value>
@@ -1181,8 +1181,9 @@
     <value>生物会对控制器光束做出反应</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex — 喷气背包机器人伙伴</value>
+    <value>Vrex — 伙伴</value>
   </data>
+  <data name="FloatingAntialiasing" xml:space="preserve"><value>平滑浮动面板边缘</value></data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>默认</value>
   </data>
@@ -1429,4 +1430,9 @@
   <data name="GameHelpPrompt" xml:space="preserve">
     <value>请识别这张截图中的游戏和具体场景。给我一个关于下一步该做什么的实用提示，避免严重剧透，并附上相关攻略或指南的链接。如果你无法确定是哪款游戏，请先问我一个问题，不要猜测。</value>
   </data>
+  <data name="VrexUbuntu" xml:space="preserve"><value>Vrex Ubuntu</value></data>
+  <data name="VrexModelSettings" xml:space="preserve"><value>Vrex AI 设置…</value></data>
+  <data name="UbuntuSettings" xml:space="preserve"><value>Ubuntu 桌面设置…</value></data>
+  <data name="VrexKeyboardTarget" xml:space="preserve"><value>正在输入 Vrex Ubuntu / 聊天</value></data>
+  <data name="ResetFloatingAppearance" xml:space="preserve"><value>重置浮动面板外观</value></data>
 </root>

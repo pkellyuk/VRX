@@ -12,6 +12,10 @@ class MenuBodyRenderer
     Ptr<ID3D12PipelineState> pipeline;
     Ptr<ID3D12DescriptorHeap> targets;
     Ptr<ID3D12Resource> vertices;
+    Ptr<ID3D12PipelineState> smoothPipeline;
+    Ptr<ID3D12Resource> smoothTile, resolvedTile;
+    std::vector<ID3D12Resource*> atlas;
+    DXGI_FORMAT atlasFormat = DXGI_FORMAT_UNKNOWN;
     UINT step = 0;
     static constexpr int EyeWidth = vrxmenu::Width/2;
     static constexpr int TileX = vrxmenu::Width, TileY = vrxmenu::Height*3;
@@ -23,6 +27,7 @@ public:
     bool Init(ID3D12Device* device, const std::vector<XrSwapchainImageD3D12KHR>& images, DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN)
     {
         if (format == DXGI_FORMAT_UNKNOWN) format = images[0].texture->GetDesc().Format;
+        atlasFormat = format;
         D3D12_ROOT_SIGNATURE_DESC rd{}; rd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         Ptr<ID3DBlob> signature, vs, ps, errors;
         const char* shader = "struct V { float4 p:POSITION; float4 c:COLOR; }; struct O { float4 p:SV_Position; float4 c:COLOR; }; O vs(V v) { O o; o.p=v.p; o.c=v.c; return o; } float4 ps(O v):SV_Target { return v.c; }";
@@ -39,22 +44,60 @@ public:
         p.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
         p.NumRenderTargets = 1; p.RTVFormats[0] = format; p.SampleDesc.Count = 1;
         if (FAILED(device->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&pipeline)))) return false;
-        D3D12_DESCRIPTOR_HEAP_DESC hd{}; hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; hd.NumDescriptors = UINT(images.size());
+        D3D12_DESCRIPTOR_HEAP_DESC hd{}; hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; hd.NumDescriptors = UINT(images.size()+1);
         if (FAILED(device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&targets)))) return false;
         step = device->GetDescriptorHandleIncrementSize(hd.Type);
         auto handle = targets->GetCPUDescriptorHandleForHeapStart();
         D3D12_RENDER_TARGET_VIEW_DESC rv{}; rv.Format = format; rv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-        for (const auto& image : images) { device->CreateRenderTargetView(image.texture,&rv,handle); handle.ptr += step; }
+        atlas.clear();
+        for (const auto& image : images)
+        {
+            atlas.push_back(image.texture);
+            device->CreateRenderTargetView(image.texture,&rv,handle); handle.ptr += step;
+        }
         D3D12_HEAP_PROPERTIES heap{}; heap.Type = D3D12_HEAP_TYPE_UPLOAD;
         D3D12_RESOURCE_DESC buffer{}; buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; buffer.Width = 2*7*24*sizeof(Vertex);
         buffer.Height = 1; buffer.DepthOrArraySize = buffer.MipLevels = 1; buffer.SampleDesc.Count = 1; buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        return SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&buffer,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&vertices)));
+        if (FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&buffer,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&vertices)))) return false;
+
+        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS samples{format,4,D3D12_MULTISAMPLE_QUALITY_LEVELS_FLAG_NONE,0};
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT support{format};
+        if (SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS,&samples,sizeof(samples))) &&
+            samples.NumQualityLevels>0 &&
+            SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT,&support,sizeof(support))) &&
+            (support.Support1 & D3D12_FORMAT_SUPPORT1_MULTISAMPLE_RESOLVE))
+        {
+            p.SampleDesc.Count=4;
+            p.RasterizerState.MultisampleEnable=TRUE;
+            if(SUCCEEDED(device->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&smoothPipeline))))
+            {
+                D3D12_RESOURCE_DESC tile{};
+                tile.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+                tile.Width=vrxmenu::Width; tile.Height=vrxmenu::Height; tile.DepthOrArraySize=tile.MipLevels=1;
+                tile.Format=format;tile.SampleDesc.Count=4;tile.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+                D3D12_CLEAR_VALUE clear{};clear.Format=format;
+                heap.Type=D3D12_HEAP_TYPE_DEFAULT;
+                if(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&tile,
+                    D3D12_RESOURCE_STATE_RENDER_TARGET,&clear,IID_PPV_ARGS(&smoothTile))))
+                {
+                    rv.ViewDimension=D3D12_RTV_DIMENSION_TEXTURE2DMS;
+                    device->CreateRenderTargetView(smoothTile.Get(),&rv,handle);
+                    tile.SampleDesc.Count=1;
+                    tile.Flags=D3D12_RESOURCE_FLAG_NONE;
+                    if(FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&tile,
+                        D3D12_RESOURCE_STATE_RESOLVE_DEST,nullptr,IID_PPV_ARGS(&resolvedTile))))
+                        smoothTile.Reset();
+                }
+            }
+        }
+        return true;
     }
-    template<class Surfaces> void Draw(ID3D12GraphicsCommandList* commands, uint32_t image, Surfaces& surfaces, XrSwapchain swapchain, XrSpace space)
+    template<class Surfaces> void Draw(ID3D12GraphicsCommandList* commands, uint32_t image, Surfaces& surfaces, XrSwapchain swapchain, XrSpace space, uint32_t frameless = 0, bool smoothEdges = false)
     {
         if (!valid || !pipeline) return;
         std::vector<int> order;
-        for (int s = 0; s <= vrxmenu::MaxSnapshots; s++) if (surfaces[s].visible) order.push_back(s);
+        for (int s = 0; s <= vrxmenu::MaxSnapshots; s++)
+            if (surfaces[s].visible && !(frameless & (1u << s))) order.push_back(s);
         std::sort(order.begin(),order.end(),[&](int a,int b) {
             auto da=vrxmenu::Sub(surfaces[a].pose.position,eyes[0].pose.position), db=vrxmenu::Sub(surfaces[b].pose.position,eyes[0].pose.position);
             return vrxmenu::Dot(da,da)>vrxmenu::Dot(db,db); });
@@ -87,20 +130,42 @@ public:
         void* data = nullptr; D3D12_RANGE empty{};
         if (FAILED(vertices->Map(0,&empty,&data))) return;
         memcpy(data,mesh.data(),mesh.size()*sizeof(Vertex)); vertices->Unmap(0,nullptr);
-        auto target=targets->GetCPUDescriptorHandleForHeapStart(); target.ptr += image*step;
-        D3D12_RECT rect{TileX,TileY,TileX+vrxmenu::Width,TileY+vrxmenu::Height}; float clear[4]{};
+        // Resolve only the casing tile. WPF text and controls retain their
+        // original framebuffer resolution and OpenXR quad layers.
+        bool smooth=smoothEdges && smoothTile;
+        auto target=targets->GetCPUDescriptorHandleForHeapStart();
+        target.ptr += (smooth?atlas.size():image)*step;
+        int x=smooth?0:TileX, y=smooth?0:TileY;
+        D3D12_RECT rect{x,y,x+vrxmenu::Width,y+vrxmenu::Height}; float clear[4]{};
         commands->ClearRenderTargetView(target,clear,1,&rect); commands->OMSetRenderTargets(1,&target,FALSE,nullptr);
-        commands->SetGraphicsRootSignature(root.Get()); commands->SetPipelineState(pipeline.Get());
+        commands->SetGraphicsRootSignature(root.Get()); commands->SetPipelineState(smooth?smoothPipeline.Get():pipeline.Get());
         commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         D3D12_VERTEX_BUFFER_VIEW vb{vertices->GetGPUVirtualAddress(),UINT(mesh.size()*sizeof(Vertex)),sizeof(Vertex)}; commands->IASetVertexBuffers(0,1,&vb);
         for (int e=0;e<2;e++)
         {
-            D3D12_VIEWPORT viewport{float(TileX+e*EyeWidth),float(TileY),float(EyeWidth),float(vrxmenu::Height),0,1};
-            D3D12_RECT scissor{TileX+e*EyeWidth,TileY,TileX+(e+1)*EyeWidth,TileY+vrxmenu::Height};
+            D3D12_VIEWPORT viewport{float(x+e*EyeWidth),float(y),float(EyeWidth),float(vrxmenu::Height),0,1};
+            D3D12_RECT scissor{x+e*EyeWidth,y,x+(e+1)*EyeWidth,y+vrxmenu::Height};
             commands->RSSetViewports(1,&viewport); commands->RSSetScissorRects(1,&scissor);
             commands->DrawInstanced(UINT(mesh.size()/2),1,UINT(e*mesh.size()/2),0);
             views[e].pose=eyes[e].pose; views[e].fov=eyes[e].fov;
             views[e].subImage={swapchain,{{TileX+e*EyeWidth,TileY},{EyeWidth,vrxmenu::Height}},0};
+        }
+        if(smooth)
+        {
+            D3D12_RESOURCE_BARRIER multisampled{};
+            multisampled.Transition={smoothTile.Get(),0,D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RESOLVE_SOURCE};
+            commands->ResourceBarrier(1,&multisampled);
+            commands->ResolveSubresource(resolvedTile.Get(),0,smoothTile.Get(),0,atlasFormat);
+            std::swap(multisampled.Transition.StateBefore,multisampled.Transition.StateAfter);
+            D3D12_RESOURCE_BARRIER afterResolve[]{multisampled,{},{}};
+            afterResolve[1].Transition={resolvedTile.Get(),0,D3D12_RESOURCE_STATE_RESOLVE_DEST,D3D12_RESOURCE_STATE_COPY_SOURCE};
+            afterResolve[2].Transition={atlas[image],0,D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_DEST};
+            commands->ResourceBarrier(3,afterResolve);
+            D3D12_TEXTURE_COPY_LOCATION source{resolvedTile.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+            D3D12_TEXTURE_COPY_LOCATION dest{atlas[image],D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+            commands->CopyTextureRegion(&dest,TileX,TileY,0,&source,nullptr);
+            for(int i=1;i<=2;++i) std::swap(afterResolve[i].Transition.StateBefore,afterResolve[i].Transition.StateAfter);
+            commands->ResourceBarrier(2,afterResolve+1);
         }
         layer.space=space; layer.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT; layer.viewCount=2; layer.views=views;
     }

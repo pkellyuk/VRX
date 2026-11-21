@@ -947,7 +947,7 @@ Dies kann nicht rückgängig gemacht werden. Noch nicht eingerichtete Spiele sta
     <value>Rechter Trigger: Linksklick / Ziehen · Rechter Griff: Rechtsklick · Menü: Einstellungen ausblenden</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
-    <value>Schnappschuss</value>
+    <value>Spiel-Screenshot</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
     <value>Bilderordner öffnen</value>
@@ -1181,8 +1181,9 @@ Dies kann nicht rückgängig gemacht werden. Noch nicht eingerichtete Spiele sta
     <value>Kreaturen reagieren auf Controller-Strahlen</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex – Jetpack-Roboter-Begleiter</value>
+    <value>Vrex – Begleiter</value>
   </data>
+  <data name="FloatingAntialiasing" xml:space="preserve"><value>Kanten schwebender Fenster glätten</value></data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>Standard</value>
   </data>
@@ -1429,4 +1430,9 @@ Dies kann nicht rückgängig gemacht werden. Noch nicht eingerichtete Spiele sta
   <data name="GameHelpPrompt" xml:space="preserve">
     <value>Bestimmen Sie das Spiel und die genaue Szene in diesem Screenshot. Geben Sie mir einen hilfreichen Hinweis, was als Nächstes zu tun ist, ohne größere Spoiler, und fügen Sie Links zu passenden Komplettlösungen oder Guides hinzu. Wenn Sie es nicht sicher erkennen, stellen Sie mir eine Frage, statt zu raten.</value>
   </data>
+  <data name="VrexUbuntu" xml:space="preserve"><value>Vrex Ubuntu</value></data>
+  <data name="VrexModelSettings" xml:space="preserve"><value>Vrex-KI-Einstellungen…</value></data>
+  <data name="UbuntuSettings" xml:space="preserve"><value>Ubuntu-Desktop-Einstellungen…</value></data>
+  <data name="VrexKeyboardTarget" xml:space="preserve"><value>Eingabe in Vrex Ubuntu / Chat</value></data>
+  <data name="ResetFloatingAppearance" xml:space="preserve"><value>Design der schwebenden Panels zurücksetzen</value></data>
 </root>

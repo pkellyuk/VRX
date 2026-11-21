@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include "room_companion_rigs.h"
 
 // All models fit their collision sphere, including moving appendages. Animation
 // clocks come from the simulation, so gait rate follows speed without abrupt turns.
@@ -54,20 +55,34 @@ float LifeRobotModel(float3 p,float t,bool hero)
 }
 // Reconstructed from the user's PersonaBot teal mascot artwork: oversized
 // rounded head, inset navy face, headphone ears, centre antenna and soft limbs.
+float3 LifeMascotHeadSpace(float3 p,float t)
+{
+    float3 pivot=float3(0,.06,0);
+    float3 q=p-pivot;
+    float yaw=.19*sin(t*1.45)+.06*sin(t*3.2);
+    float pitch=.12*sin(t*1.9+.6);
+    float sy,cy,sp,cp;sincos(yaw,sy,cy);sincos(pitch,sp,cp);
+    q.xz=float2(cy*q.x-sy*q.z,sy*q.x+cy*q.z);
+    q.yz=float2(cp*q.y+sp*q.z,cp*q.z-sp*q.y);
+    return q+pivot;
+}
 float LifeMascotModel(float3 p,float t)
 {
-    float a=LifeRoundBox(p-float3(0,.34,0),float3(.29,.21,.13),.14);
-    a=min(a,LifeRoundBox(p-float3(0,.34,.245),float3(.255,.175,.014),.085));
+    float3 head=LifeMascotHeadSpace(p,t);
+    float a=LifeRoundBox(head-float3(0,.34,0),float3(.29,.21,.13),.14);
+    a=min(a,LifeRoundBox(head-float3(0,.34,.245),float3(.255,.175,.014),.085));
     a=min(a,LifeRoundBox(p-float3(0,-.29,0),float3(.19,.18,.12),.09));
     a=min(a,LifeCapsule(p,float3(0,-.03,0),float3(0,.03,0),.085));
-    a=min(a,LifeCapsule(p,float3(0,.66,-.03),float3(0,.84,-.03),.019));
-    a=min(a,length(p-float3(0,.855,-.03))-.052);
+    a=min(a,LifeCapsule(head,float3(0,.66,-.03),float3(0,.84,-.03),.019));
+    a=min(a,length(head-float3(0,.855,-.03))-.052);
     [loop] for(uint side=0;side<2;++side)
     {
         float sign=side==0?-1:1;
-        a=min(a,LifeRoundBox(p-float3(sign*.46,.34,0),float3(.035,.10,.075),.045));
+        a=min(a,LifeRoundBox(head-float3(sign*.46,.34,0),float3(.035,.10,.075),.045));
         uint gesture=((uint)vrexState>>8)&3;
-        float3 elbow=float3(sign*.37,-.32,.02*sin(t*2.3+sign)),hand=float3(sign*.39,-.49+.018*sin(t*2.3+sign),.035);
+        float swing=sin(t*2.8+sign*1.5);
+        float3 elbow=float3(sign*(.38+.025*swing),-.30+.035*swing,.07*swing);
+        float3 hand=float3(sign*(.43+.04*swing),-.44+.09*swing,.06+.13*swing);
         if((gesture==1 || vrexChat==4) && side==0) {elbow=float3(-.48,.06,.02);hand=float3(-.50+.045*sin(t*8),.28+.06*cos(t*8),.03);}
         if(gesture==2) {elbow=float3(sign*.42,-.08,.03);hand=float3(sign*.54,.02+.03*sin(t*3),.09);}
         if(gesture==3 && side==1)
@@ -77,9 +92,12 @@ float LifeMascotModel(float3 p,float t)
         }
         a=min(a,LifeCapsule(p,float3(sign*.27,-.12,0),elbow,.061));
         a=min(a,LifeCapsule(p,elbow,hand,.055));a=min(a,LifeEllipsoid(p-hand,float3(.079,.075,.060)));
-        float sway=.025*sin(t*2+sign);
-        a=min(a,LifeCapsule(p,float3(sign*.12,-.54,0),float3(sign*.13,-.79,sway),.068));
-        a=min(a,LifeRoundBox(p-float3(sign*.14,-.855,.045+sway),float3(.08,.025,.11),.055));
+        float stride=sin(t*2.8-sign*1.5);
+        float3 knee=float3(sign*.14,-.65+max(stride,0)*.045,.10*stride);
+        float3 ankle=float3(sign*.16,-.805+max(stride,0)*.09,.16*stride-.025);
+        a=min(a,LifeCapsule(p,float3(sign*.12,-.51,0),knee,.071));
+        a=min(a,LifeCapsule(p,knee,ankle,.061));
+        a=min(a,LifeRoundBox(p-ankle-float3(0,-.04,.055),float3(.08,.025,.10),.048));
         float3 jet=p-float3(sign*.17,-.27,-.24);
         a=min(a,LifeCapsule(jet,float3(0,-.13,0),float3(0,.13,0),.088));
         a=min(a,LifeTorus(jet-float3(0,-.11,0),.085,.013));
@@ -87,9 +105,11 @@ float LifeMascotModel(float3 p,float t)
     }
     return a;
 }
+)HLSL" + RoomCompanionRigsHlsl() + R"HLSL(
 float LifeShape(float3 p,int k,float phase,float anim)
 {
     float t=anim+phase, swing=sin(t*2.1), beat=audioBass*.025;
+    if(k>=9) return LifeCompanionRig(p,t,k==10).x;
     float a=1;
     if(k==0 || k==1)
     {

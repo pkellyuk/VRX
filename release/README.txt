@@ -1,6 +1,6 @@
-VRX 1.8.4.1 - Windows x64
+VRX 1.8.5 - Windows x64
 
-Install with VRX-Setup-1.8.4.1.exe, or extract the complete portable ZIP and run
+Install with VRX-Setup-1.8.5.exe, or extract the complete portable ZIP and run
 VRX.Desktop.exe. Keep the engine and model folders with the desktop application.
 The .NET desktop runtime, native dependencies and depth model are included.
 No Python, development checkout or separate .NET installation is required.
@@ -111,7 +111,7 @@ ceiling music animations (layered with checkboxes, with a music-reactivity slide
 up to 24 animated creatures in eight kinds (sharks, fish, robots, jellyfish, mantas,
 fireflies, turtles and drones), colourful 3D dust, moving disco spotlights and
 traced shadows. Creatures react to your controller beams. "Vrex" adds a jetpack
-robot companion that follows your beam; point near him for a few chat choices.
+robot companion that hovers beside chat in Quiet mode. Open chat from the VRX badge.
 
 The floating keyboard has voice input, using Windows speech recognition on this PC
 (it needs a Windows speech recognition language installed, ideally your display
@@ -205,8 +205,11 @@ never the older ones Windows keeps in System32.
 
 VRX itself is free software under the GNU General Public License v3.0: see
 LICENSE. Source: https://github.com/pkellyuk/VRX
-Source for this build: https://github.com/pkellyuk/VRX/tree/v1.8.4.1 (the exact
-commit is in BUILD.txt).
+The exact source revision for this build is recorded in BUILD.txt.
 Third-party components keep their own licenses; notices and license texts are in
 THIRD-PARTY-NOTICES.txt and the licenses folder.
+The first Ubuntu start downloads and verifies the Windows QEMU runtime, then
+downloads the Ubuntu image. You can follow both steps in the Ubuntu setup
+panel. The matching QEMU source is available from the VRX release listed in
+THIRD-PARTY-NOTICES.txt.
 Project: https://github.com/pkellyuk/VRX

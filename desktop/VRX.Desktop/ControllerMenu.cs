@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.IO;
+using VRX.VrexBridge;
 using System.IO.MemoryMappedFiles;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -23,7 +25,10 @@ public sealed partial class ControllerMenu : IDisposable
     public const int MaxSnapshots = 6, SnapshotMetaBytes = 1056, SnapshotPathChars = 512;
     public const int PixelBytes = PixelWidth * PixelHeight * 4, SnapshotsAt = PixelsAt + PixelBytes, SnapshotBytes = SnapshotMetaBytes + PixelBytes;
     public const int KeyboardAt = SnapshotsAt + MaxSnapshots * SnapshotBytes, KeyboardEventsAt = KeyboardAt + 24;
-    public const int Capacity = KeyboardEventsAt + 256 * 8;
+    public const int VrexAt = KeyboardEventsAt + 256 * 8, PlacementAt = VrexAt + 32, PlacementBytes = 40;
+    public const int AudioAt = PlacementAt + (MaxSnapshots + 1) * PlacementBytes, AudioBytes = 16;
+    private const int SmoothEdgesAt = AudioAt + (MaxSnapshots + 1) * AudioBytes;
+    public const int Capacity = SmoothEdgesAt + 8;
     public const int Magic = 0x58524356;
     public const int TitleLeft = 48, TitleTop = 48, TitleHeight = 56, TitleRight = Width - 48;
     private readonly MemoryMappedFile map;
@@ -46,18 +51,20 @@ public sealed partial class ControllerMenu : IDisposable
     private readonly Dictionary<FrameworkElement, Action<Point, bool>> targets = new();
     private readonly List<Action> refresh = new();
     private readonly IReadOnlyList<Expander> sections;
+    private readonly CheckBox? smoothEdges;
     private readonly Action applyAll;
     private readonly RenderTargetBitmap bitmap = new(PixelWidth, PixelHeight, 192, 192, PixelFormats.Pbgra32);
     private readonly RenderTargetBitmap motionBitmap = new(Width, Height, 96, 96, PixelFormats.Pbgra32);
     private readonly byte[] motionPixels = new byte[Width * Height * 4];
     private readonly byte[] pixels = new byte[PixelBytes];
     private FrameworkElement? held;
+    private readonly PanelFeedback.Hover beamHover = new();
     private bool enabled, disposed;
     private bool controlScreen;
     private Button controlScreenButton = null!;
     private Button backButton = null!;
     private Button rollupButton = null!;
-    private readonly UniformGrid toolbar = new() { Columns = 3, Margin = new Thickness(0, 0, 0, 8) };
+    private readonly UniformGrid toolbar = new() { Columns = 4, Margin = new Thickness(0, 0, 0, 8) };
     private int generation;
     private int pageGeneration;
     private Action? back;
@@ -68,16 +75,29 @@ public sealed partial class ControllerMenu : IDisposable
     private readonly int[] pendingPanelKinds = Enumerable.Repeat(-1, MaxSnapshots).ToArray();
     private uint snapshotError;
     private string imagesFolder = Path.Combine(EngineSession.RepositoryRoot(), "images");
-    private readonly SwipePredictor predictor = new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX", "keyboard-words.json"));
+    private readonly VrViewCapture vrCapture;
+    private readonly Button captureLauncher;
+    private Button? vrScreenshotButton, vrVideoButton;
+    private readonly TextBlock captureStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly SwipePredictor predictor = new(Path.Combine(VrxDataDirectory.Root, "keyboard-words.json"));
     private IFloatingTextTarget? textTarget;
     private uint keyboardFocusSerial;
     private uint pendingArrange;
+    private int observedPanel = -1;
+    private (int Slot, FloatingBrowser? Browser, float X, float Y, long Time)? guidePanelTarget;
+    private bool settingsVisibleForGuide;
+    private bool guideShortcutWasDown;
+    private long panelDwellStart, panelLastPoint;
+    private float panelPointX, panelPointY;
 
     public ControllerMenu(string name, IReadOnlyList<Expander> sections, TextBlock desktopStatus,
-        Button recenter, Action applyAll, CheckBox? stereo = null)
+        Button recenter, Action applyAll, CheckBox? stereo = null, string? placementFile = null,
+        CheckBox? smoothEdges = null)
     {
         this.sections = sections;
+        this.smoothEdges = smoothEdges;
         this.applyAll = applyAll;
+        this.placementFile = placementFile;
         mutex = new(false, name + ".Lock");
         map = MemoryMappedFile.CreateOrOpen(name, Capacity, MemoryMappedFileAccess.ReadWrite);
         memory = map.CreateViewAccessor(0, Capacity, MemoryMappedFileAccess.ReadWrite);
@@ -85,7 +105,7 @@ public sealed partial class ControllerMenu : IDisposable
         try
         {
             memory.WriteArray(0, new byte[HeaderBytes], 0, HeaderBytes);
-            memory.Write(0, Magic); memory.Write(4, 3);
+            memory.Write(0, Magic); memory.Write(4, 7);
             memory.Write(20, -1.0f); memory.Write(24, -1.0f);
         }
         finally { mutex.ReleaseMutex(); }
@@ -97,9 +117,8 @@ public sealed partial class ControllerMenu : IDisposable
         backButton = ActionButton(Loc.Get("ControllerMenuBack"), () => back?.Invoke());
         backButton.ToolTip = Loc.Get("ControllerMenuBack");
         System.Windows.Automation.AutomationProperties.SetName(backButton, Loc.Get("ControllerMenuBack"));
-        backButton.Content = "‹"; backButton.Tag = ""; backButton.Width = 56; backButton.Height = 48;
-        backButton.FontSize = 30; backButton.Padding = new Thickness(0); backButton.Margin = new Thickness(4);
-        backButton.HorizontalContentAlignment = HorizontalAlignment.Center;
+        FloatingPanelChrome.SetTitleIcon(backButton, "M18,3 L6,12 L18,21");
+        backButton.Width = 56; backButton.Height = 48; backButton.Margin = new Thickness(4);
         DockPanel.SetDock(backButton, Dock.Left); title.Children.Add(backButton);
         var dragHint = new TextBlock { Text = Loc.Get("ControllerMenuDrag"), FontSize = 16,
             VerticalAlignment = VerticalAlignment.Center, Margin = new(12, 0, 0, 0) };
@@ -115,24 +134,28 @@ public sealed partial class ControllerMenu : IDisposable
         {
             bool collapse = toolbar.Visibility == Visibility.Visible;
             toolbar.Visibility = collapse ? Visibility.Collapsed : Visibility.Visible;
-            rollupButton.Content = collapse ? "⌄" : "⌃";
+            FloatingPanelChrome.SetTitleIcon(rollupButton, collapse ? "M3,7 L12,17 L21,7" : "M3,17 L12,7 L21,17");
             rollupButton.ToolTip = Loc.Get(collapse ? "ControllerMenuExpand" : "ControllerMenuCollapse");
             System.Windows.Automation.AutomationProperties.SetName(rollupButton, rollupButton.ToolTip.ToString());
             restoreOffset = scroll.VerticalOffset;
         });
-        rollupButton.Content = "⌃"; rollupButton.Tag = ""; rollupButton.ToolTip = Loc.Get("ControllerMenuCollapse");
-        rollupButton.Width = 56; rollupButton.MinHeight = 36; rollupButton.Padding = new Thickness(0); rollupButton.FontSize = 26;
-        rollupButton.HorizontalContentAlignment = HorizontalAlignment.Center; rollupButton.Margin = new Thickness(4, 0, 4, 4);
+        FloatingPanelChrome.SetTitleIcon(rollupButton, "M3,17 L12,7 L21,17");
+        rollupButton.ToolTip = Loc.Get("ControllerMenuCollapse");
+        System.Windows.Automation.AutomationProperties.SetName(rollupButton, Loc.Get("ControllerMenuCollapse"));
+        rollupButton.Width = 56; rollupButton.MinHeight = 36; rollupButton.Margin = new Thickness(4, 0, 4, 4);
         DockPanel.SetDock(rollupButton, Dock.Right); breadcrumbRow.Children.Add(rollupButton); breadcrumbRow.Children.Add(interactionHint);
         top.Children.Add(breadcrumbRow);
         top.Children.Add(toolbar);
         stereo ??= Window.GetWindow(sections.FirstOrDefault())?.FindName("StereoCheck") as CheckBox;
         if (stereo != null)
         {
-            var quick3d = new CheckBox { Content = Loc.Get("Quick3D"), FontSize = 23, MinHeight = 46, Margin = new(4, 4, 22, 4) };
-            Bind(quick3d, ToggleButton.IsCheckedProperty, stereo, nameof(stereo.IsChecked), BindingMode.TwoWay);
+            var indicator = new CheckBox { Content = Loc.Get("Quick3D"), IsHitTestVisible = false, Focusable = false, Margin = new(0) };
+            Bind(indicator, ToggleButton.IsCheckedProperty, stereo, nameof(stereo.IsChecked));
+            var quick3d = ActionButton(Loc.Get("Quick3D"),
+                () => stereo.SetCurrentValue(ToggleButton.IsCheckedProperty, stereo.IsChecked != true));
+            quick3d.Content = indicator;
+            System.Windows.Automation.AutomationProperties.SetName(quick3d, Loc.Get("Quick3D"));
             Bind(quick3d, UIElement.IsEnabledProperty, stereo, nameof(stereo.IsEnabled));
-            targets[quick3d] = (_, down) => { if (!down) quick3d.SetCurrentValue(ToggleButton.IsCheckedProperty, quick3d.IsChecked != true); };
             toolbar.Children.Add(quick3d);
         }
         var recenterCopy = ActionButton(Loc.Get("RecenterNow"), () => recenter.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)));
@@ -147,31 +170,24 @@ public sealed partial class ControllerMenu : IDisposable
         });
         controlScreenButton.ToolTip = Loc.Get("ControllerMenuScreenHint");
         toolbar.Children.Add(controlScreenButton);
-        toolbar.Children.Add(ActionButton(Loc.Get("SnapshotTake"), () =>
-        {
-            if (!Lock()) return;
-            try
-            {
-                bool free = Enumerable.Range(0, MaxSnapshots).Any(i => memory.ReadInt32(SnapshotsAt + i * SnapshotBytes + 8) == 0 && memory.ReadInt32(SnapshotsAt + i * SnapshotBytes + 12) == 0);
-                if (!free) { interactionHint.Text = Loc.Get("SnapshotLimit"); return; }
-                memory.Write(48, unchecked(memory.ReadUInt32(48) + 1));
-            }
-            finally { mutex.ReleaseMutex(); }
-        }));
-        toolbar.Children.Add(ActionButton(Loc.Get("SnapshotOpenFolder"), () =>
-        {
-            try
-            {
-                Directory.CreateDirectory(imagesFolder);
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(imagesFolder) { UseShellExecute = true });
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
-            { interactionHint.Text = Loc.Format("SnapshotFileError", ex.Message); }
-        }));
+        captureLauncher = ActionButton("Capture", ShowCapture);
+        captureLauncher.Tag = "▧";
+        toolbar.Children.Add(captureLauncher);
+        vrCapture = new(System.Windows.Threading.Dispatcher.CurrentDispatcher, UpdateCaptureButtons);
         toolbar.Children.Add(ActionButton(Loc.Get("BrowserOpen"), () => OpenBrowser("https://www.google.com")));
+        toolbar.Children.Add(ActionButton("Webcam", OpenWebcam));
         toolbar.Children.Add(ActionButton(Loc.Get("KeyboardOpen"), OpenKeyboard));
         toolbar.Children.Add(ActionButton(Loc.Get("ArrangeWindows"), () => pendingArrange++));
         toolbar.Children.Add(ActionButton(Loc.Get("GameHelpStart"), BeginGameHelp));
+        var vrexLauncher = ActionButton("", OpenVrexChat);
+        vrexLauncher.Tag = null;
+        vrexLauncher.HorizontalContentAlignment = HorizontalAlignment.Center;
+        vrexLauncher.ToolTip = "Open Vrex chat";
+        System.Windows.Automation.AutomationProperties.SetName(vrexLauncher, "Open Vrex chat");
+        vrexLauncher.Content = new Image { Width = 32, Height = 32,
+            Source = new BitmapImage(new Uri("pack://application:,,,/Assets/vrex-badge.png")) };
+        toolbar.Children.Add(vrexLauncher);
+        toolbar.Children.Add(ActionButton("Ubuntu", OpenVrexUbuntu));
         var text = new FrameworkElementFactory(typeof(TextBlock));
         text.SetBinding(TextBlock.TextProperty, new Binding());
         text.SetValue(TextBlock.TextWrappingProperty, TextWrapping.Wrap);
@@ -181,7 +197,7 @@ public sealed partial class ControllerMenu : IDisposable
             control.MinHeight = 68; control.Margin = new Thickness(4);
             control.FontSize = 18; control.Padding = new Thickness(12, 8, 12, 8);
             control.HorizontalAlignment = HorizontalAlignment.Stretch;
-            if (control is Button button) button.ContentTemplate = toolbarLabel;
+            if (control is Button { Content: string } button) button.ContentTemplate = toolbarLabel;
         }
         root.Children.Add(top);
         DockPanel.SetDock(status, Dock.Bottom);
@@ -196,8 +212,78 @@ public sealed partial class ControllerMenu : IDisposable
             Language = System.Windows.Markup.XmlLanguage.GetLanguage(CultureInfo.CurrentCulture.IetfLanguageTag)
         };
         Home();
+        RestoreWorkspace();
         timer.Tick += (_, _) => Tick();
         timer.Start();
+        VrexClient.Current.Changed+=VrexChanged;
+    }
+
+    private VRX.VrexBridge.VrexEvent? vrexPointing;
+    private long vrexPointingUntil;
+
+    private void VrexChanged(VRX.VrexBridge.VrexEvent message)
+    {
+        if (message.Type == "screen-point")
+        {
+            vrexPointing = message;
+            vrexPointingUntil = Environment.TickCount64 + 4200;
+            return;
+        }
+        if (message.Type == "pc-mode")
+        {
+            vrexPointing = null;
+            foreach (var bubble in snapshots.OfType<FloatingVrexReply>().Where(bubble => bubble.Interactive && !bubble.WaitingForChoice))
+                bubble.Dismiss();
+            return;
+        }
+        if (message.Type is "stopped" or "chat-changed")
+        {
+            vrexPointing = null;
+            foreach (var bubble in snapshots.OfType<FloatingVrexReply>()) bubble.Dismiss();
+            return;
+        }
+        if (!snapshots.OfType<FloatingVrexChatPanel>().Any(panel => !panel.Closed)) return;
+        if (message.Type == "suggestion" && !string.IsNullOrWhiteSpace(message.Text))
+        {
+            if (snapshots.OfType<FloatingVrexReply>().Any(panel => panel.WaitingForChoice)) return;
+            DismissVrexPreviews();
+            var client = VrexClient.Current;
+            string context = message.Text;
+            var options = (message.Choices is { Length: > 0 } ? message.Choices.Take(2) : ["Guide Me"])
+                .Select(choice => (choice, (Action)(() =>
+                {
+                    if (message.ObservedSurface is "settings" or "browser")
+                        client.Send(new("chat", $"Explain this in words: {choice}\nYour earlier observation was: {context}"));
+                    else
+                        _ = client.CapturePcAsync($"Guide me with this request: {choice}\nThe suggestion I selected was: {context}");
+                }))).ToList();
+            options.Add(("Not now", () => { }));
+            var existing = snapshots.OfType<FloatingVrexReply>().FirstOrDefault(p => p.Interactive && !p.Closed);
+            if (existing != null) existing.Show(context, options);
+            else AddPanel(5, () => { var bubble = new FloatingVrexReply(); bubble.Show(context, options); return bubble; });
+            return;
+        }
+        if(message.Type!="reply" || string.IsNullOrWhiteSpace(message.Text))return;
+        if (message.Choices is { Length: > 0 } labels)
+        {
+            DismissVrexPreviews();
+            var options = labels.Select(label => (label, (Action)(() => VrexClient.Current.ChooseReply(label)))).ToList();
+            options.Add(("Not now", () => VrexClient.Current.Send(new("dismiss-choice"))));
+            var dialogue = snapshots.OfType<FloatingVrexReply>().FirstOrDefault(panel => panel.Interactive && !panel.Closed);
+            if (dialogue != null) dialogue.Show(message.Text, options, waitForChoice: true);
+            else AddPanel(5, () => { var panel = new FloatingVrexReply(); panel.Show(message.Text, options, waitForChoice: true); return panel; });
+            return;
+        }
+        if (snapshots.OfType<FloatingVrexReply>().Any(panel => panel.Interactive && !panel.Closed)) return;
+        var caption=snapshots.OfType<FloatingVrexReply>().FirstOrDefault(p=>!p.Interactive && !p.Closed);
+        if(caption!=null) {caption.Show(message.Text);return;}
+        AddPanel(4,()=>{var panel=new FloatingVrexReply();panel.Show(message.Text);return panel;});
+
+        void DismissVrexPreviews()
+        {
+            foreach (var panel in snapshots.OfType<FloatingVrexReply>().Where(panel => !panel.Interactive))
+                panel.Dismiss();
+        }
     }
 
     public void Enable(bool value)
@@ -223,15 +309,20 @@ public sealed partial class ControllerMenu : IDisposable
         catch (AbandonedMutexException) { return true; }
     }
 
-    private int AddPanel(int kind, Func<IFloatingPanel> create)
+    private int AddPanel(int kind, Func<IFloatingPanel> create, int preferredSlot = -1)
     {
         if (!Lock()) return -1;
         int slot = -1;
         try
         {
             for (int i = 0; i < MaxSnapshots; i++)
-                if (snapshots[i] == null && memory.ReadInt32(SnapshotsAt+i*SnapshotBytes+8) == 0 && memory.ReadInt32(SnapshotsAt+i*SnapshotBytes+12) == 0)
-                { slot = i; memory.Write(SnapshotsAt+i*SnapshotBytes+12, 3); break; }
+                if ((preferredSlot < 0 || preferredSlot == i) && snapshots[i] == null && memory.ReadInt32(SnapshotsAt+i*SnapshotBytes+8) == 0 && memory.ReadInt32(SnapshotsAt+i*SnapshotBytes+12) == 0)
+                {
+                    slot = i;
+                    if (preferredSlot < 0) memory.Write(PlacementAt + (i + 1) * PlacementBytes, 0);
+                    memory.Write(SnapshotsAt+i*SnapshotBytes+12, 3);
+                    break;
+                }
         }
         finally { mutex.ReleaseMutex(); }
         if (slot < 0) { interactionHint.Text = Loc.Get("SnapshotLimit"); return -1; }
@@ -241,7 +332,8 @@ public sealed partial class ControllerMenu : IDisposable
             pendingPanelKinds[slot] = kind; // Tick publishes the bitmap and metadata together.
             return slot;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or
+            System.ComponentModel.Win32Exception or FormatException or NotSupportedException)
         {
             snapshots[slot]?.Dispose(); snapshots[slot] = null;
             pendingPanelKinds[slot] = -2; // Retry releasing the reserved slot without blocking WPF.
@@ -252,6 +344,49 @@ public sealed partial class ControllerMenu : IDisposable
     {
         int slot = AddPanel(1, () => new FloatingBrowser(FocusBrowser, OpenKeyboard, OpenBrowser, url));
         if (slot >= 0) FocusBrowser((FloatingBrowser)snapshots[slot]!);
+    }
+    private void OpenWebcam()
+    {
+        if (snapshots.OfType<FloatingBrowser>().Any(panel => panel.IsWebcam && !panel.Closed)) return;
+        AddPanel(6, CreateWebcamPanel);
+    }
+    private static FloatingBrowser CreateWebcamPanel() =>
+        new(_ => { }, () => { }, _ => { }, WebcamPage.Url, webcam: true);
+    private void OpenVrexUbuntu()
+    {
+        for(int i=0;i<MaxSnapshots;i++) if(snapshots[i] is FloatingUbuntuPanel {Closed:false} existing)
+        {
+            textTarget=existing;SetKeyboardTarget();return;
+        }
+        int slot=AddPanel(3,CreateUbuntuPanel);
+        if(slot>=0 && snapshots[slot] is FloatingUbuntuPanel panel)
+        {
+            textTarget=panel;SetKeyboardTarget();
+        }
+    }
+    private FloatingUbuntuPanel CreateUbuntuPanel() => new(target => { textTarget = target; SetKeyboardTarget(); },
+        openKeyboard: ShowKeyboardForInput);
+    private FloatingVrexChatPanel CreateVrexChatPanel() => new(VrexClient.Current,
+        target => { textTarget = target; SetKeyboardTarget(); }, ShowKeyboardForInput, CaptureGuidePanel, OpenBrowser, OpenVrexGrid);
+    private bool OpenVrexGrid()
+    {
+        if (snapshots.OfType<FloatingVrexGridPanel>().Any(panel => !panel.Closed)) return true;
+        return AddPanel(0, () => new FloatingVrexGridPanel(VrexClient.Current)) >= 0;
+    }
+    private void OpenVrexChat()
+    {
+        var existing=snapshots.OfType<FloatingVrexChatPanel>().FirstOrDefault(panel => !panel.Closed);
+        if (existing == null)
+        {
+            int slot=AddPanel(7, CreateVrexChatPanel);
+            if (slot >= 0) existing=(FloatingVrexChatPanel)snapshots[slot]!;
+        }
+        if (existing != null) { textTarget=existing; SetKeyboardTarget(); }
+    }
+    private void ShowKeyboardForInput()
+    {
+        if (!snapshots.OfType<FloatingKeyboard>().Any(keyboard => !keyboard.Closed)) OpenKeyboard();
+        else SetKeyboardTarget();
     }
     private void OpenKeyboard()
     {
@@ -270,12 +405,23 @@ public sealed partial class ControllerMenu : IDisposable
     private void SetKeyboardTarget()
     {
         string label = textTarget is FloatingBrowser browser ? Loc.Format("KeyboardBrowserTarget", browser.Address) :
+            textTarget is FloatingUbuntuPanel or FloatingVrexChatPanel ? Loc.Get("VrexKeyboardTarget") :
             controlScreen ? Loc.Get("KeyboardWindowsTarget") : Loc.Get("KeyboardChooseTarget");
-        foreach (var keyboard in snapshots.OfType<FloatingKeyboard>()) keyboard.SetTarget(label);
+        foreach (var keyboard in snapshots.OfType<FloatingKeyboard>())
+            keyboard.SetTarget(label, textTarget is FloatingVrexChatPanel { IsPasswordActive: true });
+    }
+    private AudioDirection? ReadAudioDirection(int index)
+    {
+        long at = AudioAt + index * AudioBytes;
+        if (memory.ReadInt32(at) == 0) return null;
+        float x = memory.ReadSingle(at + 4), y = memory.ReadSingle(at + 8), z = memory.ReadSingle(at + 12);
+        return float.IsFinite(x) && float.IsFinite(y) && float.IsFinite(z) ? new(x, y, z) : null;
     }
     private bool SendKeyboardEdit(KeyboardEdit edit)
     {
         if (textTarget is FloatingBrowser { Closed: false } browser) { if (!browser.CanType) return false; browser.Edit(edit); return true; }
+        if (textTarget is FloatingUbuntuPanel {Closed:false} ubuntu) {ubuntu.Edit(edit);return true;}
+        if (textTarget is FloatingVrexChatPanel {Closed:false} chat) {chat.Edit(edit);return true;}
         if (!Lock()) return false;
         try
         {
@@ -295,16 +441,19 @@ public sealed partial class ControllerMenu : IDisposable
 
     private readonly Dictionary<string, double> pageOffsets = new();
     private string pageKey = "";
+    private VrexCompanionSettings? companionSettings;
     private double? restoreOffset;
     private void Page(string title, Action? parent, string? navigationKey = null, string? trail = null)
     {
-        if (pageKey.Length > 0) pageOffsets[pageKey] = scroll.VerticalOffset;
+        if (pageKey.Length > 0) pageOffsets[pageKey] = restoreOffset ?? scroll.VerticalOffset;
         pageKey = navigationKey ?? title;
         restoreOffset = pageOffsets.GetValueOrDefault(pageKey);
         pageGeneration++;
         held = null; contentDragCandidate = contentDragging = false; refresh.Clear();
         // Keep toolbar targets; detached page targets must never receive late releases.
         foreach (var key in targets.Keys.Where(k => IsUnder(k, body)).ToArray()) targets.Remove(key);
+        companionSettings?.Dispose();
+        companionSettings = null;
         body.Children.Clear();
         heading.Text = title; back = parent;
         backButton.IsEnabled = parent != null;
@@ -326,6 +475,71 @@ public sealed partial class ControllerMenu : IDisposable
         body.Children.Add(cards);
         body.Children.Add(ActionButton(Loc.Get("GameHelpSettings"), ShowGameHelpSettings));
     }
+
+    private void ShowCapture()
+    {
+        if (pageKey == "capture") return;
+        var parent = currentPage ?? Home;
+        OpenCapturePage(parent, breadcrumb);
+    }
+
+    private void OpenCapturePage(Action parent, string parentTrail)
+    {
+        Page("Capture", parent, "capture", parentTrail + " › Capture");
+        currentPage = () => OpenCapturePage(parent, parentTrail);
+        body.Children.Add(ActionButton(Loc.Get("SnapshotTake"), TakeGameSnapshot));
+        vrScreenshotButton = ActionButton("VR screenshot", () => vrCapture.Start(imagesFolder, false));
+        vrVideoButton = ActionButton("Record VR video", () =>
+        {
+            if (vrCapture.CanStop) vrCapture.Stop();
+            else vrCapture.Start(imagesFolder, true);
+        });
+        body.Children.Add(vrScreenshotButton);
+        body.Children.Add(vrVideoButton);
+        body.Children.Add(ActionButton(Loc.Get("SnapshotOpenFolder"), OpenCaptures));
+        body.Children.Add(captureStatus);
+        UpdateCaptureButtons();
+    }
+
+    private void UpdateCaptureButtons()
+    {
+        captureLauncher.Content = vrCapture.CanStop ? "Capture · Recording" : "Capture";
+        if (vrScreenshotButton != null) vrScreenshotButton.IsEnabled = !vrCapture.Busy;
+        if (vrVideoButton != null)
+        {
+            vrVideoButton.Content = vrCapture.CanStop ? "Stop VR recording" : "Record VR video";
+            vrVideoButton.IsEnabled = !vrCapture.Busy || vrCapture.CanStop;
+        }
+        captureStatus.Text = vrCapture.Status;
+        nextMenuRender = 0;
+    }
+
+    private void TakeGameSnapshot()
+    {
+        if (!Lock()) return;
+        try
+        {
+            bool free = Enumerable.Range(0, MaxSnapshots).Any(i =>
+                memory.ReadInt32(SnapshotsAt + i * SnapshotBytes + 8) == 0 &&
+                memory.ReadInt32(SnapshotsAt + i * SnapshotBytes + 12) == 0);
+            if (!free) { interactionHint.Text = Loc.Get("SnapshotLimit"); return; }
+            memory.Write(48, unchecked(memory.ReadUInt32(48) + 1));
+        }
+        finally { mutex.ReleaseMutex(); }
+    }
+
+    private void OpenCaptures()
+    {
+        try
+        {
+            Directory.CreateDirectory(imagesFolder);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(imagesFolder) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        { interactionHint.Text = Loc.Format("SnapshotFileError", ex.Message); }
+    }
+
+    internal Task StopCaptureAsync() => vrCapture.StopAsync();
 
     private void Section(Expander section)
     {
@@ -352,6 +566,14 @@ public sealed partial class ControllerMenu : IDisposable
         Page(category.Header?.ToString() ?? "", parent, "category:" + category.Name, parentTrail + " › " + category.Header);
         currentPage = () => Category(category, parent, parentTrail);
         if (category.Content is FrameworkElement content && Project(content) is { } copy) body.Children.Add(copy);
+        if (category.Name == "RoomVrexCategory")
+        {
+            companionSettings = new VrexCompanionSettings(
+                (button, action) => targets[button] = (_, down) => { if (!down) action(); },
+                button => targets.Remove(button), () => nextMenuRender = 0);
+            body.Children.Add(companionSettings);
+            companionSettings.Connect();
+        }
     }
 
     private static void Bind(DependencyObject target, DependencyProperty property, object source, string path,
@@ -363,6 +585,8 @@ public sealed partial class ControllerMenu : IDisposable
         FrameworkElement? copy;
         switch (source)
         {
+            case ContentControl { Name: "VrexSetupHost" or "VrexModelSettingsHost" or "VrexCompanionSettingsHost" }: return null;
+            case Button { Name: "VrexModelSettingsButton" }: return null;
             case Expander category:
                 Action parent = currentPage ?? Home;
                 string trail = breadcrumb;
@@ -531,10 +755,13 @@ public sealed partial class ControllerMenu : IDisposable
     }
     private void Pointer(int kind, float x, float y, float value)
     {
+        if (kind is 4 or PanelFeedback.Leave) beamHover.Set(null, () => nextMenuRender = 0);
+        if (kind == PanelFeedback.Leave) return;
         if (kind == 4)
         { PanelFeedback.Cancel(held, () => nextMenuRender = 0); held = null; contentDragCandidate = contentDragging = false; scrolling.Jump(scroll.VerticalOffset); return; }
         if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(value)) return;
         var point = new Point(x * Width, y * Height);
+        if (kind == 0) beamHover.Set(Hit(point), () => nextMenuRender = 0);
         if (!scrolling.Active && !contentDragging) scrolling.Jump(scroll.VerticalOffset);
         if (kind == 3) { scrolling.Add(-Math.Clamp(value, -1000, 1000), scroll.ScrollableHeight); return; }
         if (kind == 1)
@@ -590,6 +817,43 @@ public sealed partial class ControllerMenu : IDisposable
             memory.Write(8, enabled ? 1 : 0);
             memory.Write(36, enabled && controlScreen ? 1 : 0);
             memory.Write(40, unchecked((ulong)Environment.TickCount64));
+            memory.Write(SmoothEdgesAt, smoothEdges?.IsChecked == true ? 1 : 0);
+            var vrex=VrexClient.Current;
+            vrex.AudioDirection = enabled ? ReadAudioDirection(0) : null;
+            for (int i = 0; i < snapshots.Length; i++)
+                if (snapshots[i] is FloatingBrowser browser)
+                    browser.SetAudioDirection(enabled ? ReadAudioDirection(i + 1) : null);
+            int vrexSlot=Array.FindIndex(snapshots,p=>p is FloatingUbuntuPanel {Closed:false});
+            int chatSlot=Array.FindIndex(snapshots,p=>p is FloatingVrexChatPanel {Closed:false});
+            vrex.GuestAudioDirection = enabled && vrex.VmPhase == VrexVmPhase.Running && vrexSlot >= 0
+                ? ReadAudioDirection(vrexSlot + 1) : null;
+            int vrexState=vrex.State switch {"responding"=>1,"working"=>2,"paused"=>3,"speaking"=>4,"error"=>5,_=>0};
+            bool companionOpen = chatSlot >= 0;
+            int vrexFlags = (companionOpen ? 1 : 0) | (vrex.Helpful ? 2 : 0) |
+                (vrex.AllowPcScreen ? 4 : 0) | (vrex.AllowPanelScreen ? 8 : 0) |
+                (snapshots.OfType<FloatingVrexReply>().Any(panel => panel.Interactive && !panel.Closed) ? 16 : 0);
+            int companionSlot = vrex.Helpful && vrexSlot >= 0 ? vrexSlot : chatSlot;
+            var vrexPoint=vrex.Helpful && vrexSlot>=0?((FloatingUbuntuPanel)snapshots[vrexSlot]!).BotPoint:new Point(-1,-1);
+            if (!companionOpen || Environment.TickCount64 >= vrexPointingUntil) vrexPointing = null;
+            if (vrexPointing is { Point: { } location, Text: var target })
+            {
+                if (target == "pc" && vrex.AllowPcScreen && vrex.PcTools.Contains("pc_mark"))
+                {
+                    vrexFlags |= 32;
+                    companionSlot = -1;
+                    vrexPoint = new Point(location.X, location.Y);
+                }
+                else if (target == "ubuntu" && vrex.AllowUbuntuMarks && vrexSlot >= 0 &&
+                    ((FloatingUbuntuPanel)snapshots[vrexSlot]!).ProjectGuestPoint(location) is Point projected)
+                {
+                    vrexFlags |= 32;
+                    companionSlot = vrexSlot;
+                    vrexPoint = projected;
+                }
+            }
+            memory.Write(VrexAt,companionOpen?vrexFlags:0);memory.Write(VrexAt+4,vrexState);memory.Write(VrexAt+8,companionSlot);
+            memory.Write(VrexAt+16,(float)vrexPoint.X);memory.Write(VrexAt+20,(float)vrexPoint.Y);
+            memory.Write(VrexAt+24,vrex.Avatar);memory.Write(VrexAt+28,vrex.ShellRgb);
             if (pendingArrange != 0) { memory.Write(60, unchecked(memory.ReadUInt32(60)+pendingArrange)); pendingArrange = 0; }
             visible = enabled && memory.ReadInt32(12) != 0;
             if (memory.ReadUInt32(KeyboardAt+8) != keyboardFocusSerial)
@@ -606,7 +870,7 @@ public sealed partial class ControllerMenu : IDisposable
             uint write = memory.ReadUInt32(28), read = memory.ReadUInt32(32);
             // A producer overflow cancels a drag; never turn a dropped release into a stuck slider.
             if (unchecked(write - read) > EventCount)
-            { held = null; foreach (var snapshot in snapshots) snapshot?.Pointer(4, -1, -1); read = write; }
+            { held = null; observedPanel = -1; foreach (var snapshot in snapshots) snapshot?.Pointer(4, -1, -1); read = write; }
             while (read != write)
             {
                 int offset = HeaderBytes + (int)(read % EventCount) * 16;
@@ -649,12 +913,18 @@ public sealed partial class ControllerMenu : IDisposable
                     try { File.Delete(full); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
         }
+        settingsVisibleForGuide = visible;
         foreach (var e in events.Where(e => e.Kind >= 16))
         {
             int slot = e.Kind / 16 - 1;
             if (slot >= 0 && slot < MaxSnapshots)
                 snapshots[slot]?.Pointer(enabled ? e.Kind % 16 : 4, e.X, e.Y, e.Value);
         }
+        TrackObservedPanel(events);
+        bool guideShortcutDown = GuideShortcutIsDown();
+        if (enabled && guideShortcutDown && !guideShortcutWasDown)
+            snapshots.OfType<FloatingVrexChatPanel>().FirstOrDefault(panel => !panel.Closed)?.RequestGuide();
+        guideShortcutWasDown = guideShortcutDown;
         timer.Interval = TimeSpan.FromMilliseconds(visible || snapshots.Any(p => p is { Closed: false }) ? 1000.0 / 90 : 50);
         RenderSettings(events, visible);
         for (int i = 0; i < MaxSnapshots; i++)
@@ -668,6 +938,11 @@ public sealed partial class ControllerMenu : IDisposable
                 long at = SnapshotsAt + i * SnapshotBytes;
                 if (snapshot == null || snapshot.Closed)
                 {
+                    if (snapshot is FloatingVrexChatPanel)
+                    {
+                        foreach (var bubble in snapshots.OfType<FloatingVrexReply>()) bubble.Dismiss();
+                        foreach (var grid in snapshots.OfType<FloatingVrexGridPanel>()) grid.Dispose();
+                    }
                     memory.Write(at + 8, 0); memory.Write(at + 12, 0);
                     if (ReferenceEquals(snapshot, textTarget)) { textTarget = null; SetKeyboardTarget(); }
                     snapshot?.Dispose(); snapshots[i] = null;
@@ -684,11 +959,81 @@ public sealed partial class ControllerMenu : IDisposable
             }
             finally { mutex.ReleaseMutex(); }
         }
+        if (enabled && snapshots.OfType<FloatingVrexChatPanel>().Any(panel => !panel.Closed) &&
+            !snapshots.OfType<FloatingVrexReply>().Any(panel => panel.WaitingForChoice))
+            VrexClient.Current.PollPcScreen(() => CaptureObservedPanel(visible));
+    }
+
+    private static bool GuideShortcutIsDown()
+    {
+        const int control = 0x11, leftAlt = 0xA4, shift = 0x10, leftWindows = 0x5B, rightWindows = 0x5C;
+        return IsKeyDown('G') && IsKeyDown(control) && IsKeyDown(leftAlt) &&
+            !IsKeyDown(shift) && !IsKeyDown(leftWindows) && !IsKeyDown(rightWindows);
+    }
+
+    private static bool IsKeyDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
+
+    private void TrackObservedPanel(IEnumerable<(int Kind, float X, float Y, float Value)> events)
+    {
+        if (!enabled) { observedPanel = -1; guidePanelTarget = null; return; }
+        long now = Environment.TickCount64;
+        foreach (var e in events)
+        {
+            int panel = e.Kind / 16, kind = e.Kind % 16;
+            if (kind == 0 && e.X is >= 0 and <= 1 && e.Y is >= 0 and <= 1)
+            {
+                if (observedPanel != panel || now - panelLastPoint > 500) panelDwellStart = now;
+                observedPanel = panel;
+                panelLastPoint = now;
+                (panelPointX, panelPointY) = (e.X, e.Y);
+                var browser = panel > 0 && panel <= snapshots.Length ? snapshots[panel - 1] as FloatingBrowser : null;
+                if (now - panelDwellStart >= 900 && (panel == 0 || browser is { CanObserve: true }))
+                    guidePanelTarget = (panel, browser, e.X, e.Y, now);
+            }
+            else if ((kind is 4 or PanelFeedback.Leave) && observedPanel == panel) observedPanel = -1;
+        }
+    }
+
+    private (VrexScreenCapture.Frame Frame, string Surface)? CaptureObservedPanel(bool settingsVisible)
+    {
+        long now = Environment.TickCount64;
+        if (observedPanel < 0 || now - panelLastPoint > 350 || now - panelDwellStart < 900) return null;
+        return CapturePanel(observedPanel, panelPointX, panelPointY, settingsVisible);
+    }
+
+    private (VrexScreenCapture.Frame Frame, string Surface)? CaptureGuidePanel()
+    {
+        if (guidePanelTarget is not { } target || Environment.TickCount64 - target.Time > 8000 ||
+            (target.Slot > 0 && !ReferenceEquals(snapshots[target.Slot - 1], target.Browser))) return null;
+        return CapturePanel(target.Slot, target.X, target.Y, settingsVisibleForGuide);
+    }
+
+    private (VrexScreenCapture.Frame Frame, string Surface)? CapturePanel(int slot, float x, float y, bool settingsVisible)
+    {
+        byte[] frame;
+        string source;
+        if (slot == 0 && settingsVisible) { frame = pixels; source = "settings"; }
+        else if (slot > 0 && slot <= snapshots.Length && snapshots[slot - 1] is FloatingBrowser { CanObserve: true } browser)
+        { frame = browser.Render(); source = "browser"; }
+        else return null;
+        try
+        {
+            var image = BitmapSource.Create(PixelWidth, PixelHeight, 192, 192, PixelFormats.Pbgra32, null, frame, PixelWidth * 4);
+            return (VrexScreenCapture.Encode(image, x, y), source);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Vrex panel capture] {ex.Message}");
+            return null;
+        }
     }
 
     private void RenderSettings(IReadOnlyList<(int Kind, float X, float Y, float Value)> events, bool visible)
     {
-        if (!visible) { PanelFeedback.Cancel(held, () => nextMenuRender = 0); held = null; contentDragCandidate = contentDragging = false; scrolling.Jump(scroll.VerticalOffset); return; }
+        if (!visible) { beamHover.Set(null, () => nextMenuRender = 0); PanelFeedback.Cancel(held, () => nextMenuRender = 0); held = null; contentDragCandidate = contentDragging = false; scrolling.Jump(scroll.VerticalOffset); return; }
         surface.Measure(new Size(Width, Height)); surface.Arrange(new Rect(0, 0, Width, Height)); surface.UpdateLayout();
         if (restoreOffset is double savedOffset) { scroll.ScrollToVerticalOffset(savedOffset); surface.UpdateLayout(); scrolling.Jump(scroll.VerticalOffset); restoreOffset = null; }
         int page = pageGeneration;
@@ -749,7 +1094,13 @@ public sealed partial class ControllerMenu : IDisposable
     public void Dispose()
     {
         if (disposed) return;
+        SaveWorkspace();
         Enable(false); disposed = true; timer.Stop();
+        VrexClient.Current.Changed-=VrexChanged;
+        companionSettings?.Dispose();
+        vrCapture.Dispose();
+        VrexClient.Current.AudioDirection = null;
+        VrexClient.Current.GuestAudioDirection = null;
         foreach (var panel in snapshots) panel?.Dispose();
         predictor.Save();
         memory.Dispose(); map.Dispose(); mutex.Dispose();
@@ -765,12 +1116,55 @@ public sealed partial class ControllerMenu : IDisposable
         if (!Lock()) throw new Exception("Menu test could not show the panel");
         try { memory.Write(12, 1); } finally { mutex.ReleaseMutex(); }
         Tick();
+        var close = targets.Keys.OfType<Button>().Single(button => button.ToolTip?.ToString() == Loc.Get("SnapshotClose"));
+        foreach (var button in new[] { close, backButton, rollupButton })
+        {
+            if (button.Content is not Grid { Width: 24, Height: 24 } icon)
+                throw new Exception("Floating settings navigation buttons must show full-size icons.");
+            var iconCentre = icon.TranslatePoint(new Point(icon.ActualWidth / 2, icon.ActualHeight / 2), button);
+            if (Math.Abs(iconCentre.X - button.ActualWidth / 2) > .5 || Math.Abs(iconCentre.Y - button.ActualHeight / 2) > .5)
+                throw new Exception("Floating settings navigation icons must be centered.");
+        }
         double expandedViewport = scroll.ViewportHeight;
         ClickButton(Loc.Get("ControllerMenuCollapse")); Tick();
         if (toolbar.Visibility != Visibility.Collapsed || scroll.ViewportHeight < expandedViewport + 100)
             throw new Exception("Rolling up quick controls must give their space to the scrolling content");
         ClickButton(Loc.Get("ControllerMenuExpand")); Tick();
         if (toolbar.Visibility != Visibility.Visible) throw new Exception("Quick controls must expand again through the roll-up icon");
+        if (memory.ReadUInt32(VrexAt) != 0) throw new Exception("Vrex must be inactive while chat is closed.");
+        string chatPreferences = Path.Combine(output, $"vrex-prefs-{Guid.NewGuid():N}.json");
+        var settings = new VrexChatPreferences(true, true, true, true, ["pc_click", "pc_read_file", "unknown"]);
+        try
+        {
+            settings.Save(chatPreferences);
+            var restored = VrexChatPreferences.Load(chatPreferences);
+            if (!restored.Helpful || !restored.SpeakReplies || !restored.AllowPcScreen || !restored.AllowPanelScreen ||
+                restored.PcTools?.SequenceEqual(["pc_click", "pc_read_file"]) != true)
+                throw new Exception("Reloading Vrex chat preferences must restore each setting and recognized tool permission.");
+        }
+        finally { File.Delete(chatPreferences); }
+        var vrexLauncher = toolbar.Children.OfType<Button>().Single(button => button.ToolTip as string == "Open Vrex chat");
+        if (vrexLauncher.Content is not Image { ActualWidth: > 0, Source: BitmapSource { PixelWidth: > 0 } } badge ||
+            !IsUnder(badge, vrexLauncher))
+            throw new Exception("The Vrex launcher must render the logo in its button.");
+        if (toolbar.Children[toolbar.Children.IndexOf(vrexLauncher) + 1] is not Button { Content: "Ubuntu" })
+            throw new Exception("The Ubuntu launcher must sit next to the Vrex launcher.");
+        ClickButton("Capture");
+        if (pageKey != "capture" || vrScreenshotButton == null || vrVideoButton == null ||
+            !targets.Keys.OfType<Button>().Any(button => button.Content?.ToString() == Loc.Get("SnapshotTake")))
+            throw new Exception("Capture must expose game screenshot, VR screenshot and VR video.");
+        ClickButton(Loc.Get("ControllerMenuBack"));
+        var stereoButton = toolbar.Children.OfType<Button>().Single(button => button.Content is CheckBox);
+        var stereoIndicator = (CheckBox)stereoButton.Content;
+        var stereoSource = (CheckBox)BindingOperations.GetBinding(stereoIndicator, ToggleButton.IsCheckedProperty)!.Source;
+        bool? initialStereo = stereoSource.IsChecked;
+        var stereoEdge = stereoButton.TranslatePoint(new Point(stereoButton.ActualWidth - 8, stereoButton.ActualHeight / 2), surface);
+        float stereoX = (float)(stereoEdge.X / Width), stereoY = (float)(stereoEdge.Y / Height);
+        Pointer(1, stereoX, stereoY, 0);
+        Pointer(2, stereoX, stereoY, 0);
+        if (stereoSource.IsChecked == initialStereo || stereoIndicator.IsChecked != stereoSource.IsChecked)
+            throw new Exception("The entire 3D button must toggle the setting and update its indicator.");
+        stereoSource.IsChecked = initialStereo;
         var helpPreferences = GameHelpPreferences.Current;
         helpPreferences.Permit(helpPreferences.Selected, false);
         uint oldCaptureRequests = memory.ReadUInt32(48);
@@ -892,14 +1286,6 @@ public sealed partial class ControllerMenu : IDisposable
         source.Value = before;
         Tick();
         if (track.Value != before) throw new Exception("Desktop setting did not update the controller slider");
-        var box = targets.Keys.OfType<CheckBox>().First();
-        var original = (CheckBox)BindingOperations.GetBinding(box, ToggleButton.IsCheckedProperty)!.Source;
-        bool? old = original.IsChecked;
-        point = box.TranslatePoint(new Point(8, 8), surface);
-        Pointer(1, (float)(point.X / Width), (float)(point.Y / Height), 0);
-        Pointer(2, (float)(point.X / Width), (float)(point.Y / Height), 0);
-        if (original.IsChecked == old) throw new Exception("Controller checkbox did not update the desktop setting");
-        original.IsChecked = old;
         var panelFrameTimes = new List<double>();
         for (int sample = 0; sample < 30; sample++)
         {

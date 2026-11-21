@@ -317,6 +317,7 @@ public sealed class ProfileStore(string root)
             FloatingTheme = Math.Clamp(settings.FloatingTheme, 0, Appearance.Themes.Length - 1),
             DesktopTheme = Math.Clamp(settings.DesktopTheme, 0, Appearance.Themes.Length - 1),
             FloatingOpacity = Math.Clamp(settings.FloatingOpacity, 0, 100),
+            FloatingAntialiasing = settings.FloatingAntialiasing,
             AutoAttachSeconds = AppSettings.ClampSeconds(settings.AutoAttachSeconds),
             Mode = AppSettings.ValidMode(settings.Mode) ? settings.Mode : null,
             Sections = settings.Sections == null ? null : new Dictionary<string, bool>(settings.Sections, StringComparer.Ordinal),

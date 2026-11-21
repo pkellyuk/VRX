@@ -1,4 +1,5 @@
 using System.IO;
+using VRX.VrexBridge;
 using System.Text.Json;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -49,7 +50,7 @@ internal sealed class GameHelpPreferences(string path)
     private static GameHelpPreferences? current;
     internal static GameHelpPreferences Current => current ??= new(Path.Combine(
         Environment.GetCommandLineArgs().Contains("--smoke-test") ? Path.Combine(Path.GetTempPath(), "VRX-GameHelpSmoke", Environment.ProcessId.ToString()) :
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX"), "game-help.json"));
+            VrxDataDirectory.Root, "game-help.json"));
     internal static void SmokeTest(string output)
     {
         string file = Path.Combine(output, "game-help-settings-test.json"); if (File.Exists(file)) File.Delete(file);

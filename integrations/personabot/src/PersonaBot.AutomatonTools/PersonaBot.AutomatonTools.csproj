@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><NoWarn>$(NoWarn);CA1416</NoWarn><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Automaton.Core/Automaton.Core.csproj" />
+    <Compile Include="../Automaton.Tools/Tools/ComputerUseTools.cs" Link="ComputerUseTools.cs" />
+    <Compile Include="../Automaton.Tools/Models/ComputerUseToolParameters.cs" Link="ComputerUseToolParameters.cs" />
+    <Compile Include="../Automaton.Tools/Tools/TaskListTool.cs" Link="TaskListTool.cs" />
+    <!-- Guide Me asks the person questions in the guide's bubble (PersonaBot.Core/Guide.cs). -->
+    <Compile Include="../Automaton.Tools/Tools/QuestionTool.cs" Link="QuestionTool.cs" />
+    <Compile Include="../Automaton.Tools/Models/QuestionToolParameters.cs" Link="QuestionToolParameters.cs" />
+  </ItemGroup>
+</Project>

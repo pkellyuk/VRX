@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using VRX.VrexBridge;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Automation;
@@ -48,8 +49,7 @@ public partial class MainWindow : Window
     public MainWindow(bool smokeTest)
     {
         smoke = smokeTest;
-        string data = smoke ? Path.Combine(EngineSession.RepositoryRoot(), "desktop", "out", "smoke-data") :
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VRX");
+        string data = smoke ? Path.Combine(EngineSession.RepositoryRoot(), "desktop", "out", "smoke-data") : VrxDataDirectory.Root;
         store = new(data);
         // Bound numbers ("5.70 m") in the user's format; profiles and the engine stay invariant.
         Language = XmlLanguage.GetLanguage(CultureInfo.CurrentCulture.IetfLanguageTag);
@@ -200,13 +200,11 @@ public partial class MainWindow : Window
         }
         UpdateButtons();
     }
-    // "v1.2" for 1.2.0, "v1.2.3" for a patch, including a fourth revision when set.
     public static string DisplayVersion()
     {
         var v = typeof(MainWindow).Assembly.GetName().Version;
         if (v == null) return "";
-        if (v.Revision > 0) return $"v{v.Major}.{v.Minor}.{v.Build}.{v.Revision}";
-        return v.Build > 0 ? $"v{v.Major}.{v.Minor}.{v.Build}" : $"v{v.Major}.{v.Minor}";
+        return "v" + v.ToString(v.Revision > 0 ? 4 : 3);
     }
 
     private IReadOnlyList<GpuChoice> gpuChoices = Gpus.Parse([]);
@@ -258,6 +256,7 @@ public partial class MainWindow : Window
         FloatingThemeList.SelectedIndex = Math.Clamp(appSettings.FloatingTheme, 0, Appearance.Themes.Length - 1);
         DesktopThemeList.SelectedIndex = Math.Clamp(appSettings.DesktopTheme, 0, Appearance.Themes.Length - 1);
         FloatingOpacitySlider.Value = Math.Clamp(appSettings.FloatingOpacity, 0, 100);
+        FloatingAntialiasingCheck.IsChecked = appSettings.FloatingAntialiasing;
         Appearance.Configure(FloatingThemeList.SelectedIndex, (int)FloatingOpacitySlider.Value, DesktopThemeList.SelectedIndex);
         appearanceLoading = false;
     }
@@ -267,8 +266,21 @@ public partial class MainWindow : Window
         appSettings.FloatingTheme = FloatingThemeList.SelectedIndex;
         appSettings.DesktopTheme = DesktopThemeList.SelectedIndex;
         appSettings.FloatingOpacity = (int)Math.Round(FloatingOpacitySlider.Value);
+        appSettings.FloatingAntialiasing = FloatingAntialiasingCheck.IsChecked == true;
         Appearance.Configure(appSettings.FloatingTheme, appSettings.FloatingOpacity, appSettings.DesktopTheme);
         SaveAppSettings();
+    }
+    private void ResetFloatingAppearanceClick(object sender, RoutedEventArgs e)
+    {
+        if (!ready || appearanceLoading) return;
+        appearanceLoading = true;
+        try
+        {
+            FloatingThemeList.SelectedIndex = AppSettings.DefaultFloatingTheme;
+            FloatingOpacitySlider.Value = AppSettings.DefaultFloatingOpacity;
+        }
+        finally { appearanceLoading = false; }
+        AppearanceChanged(sender, e);
     }
 
     private void PutProfile(Profile p)
@@ -872,6 +884,48 @@ public partial class MainWindow : Window
         }
     }
 
+    private void VrexModelSettingsClick(object sender, RoutedEventArgs e)
+    {
+        if (VrexModelSettingsHost.Visibility == Visibility.Visible)
+        {
+            VrexModelSettingsHost.Visibility = Visibility.Collapsed;
+            return;
+        }
+        if (VrexModelSettingsHost.Content is not VrexModelSettings setup)
+        {
+            setup = new VrexModelSettings(VrexClient.Current);
+            VrexModelSettingsHost.Content = setup;
+            Closed += (_, _) => setup.Dispose();
+        }
+        VrexModelSettingsHost.Visibility = Visibility.Visible;
+        setup.Connect();
+    }
+
+    private void VrexCategoryExpanded(object sender, RoutedEventArgs e)
+    {
+        if (smoke || !ReferenceEquals(sender, e.Source) || VrexCompanionSettingsHost.Content != null) return;
+        var settings = new VrexCompanionSettings();
+        VrexCompanionSettingsHost.Content = settings;
+        Closed += (_, _) => settings.Dispose();
+        settings.Connect();
+    }
+
+    private void UbuntuSettingsClick(object sender, RoutedEventArgs e)
+    {
+        if (VrexSetupHost.Visibility == Visibility.Visible)
+        {
+            VrexSetupHost.Visibility = Visibility.Collapsed;
+            return;
+        }
+        if (VrexSetupHost.Content is not VrexSetup setup)
+        {
+            setup = new VrexSetup();
+            VrexSetupHost.Content = setup;
+            Closed += (_, _) => setup.Dispose();
+        }
+        VrexSetupHost.Visibility = Visibility.Visible;
+        setup.Connect();
+    }
     private void ControllersChecked(object sender, RoutedEventArgs e)
     {
         if (!ready || autoSettingsLoading) return;
@@ -887,7 +941,9 @@ public partial class MainWindow : Window
         {
             if (appSettings.MotionControllers && controllerMenu == null)
                 controllerMenu = new ControllerMenu(engine.ControllerMenuName, SectionList().Select(s => s.Section).ToArray(),
-                    Status, RecenterButton, ApplyAllConfirmed, StereoCheck);
+                    Status, RecenterButton, ApplyAllConfirmed, StereoCheck,
+                    Path.Combine(VrxDataDirectory.Root, "floating-workspace.json"),
+                    FloatingAntialiasingCheck);
             controllerMenu?.Enable(appSettings.MotionControllers);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -1401,7 +1457,12 @@ public partial class MainWindow : Window
         if (!engine.Running || profile == null || stopping) return;
         SaveAndApply(); saveTimer.Stop();
         stopping = true; UpdateButtons(); Status.Text = Loc.Get("StatusStopping");
-        try { await engine.Stop(profile); }
+        try
+        {
+            try { if (controllerMenu != null) await controllerMenu.StopCaptureAsync(); }
+            catch (TimeoutException) { System.Diagnostics.Trace.TraceWarning("Timed out finalizing VR video."); }
+            await engine.Stop(profile);
+        }
         catch (Exception ex) { Status.Text = Loc.Format("StatusStopFailed", ex.Message); }
         finally { stopping = false; UpdateButtons(); }
     }
@@ -1480,16 +1541,29 @@ public partial class MainWindow : Window
         UpdateButtons();
         if (!loading && !refreshing && profile != null) { saveTimer.Stop(); saveTimer.Start(); }
     }
+    private bool waitingForShutdown;
     private async void WindowClosing(object? sender, CancelEventArgs e)
     {
         if (closing) return;
+        if (waitingForShutdown) { e.Cancel = true; return; }
         if (placedMode >= 0 && RememberPlace(placedMode == 1)) SaveAppSettings();
         SaveAndApply(); refreshTimer.Stop(); saveTimer.Stop();
         autoTimer.Stop(); HideAutoOverlay();
-        if (!engine.Running) return;
+        if (!engine.Running && !VrexClient.Current.Running) return;
         e.Cancel = true;
-        await StopSession();
-        if (engine.Running) { Status.Text = Loc.Get("StatusStillStopping"); UpdateAutoTimer(); return; }
+        waitingForShutdown = true;
+        try
+        {
+            await StopSession();
+            if (engine.Running) { Status.Text = Loc.Get("StatusStillStopping"); UpdateAutoTimer(); return; }
+            if (VrexClient.Current.Running)
+            {
+                Status.Text = "Shutting down Vrex Ubuntu…";
+                await VrexClient.Current.StopAsync();
+            }
+        }
+        finally { waitingForShutdown = false; }
+        await Dispatcher.Yield();
         closing = true; Close();
     }
     private async Task SmokeTest()
@@ -1607,10 +1681,31 @@ public partial class MainWindow : Window
             new Profile { RoomEnvironment = Profile.EnvironmentCount }.Valid() || new Profile { RoomEnvironment = -1 }.Valid() || !new Profile { RoomEnvironment = Profile.EnvironmentOpenAir }.Valid())
             throw new Exception("Profiles saved before the environments existed must load in the room; the environment comes before the seat, 0 to 4");
         var appearanceStore = new ProfileStore(Path.Combine(output, "appearance-settings"));
-        appearanceStore.SaveAppSettings(new AppSettings { Mode = AppSettings.ExpertMode, FloatingTheme = 8, FloatingOpacity = 37, DesktopTheme = 7 });
+        var freshAppearance = new ProfileStore(Path.Combine(output, "fresh-appearance-settings")).LoadAppSettings();
+        if (Appearance.Themes[freshAppearance.FloatingTheme].Key != "ThemeDark" || freshAppearance.FloatingOpacity != 74)
+            throw new Exception("Fresh installs use the Dark floating theme at 74% opacity");
+        appearanceStore.SaveAppSettings(new AppSettings { Mode = AppSettings.ExpertMode, FloatingTheme = 8, FloatingOpacity = 37,
+            DesktopTheme = 7, FloatingAntialiasing = true });
         var appearanceBack = appearanceStore.LoadAppSettings();
-        if (appearanceBack.FloatingTheme != 8 || appearanceBack.FloatingOpacity != 37 || appearanceBack.DesktopTheme != 7)
+        if (appearanceBack.FloatingTheme != 8 || appearanceBack.FloatingOpacity != 37 || appearanceBack.DesktopTheme != 7 ||
+            !appearanceBack.FloatingAntialiasing)
             throw new Exception("Separate floating and desktop appearance settings must persist app-wide");
+        int previousFloatingTheme = FloatingThemeList.SelectedIndex, previousDesktopTheme = DesktopThemeList.SelectedIndex;
+        double previousOpacity = FloatingOpacitySlider.Value;
+        bool? previousSmoothing = FloatingAntialiasingCheck.IsChecked;
+        FloatingThemeList.SelectedIndex = 8;
+        FloatingOpacitySlider.Value = 37;
+        DesktopThemeList.SelectedIndex = 7;
+        FloatingAntialiasingCheck.IsChecked = true;
+        ResetFloatingAppearanceButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var resetAppearance = store.LoadAppSettings();
+        if (resetAppearance.FloatingTheme != AppSettings.DefaultFloatingTheme || resetAppearance.FloatingOpacity != 74 ||
+            resetAppearance.DesktopTheme != 7 || !resetAppearance.FloatingAntialiasing)
+            throw new Exception("Reset restores the floating theme and opacity without changing other settings");
+        FloatingThemeList.SelectedIndex = previousFloatingTheme;
+        FloatingOpacitySlider.Value = previousOpacity;
+        DesktopThemeList.SelectedIndex = previousDesktopTheme;
+        FloatingAntialiasingCheck.IsChecked = previousSmoothing;
         if (new Profile { VisualLayers = 4096 }.Valid() || new Profile { MusicReactivity = 301 }.Valid())
             throw new Exception("Layer masks and music reactivity must match native limits");
         var lifeProfile = new Profile { ExecutablePath = one.ExecutablePath, Room = 35, ListenAudio = true, MusicVisuals = true,
@@ -1943,7 +2038,8 @@ public partial class MainWindow : Window
         if (DepthGpuList.SelectedValue as string != "name:Old Card#0" || ((GpuChoice)DepthGpuList.SelectedItem).Label != Loc.Format("GpuNotFound", "Old Card"))
             throw new Exception("A missing saved GPU must stay selected and be marked not found");
         DepthGpuList.SelectedValue = Gpus.Same;
-        if (VersionText.Text != DisplayVersion() || !VersionText.Text.StartsWith("v1.") || !Title.Contains(VersionText.Text))
+        if (VersionText.Text != DisplayVersion() || TitleVersion.Text != VersionText.Text.TrimStart('v') ||
+            !Version.TryParse(TitleVersion.Text, out var shownVersion) || shownVersion.Revision < 0 || !Title.Contains(VersionText.Text))
             throw new Exception("Version is not shown in the header and window title");
         var real = Gpus.List();                                    // the engine's --list-gpus on this PC
         File.WriteAllLines(Path.Combine(output, "gpus.txt"), real.Select(g => $"{g.Id} | {g.Label}"));
@@ -2014,10 +2110,22 @@ public partial class MainWindow : Window
         using (var menu = new ControllerMenu(@"Local\VRX.Controllers.Test." + Guid.NewGuid().ToString("N"),
             SectionList().Select(s => s.Section).ToArray(), Status, RecenterButton, ApplyAllConfirmed)) menu.SmokeTest(output);
         await FloatingBrowser.SmokeTest(output);
+        FloatingUbuntuPanel.SmokeTest(output);
+        VrexMainScreenMarks.VerifyFirstShow();
+        FloatingVrexReply.SmokeChoices();
+        SpatialSamples.SmokeTest();
+        await ControllerMenu.SmokeWorkspace(output, SectionList().Select(section => section.Section).ToArray());
         SmokeTestModes(output, sample, one);
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
-        SmokeTestStrings(root);
+        // A preview may contain the engine while still living under a source checkout.
+        // The source lint needs the checkout, while the language test only needs the package.
+        for (DirectoryInfo? source = new(root); source != null; source = source.Parent)
+        {
+            if (!File.Exists(Path.Combine(source.FullName, "desktop", "VRX.Desktop", "MainWindow.xaml"))) continue;
+            SmokeTestStrings(source.FullName);
+            break;
+        }
         SmokeTestLanguages(output);
 
         PutProfile(one);

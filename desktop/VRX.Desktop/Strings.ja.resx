@@ -947,7 +947,7 @@
     <value>右トリガー: 左クリック/ドラッグ · 右グリップ: 右クリック · メニュー: 設定を隠す</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
-    <value>スナップショット</value>
+    <value>ゲームのスクリーンショット</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
     <value>画像フォルダーを開く</value>
@@ -1181,8 +1181,9 @@
     <value>生き物がコントローラーのビームに反応</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex — ジェットパックのロボット相棒</value>
+    <value>Vrex — コンパニオン</value>
   </data>
+  <data name="FloatingAntialiasing" xml:space="preserve"><value>フローティングパネルの輪郭を滑らかにする</value></data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>既定</value>
   </data>
@@ -1429,4 +1430,9 @@
   <data name="GameHelpPrompt" xml:space="preserve">
     <value>このスクリーンショットのゲームと具体的な場面を特定してください。大きなネタバレは避けて、次に何をすればよいか役立つヒントをください。関連する攻略やガイドへのリンクも付けてください。確信を持って特定できない場合は、推測せずに質問してください。</value>
   </data>
+  <data name="VrexUbuntu" xml:space="preserve"><value>Vrex Ubuntu</value></data>
+  <data name="VrexModelSettings" xml:space="preserve"><value>Vrex AI 設定…</value></data>
+  <data name="UbuntuSettings" xml:space="preserve"><value>Ubuntu デスクトップの設定…</value></data>
+  <data name="VrexKeyboardTarget" xml:space="preserve"><value>Vrex Ubuntu / チャットに入力</value></data>
+  <data name="ResetFloatingAppearance" xml:space="preserve"><value>フローティングパネルの外観をリセット</value></data>
 </root>

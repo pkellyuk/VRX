@@ -272,9 +272,12 @@
        <Slider x:Name="CreatureCountSlider" Minimum="0" Maximum="24" Value="12" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged"/>
        </StackPanel>
       </Expander>
-      <Expander x:Name="RoomVrexCategory" Header="{l:Tr RoomCategoryVrex}" IsExpanded="False">
+      <Expander x:Name="RoomVrexCategory" Header="{l:Tr RoomCategoryVrex}" IsExpanded="False" Expanded="VrexCategoryExpanded">
        <StackPanel>
        <CheckBox x:Name="VrexCheck" Content="{l:Tr Vrex}" Checked="SettingsChanged" Unchecked="SettingsChanged"/>
+       <ContentControl x:Name="VrexCompanionSettingsHost"/>
+       <Button x:Name="VrexModelSettingsButton" Content="{l:Tr VrexModelSettings}" Click="VrexModelSettingsClick"/>
+       <ContentControl x:Name="VrexModelSettingsHost" Visibility="Collapsed"/>
        </StackPanel>
       </Expander>
       <Expander x:Name="RoomAtmosphereCategory" Header="{l:Tr RoomCategoryAtmosphere}" IsExpanded="False">
@@ -288,6 +291,8 @@
        <Slider x:Name="ParticleDensitySlider" Minimum="0" Maximum="100" Value="40" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged"/>
        </StackPanel>
       </Expander>
+      <Button Content="{l:Tr UbuntuSettings}" Click="UbuntuSettingsClick"/>
+      <ContentControl x:Name="VrexSetupHost" Visibility="Collapsed"/>
       </StackPanel>
      </StackPanel>
     </Expander>
@@ -343,7 +348,9 @@
       <TextBlock Text="{l:Tr FloatingThemeLabel}" Style="{StaticResource Label}"/>
       <ComboBox x:Name="FloatingThemeList" SelectionChanged="AppearanceChanged"/>
       <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=FloatingOpacitySlider}"/><TextBlock Text="{l:Tr FloatingOpacityLabel}" Style="{StaticResource Label}"/></DockPanel>
-      <Slider x:Name="FloatingOpacitySlider" Minimum="0" Maximum="100" Value="95" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="AppearanceChanged"/>
+      <Slider x:Name="FloatingOpacitySlider" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="AppearanceChanged"/>
+      <Button x:Name="ResetFloatingAppearanceButton" Content="{l:Tr ResetFloatingAppearance}" Click="ResetFloatingAppearanceClick" HorizontalAlignment="Left"/>
+      <CheckBox x:Name="FloatingAntialiasingCheck" Content="{l:Tr FloatingAntialiasing}" Checked="AppearanceChanged" Unchecked="AppearanceChanged"/>
       <TextBlock Text="{l:Tr DesktopThemeLabel}" Style="{StaticResource Label}"/>
       <ComboBox x:Name="DesktopThemeList" SelectionChanged="AppearanceChanged"/>
       <TextBlock Text="{l:Tr AppearanceHint}" Style="{StaticResource Hint}"/>

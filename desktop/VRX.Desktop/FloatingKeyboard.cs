@@ -114,7 +114,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
             {
                 if (Closed || epoch != voiceGeneration || !dictation.Listening || changingVoice) return;
                 modifiers = KeyboardModifiers.None; shift = false;
-                if (Send(new KeyboardEdit(text + " "))) { ClearWord(); voiceStatus.Text = Loc.Format("DictationHeard", text); }
+                if (Send(new KeyboardEdit(text + " "))) { StopVoice(); ClearWord(); voiceStatus.Text = Loc.Format("DictationHeard", text); }
                 else { StopVoice(); voiceStatus.Text = Loc.Get("KeyboardChooseTarget"); }
                 Dirty = true;
             });
@@ -136,10 +136,17 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         var button = new Button { Content = text, Width = width, Height = 48, FontSize = 18, Padding = new Thickness(4), Margin = new Thickness(0, 0, 6, 4) };
         actions[button] = () => { action(); Dirty = true; }; return button;
     }
-    internal void SetTarget(string label) { if (target.Text != label) StopVoice(); target.Text = label; ClearWord(); Dirty = true; }
+    private bool passwordTarget;
+    internal void SetTarget(string label, bool password = false)
+    {
+        if (target.Text != label || passwordTarget != password) StopVoice();
+        passwordTarget = password;
+        voiceButton.IsEnabled = !password;
+        target.Text = label; ClearWord(); Dirty = true;
+    }
     private async Task ToggleVoice()
     {
-        if (changingVoice) return;
+        if (changingVoice || passwordTarget) return;
         if (dictation.Listening) { StopVoice(); return; }
         changingVoice = true; int epoch = ++voiceGeneration;
         voiceButton.IsEnabled = microphoneButton.IsEnabled = false;
@@ -152,7 +159,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException or NAudio.MmException or UnauthorizedAccessException or ArgumentException or PlatformNotSupportedException)
         { voiceStatus.Text = Loc.Format("DictationError", ex.Message); }
-        finally { changingVoice = false; voiceButton.IsEnabled = microphoneButton.IsEnabled = true; Dirty = true; }
+        finally { changingVoice = false; voiceButton.IsEnabled = !passwordTarget; microphoneButton.IsEnabled = true; Dirty = true; }
     }
     internal void StopVoice()
     {
@@ -218,6 +225,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
     private void ClearWord() { prefix = committed = ""; suggestions = []; addWordCandidate = false; ShowSuggestions(); }
     private void CompletePrefix()
     {
+        if (passwordTarget) { ClearWord(); return; }
         suggestions = prefix.Length > 0 ? predictor.Prefix(prefix) : []; addWordCandidate = false;
         if (suggestions.Length == 0 && prefix.Length >= 2 && !predictor.IsKnown(prefix))
         { suggestions = [prefix]; addWordCandidate = true; }
@@ -245,8 +253,11 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         CompletePrefix();
     }
     private Point Normalized(Point point) => new(point.X / 86.4 - .5, (point.Y - 86.5) / 69.6);
+    private readonly PanelFeedback.Hover beamHover = new();
     public void Pointer(int kind, float x, float y, float value = 0)
     {
+        if (kind is 4 or PanelFeedback.Leave) beamHover.Set(null, () => Dirty = true);
+        if (kind == PanelFeedback.Leave) return;
         if (kind == 4)
         {
             PanelFeedback.Cancel(heldButton, () => Dirty = true);
@@ -258,6 +269,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         if (kind == 3 && microphonePopup.Visibility == Visibility.Visible) { microphoneScroll.ScrollToVerticalOffset(microphoneScroll.VerticalOffset - value); Dirty = true; return; }
         var possibleButtons = microphonePopup.Visibility == Visibility.Visible ? microphoneButtons.Prepend(microphoneButton) : actions.Keys.Where(b => !microphoneButtons.Contains(b));
         var button = possibleButtons.FirstOrDefault(b => b.IsEnabled && Drawn(b) && new Rect(b.TranslatePoint(new Point(), surface), b.RenderSize).Contains(point));
+        if (kind == 0) beamHover.Set(button, () => Dirty = true);
         var local = surface.TranslatePoint(point, keys);
         var letter = microphonePopup.Visibility != Visibility.Visible && keys.Visibility == Visibility.Visible ? letters.FirstOrDefault(k => k.Box.Contains(local)).Letter : '\0';
         if (kind == 1)
@@ -279,7 +291,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         {
             double length = 0;
             for (int i = 1; i < trace.Count; i++) length += (trace[i] - trace[i - 1]).Length;
-            if (modifiers == KeyboardModifiers.None && char.IsLetter(heldLetter) && length > .8 && trace.Count > 2)
+            if (!passwordTarget && modifiers == KeyboardModifiers.None && char.IsLetter(heldLetter) && length > .8 && trace.Count > 2)
             {
                 suggestions = predictor.Predict(trace);
                 addWordCandidate = false;

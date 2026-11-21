@@ -66,16 +66,13 @@ int main()
     ComPtr<ID3D12Resource> atlas;
     assert(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_RENDER_TARGET,nullptr,IID_PPV_ARGS(&atlas))));
     std::vector<XrSwapchainImageD3D12KHR> images(1,{XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR}); images[0].texture=atlas.Get();
-    MenuBodyRenderer bodies; assert(bodies.Init(device.Get(),images,DXGI_FORMAT_R8G8B8A8_UNORM)); bodies.valid=true;
+    MenuBodyRenderer bodies; assert(bodies.Init(device.Get(),images,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)); bodies.valid=true;
     for (int e=0;e<2;e++) { bodies.eyes[e].pose={{0,0,0,1},{e ? .032f:-.032f,0,0}}; bodies.eyes[e].fov={-.7f,.7f,.7f,-.7f}; }
     struct Panel { XrPosef pose{{0,sinf(.3f),0,cosf(.3f)},{0,0,-1.2f}}; XrExtent2Df size{.85f,.68f}; bool visible=false; } panels[7];
     panels[0].visible=true;
-    assert(SUCCEEDED(allocator->Reset())); assert(SUCCEEDED(commands->Reset(allocator.Get(),nullptr)));
-    bodies.Draw(commands.Get(),0,panels,XR_NULL_HANDLE,XR_NULL_HANDLE);
     D3D12_RESOURCE_BARRIER barrier{}; barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource=atlas.Get(); barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_RENDER_TARGET; barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_SOURCE;
-    commands->ResourceBarrier(1,&barrier);
     heap.Type=D3D12_HEAP_TYPE_READBACK; buffer.Width=UINT64(vrxmenu::Width)*vrxmenu::Height*4;
     ComPtr<ID3D12Resource> readback;
     assert(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&buffer,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&readback))));
@@ -83,16 +80,35 @@ int main()
     to={}; to.pResource=readback.Get(); to.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     to.PlacedFootprint.Footprint={DXGI_FORMAT_R8G8B8A8_UNORM,vrxmenu::Width,vrxmenu::Height,1,vrxmenu::Width*4};
     D3D12_BOX tile{vrxmenu::Width,vrxmenu::Height*3,0,vrxmenu::Width*2,vrxmenu::Height*4,1};
-    commands->CopyTextureRegion(&to,0,0,0,&from,&tile); assert(SUCCEEDED(commands->Close()));
-    queue->ExecuteCommandLists(1,lists);
     ComPtr<ID3D12Fence> fence; assert(SUCCEEDED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence))));
-    assert(SUCCEEDED(queue->Signal(fence.Get(),1))); HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
-    assert(event && SUCCEEDED(fence->SetEventOnCompletion(1,event))); assert(WaitForSingleObject(event,5000)==WAIT_OBJECT_0); CloseHandle(event);
-    assert(SUCCEEDED(readback->Map(0,nullptr,&mapped)));
-    int opaque[2]{};
-    for (int y=0;y<vrxmenu::Height;y++) for (int x=0;x<vrxmenu::Width;x++)
-        if (static_cast<uint8_t*>(mapped)[(size_t(y)*vrxmenu::Width+x)*4+3]) ++opaque[x/(vrxmenu::Width/2)];
-    assert(opaque[0]>100 && opaque[1]>100 && opaque[0]<vrxmenu::Width*vrxmenu::Height/20);
-    readback->Unmap(0,nullptr); assert(SUCCEEDED(device->GetDeviceRemovedReason()));
-    puts("PASS: thin panel casings rasterize in both eyes with transparent interiors (WARP)");
+    for (UINT64 pass=1;pass<=2;++pass)
+    {
+        assert(SUCCEEDED(allocator->Reset())); assert(SUCCEEDED(commands->Reset(allocator.Get(),nullptr)));
+        bodies.Draw(commands.Get(),0,panels,XR_NULL_HANDLE,XR_NULL_HANDLE,0,pass==2);
+        commands->ResourceBarrier(1,&barrier);
+        commands->CopyTextureRegion(&to,0,0,0,&from,&tile);
+        std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);
+        commands->ResourceBarrier(1,&barrier);
+        std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);
+        assert(SUCCEEDED(commands->Close()));
+        queue->ExecuteCommandLists(1,lists);
+        assert(SUCCEEDED(queue->Signal(fence.Get(),pass))); HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+        assert(event && SUCCEEDED(fence->SetEventOnCompletion(pass,event))); assert(WaitForSingleObject(event,5000)==WAIT_OBJECT_0); CloseHandle(event);
+        assert(SUCCEEDED(readback->Map(0,nullptr,&mapped)));
+        int painted[2]{}, fractional[2]{};
+        for (int y=0;y<vrxmenu::Height;y++) for (int x=0;x<vrxmenu::Width;x++)
+        {
+            auto alpha=static_cast<uint8_t*>(mapped)[(size_t(y)*vrxmenu::Width+x)*4+3];
+            int eye=x/(vrxmenu::Width/2);
+            if(alpha) ++painted[eye];
+            if(alpha && alpha<255) ++fractional[eye];
+        }
+        fprintf(stderr,"Panel coverage with smoothing %s: %d/%d painted, %d/%d fractional\n",
+            pass==2?"on":"off",painted[0],painted[1],fractional[0],fractional[1]);
+        assert(painted[0]>100 && painted[1]>100 && painted[0]<vrxmenu::Width*vrxmenu::Height/20);
+        if(pass==1) assert(fractional[0]==0 && fractional[1]==0);
+        else assert(fractional[0]>100 && fractional[1]>100);
+        readback->Unmap(0,nullptr); assert(SUCCEEDED(device->GetDeviceRemovedReason()));
+    }
+    puts("PASS: thin panel casings in both eyes, transparent interiors and optional multisample coverage (WARP)");
 }

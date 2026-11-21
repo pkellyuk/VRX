@@ -23,10 +23,11 @@ internal static class Appearance
         new("ThemeGrape", "🍇", "#D0AEFF", "#201A2E", "#332843", "#F4EBFF", "#BBACCF"),
     ];
     private static readonly List<WeakReference<Grid>> panels = [];
-    private static int floatingTheme;
-    private static double opacity = .95;
+    private static int floatingTheme = AppSettings.DefaultFloatingTheme;
+    private static double opacity = AppSettings.DefaultFloatingOpacity / 100.0;
     internal static int Revision { get; private set; }
     private static Palette Floating => Themes[floatingTheme];
+    internal static Palette FloatingPalette => Floating;
     internal static SolidColorBrush Brush(string hex, double alpha = 1)
     {
         var colour = (Color)ColorConverter.ConvertFromString(hex);
@@ -63,6 +64,9 @@ internal static class Appearance
     {
         var theme = Floating;
         root.Resources["Accent"] = Brush(theme.Accent);
+        var accent = ((SolidColorBrush)root.Resources["Accent"]).Color;
+        double luminance = .2126 * accent.ScR + .7152 * accent.ScG + .0722 * accent.ScB;
+        root.Resources["OnPanelAccent"] = luminance >= .18 ? Brushes.Black : Brushes.White;
         root.Resources["Ink"] = Brush(theme.Ink); root.Resources["Muted"] = Brush(theme.Muted);
         root.Resources["Card"] = Brush(theme.Card, opacity); root.Resources["Page"] = Brush(theme.Page, opacity);
         root.Resources["Well"] = Brush(theme.Page, opacity); root.Resources["Field"] = Brush(theme.Page, opacity);
@@ -109,14 +113,16 @@ internal static class Appearance
         style.Setters.Add(new Setter(Control.BorderBrushProperty, Brush(p.Accent, .22)));
         style.Setters.Add(new Setter(Control.FontFamilyProperty, new FontFamily("Segoe UI")));
         style.Setters.Add(new Setter(Control.TemplateProperty, (ControlTemplate)XamlReader.Parse("""
-            <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Button">
-             <Border x:Name="Card" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="14" Padding="{TemplateBinding Padding}">
+            <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="Button">
+             <Border x:Name="Card" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="14" Padding="{TemplateBinding Padding}">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
-               <TextBlock Text="{TemplateBinding Tag}" FontFamily="Segoe UI Emoji" FontSize="22" VerticalAlignment="Center" Margin="0,0,10,0"/>
+               <TextBlock x:Name="ActionIcon" Text="{TemplateBinding Tag}" FontFamily="Segoe UI Emoji" FontSize="22" VerticalAlignment="Center" Margin="0,0,10,0"/>
                <ContentPresenter Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" RecognizesAccessKey="True"/>
               </Grid>
              </Border>
              <ControlTemplate.Triggers>
+              <Trigger Property="Tag" Value="{x:Null}"><Setter TargetName="ActionIcon" Property="Visibility" Value="Collapsed"/></Trigger>
+              <Trigger Property="Tag" Value=""><Setter TargetName="ActionIcon" Property="Visibility" Value="Collapsed"/></Trigger>
               <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Card" Property="Opacity" Value=".82"/></Trigger>
               <Trigger Property="IsPressed" Value="True"><Setter TargetName="Card" Property="Opacity" Value=".65"/></Trigger>
               <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Card" Property="Opacity" Value=".42"/></Trigger>

@@ -134,7 +134,7 @@ internal sealed partial class FloatingBrowser
         }
         if (permissionQueue.Count == 0) { permissionOverlay.Visibility = Visibility.Collapsed; Changed(); return; }
         var request = permissionQueue[0];
-        CancelMouse(); ClearContext();
+        CancelMouse(); ClearContext(); CloseBookmarks();
         permissionTitle.Text = Loc.Get("BrowserPermissionTitle");
         string origin = request.Page == request.Origin ? Loc.Format("BrowserPermissionOrigin", request.Origin) :
             Loc.Format("BrowserPermissionEmbedded", request.Origin, request.Page);
@@ -250,7 +250,7 @@ internal sealed partial class FloatingBrowser
         }
     }
 
-    private sealed class PermissionTestServer : IDisposable
+    internal sealed class PermissionTestServer : IDisposable
     {
         private readonly System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, 0);
         private readonly CancellationTokenSource stop = new();

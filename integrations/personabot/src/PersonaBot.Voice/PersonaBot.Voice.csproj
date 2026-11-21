@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    PersonaBot's voice (personabot-voice): Kokoro text to speech and Moonshine speech to text, offline, through
+    sherpa-onnx, with PortAudio for the speakers and microphone. It is its own process because sherpa-onnx ships its
+    own onnxruntime.dll while Automaton.Core, inside the app, uses ONNX Runtime 1.30: one process can load only one
+    onnxruntime.dll. The app starts it, sends requests as JSON lines on stdin and reads events back on stdout
+    (VoiceProtocol.cs). The models are downloaded by the app when the person turns voice on.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>personabot-voice</AssemblyName>
+    <RootNamespace>PersonaBot.Voice</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\..\..\desktop\Shared\PointSourceAudio.cs" Link="PointSourceAudio.cs" />
+    <!-- Apache-2.0 (k2-fsa). Checked on nuget.org 16 Nov 2026: 2.0.1 is the latest. -->
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="2.0.1" />
+    <!-- MIT (k2-fsa's PortAudio build). -->
+    <PackageReference Include="PortAudioSharp2" Version="1.0.6" />
+  </ItemGroup>
+</Project>

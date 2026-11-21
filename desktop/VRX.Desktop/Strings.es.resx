@@ -947,7 +947,7 @@ No se puede deshacer. Los juegos que aún no has configurado siguen partiendo de
     <value>Gatillo derecho: clic izquierdo / arrastrar · Agarre derecho: clic derecho · Menú: ocultar ajustes</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
-    <value>Instantánea</value>
+    <value>Captura del juego</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
     <value>Abrir carpeta de imágenes</value>
@@ -1181,8 +1181,9 @@ No se puede deshacer. Los juegos que aún no has configurado siguen partiendo de
     <value>Las criaturas reaccionan a los rayos de los mandos</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex — robot compañero con jetpack</value>
+    <value>Vrex — compañero</value>
   </data>
+  <data name="FloatingAntialiasing" xml:space="preserve"><value>Suavizar los bordes de los paneles flotantes</value></data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>Predeterminado</value>
   </data>
@@ -1429,4 +1430,9 @@ No se puede deshacer. Los juegos que aún no has configurado siguen partiendo de
   <data name="GameHelpPrompt" xml:space="preserve">
     <value>Identifica el juego y la escena exacta de esta captura de pantalla. Dame una pista útil sobre qué hacer a continuación, sin spoilers importantes, e incluye enlaces a guías o tutoriales relevantes. Si no puedes identificarlo con seguridad, hazme una pregunta en lugar de adivinar.</value>
   </data>
+  <data name="VrexUbuntu" xml:space="preserve"><value>Vrex Ubuntu</value></data>
+  <data name="VrexModelSettings" xml:space="preserve"><value>Ajustes de IA de Vrex…</value></data>
+  <data name="UbuntuSettings" xml:space="preserve"><value>Ajustes del escritorio Ubuntu…</value></data>
+  <data name="VrexKeyboardTarget" xml:space="preserve"><value>Escribiendo en Ubuntu Vrex / chat</value></data>
+  <data name="ResetFloatingAppearance" xml:space="preserve"><value>Restablecer el aspecto de los paneles flotantes</value></data>
 </root>

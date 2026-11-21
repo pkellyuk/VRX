@@ -43,6 +43,21 @@ inline XrPosef Place(XrPosef eye)
     return {eye.orientation, Add(eye.position, Rotate(eye.orientation,{0,0,-1.2f}))};
 }
 
+inline XrPosef ChatReplyPose(XrPosef chat, XrExtent2Df chatSize, XrExtent2Df replySize)
+{
+    return {chat.orientation, Add(chat.position,
+        Rotate(chat.orientation, {0, (chatSize.height + replySize.height)*.5f + .025f, .025f}))};
+}
+
+inline bool MenuCenterInView(XrPosef eye, XrVector3f center, XrFovf fov)
+{
+    const auto point = Rotate(Inverse(eye.orientation), Sub(center, eye.position));
+    if (point.z >= -.01f) return false;
+    const float horizontal = point.x / -point.z, vertical = point.y / -point.z;
+    return horizontal >= std::tan(fov.angleLeft) && horizontal <= std::tan(fov.angleRight) &&
+        vertical >= std::tan(fov.angleDown) && vertical <= std::tan(fov.angleUp);
+}
+
 constexpr float ResizeBorderU = 40.0f/960, ResizeBorderV = 40.0f/768;
 constexpr float MaxPanelWidth = 3.0f; // Metres; shared by edge and two-handed resizing.
 inline bool EdgeHit(float u, float v)

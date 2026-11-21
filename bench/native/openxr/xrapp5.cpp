@@ -171,6 +171,7 @@ using Microsoft::WRL::ComPtr;
 #include "room.h"
 #include "room_life.h"
 #include "room_life_shader.h"
+#include "floating_panel_shader.h"
 
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wdx = winrt::Windows::Graphics::DirectX;
@@ -364,6 +365,7 @@ struct DepthSlot
     float lo = 0, hi = 0;               // normalisation range actually used
     float back = 0, panel = 0, marker = 0;
     bool reused = false;                // the previous depth carried forward to a barely changed frame
+    uint32_t mode = 1;                  // depth mode when this pass started
 };
 
 struct WarpConstants                    // must match cbuffer C in kWarpHlsl
@@ -670,6 +672,10 @@ struct App
     std::atomic<bool> stop{ false };
     std::atomic<uint64_t> depthPublished{ 0 };
     std::atomic<bool> depthHealthy{ false };
+    // The low bit enables inference. Every toggle advances the mode so the renderer
+    // can reject any depth still in flight from before the toggle.
+    std::atomic<uint32_t> depthMode{ 1 };
+    uint32_t workerDepthMode = 1;        // main before worker starts, then worker only
     int testDepthFailuresLeft = 0;      // main until worker starts, then worker only
 
     // Depth steadying and two-model fusion (depth_fusion.h, XMMODEL.md). Set by the
@@ -750,7 +756,7 @@ struct App
     bool motionUnavailableLogged = false, fuseModelLogged = false;
 
     // Anchor model (Depth Anything V2) on its own thread and queue on the depth GPU.
-    struct AnchorJob { std::vector<uint32_t> rgba; fusion::Image luma; uint64_t seq = 0; double time = 0; bool valid = false; };
+    struct AnchorJob { std::vector<uint32_t> rgba; fusion::Image luma; uint64_t seq = 0; double time = 0; uint32_t mode = 1; bool valid = false; };
     struct AnchorResult { fusion::Image nearMap, luma; uint64_t seq = 0, id = 0; double time = 0; };
     std::mutex anchorMutex;
     std::condition_variable anchorCv;
@@ -780,7 +786,9 @@ static const UINT DESC_REFINE_TABLE = SRC_RING + 36;    // 4: depth SRV, guide, 
 static const UINT DESC_STANDS_MAIN = SRC_RING + 55;     // 1 each: the theatre's id buffers (EnsureStandsTarget) - the frame loop's,
 static const UINT DESC_STANDS_TEST = SRC_RING + 56;     //   the self-test's,
 static const UINT DESC_STANDS_BENCH = SRC_RING + 57;    //   and the benchmark's
-static const UINT DESC_COUNT = SRC_RING + 58;
+static const UINT DESC_EMPTY_PANELS = SRC_RING + 58;
+static const UINT DESC_PANELS = SRC_RING + 59;
+static const UINT DESC_COUNT = SRC_RING + 60;
 static const int WORLD_W = 8;                            // the world colour layer: one colour needs few pixels
 static const int TEST_EYE_W = 256, TEST_EYE_H = 192;     // self-test eye buffers
 
@@ -906,8 +914,6 @@ static D3D12_GPU_DESCRIPTOR_HANDLE GpuDesc(App& app, UINT index)
 
 static void MakeTextureSrv(App& app, ID3D12Resource* tex, DXGI_FORMAT fmt, UINT index)
 {
-    if (!tex) return;
-
     D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
     sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     sv.Format = fmt;
@@ -1394,6 +1400,11 @@ static bool InitD3D(App& app)
     // The self-test needs no VR session: when the runtime names no GPU (SteamVR running with
     // no headset gives a zero LUID), it uses the high-performance GPU instead.
     const bool noLuid = app.adapterLuid.LowPart == 0 && app.adapterLuid.HighPart == 0;
+    if (noLuid && !app.opt.selfTestOnly)
+    {
+        Log("InitD3D: FAIL OpenXR supplied no graphics adapter. Check that the headset display is connected and SteamVR's compositor is running, then retry.");
+        return false;
+    }
     if (noLuid && app.opt.selfTestOnly)
     {
         ComPtr<IDXGIFactory6> fac6;
@@ -2903,7 +2914,9 @@ cbuffer RoomC : register(ROOM_REGISTER)
     float4 lifeObjects[100];
     float4 lifeWaveform[12];
     float visualReactivity; uint visualLayers; float vrexChat; float vrexState;
-    float4 lifePadding[4];
+    float4 vrexPanels[21]; // center / atlas tile, right / half-width, up / half-height
+    uint vrexPanelCount;
+    uint smoothPanels;
 };
 )HLSL";
 
@@ -3169,6 +3182,7 @@ static const char* kCurveRoomHlsl = R"HLSL(
 Texture2DArray<float4> lightmap : register(t2);
 #if ROOM_LOOK
 Texture2D<float4> mirrorPic : register(t3);          // the mirror picture (MIRROR), its first mirrorH rows
+Texture2D<float4> panelAtlas : register(t6);
 #endif
 
 static const int BAYER[64] = ROOM_BAYER;           // room.h kRoomBayer
@@ -4505,6 +4519,7 @@ float3 LookColour(int kind, float2 uv, float2 guv, uint e, float3 o, float3 d, f
 #endif
 }
 /*VRX_LIFE*/
+/*VRX_PANELS*/
 #endif
 
 [numthreads(8, 8, 1)]
@@ -4600,10 +4615,13 @@ void main(uint3 id : SV_DispatchThreadID, uint3 gid : SV_GroupID, uint gi : SV_G
         Ray(e,(float)id.x+.5,(float)id.y+.5,lifeO,lifeD);
         // Compose once per pixel after the room's four samples. This keeps the
         // ray marcher out of the room material's four-sample branch graph.
-        col=LifeCompose(col,kind[0],uv[0],guv[0],e,lifeO,lifeD,Dx,Dy);
+        float companionDepth;
+        col=LifeCompose(col,kind[0],uv[0],guv[0],e,lifeO,lifeD,Dx,Dy,companionDepth);
+        if (vrexPanelCount>0)
+            col=ComposePanels(col,lifeO,normalize(lifeD),Dx/length(lifeD),Dy/length(lifeD),companionDepth);
     }
 #endif
-    outEye[uint3(id.x, id.y, e)] = float4(col, 1.0);
+    outEye[uint3(id.x, id.y, e)] = float4(col, 0);
 }
 )HLSL";
 
@@ -5085,7 +5103,8 @@ static bool MakeAmbiRootSig(App& app, ComPtr<ID3D12RootSignature>& out)
 // DWORDs (a table costs one DWORD however many ranges it holds).
 static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out, bool room = false)
 {
-    static_assert(sizeof(CurveConstants) / 4 + 1 + 2 + 2 + 1 <= 64, "curve root signature: constants + table + CBV + the room's emitters (SRV) + the stands' ids (table)");
+    static_assert(sizeof(CurveConstants) / 4 + 1 + 2 + 2 + 1 + 1 <= 64,
+        "curve root signature: constants, textures, CBV, emitters, stands, panel atlas");
     D3D12_DESCRIPTOR_RANGE tbl[3]{};
     tbl[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     tbl[0].NumDescriptors = 2; tbl[0].BaseShaderRegister = 0; tbl[0].OffsetInDescriptorsFromTableStart = 0;
@@ -5094,7 +5113,7 @@ static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out, bool ro
     tbl[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     tbl[2].NumDescriptors = 2; tbl[2].BaseShaderRegister = 2; tbl[2].OffsetInDescriptorsFromTableStart = 3;
 
-    D3D12_ROOT_PARAMETER params[5]{};
+    D3D12_ROOT_PARAMETER params[6]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants.ShaderRegister = 0;
     params[0].Constants.Num32BitValues = sizeof(CurveConstants) / 4;
@@ -5113,6 +5132,10 @@ static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out, bool ro
     params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[4].DescriptorTable.NumDescriptorRanges = 1;
     params[4].DescriptorTable.pDescriptorRanges = &standsRange;
+    D3D12_DESCRIPTOR_RANGE panelRange = standsRange;
+    panelRange.BaseShaderRegister = 6;
+    params[5] = params[4];
+    params[5].DescriptorTable.pDescriptorRanges = &panelRange;
 
     D3D12_STATIC_SAMPLER_DESC ss{};
     ss.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -5122,7 +5145,7 @@ static bool MakeCurveRootSig(App& app, ComPtr<ID3D12RootSignature>& out, bool ro
     ss.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC rsd{};
-    rsd.NumParameters = room ? 5 : 2;
+    rsd.NumParameters = room ? 6 : 2;
     rsd.pParameters = params;
     rsd.NumStaticSamplers = 1;
     rsd.pStaticSamplers = &ss;
@@ -5271,6 +5294,10 @@ static bool BuildRoomShaderTexts(RoomShaderTexts& out)
     const size_t lifeAt=eyeBody.find("/*VRX_LIFE*/");
     if(lifeAt==std::string::npos) return false;
     eyeBody.replace(lifeAt,12,RoomLifeHlsl());
+    const std::string panelMarker = "/*VRX_PANELS*/";
+    const size_t panelAt = eyeBody.find(panelMarker);
+    if (panelAt == std::string::npos) return false;
+    eyeBody.replace(panelAt, panelMarker.size(), kFloatingPanelHlsl);
     out.eye = std::string("#define ROOM_LOOK 0\n#define ROOM_STANDS 0\n") + eyeHead + eyeBody;
     out.eyeLook = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 0\n") + eyeHead + eyeBody;
     out.eyeStands = std::string("#define ROOM_LOOK 1\n#define ROOM_STANDS 1\n") + eyeHead + eyeBody;
@@ -5639,7 +5666,9 @@ static bool EnsureNearFine(App& app)
     if (t.cw <= 0 || t.ch <= 0 || !t.colorOut) return false;
     ID3D12Device* dev = app.device.Get();
     app.nearFine.Reset(); app.nearFineUp.Reset(); app.nearFineMapped = nullptr; app.fineTmp.Reset();
-    const UINT64 bytes = (UINT64)t.cw * t.ch * sizeof(float);
+    // The startup refinement test processes a fixed W x H image even for a tiny capture.
+    const UINT refineCapacity = std::max((UINT)t.cw * (UINT)t.ch, (UINT)(W * H));
+    const UINT64 bytes = (UINT64)refineCapacity * sizeof(float);
     if (!MakeBuffer(dev, D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, app.nearFine, nullptr) ||
         !MakeBuffer(dev, D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
@@ -5679,7 +5708,7 @@ static bool EnsureNearFine(App& app)
     dev->CreateShaderResourceView(app.nearBuf.Get(), &bv, CpuDesc(app, DESC_REFINE_TABLE + 0));
     sv.Buffer.NumElements = (UINT)(W * H);
     dev->CreateUnorderedAccessView(app.guideBuf.Get(), nullptr, &sv, CpuDesc(app, DESC_REFINE_TABLE + 1));
-    sv.Buffer.NumElements = (UINT)t.cw * (UINT)t.ch;
+    sv.Buffer.NumElements = refineCapacity;
     dev->CreateUnorderedAccessView(app.fineTmp.Get(), nullptr, &sv, CpuDesc(app, DESC_REFINE_TABLE + 2));
     dev->CreateUnorderedAccessView(app.nearFine.Get(), nullptr, &sv, CpuDesc(app, DESC_REFINE_TABLE + 3));
     app.nearFineW = t.cw; app.nearFineH = t.ch;
@@ -6202,6 +6231,7 @@ static bool InitStandsRaster(App& app)
     sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
     sv.Texture2DArray.MipLevels = 1; sv.Texture2DArray.ArraySize = VIEWS;
     for (UINT d : { DESC_STANDS_MAIN, DESC_STANDS_TEST, DESC_STANDS_BENCH }) app.device->CreateShaderResourceView(nullptr, &sv, CpuDesc(app, d));
+    MakeTextureSrv(app, nullptr, DXGI_FORMAT_R8G8B8A8_UNORM, DESC_EMPTY_PANELS);
     Log("InitStandsRaster: exit ok (%u-vertex mesh uploads)", kStandsMeshMax);
     return true;
 }
@@ -6234,7 +6264,7 @@ static UINT UploadStandsMesh(App& app, const Room& r, int slot)
 static bool RecordCurvedScreen(App& app, UINT tableIndex, ID3D12Resource* picture, const CurveConstants& c,
                                ID3D12Resource* eyes, ID3D12Resource* eyeImg, D3D12_GPU_VIRTUAL_ADDRESS roomConstants = 0,
                                UINT timeBase = UINT_MAX, ID3D12QueryHeap* timeHeap = nullptr, ID3D12PipelineState* roomPso = nullptr,
-                               UINT standsSrv = DESC_STANDS_MAIN)
+                               UINT standsSrv = DESC_STANDS_MAIN, bool panels = false)
 {
     if (!picture || !eyes || !app.curvePso || !app.ambiTex) return false;
     if (c.ew == 0 || c.eh == 0) return false;
@@ -6259,6 +6289,7 @@ static bool RecordCurvedScreen(App& app, UINT tableIndex, ID3D12Resource* pictur
     if (room) cl->SetComputeRootConstantBufferView(2, roomConstants);
     if (room) cl->SetComputeRootShaderResourceView(3, app.roomEmitters->GetGPUVirtualAddress());
     if (room) cl->SetComputeRootDescriptorTable(4, GpuDesc(app, standsSrv));
+    if (room) cl->SetComputeRootDescriptorTable(5, GpuDesc(app, panels ? DESC_PANELS : DESC_EMPTY_PANELS));
     cl->Dispatch((c.ew + 7) / 8, (c.eh + 7) / 8, VIEWS);
     if (room) Transition(cl, app.roomEmitters.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     if (room) Transition(cl, app.roomMirror.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -6863,7 +6894,7 @@ static void PublishDepth(App& app, const SourceRef& src, const std::vector<float
     if (s.hasBack) memcpy(s.backMapped, app.backNow.data(), app.backNow.size() * sizeof(uint32_t));
     memcpy(s.nearMapped, preparedDepth.data(), preparedDepth.size() * sizeof(float));
     s.source = src; s.sceneTime = src->time; s.modelMs = modelMs;
-    s.lo = lo; s.hi = hi; s.completeTime = NowSeconds(); s.reused = reused;
+    s.lo = lo; s.hi = hi; s.completeTime = NowSeconds(); s.reused = reused; s.mode = app.workerDepthMode;
     app.writeSlot = app.readySlot.exchange(app.writeSlot | SLOT_FRESH) & (SLOT_FRESH - 1);
     app.depthPublished++; app.depthHealthy = true;
 }
@@ -6877,7 +6908,7 @@ static const size_t FAST_HISTORY = 16;      // fast-model maps kept for fitting 
 
 static bool FuseActive(const App& app)
 {
-    return app.fuseEnabled.load() && app.opt.model == &kZipDepth && !app.anchorFailed.load();
+    return (app.depthMode.load() & 1u) && app.fuseEnabled.load() && app.opt.model == &kZipDepth && !app.anchorFailed.load();
 }
 
 // Grid image of the texture at descriptor `srcDesc` (srcW x srcH) on the ml queue,
@@ -7083,7 +7114,7 @@ static void AnchorMain(App* app)
             job = std::move(app->anchorJob);
             app->anchorJob.valid = false;
         }
-        if (!FuseActive(*app) || job.rgba.size() != (size_t)W * H) continue;
+        if (job.mode != app->depthMode.load() || !FuseActive(*app) || job.rgba.size() != (size_t)W * H) continue;
         lastStart = NowSeconds();
 
         const size_t plane = (size_t)W * H;
@@ -7127,6 +7158,7 @@ static void AnchorMain(App* app)
         for (size_t i = 0; i < plane; i++) nearMap.v[i] = std::clamp((raw[i] - lo) * inv, 0.0f, 1.0f);
         {
             std::lock_guard<std::mutex> lock(app->anchorMutex);
+            if (job.mode != app->depthMode.load()) continue;
             app->anchorResult.nearMap = std::move(nearMap);
             app->anchorResult.luma = std::move(job.luma);
             app->anchorResult.seq = job.seq;
@@ -7205,6 +7237,7 @@ static void PostProcessDepth(App& app, const SourceRef& src, UINT64 gridDone, st
             app.anchorJob.luma = luma;
             app.anchorJob.seq = src->seq;
             app.anchorJob.time = src->time;
+            app.anchorJob.mode = app.workerDepthMode;
             app.anchorJob.valid = true;
         }
         app.anchorCv.notify_one();
@@ -7438,6 +7471,19 @@ static bool SwitchModel(App& app, const ModelSpec* next)
     return true;
 }
 
+static void SetDepthProcessing(App& app, bool enabled)
+{
+    const auto mode = app.depthMode.load();
+    if (bool(mode & 1u) == enabled) return;
+    {
+        std::lock_guard<std::mutex> lock(app.anchorMutex);
+        app.depthMode = mode + 1;
+        app.anchorJob.valid = false;
+        app.anchorResult = {};
+    }
+    Log("Depth processing: %s", enabled ? "enabled" : "paused");
+}
+
 static void WorkerMain(App* app)
 {
     g_threadName = "worker";
@@ -7462,6 +7508,21 @@ static void WorkerMain(App* app)
     {
     while (!app->stop.load())
     {
+        const auto mode = app->depthMode.load();
+        if (!(mode & 1u)) { Sleep(10); continue; }
+        if (mode != app->workerDepthMode)
+        {
+            app->workerDepthMode = mode;
+            lastSeq = 0;
+            haveEstimate = false;
+            app->smoother.have = false;
+            app->foregroundTracker.Reset();
+            app->postLayout = 0;
+            app->anchorFit = false;
+            app->anchorCurrent = {};
+            nextSummary = NowSeconds() + 2.0;
+            app->passMs.clear();
+        }
         const ModelSpec* wanted = app->requestedModel.load();
         if (wanted && wanted != app->opt.model && !SwitchModel(*app, wanted))
         { app->depthHealthy = false; Log("WorkerMain: no depth model; flat viewing"); break; }
@@ -7497,7 +7558,7 @@ static void WorkerMain(App* app)
             // Run may have failed after queuing prep; do not reset its allocator
             // until that dispatch is complete, including on retry of a static frame.
             WaitDepthIdle(*app);
-            for (int i = 0; i < 50 && !app->stop.load(); ++i) Sleep(20);
+            for (int i = 0; i < 50 && !app->stop.load() && app->depthMode.load() == mode; ++i) Sleep(20);
             continue;
         }
         if (failures) Log("WorkerMain: depth recovered");
@@ -7853,6 +7914,38 @@ static bool SelfTestSteadyFuse(App& app, const std::vector<unsigned char>& scene
 // results. Exercises the grid pass, motion estimator, anchor thread and CPU maths.
 static bool FirstSourceFrame(App& app);
 
+static bool SelfTestDepthToggle(App& app)
+{
+    if (!app.sources.Latest() && !FirstSourceFrame(app)) return false;
+    SetDepthProcessing(app, false);
+    const auto before = app.depthPublished.load();
+    std::thread worker(WorkerMain, &app);
+    Sleep(250);
+    const bool startedPaused = app.depthPublished.load() == before;
+    const auto waitForDepth = [&](uint64_t previous)
+    {
+        const double deadline = NowSeconds() + 5.0;
+        while (app.depthPublished.load() == previous && NowSeconds() < deadline) Sleep(10);
+        return app.depthPublished.load() > previous;
+    };
+    SetDepthProcessing(app, true);
+    const bool enabled = waitForDepth(before);
+    SetDepthProcessing(app, false);
+    Sleep(250);  // let a pass already submitted to the GPU finish
+    const auto paused = app.depthPublished.load();
+    Sleep(250);
+    const bool stayedPaused = app.depthPublished.load() == paused;
+    SetDepthProcessing(app, true);
+    const bool resumed = waitForDepth(paused);
+    app.stop = true;
+    worker.join();
+    WaitDepthIdle(app);
+    const bool ok = startedPaused && enabled && stayedPaused && resumed;
+    Log("SelfTestDepthToggle: %s (start paused %d, enable %d, stay paused %d, resume %d)",
+        ok ? "PASS" : "FAIL", startedPaused, enabled, stayedPaused, resumed);
+    return ok;
+}
+
 static bool SelfTestPipeline(App& app)
 {
     if (!app.steadyEnabled.load() && !app.fuseEnabled.load()) return true;
@@ -7897,7 +7990,7 @@ static bool SelfTestRefine(App& app, const std::vector<unsigned char>& scene, co
     const int dw = W / 2, dh = H / 2;
     if (scene.size() != (size_t)W * H * 3 || near01.size() != (size_t)W * H) { Log("SelfTestRefine: bad input sizes"); return false; }
     Log("SelfTestRefine: enter (%dx%d depth for a %dx%d picture)", dw, dh, W, H);
-    if (!EnsureNearFine(app) || (size_t)app.nearFineW * app.nearFineH < (size_t)W * H) { Log("SelfTestRefine: FAIL no buffers"); return false; }
+    if (!EnsureNearFine(app)) { Log("SelfTestRefine: FAIL no buffers"); return false; }
     if (!UploadTestSource(app, scene)) return false;
     ID3D12Device* dev = app.device.Get();
 
@@ -10403,6 +10496,7 @@ static void RunFrameLoop(App& app)
     Cylinder cylinder;
     float curveWidth = -1, curveHeight = -1, curveDistance = -1, curveFraction = -1;
     bool headLockedNoticeLogged = false;
+    bool panelAtlasBound = false;
     // The room (room.h): rebuilt only when the screen, the recentre point, the curve or
     // the floor change; its light is worked out every frame.
     Room room;
@@ -10471,6 +10565,7 @@ static void RunFrameLoop(App& app)
                 desktop = next; lastRecenter = next.recenter; lastMenu = next.menu;
                 recenterKey = next.recenterKey; menuKey = next.menuKey;
                 app.opt.warpScale = next.strength; app.opt.doWarp = next.stereo != 0;
+                SetDepthProcessing(app, app.opt.doWarp);
                 app.opt.keepDashboard = next.autoDismiss == 0;
                 if (app.opt.paired != (next.paired != 0))
                     Log("Frame matching: %s", next.paired ? "enabled (matching colour and depth; added delay)" : "disabled (latest colour)");
@@ -10667,6 +10762,7 @@ static void RunFrameLoop(App& app)
         XrCompositionLayerQuad quads[VIEWS] = {};
         XrCompositionLayerQuad glowQuad{};
         XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
+        uint32_t compositedPanels = 0;
         XrCompositionLayerProjectionView pviews[VIEWS];
         XrCompositionLayerDepthInfoKHR dinfo[VIEWS];
 
@@ -10888,7 +10984,9 @@ static void RunFrameLoop(App& app)
                 roomRejected = false;
                 roomFailedLogged = false;
             }
-            const bool lifeProjection = roomOn && ((app.opt.life.flags & 12) != 0 || app.opt.life.vrex != 0);
+            RoomLifeSettings activeLife = app.opt.life;
+            if (!app.controllerMenu.VrexEnabled()) activeLife.vrex = 0;
+            const bool lifeProjection = roomOn && ((activeLife.flags & 12) != 0 || activeLife.vrex != 0);
             const bool projectionScreen = curvedScreen || lifeProjection;
             const bool roomFlat = roomOn && !projectionScreen;
             roomLife.EnableAudio(roomOn && (app.opt.life.flags & 1) != 0);
@@ -10993,21 +11091,33 @@ static void RunFrameLoop(App& app)
 
                 // --- latest COMPLETED depth
                 bool tookSlot = false;
-                if (app.readySlot.load() & SLOT_FRESH)
+                const auto depthMode = app.depthMode.load();
+                const bool processDepth = (depthMode & 1u) != 0;
+                if (!processDepth || (cur && cur->mode != depthMode))
+                {
+                    cur = nullptr;
+                    depthDelay = {};
+                    depthGrace = {};
+                }
+                if (processDepth && (app.readySlot.load() & SLOT_FRESH))
                 {
                     WaitFence(app, app.slotFence);
                     app.readSlot = app.readySlot.exchange(app.readSlot) & (SLOT_FRESH - 1);
-                    cur = &app.slots[app.readSlot];
-                    RecordUploadNear(app, cur->nearUp.Get());
-                    if (cur->hasGuide) RecordUploadGuide(app, cur->guideUp.Get());
-                    if (cur->hasBack) RecordUploadBack(app, cur->backUp.Get());
-                    tookSlot = true;
-                    depthUpdates++; repDepth++;
-                    if (!cur->reused) depthDelay.Update(cur->completeTime - cur->sceneTime);   // carried-forward depth took no model time
+                    if (app.slots[app.readSlot].mode == depthMode)
+                    {
+                        cur = &app.slots[app.readSlot];
+                        RecordUploadNear(app, cur->nearUp.Get());
+                        if (cur->hasGuide) RecordUploadGuide(app, cur->guideUp.Get());
+                        if (cur->hasBack) RecordUploadBack(app, cur->backUp.Get());
+                        tookSlot = true;
+                        depthUpdates++; repDepth++;
+                        if (!cur->reused) depthDelay.Update(cur->completeTime - cur->sceneTime);
+                    }
                 }
 
                 // --- game frame timing (frame_timing.h)
-                const FrameTiming timing = app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest;
+                const FrameTiming timing = !processDepth ? FrameTiming::Latest :
+                    app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest;
                 if (timing == FrameTiming::Delayed && source && !newSrc)
                 {
                     if (!history.empty() && history.back()->layout != source->layout) history.clear();
@@ -11050,7 +11160,7 @@ static void RunFrameLoop(App& app)
                     WarpConstants c{};
                     c.cw = (uint32_t)target.cw; c.ch = (uint32_t)target.ch; c.dw = W; c.dh = H;
                     c.doWarp = stereo ? 1u : 0u;
-                    c.showDepthMap = app.opt.showDepthMap ? (depthAvailable ? 1u : 2u) : 0u;
+                    c.showDepthMap = processDepth && app.opt.showDepthMap ? (depthAvailable ? 1u : 2u) : 0u;
                     c.scaleFocal = app.opt.warpScale * focalPx;
                     c.invZNear = 1.0f / 1.2f;
                     c.invZFar = 1.0f / 12.0f;
@@ -11158,7 +11268,16 @@ static void RunFrameLoop(App& app)
                             lifePlayer.beams[hand]={{o.x,o.y,o.z},{d.x,d.y,d.z},beam.limit,beam.active && state==XR_SESSION_STATE_FOCUSED,beam.trigger};
                         }
                         roomLife.SetPlayer(lifePlayer);
-                        roomLife.Fill(rc, room, app.opt.life, (float)dt, reset);
+                        int helperState=0;bool helperPoint=false,helperAnchored=false,helperRoam=false;XrVector3f helperWorld{},helperAnchor{};
+                        bool helperActive=app.controllerMenu.GetVrexWork(helperState,helperPoint,helperWorld,helperAnchored,helperAnchor,helperRoam);
+                        auto helperLocal=vrxmenu::Rotate(screenInverse,vrxmenu::Sub(helperWorld,screen.pose.position));
+                        auto anchorLocal=vrxmenu::Rotate(screenInverse,vrxmenu::Sub(helperAnchor,screen.pose.position));
+                        roomLife.SetVrexWork(helperActive,helperState,helperPoint,{helperLocal.x,helperLocal.y,helperLocal.z},
+                            helperAnchored,{anchorLocal.x,anchorLocal.y,anchorLocal.z},helperRoam);
+                        roomLife.SetVrexAppearance(app.controllerMenu.VrexAvatar(),app.controllerMenu.VrexShellRgb());
+                        roomLife.Fill(rc, room, activeLife, (float)dt, reset);
+                        if (projectionScreen && activeLife.vrex && (rc.lifeFlags & 190) != 0)
+                            compositedPanels = app.controllerMenu.CopyVrexPanelPlanes(rc, screen.pose);
                         memcpy(app.roomCbMapped + (size_t)ring * sizeof(RoomConstants), &rc, sizeof(rc));
                         roomCb = app.roomCbUp->GetGPUVirtualAddress() + (UINT64)ring * sizeof(RoomConstants);
                         ID3D12Resource* geometry = nullptr;
@@ -11190,8 +11309,9 @@ static void RunFrameLoop(App& app)
                             standsFailedLogged = true;
                         }
                         if (!RecordCurvedScreen(app, DESC_CURVE_MAIN, target.colorOut.Get(), cc, app.eyeOut.Get(), app.eimgs[eyeImage.index].texture, roomCb,
-                                                splitTimes ? timeBase : UINT_MAX, nullptr, roomEyePso, DESC_STANDS_MAIN))
-                            splitDone = false;
+                                                splitTimes ? timeBase : UINT_MAX, nullptr, roomEyePso, DESC_STANDS_MAIN,
+                                                compositedPanels != 0))
+                        { splitDone = false; compositedPanels = 0; }
                         drewRoom = roomFlat;
                     }
                     if (timed)
@@ -11362,21 +11482,24 @@ static void RunFrameLoop(App& app)
             }
         }
         app.controllerMenu.SetScene(room,screen.pose,app.opt.headLocked ? XrExtent2Df{} : screen.size,cylinder,mouseTarget,mouseWindow,menuFov);
-        LifeVec vrexPosition;VrexMenuFrame vrexMenu;int vrexHost=-1;bool vrexOpen=false;
-        bool vrexTarget=app.opt.life.vrex && app.opt.room>0 && !desktop.follow && !app.opt.headLocked &&
-            roomLife.GetVrexInteraction(vrexPosition,vrexMenu,vrexHost,vrexOpen);
-        XrPosef vrexMenuPose{{0,0,0,1},{0,0,0}};XrVector3f vrexWorld{};
+        LifeVec vrexPosition;
+        bool vrexTarget=app.opt.life.vrex && app.controllerMenu.VrexEnabled() && app.opt.room>0 && !desktop.follow && !app.opt.headLocked &&
+            roomLife.GetVrexPosition(vrexPosition);
+        XrVector3f vrexWorld{};
         if(vrexTarget)
         {
             auto worldVector=[&](LifeVec p) {return vrxmenu::Rotate(screen.pose.orientation,{p.x,p.y,p.z});};
             vrexWorld=vrxmenu::Add(screen.pose.position,worldVector(vrexPosition));
-            vrexMenuPose.position=vrxmenu::Add(screen.pose.position,worldVector(vrexMenu.centre));
-            vrexMenuPose.orientation=vrxmenu::Axes(worldVector(vrexMenu.right),worldVector(vrexMenu.up),worldVector(vrexMenu.normal));
         }
-        app.controllerMenu.SetVrexTarget(vrexTarget,vrexWorld,vrexHost,vrexOpen,vrexMenuPose);
+        app.controllerMenu.SetVrexTarget(vrexTarget,vrexWorld);
         app.controllerMenu.Update(g_getProc, app.instance, app.session, app.space, app.device.Get(), app.gfxQueue.Get(),
             state == XR_SESSION_STATE_FOCUSED, fs.shouldRender && trackingWasValid, fs.predictedDisplayTime,
             app.frameControllerProfile, app.genericControllerProfile);
+        if (!panelAtlasBound && app.controllerMenu.PanelAtlas())
+        {
+            MakeTextureSrv(app, app.controllerMenu.PanelAtlas(), app.controllerMenu.AtlasFormat(), DESC_PANELS);
+            panelAtlasBound = true;
+        }
         std::wstring capturedPath;
         if (app.snapshotCapture.Poll(capturedPath))
         { app.snapshotFrameHold.reset(); app.snapshotCompletionPath = std::move(capturedPath); app.snapshotCompletionPending = true; }
@@ -11389,7 +11512,11 @@ static void RunFrameLoop(App& app)
             else { app.snapshotCompletionPending = true; app.snapshotCompletionPath.clear(); }
         }
         if (fs.shouldRender && trackingWasValid)
-            app.controllerMenu.Append(layers, layerCount);
+        {
+            const bool drewPanelFaces = layerCount > 0 &&
+                layers[0] == reinterpret_cast<const XrCompositionLayerBaseHeader*>(&proj);
+            app.controllerMenu.Append(layers, layerCount, drewPanelFaces ? compositedPanels : 0);
+        }
         if (app.controllerMenu.Error() != controllerError)
         {
             controllerError = app.controllerMenu.Error();
@@ -11460,7 +11587,8 @@ static void RunFrameLoop(App& app)
                 (capFrames - lastCapFrames) / dt,
                 repDepth / dt, cur ? cur->modelMs : 0.0, repDrawn ? repAgeMs / repDrawn : 0.0,
                 cur ? cur->lo : 0.f, cur ? cur->hi : 0.f,
-                FrameTimingName(app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest),
+                FrameTimingName(!(app.depthMode.load() & 1u) ? FrameTiming::Latest :
+                    app.opt.paired ? FrameTiming::Matched : app.opt.delayed ? FrameTiming::Delayed : FrameTiming::Latest),
                 repDrawn ? repShownAgeMs / repDrawn : 0.0, depthDelay.value * 1000.0,
                 app.opt.useTruth ? " [warp uses TRUTH]" : "");
             if (app.opt.source == SourceKind::Synthetic && cur)
@@ -11868,6 +11996,8 @@ int wmain(int argc, wchar_t** wideArgv)
         DesktopSettings initial;
         if (!ReadDesktopSettings(app.opt.controlPath, initial) || app.opt.headLocked)
         { Log("Desktop control: invalid settings or incompatible projection diagnostic"); return 1; }
+        app.opt.doWarp = initial.stereo != 0;
+        SetDepthProcessing(app, app.opt.doWarp);
         app.foregroundEnabled = initial.foreground != 0 && initial.stereo != 0;
         app.opt.paired = initial.paired != 0;
         if (initial.version >= 4)
@@ -11959,6 +12089,7 @@ int wmain(int argc, wchar_t** wideArgv)
             bool passed = SelfTestPipeline(app) && fg;
             if (app.opt.benchRoom && !passed) Log("main: --bench-room skipped - the self-test failed, so its passes are not worth timing");
             if (app.opt.benchRoom && passed) passed = BenchRoom(app);
+            if (passed) passed = SelfTestDepthToggle(app);
             if (passed) rc = 0;
             break;
         }
@@ -11969,7 +12100,8 @@ int wmain(int argc, wchar_t** wideArgv)
         // its first frame and the log shows the model's numbers even if the HMD
         // never wakes.
         std::vector<float> firstNear;
-        if (ComputeAndPublish(app, app.sources.Latest(), firstNear))
+        if (!(app.depthMode.load() & 1u)) Log("main: starting flat playback with depth paused");
+        else if (ComputeAndPublish(app, app.sources.Latest(), firstNear))
         {
             const DepthSlot& s = app.slots[app.readySlot.load() & (SLOT_FRESH - 1)];
             Log("main: first depth in %.1f ms (includes warm-up), range %.3f..%.3f", s.modelMs, s.lo, s.hi);
@@ -11995,7 +12127,7 @@ int wmain(int argc, wchar_t** wideArgv)
 
         app.worker = std::thread(WorkerMain, &app);
         RunFrameLoop(app);
-        rc = app.stop.load() || !app.depthHealthy.load() ? 1 : 0;
+        rc = app.stop.load() || ((app.depthMode.load() & 1u) && !app.depthHealthy.load()) ? 1 : 0;
     } while (false);
     }
     catch (const winrt::hresult_error& e) { Log("main: failure 0x%08X", (unsigned)e.code().value); }

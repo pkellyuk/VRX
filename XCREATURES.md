@@ -136,9 +136,8 @@ controller is available he floats near the viewer. Trigger-point for a reaction 
 
 Vrex recreates the approved teal PersonaBot mascot as procedural 3D geometry: rounded
 head and body, navy visor, happy eyes, pink cheeks, centered antenna, headphone ears,
-soft limbs and twin jetpack exhaust. The source project contains PNG artwork rather
-than mesh files; the reference is preserved in `docs/references/personabot-mascot-reference.png`
-from `PersonaBot/src/PersonaBot.UI/Assets/personabot-logo.png`. His chest carries a
+soft limbs and twin jetpack exhaust. The design reference is the PNG artwork at
+`PersonaBot/src/PersonaBot.UI/Assets/personabot-logo.png`. His chest carries a
 sampled version of `docs/vrx-logo.png`. Short preset bubbles cover greetings, beam
 following, music, controller reactions and readiness. These are preset companion
 behaviours, without conversational AI. Badge and bubble orientation is verified with

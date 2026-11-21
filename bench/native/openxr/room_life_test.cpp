@@ -82,16 +82,18 @@ int main(int argc,char**)
         Check(RoomLife::Clear(palRoom,position,kLifeRadius[LifeVrex]),"Vrex respects room furniture and boundaries");
         Check((position-player.head).Length()>=.30f,"Vrex does not fly through the viewer head");
         Check((position-previous).Length()<.04f,"Vrex moves continuously");
-        Check(palConstants.vrexState!=(float)VrexPerched,"Vrex never automatically perches on a shoulder");
     }
-    Check(palConstants.vrexState==(float)VrexBeamFollow,"Vrex follows a tracked beam");
-    player.beams[0].active=false;life.SetPlayer(player);
-    for(int frame=0;frame<300;++frame) life.Fill(palConstants,palRoom,palSettings,1.f/60,false);
-    Check(palConstants.lifeObjects[0][15]==1,"Vrex switches to the available right beam");
-    for(int frame=0;frame<25;++frame) {player.beams[1].origin.x+=.006f;life.SetPlayer(player);life.Fill(palConstants,palRoom,palSettings,1.f/60,false);}
-    float beforeReverse=palConstants.lifeObjects[0][0];
-    player.beams[1].origin.x-=.8f;life.SetPlayer(player);life.Fill(palConstants,palRoom,palSettings,1.f/120,false);
-    Check(palConstants.lifeObjects[0][0]>beforeReverse,"Vrex retains momentum when a beam abruptly reverses");
+    const LifeVec chatAnchor{-1.0f,.15f,1.75f};
+    life.SetVrexWork(true,0,false,{},true,chatAnchor);
+    for(int frame=0;frame<360;++frame)
+    {
+        player.beams[1].origin.x=.65f+sinf(frame*.08f);life.SetPlayer(player);
+        life.Fill(palConstants,palRoom,palSettings,1.f/60,false);
+    }
+    LifeVec quietPosition{palConstants.lifeObjects[0][0],palConstants.lifeObjects[0][1],palConstants.lifeObjects[0][2]};
+    Check((quietPosition-chatAnchor).Length()<.15f && palConstants.lifeObjects[0][15]==-1,
+        "Vrex hovers by the chat anchor while the controller beam moves");
+    life.SetVrexWork(false,0,false,{});
     player.beams[1].active=false;
     LifeVec palPosition{palConstants.lifeObjects[0][0],palConstants.lifeObjects[0][1],palConstants.lifeObjects[0][2]};
     LifeVec toPal=palPosition-player.head;player.beams[0]={player.head,toPal*(1/toPal.Length()),20,true,true};
@@ -104,31 +106,55 @@ int main(int argc,char**)
     RoomLife companion;LifePlayer owner;owner.valid=true;owner.head={0,0,3};owner.forward={0,0,-1};
     owner.beams[0]={{-.25f,-.25f,2.9f},{0,0,-1},3,true,false};
     companion.SetPlayer(owner);companion.Fill(palConstants,palRoom,palSettings,0,true);
-    for(int frame=0;frame<300;++frame) companion.Fill(palConstants,palRoom,palSettings,1.f/60,false);
-    Check(((int)palConstants.vrexState&16)==0,"the host beam alone cannot open the companion menu");
-    auto pointFree=[&](int row,bool trigger,float limit=20.f)
+    companion.SetVrexWork(true,4,false,{});
+    companion.Fill(palConstants,palRoom,palSettings,1.f/60,false);
+    Check(((int)palConstants.vrexState&1024)!=0 && palConstants.vrexChat==0,"spoken replies animate Vrex without a preset bubble");
+    companion.SetVrexWork(true,0,false,{});
+    for(int frame=0;frame<60;++frame)
     {
         LifeVec position{palConstants.lifeObjects[0][0],palConstants.lifeObjects[0][1],palConstants.lifeObjects[0][2]};
-        auto menu=MakeVrexMenuFrame(owner.head,position);
-        LifeVec target=row?menu.centre+menu.up*(row==1?.054f:-.054f):position;
-        LifeVec origin{.65f,-.25f,2.9f},direction=target-origin;
-        owner.beams[1]={origin,direction*(1/direction.Length()),limit,true,trigger};
+        LifeVec origin{.65f,-.25f,2.9f},direction=position-origin;
+        owner.beams[1]={origin,direction*(1/direction.Length()),20.f,true,frame%20>=10};
         companion.SetPlayer(owner);companion.Fill(palConstants,palRoom,palSettings,1.f/60,false);
-    };
-    for(int frame=0;frame<20;++frame) pointFree(0,false);
-    Check(((int)palConstants.vrexState&16)!=0,"free-controller hover opens the Vrex interaction menu");
-    pointFree(1,false);pointFree(1,true);pointFree(1,false);
-    Check(palConstants.vrexChat==1 && (((int)palConstants.vrexState>>8)&3)==1,"Hello selects a greeting with a wave and wink");
-    pointFree(2,false);pointFree(2,true);pointFree(0,true);pointFree(0,false);
-    Check(palConstants.vrexChat==1,"moving off a pressed option cancels its reply");
-    pointFree(2,false);pointFree(2,true);pointFree(2,false);
-    Check(palConstants.vrexChat==7 && (((int)palConstants.vrexState>>8)&3)==2,"What are you doing selects a beam-following reply and shrug");
-    for(int frame=0;frame<110;++frame) pointFree(1,false,.01f);
-    Check(((int)palConstants.vrexState&16)==0,"foreground occluders prevent menu interaction and let it close");
-    for(int frame=0;frame<20;++frame) pointFree(0,false);
-    Check(((int)palConstants.vrexState&16)!=0,"menu reopens after moving clear of an occluder");
-    owner.beams[1].active=false;companion.SetPlayer(owner);companion.Fill(palConstants,palRoom,palSettings,.02f,false);
-    Check(((int)palConstants.vrexState&16)==0,"lost free-controller tracking closes the companion menu");
+        Check(((int)palConstants.vrexState&0xf0)==0 && palConstants.vrexChat==0,
+            "Aiming and clicking at Vrex never opens the old prompts");
+    }
+    LifeVec companionPosition;
+    Check(companion.GetVrexPosition(companionPosition),"Vrex reports his position for spatial audio");
+    owner.beams[1].active=false;companion.SetPlayer(owner);
+    companion.SetVrexWork(true,2,true,{.6f,0,2});
+    for(int frame=0;frame<300;++frame)companion.Fill(palConstants,palRoom,palSettings,1.f/60,false);
+    LifeVec working{palConstants.lifeObjects[0][0],palConstants.lifeObjects[0][1],palConstants.lifeObjects[0][2]};
+    Check(palConstants.lifeCount==1 && palConstants.vrexChat==0,"Ubuntu helper reuses one Vrex and suppresses canned replies");
+    Check((working-LifeVec{.4f,.1f,2}).Length()<.1f && (((int)palConstants.vrexState>>8)&3)==3,"working Vrex follows and points at the Ubuntu interaction target");
+    Check(palConstants.lifeObjects[0][4]>.95f && fabsf(palConstants.lifeObjects[0][6])<.1f,"working Vrex faces the Ubuntu target rather than pointing toward the viewer");
+    const LifeVec pointAnchor{.75f,.16f,2};
+    companion.SetVrexWork(true,6,true,{.93f,.1f,2},true,pointAnchor);
+    for(int frame=0;frame<240;++frame)companion.Fill(palConstants,palRoom,palSettings,1.f/60,false);
+    Check(companion.GetVrexPosition(companionPosition) && (companionPosition-pointAnchor).Length()<.1f &&
+        (((int)palConstants.vrexState>>8)&3)==3,"the explicit point gesture flies to its screen anchor");
+    companion.SetVrexWork(true,0,false,{},true,working);
+    for(int frame=0;frame<240;++frame)companion.Fill(palConstants,palRoom,palSettings,1.f/60,false);
+    Check(companion.GetVrexPosition(companionPosition) && (companionPosition-working).Length()<.13f,
+        "the companion returns to his normal anchor after pointing");
+    RoomLife roaming;
+    owner.beams[0].active=false; owner.beams[1].active=false;
+    roaming.SetPlayer(owner);
+    const LifeVec focus{0,0,0},home{-1.4f,.1f,1.8f},beam=focus-owner.head;
+    roaming.SetVrexWork(true,0,true,focus,true,home,true);
+    bool visitedScreen=false, returnedHome=false;
+    for(int frame=0;frame<4200;++frame)
+    {
+        roaming.Fill(palConstants,palRoom,palSettings,1.f/60,frame==0);
+        Check(palConstants.lifeCount==1,"roaming Vrex remains present");
+        LifeVec position{palConstants.lifeObjects[0][0],palConstants.lifeObjects[0][1],palConstants.lifeObjects[0][2]};
+        float along=std::clamp(LifeDot(position-owner.head,beam)/LifeDot(beam,beam),0.f,1.f);
+        Check((position-(owner.head+beam*along)).Length()>=kLifeRadius[LifeVrex]+.18f,"roaming Vrex avoids the cursor's sightline");
+        if(position.z<1.2f && (position-home).Length()>.9f) visitedScreen=true;
+        if(visitedScreen && (position-home).Length()<.18f) returnedHome=true;
+    }
+    Check(visitedScreen && returnedHome,"helpful Vrex explores near the screen and returns to Ubuntu");
+    companion.SetVrexWork(false,0,false,{});
     palSettings.vrex=0;companion.Fill(palConstants,palRoom,palSettings,.02f,false);
     Check(palConstants.lifeCount==0 && ((int)palConstants.vrexState&16)==0,"Vrex off also disables his interaction menu");
     puts("PASS: FFT bands, silence, 18 room/curve collision soaks, species selection, toggles and directed relations");

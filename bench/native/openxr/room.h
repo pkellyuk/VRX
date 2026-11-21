@@ -1534,12 +1534,18 @@ struct RoomConstants                            // must match kRoomCbufferHlsl
     float lifeObjects[25][16] = {};
     float lifeWaveform[48] = {};
     float visualReactivity=0; uint32_t visualLayers=0; float vrexChat=0, vrexState=0;
-    float lifePadding[16] = {};                                                // 2560 bytes, keeping every ring CBV 256-aligned
+    struct PanelPlane { float center[4], right[4], up[4]; };
+    PanelPlane vrexPanels[7] = {};
+    uint32_t vrexPanelCount = 0;
+    uint32_t smoothPanels = 0;
+    uint32_t panelPadding[58] = {};                     // keep each frame's CBV 256-byte aligned
 };
 static_assert(offsetof(RoomConstants,lifeTime)==576 && offsetof(RoomConstants,lifeSpectrum)==624 &&
               offsetof(RoomConstants,lifeObjects)==688 && offsetof(RoomConstants,lifeWaveform)==2288,
               "room life rows match the HLSL constant buffer");
-static_assert(sizeof(RoomConstants) == 2560, "RoomConstants is ten 256-byte steps");
+static_assert(offsetof(RoomConstants, vrexPanels) == 2496 && offsetof(RoomConstants, vrexPanelCount) == 2832,
+    "panel planes match the HLSL constant buffer");
+static_assert(sizeof(RoomConstants) == 3072, "RoomConstants stays on a 256-byte boundary");
 static_assert(offsetof(RoomConstants, standsZ0) == 512 && offsetof(RoomConstants, seatX0) == 528 && offsetof(RoomConstants, standsRows) == 544 &&
               offsetof(RoomConstants, seatJMin) == 560, "rows 32-35: the theatre (XENV.md)");
 static_assert(offsetof(RoomConstants, glowH) == 160 && offsetof(RoomConstants, glass) == 176, "rows 0-10 are v10's; row 11 starts at 176");

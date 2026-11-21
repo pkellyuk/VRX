@@ -184,13 +184,22 @@ struct PanelFlight
     }
 };
 
+inline XrPosef ScreenPointerAt(XrPosef screen, XrExtent2Df size, const Cylinder& cylinder, float u, float v)
+{
+    if (!cylinder.curved)
+        return {screen.orientation,Add(screen.position,Rotate(screen.orientation,{(u-.5f)*size.width,(.5f-v)*size.height,.005f}))};
+    const float phi = (u-.5f)*2*cylinder.halfWrap;
+    return {Multiply(screen.orientation,{0,-std::sin(phi*.5f),0,std::cos(phi*.5f)}),
+        Add(screen.position,Rotate(screen.orientation,{(cylinder.radius-.005f)*std::sin(phi),(v-.5f)*-size.height,
+            cylinder.radius-(cylinder.radius-.005f)*std::cos(phi)}))};
+}
 inline bool ScreenHit(XrPosef screen, XrExtent2Df size, const Cylinder& cylinder, XrPosef ray,
     float& u, float& v, XrPosef& pointer)
 {
     if (!cylinder.curved)
     {
         if (!Hit(screen,size,ray,u,v)) return false;
-        pointer = {screen.orientation,Add(screen.position,Rotate(screen.orientation,{(u-.5f)*size.width,(.5f-v)*size.height,.005f}))};
+        pointer = ScreenPointerAt(screen,size,cylinder,u,v);
         return true;
     }
     const auto inverse = Inverse(screen.orientation);
@@ -198,10 +207,7 @@ inline bool ScreenHit(XrPosef screen, XrExtent2Df size, const Cylinder& cylinder
     const auto direction = Rotate(inverse,Rotate(ray.orientation,{0,0,-1}));
     float o[]{origin.x,origin.y,origin.z}, d[]{direction.x,direction.y,direction.z};
     if (!CylinderHit(cylinder,o,d,&u,&v)) return false;
-    const float phi = (u-.5f)*2*cylinder.halfWrap;
-    pointer = {Multiply(screen.orientation,{0,-std::sin(phi*.5f),0,std::cos(phi*.5f)}),
-        Add(screen.position,Rotate(screen.orientation,{(cylinder.radius-.005f)*std::sin(phi),(v-.5f)*-size.height,
-            cylinder.radius-(cylinder.radius-.005f)*std::cos(phi)}))};
+    pointer = ScreenPointerAt(screen,size,cylinder,u,v);
     return true;
 }
 

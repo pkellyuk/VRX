@@ -113,4 +113,4 @@ if errorlevel 1 (
   echo BUILD FAILED ^(cannot copy d3dcompiler_47.dll^)
   exit /b 1
 )
-echo BUILD OK: %OUT%\xrapp3.exe
+echo BUILD OK: %OUT%\%APP5_NAME%.exe

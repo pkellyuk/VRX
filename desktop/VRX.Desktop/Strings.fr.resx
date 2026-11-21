@@ -947,7 +947,7 @@ Cette action est irréversible. Les jeux pas encore configurés partent toujours
     <value>Gâchette droite : clic gauche / glisser · Préhension droite : clic droit · Menu : masquer les paramètres</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
-    <value>Instantané</value>
+    <value>Capture du jeu</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
     <value>Ouvrir le dossier images</value>
@@ -1181,8 +1181,9 @@ Cette action est irréversible. Les jeux pas encore configurés partent toujours
     <value>Les créatures réagissent aux faisceaux des manettes</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex — compagnon robot jetpack</value>
+    <value>Vrex — compagnon</value>
   </data>
+  <data name="FloatingAntialiasing" xml:space="preserve"><value>Lisser les bords des panneaux flottants</value></data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>Par défaut</value>
   </data>
@@ -1429,4 +1430,9 @@ Cette action est irréversible. Les jeux pas encore configurés partent toujours
   <data name="GameHelpPrompt" xml:space="preserve">
     <value>Identifiez le jeu et la scène exacte dans cette capture d'écran. Donnez-moi un indice utile sur ce qu'il faut faire ensuite, en évitant les spoilers majeurs, et incluez des liens vers des solutions ou des guides pertinents. Si vous ne parvenez pas à l'identifier avec certitude, posez-moi une question plutôt que de deviner.</value>
   </data>
+  <data name="VrexUbuntu" xml:space="preserve"><value>Vrex Ubuntu</value></data>
+  <data name="VrexModelSettings" xml:space="preserve"><value>Paramètres IA de Vrex…</value></data>
+  <data name="UbuntuSettings" xml:space="preserve"><value>Paramètres du bureau Ubuntu…</value></data>
+  <data name="VrexKeyboardTarget" xml:space="preserve"><value>Saisie dans Ubuntu Vrex / discussion</value></data>
+  <data name="ResetFloatingAppearance" xml:space="preserve"><value>Réinitialiser l’apparence des panneaux flottants</value></data>
 </root>

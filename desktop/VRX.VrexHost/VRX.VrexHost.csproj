@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <Version>1.8.5</Version>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <Upstream>..\..\integrations\personabot\src</Upstream>
+    <QemuRuntime>..\..\integrations\personabot\runtime</QemuRuntime>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
+    <Compile Include="..\Shared\VrexProtocol.cs" Link="VrexProtocol.cs" />
+    <Compile Include="..\Shared\VrxDataDirectory.cs" Link="VrxDataDirectory.cs" />
+    <Compile Include="$(Upstream)\PersonaBot.Voice\VoiceProtocol.cs" Link="Voice\VoiceProtocol.cs" />
+    <ProjectReference Include="$(Upstream)\PersonaBot.Core\PersonaBot.Core.csproj" />
+    <ProjectReference Include="$(Upstream)\PersonaBot.Voice\PersonaBot.Voice.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.7" />
+    <PackageReference Include="DiscUtils.Iso9660" Version="0.16.13" />
+    <EmbeddedResource Include="$(Upstream)\PersonaBot.Desktop\Guest\cloud-provision.sh" LogicalName="PersonaBot.Guest.cloud-provision.sh" />
+    <Compile Include="$(Upstream)\PersonaBot.Desktop\*.cs" Link="Guest\%(Filename)%(Extension)" />
+    <Content Include="$(QemuRuntime)\**\*" Link="qemu\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="'$(CopyLocalQemu)' != 'false'" />
+  </ItemGroup>
+  <Target Name="CopyPersonaVoice" AfterTargets="Build">
+    <MSBuild Projects="$(Upstream)\PersonaBot.Voice\PersonaBot.Voice.csproj" Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64">
+      <Output TaskParameter="TargetOutputs" ItemName="VoiceAssembly" />
+    </MSBuild>
+    <ItemGroup>
+      <VoiceBinary Include="%(VoiceAssembly.RootDir)%(VoiceAssembly.Directory)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(VoiceBinary)" DestinationFolder="$(TargetDir)voice\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishPersonaVoice" AfterTargets="Publish">
+    <MSBuild Projects="$(Upstream)\PersonaBot.Voice\PersonaBot.Voice.csproj" Targets="Restore;Publish"
+             RemoveProperties="OutDir;OutputPath;BaseOutputPath;BaseIntermediateOutputPath"
+             Properties="Configuration=$(Configuration);SelfContained=$(SelfContained);RuntimeIdentifier=win-x64;PublishDir=$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine($(MSBuildProjectDirectory), $(PublishDir)))))voice\" />
+  </Target>
+</Project>

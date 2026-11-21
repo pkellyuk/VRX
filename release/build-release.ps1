@@ -3,19 +3,20 @@
 # SignPath's code signing:
 #   Payload    build everything into <out>\VRX-<version>-win-x64, plus <out>\to-sign with
 #              VRX's own programs and Inno Setup's uninstaller, for the first signing request
+#   SteamPayload  build the Steam depot directory and its checksums
 #   Package    put the signed files (-SignedFiles) back, then build the installer and ZIP
 #   Checksums  SHA256SUMS.txt for the installer and ZIP (again after the installer is signed)
 param(
     [string]$OutputRoot = '',
-    [ValidateSet('All', 'Payload', 'Package', 'Checksums')] [string]$Stage = 'All',
+    [ValidateSet('All', 'Payload', 'SteamPayload', 'Package', 'Checksums')] [string]$Stage = 'All',
     [string]$SignedFiles = ''
 )
 $ErrorActionPreference = 'Stop'
-$version = '1.8.4.1'
+$version = '1.8.5'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 if (!$OutputRoot)
 {
-    if ($Stage -ne 'All' -and $Stage -ne 'Payload') { throw "-Stage $Stage needs the -OutputRoot of the Payload stage" }
+    if ($Stage -in 'Package', 'Checksums') { throw "-Stage $Stage needs the -OutputRoot of the Payload stage" }
     $OutputRoot = Join-Path $PSScriptRoot ("out\v$version-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
@@ -52,8 +53,9 @@ function Build-Payload
         & cmd /c 'bench\native\openxr\build.bat --desktop'
         if ($LASTEXITCODE) { throw 'Native build failed' }
         $env:LIB = ''
-        & dotnet publish desktop/VRX.Desktop/VRX.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o $payload
+        & dotnet publish desktop/VRX.Desktop/VRX.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:CopyLocalQemu=false -o $payload
         if ($LASTEXITCODE) { throw 'Desktop publish failed' }
+        if (Test-Path -LiteralPath (Join-Path $payload 'vrex\qemu')) { throw 'The release payload should fetch QEMU on first use.' }
         Get-ChildItem -LiteralPath $payload -Filter '*.pdb' | Remove-Item
         $engine = New-Item -ItemType Directory -Path (Join-Path $payload 'engine')
         $models = New-Item -ItemType Directory -Path (Join-Path $engine 'models')
@@ -87,11 +89,20 @@ function Build-Payload
         # The cache is keyed by d3dcompiler_47.dll's version too; the pre-warm runs the payload's
         # own xrplayer.exe, so it loads the app-local SDK compiler that ships with it.
         $warmLog = Join-Path $OutputRoot 'shader-cache-warm.log'
-        & "$engine\xrplayer.exe" "--warm-shader-cache=$engine\shader-cache" *> $warmLog
-        if ($LASTEXITCODE) { Get-Content $warmLog -Tail 20; throw 'Shader cache pre-warm failed' }
+        # Use a distinct process name so Attach / Play can run while packaging warms shaders.
+        $cacheBuilder = Join-Path $engine 'vrx-shader-cache-builder.exe'
+        Copy-Item -LiteralPath "$engine\xrplayer.exe" -Destination $cacheBuilder
+        try {
+            & $cacheBuilder "--warm-shader-cache=$engine\shader-cache" *> $warmLog
+            if ($LASTEXITCODE) { Get-Content $warmLog -Tail 20; throw 'Shader cache pre-warm failed' }
+        } finally {
+            Remove-Item -LiteralPath $cacheBuilder
+        }
         if (!(Select-String -LiteralPath $warmLog -SimpleMatch "$engine\d3dcompiler_47.dll" -Quiet)) { Get-Content $warmLog -Tail 20; throw 'Shader cache pre-warm did not use the app-local d3dcompiler_47.dll' }
         Get-Content $warmLog -Tail 1
         Copy-Item release/licenses/*.txt $licenses
+        Copy-Item release/licenses/vrex $licenses -Recurse
+        & (Join-Path $PSScriptRoot 'copy-vrex-package-notices.ps1') -Payload $payload -Packages $packages
         Copy-Item "$ortPackage\LICENSE" "$licenses\ONNXRuntime-LICENSE.txt"
         Copy-Item "$ortPackage\ThirdPartyNotices.txt" "$licenses\ONNXRuntime-ThirdPartyNotices.txt"
         Copy-Item "$dmlPackage\LICENSE.txt" "$licenses\DirectML-LICENSE.txt"
@@ -141,6 +152,14 @@ function Write-SigningInput
     Get-ChildItem -LiteralPath $toSign -Recurse -File | ForEach-Object { Write-Output "to sign: $([IO.Path]::GetRelativePath($toSign, $_.FullName))" }
 }
 
+function Write-PayloadChecksums
+{
+    Get-ChildItem -LiteralPath $payload -Recurse -File | Where-Object Name -ne 'FILES.sha256.txt' | Sort-Object FullName | ForEach-Object {
+        $relative = [IO.Path]::GetRelativePath($payload, $_.FullName)
+        '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $relative
+    } | Set-Content "$payload\FILES.sha256.txt"
+}
+
 function Build-Package
 {
     if (!(Test-Path -LiteralPath $payload)) { throw "No payload at $($payload) - run the Payload stage first" }
@@ -162,10 +181,7 @@ function Build-Package
         Write-Output "signed: uninstaller $($uninstaller[0].Name)"
         $innoDefines += "/DSignedUninstallerDir=$uninstallers"
     }
-    Get-ChildItem -LiteralPath $payload -Recurse -File | Where-Object Name -ne 'FILES.sha256.txt' | Sort-Object FullName | ForEach-Object {
-        $relative = [IO.Path]::GetRelativePath($payload, $_.FullName)
-        '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $relative
-    } | Set-Content "$payload\FILES.sha256.txt"
+    Write-PayloadChecksums
     $compiler = Find-InnoCompiler
     & $compiler /Qp "/DPayload=$payload" "/DArtifacts=$OutputRoot" @innoDefines (Join-Path $PSScriptRoot 'VRX.iss')
     if ($LASTEXITCODE) { throw 'Installer build failed' }
@@ -184,6 +200,7 @@ switch ($Stage)
 {
     'All'       { Build-Payload; Build-Package; Write-Checksums }
     'Payload'   { Build-Payload; Write-SigningInput }
+    'SteamPayload' { Build-Payload; Write-PayloadChecksums }
     'Package'   { Build-Package; Write-Checksums }
     'Checksums' { Write-Checksums }
 }

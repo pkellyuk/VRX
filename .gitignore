@@ -11,6 +11,7 @@
 #   * fixed shapes:   bench/make_fixed_shape.py <src> <dst> <height> [width]
 bench/models/
 *.onnx
+integrations/personabot/runtime/
 
 # --- Build outputs ------------------------------------------------------
 [Bb]in/

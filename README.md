@@ -189,9 +189,12 @@ live microphone selection, and 3D has a quick toggle at the top of settings. Use
 the room enabled; everything is off by default and saved per game.
 
 Room settings have six category pages in VR and matching collapsible groups on desktop.
-Point the free controller near Vrex to open **Hello** and **What are you doing?**;
-trigger-click a choice for a preset reply and gesture. He also waves, winks, shrugs,
-points along travel and occasionally spins. Screen-aware AI help remains a later stage.
+In VRX 1.8.5, [Vrex](integrations/personabot/README.md) uses PersonaBot’s
+agent core and one persistent Ubuntu 24.04 LTS desktop. Open **Ubuntu** in the
+controller menu to use the guest. The Vrex logo opens chat, where **Settings**
+holds the model configuration and PC tool permissions. **Room → Vrex** holds
+companion appearance and voice options. Ubuntu requires a working Windows
+Hypervisor Platform and hardware-backed VirGL graphics.
 
 **Help with this game** now prototypes browser-based screenshot help using Google AI
 Mode (default), Google Lens, Microsoft Copilot or Google Gemini. Enable sharing for
@@ -223,10 +226,7 @@ From using VRX day to day:
 
 ## Get started
 
-Download VRX v1.8.4.1: the [installer](https://github.com/pkellyuk/VRX/releases/download/v1.8.4.1/VRX-Setup-1.8.4.1.exe)
-or the [portable ZIP](https://github.com/pkellyuk/VRX/releases/download/v1.8.4.1/VRX-1.8.4.1-win-x64.zip)
-([release notes and checksums](https://github.com/pkellyuk/VRX/releases/tag/v1.8.4.1); older versions on
-[GitHub Releases](https://github.com/pkellyuk/VRX/releases)).
+Download the installer or portable ZIP from [GitHub Releases](https://github.com/pkellyuk/VRX/releases).
 For the portable version, extract the entire ZIP and run `VRX.Desktop.exe`.
 Keep the bundled folders alongside the application.
 

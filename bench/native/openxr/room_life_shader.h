@@ -11,9 +11,15 @@ float LifeEllipsoid(float3 p,float3 r) { float a=length(p/r), b=length(p/(r*r));
 float3 LifeLocal(float3 p,uint i)
 {
     float3 q=(p-lifeObjects[i*4].xyz)/lifeObjects[i*4].w;
-    if((int)lifeObjects[i*4+1].w==8) q.y-=.025*sin(lifeObjects[i*4+3].x*2.4);
+    if(lifeObjects[i*4+1].w>=8) q.y-=.025*sin(lifeObjects[i*4+3].x*2.4);
     float3 forward=lifeObjects[i*4+1].xyz;
-    return float3(dot(q,float3(forward.z,0,-forward.x)),q.y,dot(q,forward));
+    float3 local=float3(dot(q,float3(forward.z,0,-forward.x)),q.y,dot(q,forward));
+    if(lifeObjects[i*4+1].w>=8)
+    {
+        float s,c;sincos(lifeObjects[i*4+3].z+sin(lifeObjects[i*4+3].x*2.1)*.045,s,c);
+        local.yz=float2(c*local.y+s*local.z,c*local.z-s*local.y);
+    }
+    return local;
 }
 bool LifeSphere(float3 o,float3 d,float3 c,float r,out float a,out float b)
 {
@@ -26,11 +32,13 @@ bool LifeTrace(float3 o,float3 d,float limit,out float nearest,out uint object)
     [loop] for(uint i=0;i<lifeCount;++i)
     {
         float a,b; float4 instance=lifeObjects[i*4];
-        if(!LifeSphere(o,d,instance.xyz,instance.w,a,b) || a>nearest) continue;
+        int kind=(int)lifeObjects[i*4+1].w;
+        float bounds=instance.w*(kind==10?1.45:kind==9?1.10:1);
+        if(!LifeSphere(o,d,instance.xyz,bounds,a,b) || a>nearest) continue;
         float t=max(a,.001);
         [loop] for(int step=0;step<56 && t<min(b,nearest);++step)
         {
-            float distance=LifeShape(LifeLocal(o+d*t,i),(int)lifeObjects[i*4+1].w,lifeObjects[i*4+2].w,lifeObjects[i*4+3].x)*instance.w;
+            float distance=LifeShape(LifeLocal(o+d*t,i),kind,lifeObjects[i*4+2].w,lifeObjects[i*4+3].x)*instance.w;
             if(distance<.0008) { nearest=t; object=i; found=true; break; }
             t+=max(distance*.65,.0004);
         }
@@ -120,8 +128,9 @@ float3 LifeVisual(float3 p,int face,float footprint)
  return colour/sqrt(max(1,layers));
 }
 )HLSL" + VrexBrandingHlsl() + R"HLSL(
-float3 LifeCompose(float3 base,int kind,float2 uv,float2 guv,uint e,float3 o,float3 d,float3 Dx,float3 Dy)
+float3 LifeCompose(float3 base,int kind,float2 uv,float2 guv,uint e,float3 o,float3 d,float3 Dx,float3 Dy,out float companionDepth)
 {
+    companionDepth=0;
     if(lifeFlags==0 || !InsideH(o)) return base;
     float3 ray=normalize(d), p=0, n=0; float limit=1000;
     bool surface=kind>=1 && kind<=ROOM_FACES;
@@ -148,8 +157,22 @@ float3 LifeCompose(float3 base,int kind,float2 uv,float2 guv,uint e,float3 o,flo
     {
         float3 hit=o+ray*t, local=LifeLocal(hit,object);
         int k=(int)lifeObjects[object*4+1].w; float phase=lifeObjects[object*4+2].w;
+        if(k>=8) companionDepth=t;
         float eps=.004;
-        float3 normal=normalize(float3(LifeShape(local+float3(eps,0,0),k,phase,lifeObjects[object*4+3].x)-LifeShape(local-float3(eps,0,0),k,phase,lifeObjects[object*4+3].x),LifeShape(local+float3(0,eps,0),k,phase,lifeObjects[object*4+3].x)-LifeShape(local-float3(0,eps,0),k,phase,lifeObjects[object*4+3].x),LifeShape(local+float3(0,0,eps),k,phase,lifeObjects[object*4+3].x)-LifeShape(local-float3(0,0,eps),k,phase,lifeObjects[object*4+3].x)));
+        float animation=lifeObjects[object*4+3].x;
+        float3 gradient=0;
+        [loop] for(int axis=0;axis<3;++axis)
+        {
+            float3 direction=float3(axis==0,axis==1,axis==2);
+            float3 delta=direction*eps;
+            gradient+=direction*(LifeShape(local+delta,k,phase,animation)-LifeShape(local-delta,k,phase,animation));
+        }
+        float3 normal=normalize(gradient);
+        if(k>=8)
+        {
+            float s,c;sincos(lifeObjects[object*4+3].z+sin(lifeObjects[object*4+3].x*2.1)*.045,s,c);
+            normal.yz=float2(c*normal.y-s*normal.z,s*normal.y+c*normal.z);
+        }
         float3 forward=lifeObjects[object*4+1].xyz;
         float3 wn=normal.x*float3(forward.z,0,-forward.x)+normal.y*float3(0,1,0)+normal.z*forward;
         float3 colour=LifePalette(phase*.159+local.z*.18+audioMid*.15);
@@ -204,26 +227,36 @@ float3 LifeCompose(float3 base,int kind,float2 uv,float2 guv,uint e,float3 o,flo
         }
         if(k==8)
         {
-            float3 teal=float3(.025,.58,.49);
-            body=teal*(shade+.28)+highlight*float3(.40,.9,.80)*.55;
-            if(local.y<-.62) body=float3(.025,.17,.15)*(shade+.2)+highlight*.15;
-            if(local.z>.26 && local.y>.08 && local.y<.60 && abs(local.x)<.34)
+            float3 face=LifeMascotHeadSpace(local,animation+phase);
+            float3 shell=lifeObjects[object*4+2].xyz;
+            float reflected=pow(saturate(dot(reflect(ray,wn),normalize(float3(.65,.30,.76)))),15);
+            body=shell*(shade+.24+rim*.31)+highlight*.72+reflected*float3(.29,.39,.48);
+            if(local.y<-.62) body=shell*.28*(shade+.2)+highlight*.23;
+            if(face.z>.26 && face.y>.08 && face.y<.60 && abs(face.x)<.34)
             {
                 body=float3(.009,.019,.045)+highlight*.16;
                 float blink=frac(lifeTime*.17+phase*.1)>.97?.12:1;
-                if((((uint)vrexState>>8)&3)==1 && local.x<0 && frac(lifeTime*1.1)<.32) blink=.12;
-                float eyeX=(abs(local.x)-.145)/.078;
+                if((((uint)vrexState>>8)&3)==1 && face.x<0 && frac(lifeTime*1.1)<.32) blink=.12;
+                float eyeX=(abs(face.x)-.145)/.078;
                 float eyeY=.40+.050*(1-eyeX*eyeX)*blink;
-                if(abs(eyeX)<1 && abs(local.y-eyeY)<.016) body=float3(.30,.95,.82)*(1+.3*attention);
-                float smile=.20+(1.2+.35*saturate(vrexChat)) *local.x*local.x;
-                if(abs(local.x)<.105 && abs(local.y-smile)<.013) body=float3(.28,.92,.80);
-                if(length(float2(abs(local.x)-.235,local.y-.235))<.034) body=float3(.58,.17,.36);
+                if(abs(eyeX)<1 && abs(face.y-eyeY)<.016) body=float3(.30,.95,.82)*(1+.3*attention);
+                float smile=.20+(1.2+.35*saturate(vrexChat)) *face.x*face.x;
+                if(((uint)vrexState&1024)!=0 || vrexChat>0)
+                {
+                    float syllable=pow(saturate(.52+.32*sin(lifeTime*17+phase)+.22*sin(lifeTime*28)),1.4);
+                    float2 mouth=float2(face.x/(.104-.025*syllable),(face.y-smile-.015*syllable)/(.012+.058*syllable));
+                    float outline=length(mouth);
+                    if(outline<1) body=outline<.66?float3(.02,.27,.27):float3(.28,.92,.80);
+                }
+                else if(abs(face.x)<.105 && abs(face.y-smile)<.013) body=float3(.28,.92,.80);
+                if(length(float2(abs(face.x)-.235,face.y-.235))<.034) body=float3(.58,.17,.36);
             }
-            if(local.y>.81) body=float3(.30,1,.82)*1.3;
+            if(face.y>.81) body=float3(.30,1,.82)*1.3;
             if(local.z>.19 && abs(local.x)<.185 && local.y>-.47 && local.y<-.10)
                 body=VrexBadge(float2(.5+local.x/.37,.5-(local.y+.285)/.37))*(.6+shade);
             if(local.z<-.18 && local.y<-.42) body=float3(.08,.65,.9)*(1.2+.3*sin(lifeTime*30));
         }
+        if(k>=9) body=LifeCompanionColour(local,animation+phase,k==10,shade,highlight,rim);
         if(k==3)
         {
             float veins=pow(.5+.5*cos(atan2(local.z,local.x)*8+local.y*3),12);

@@ -947,7 +947,7 @@ Isso não pode ser desfeito. Os jogos que você ainda não configurou continuam 
     <value>Gatilho direito: clique esquerdo / arrastar · Botão lateral direito: clique direito · Menu: ocultar configurações</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
-    <value>Captura</value>
+    <value>Captura do jogo</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
     <value>Abrir pasta de imagens</value>
@@ -1181,8 +1181,9 @@ Isso não pode ser desfeito. Os jogos que você ainda não configurou continuam 
     <value>Criaturas reagem aos feixes dos controles</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex — robô companheiro com jetpack</value>
+    <value>Vrex — companheiro</value>
   </data>
+  <data name="FloatingAntialiasing" xml:space="preserve"><value>Suavizar as bordas dos painéis flutuantes</value></data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>Padrão</value>
   </data>
@@ -1429,4 +1430,9 @@ Isso não pode ser desfeito. Os jogos que você ainda não configurou continuam 
   <data name="GameHelpPrompt" xml:space="preserve">
     <value>Identifique o jogo e a cena exata nesta captura de tela. Me dê uma dica útil sobre o que fazer a seguir, evitando spoilers importantes, e inclua links para detonados ou guias relevantes. Se não conseguir identificar com segurança, me faça uma pergunta em vez de chutar.</value>
   </data>
+  <data name="VrexUbuntu" xml:space="preserve"><value>Vrex Ubuntu</value></data>
+  <data name="VrexModelSettings" xml:space="preserve"><value>Configurações de IA do Vrex…</value></data>
+  <data name="UbuntuSettings" xml:space="preserve"><value>Configurações do desktop Ubuntu…</value></data>
+  <data name="VrexKeyboardTarget" xml:space="preserve"><value>Digitando no Ubuntu Vrex / chat</value></data>
+  <data name="ResetFloatingAppearance" xml:space="preserve"><value>Repor a aparência dos painéis flutuantes</value></data>
 </root>

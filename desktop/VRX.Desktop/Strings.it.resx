@@ -947,7 +947,7 @@ L'operazione non può essere annullata. I giochi non ancora configurati partono 
     <value>Grilletto destro: clic sinistro / trascina · Grip destro: clic destro · Menu: nascondi impostazioni</value>
   </data>
   <data name="SnapshotTake" xml:space="preserve">
-    <value>Istantanea</value>
+    <value>Schermata del gioco</value>
   </data>
   <data name="SnapshotOpenFolder" xml:space="preserve">
     <value>Apri cartella immagini</value>
@@ -1181,8 +1181,9 @@ L'operazione non può essere annullata. I giochi non ancora configurati partono 
     <value>Le creature reagiscono ai raggi dei controller</value>
   </data>
   <data name="Vrex" xml:space="preserve">
-    <value>Vrex — robot compagno con jetpack</value>
+    <value>Vrex — compagno</value>
   </data>
+  <data name="FloatingAntialiasing" xml:space="preserve"><value>Smussa i bordi dei pannelli mobili</value></data>
   <data name="ThemeDefault" xml:space="preserve">
     <value>Predefinito</value>
   </data>
@@ -1429,4 +1430,9 @@ L'operazione non può essere annullata. I giochi non ancora configurati partono 
   <data name="GameHelpPrompt" xml:space="preserve">
     <value>Identifica il gioco e la scena esatta in questo screenshot. Dammi un suggerimento utile su cosa fare dopo, evitando spoiler importanti, e includi link a soluzioni o guide pertinenti. Se non riesci a identificarlo con sicurezza, fammi una domanda invece di tirare a indovinare.</value>
   </data>
+  <data name="VrexUbuntu" xml:space="preserve"><value>Vrex Ubuntu</value></data>
+  <data name="VrexModelSettings" xml:space="preserve"><value>Impostazioni IA di Vrex…</value></data>
+  <data name="UbuntuSettings" xml:space="preserve"><value>Impostazioni del desktop Ubuntu…</value></data>
+  <data name="VrexKeyboardTarget" xml:space="preserve"><value>Digitazione in Ubuntu Vrex / chat</value></data>
+  <data name="ResetFloatingAppearance" xml:space="preserve"><value>Ripristina l’aspetto dei pannelli mobili</value></data>
 </root>

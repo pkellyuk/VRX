@@ -1,4 +1,4 @@
-VRX 1.8.4.1 third-party components
+VRX 1.8.5 third-party components
 
 CefSharp.OffScreen.NETCore 156.0.150 (BSD-3-Clause)
 https://github.com/cefsharp/CefSharp
@@ -21,6 +21,12 @@ request: open an issue at https://github.com/pkellyuk/VRX/issues.
 NAudio.Core and NAudio.WinMM 2.3.0 (MIT), Mark Heath
 https://github.com/naudio/NAudio
 Microphone input for the floating keyboard's dictation. See licenses/NAudio-LICENSE.txt.
+
+SCOWL 2020.12.07, Kevin Atkinson and contributors
+https://wordlist.aspell.net/
+English keyboard predictions use a subset of levels 10 and 20 with American
+and British spellings, filtered for the keyboard and deduplicated. See
+licenses/SCOWL-COPYRIGHT.txt for the copyright and distribution terms.
 
 System.Speech 10.0.7 (MIT), Microsoft / .NET Foundation
 https://github.com/dotnet/runtime
@@ -70,6 +76,34 @@ was built by. Distributable code under the Microsoft Windows SDK license terms
 Microsoft Visual C++ x64 runtime redistribution files
 App-local runtime DLLs copied from the Visual Studio redistributable directory.
 See https://visualstudio.microsoft.com/license-terms/ for Microsoft terms.
+
+ScreenRecorderLib 7.0.1 (VR view capture)
+https://github.com/sskodje/ScreenRecorderLib
+See licenses/ScreenRecorderLib-LICENSE.txt (MIT).
+
+QEMU Windows x64 11.1.90 (GPL-2.0; individual files have their own terms)
+Upstream source revision e9fa1f66f0d47c74b6766e1b8b87ad7c2a9394d5.
+The November 17, 2026 build changes Windows EGL/GLES readback, VNC refresh
+and damage handling, and the Windows Meson build-tree symlink hook.
+VRX fetches QEMU and its runtime libraries when Ubuntu is first started.
+See licenses/QEMU-COPYING.txt, QEMU-LICENSE.txt and QEMU-firmware.txt.
+The QEMU distribution site provides its Windows runtime, corresponding
+source archives with patches and build scripts, and SHA-256 checksums.
+https://github.com/pkellyuk/VRX/releases/tag/qemu-windows-e9fa1f66
+The downloaded runtime contains the MSYS2 licenses in share/licenses and
+the EDK2 and Hexagon firmware licenses in share. Ubuntu is separately
+downloaded from Canonical when starting a new VM.
+
+Vrex dependencies
+See licenses/vrex/package-versions.txt for the exact Vrex worker and voice
+package versions. The directory also includes license and notice files for
+DiscUtils (MIT), OpenAI (MIT), Polly (BSD-3-Clause), SharpZipLib (MIT),
+SkiaSharp (MIT and native third-party terms),
+SQLitePCLRaw (Apache-2.0), System.ClientModel (MIT), the .NET components
+(MIT, see also Microsoft.NETCore.App-LICENSE.txt), sherpa-onnx (Apache-2.0),
+PortAudioSharp2 (Apache-2.0) and PortAudio
+(see its license). SourceGear.sqlite3 supplies SQLite, which is public
+domain.
 
 Exact packaged file versions and hashes are recorded in FILES.sha256.txt and
 BUILD.txt. This notice does not change the licenses of those components.

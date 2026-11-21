@@ -335,7 +335,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ControllerMenuControlScreen" xml:space="preserve"><value>Control screen</value></data>
   <data name="ControllerMenuStopControlScreen" xml:space="preserve"><value>Stop controlling screen</value></data>
   <data name="ControllerMenuScreenHint" xml:space="preserve"><value>Right trigger: left-click / drag · Right grip: right-click · Menu: hide settings</value></data>
-  <data name="SnapshotTake" xml:space="preserve"><value>Snapshot</value></data>
+  <data name="SnapshotTake" xml:space="preserve"><value>Game screenshot</value></data>
   <data name="SnapshotOpenFolder" xml:space="preserve"><value>Open images folder</value></data>
   <data name="SnapshotTitle" xml:space="preserve"><value>Snapshot · hold title to move</value></data>
   <data name="SnapshotSave" xml:space="preserve"><value>Save</value></data>
@@ -414,7 +414,8 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="VisualLayers" xml:space="preserve"><value>Visualizer layers — combine any</value></data>
   <data name="MusicReactivity" xml:space="preserve"><value>Music reactivity</value></data>
   <data name="BeamReactions" xml:space="preserve"><value>Creatures react to controller beams</value></data>
-  <data name="Vrex" xml:space="preserve"><value>Vrex — jetpack robot companion</value></data>
+  <data name="Vrex" xml:space="preserve"><value>Vrex companion</value></data>
+  <data name="FloatingAntialiasing" xml:space="preserve"><value>Smooth floating panel edges</value></data>
   <data name="ThemeDefault" xml:space="preserve"><value>Default</value></data>
   <data name="ThemeRobots" xml:space="preserve"><value>Robots</value></data>
   <data name="ThemeDinosaurs" xml:space="preserve"><value>Dinosaurs</value></data>
@@ -497,4 +498,9 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="GameHelpExistingDraft" xml:space="preserve"><value>The site already has a draft. Clear it, then choose Retry help.</value></data>
   <data name="GameHelpRetryNeeded" xml:space="preserve"><value>The site is not ready. Finish any site prompts, then choose Retry help.</value></data>
   <data name="GameHelpPrompt" xml:space="preserve"><value>Identify the game and the exact scene in this screenshot. Give me a useful hint for what to do next, avoiding major spoilers, and include links to relevant walkthroughs or guides. If you cannot identify it confidently, ask me a question rather than guessing.</value></data>
+  <data name="VrexUbuntu" xml:space="preserve"><value>Vrex Ubuntu</value></data>
+  <data name="VrexModelSettings" xml:space="preserve"><value>Vrex AI settings…</value></data>
+  <data name="UbuntuSettings" xml:space="preserve"><value>Ubuntu desktop settings…</value></data>
+  <data name="VrexKeyboardTarget" xml:space="preserve"><value>Typing into Vrex Ubuntu / chat</value></data>
+  <data name="ResetFloatingAppearance" xml:space="preserve"><value>Reset floating appearance</value></data>
 </root>

@@ -130,28 +130,30 @@
    </Setter>
   </Style>
 
-  <!-- Text boxes: the same dark field. -->
-  <Style TargetType="TextBox">
+  <ControlTemplate x:Key="InputFieldTemplate" TargetType="Control">
+   <Border x:Name="Face" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+    <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+   </Border>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Face" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+    <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Face" Property="Opacity" Value="0.45"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate>
+  <Style x:Key="InputFieldStyle" TargetType="Control">
    <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
    <Setter Property="Background" Value="{DynamicResource Field}"/>
    <Setter Property="BorderBrush" Value="{DynamicResource RaisedEdge}"/>
    <Setter Property="BorderThickness" Value="1"/>
+   <Setter Property="MinHeight" Value="28"/>
+   <Setter Property="Template" Value="{StaticResource InputFieldTemplate}"/>
+  </Style>
+  <Style TargetType="TextBox" BasedOn="{StaticResource InputFieldStyle}">
    <Setter Property="CaretBrush" Value="{DynamicResource Ink}"/>
    <Setter Property="SelectionBrush" Value="{DynamicResource Accent}"/>
-   <Setter Property="MinHeight" Value="28"/>
-   <Setter Property="Template">
-    <Setter.Value>
-     <ControlTemplate TargetType="TextBox">
-      <Border x:Name="Face" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
-       <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
-      </Border>
-      <ControlTemplate.Triggers>
-       <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Face" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
-       <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Face" Property="Opacity" Value="0.45"/></Trigger>
-      </ControlTemplate.Triggers>
-     </ControlTemplate>
-    </Setter.Value>
-   </Setter>
+  </Style>
+  <Style TargetType="PasswordBox" BasedOn="{StaticResource InputFieldStyle}">
+   <Setter Property="CaretBrush" Value="{DynamicResource Ink}"/>
+   <Setter Property="SelectionBrush" Value="{DynamicResource Accent}"/>
   </Style>
 
   <!-- Sliders: a thin track filled with the accent up to a round thumb. -->

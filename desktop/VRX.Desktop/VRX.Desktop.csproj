@@ -9,7 +9,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <ApplicationIcon>Assets\vrx.ico</ApplicationIcon>
-    <Version>1.8.4.1</Version>
+    <Version>1.8.5</Version>
     <Product>VRX</Product>
     <Company>VRX</Company>
     <Copyright>Copyright (C) 2026 Paul Kelly. GPL-3.0.</Copyright>
@@ -19,13 +19,32 @@
     <NeutralLanguage>en</NeutralLanguage>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\VRX.VrexHost\VRX.VrexHost.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <Compile Include="..\Shared\VrexProtocol.cs" Link="VrexProtocol.cs" />
+    <Compile Include="..\Shared\VrxDataDirectory.cs" Link="VrxDataDirectory.cs" />
+    <Compile Include="..\Shared\PointSourceAudio.cs" Link="PointSourceAudio.cs" />
     <PackageReference Include="System.Speech" Version="10.0.7" />
     <PackageReference Include="NAudio.WinMM" Version="2.3.0" />
+    <PackageReference Include="ScreenRecorderLib" Version="7.0.1" GeneratePathProperty="true" ExcludeAssets="build" />
+    <Reference Include="ScreenRecorderLib" HintPath="$(PkgScreenRecorderLib)\build\x64\ScreenRecorderLib.dll" />
     <PackageReference Include="CefSharp.OffScreen.NETCore" Version="156.0.150" />
     <!-- Also embedded as a resource so the window and taskbar use it. Regenerate
          with desktop\assets\make_icon.py. -->
     <Resource Include="Assets\vrx.ico" />
+    <Resource Include="..\..\docs\vrx-logo.png" Link="Assets\vrex-badge.png" />
+    <EmbeddedResource Include="Assets\swipe-english.txt" LogicalName="VRX.Desktop.SwipeEnglish" />
   </ItemGroup>
+  <Target Name="CopyVrexWorker" AfterTargets="Build" Condition="'$(MSBuildProjectName)' == 'VRX.Desktop'">
+    <MSBuild Projects="..\VRX.VrexHost\VRX.VrexHost.csproj" Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64">
+      <Output TaskParameter="TargetOutputs" ItemName="VrexWorkerAssembly" />
+    </MSBuild>
+    <ItemGroup><VrexWorkerFiles Include="%(VrexWorkerAssembly.RootDir)%(VrexWorkerAssembly.Directory)**\*" /></ItemGroup>
+    <Copy SourceFiles="@(VrexWorkerFiles)" DestinationFiles="@(VrexWorkerFiles->'$(TargetDir)vrex\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishVrexWorker" AfterTargets="Publish">
+    <MSBuild Projects="..\VRX.VrexHost\VRX.VrexHost.csproj" Targets="Restore;Publish" RemoveProperties="OutDir;OutputPath;BaseOutputPath;BaseIntermediateOutputPath" Properties="Configuration=$(Configuration);SelfContained=true;RuntimeIdentifier=win-x64;PublishDir=$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine($(MSBuildProjectDirectory), $(PublishDir)))))vrex\" />
+  </Target>
   <Target Name="UseVrxBrowserRuntime" AfterTargets="Build">
     <Copy SourceFiles="$(TargetDir)$(AssemblyName).runtimeconfig.json" DestinationFiles="$(TargetDir)CefSharp.BrowserSubprocess.runtimeconfig.json" Condition="Exists('$(TargetDir)CefSharp.BrowserSubprocess.runtimeconfig.json')" />
   </Target>

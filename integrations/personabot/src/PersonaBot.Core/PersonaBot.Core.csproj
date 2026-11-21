@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Platform-neutral PersonaBot: settings, the testing chat loop, run control, sessions, the explicit
+    guest tool registry and the guest abstractions (GuestRuntime.cs). No Windows or Android APIs.
+    Hosts: PersonaBot.Desktop (QEMU on Windows) and PersonaBot.Android (proot on Android).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PersonaBot</RootNamespace>
+    <!--
+      Automaton's computer-use types still carry [SupportedOSPlatform("windows")] for their desktop
+      paths. PersonaBot only uses the guest-only composition, which captures through IComputerScreen and
+      never touches Win32, so the analyser's warning does not apply here.
+    -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- MIT. Only its bzip2 decoder: the voice models come as .tar.bz2 (VoiceModels). -->
+    <PackageReference Include="SharpZipLib" Version="1.4.2" />
+    <ProjectReference Include="../Automaton.AI/Automaton.AI.csproj" />
+    <ProjectReference Include="../PersonaBot.AutomatonTools/PersonaBot.AutomatonTools.csproj" />
+    <InternalsVisibleTo Include="PersonaBot.Tests" />
+  </ItemGroup>
+</Project>
