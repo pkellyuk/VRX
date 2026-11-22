@@ -19,7 +19,7 @@ internal sealed class FloatingVrexGridPanel : IFloatingPanel
     private readonly Canvas overlay = new() { IsHitTestVisible = false };
     private readonly Ellipse marker = new() { Width = 34, Height = 34, StrokeThickness = 4,
         Fill = new SolidColorBrush(Color.FromArgb(90, 0, 0, 0)), Visibility = Visibility.Collapsed };
-    private readonly TextBlock detail = new() { Text = "Waiting for Vrex to inspect a screen.", FontSize = 19, Margin = new(6), TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock detail = new() { Text = Loc.Get("VrexGridWaiting"), FontSize = 19, Margin = new(6), TextWrapping = TextWrapping.Wrap };
     private readonly RenderTargetBitmap bitmap = new(ControllerMenu.PixelWidth, ControllerMenu.PixelHeight, 192, 192, PixelFormats.Pbgra32);
     private readonly byte[] pixels = new byte[ControllerMenu.PixelBytes];
     private readonly PanelFeedback.Hover hover = new();
@@ -36,7 +36,7 @@ internal sealed class FloatingVrexGridPanel : IFloatingPanel
         this.client = client;
         var root = new DockPanel { Margin = new Thickness(48) };
         var title = new Border { Height = 56, Child = FloatingPanelChrome.Title(new TextBlock {
-            Text = "Vrex zoom grid", FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center
+            Text = Loc.Get("VrexZoomGridTitle"), FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center
         }, close) };
         DockPanel.SetDock(title, Dock.Top);
         DockPanel.SetDock(detail, Dock.Bottom);
@@ -69,13 +69,13 @@ internal sealed class FloatingVrexGridPanel : IFloatingPanel
                     }
                     catch (Exception ex) when (ex is IOException or NotSupportedException or ArgumentException)
                     {
-                        detail.Text = "This view could not be displayed.";
+                        detail.Text = Loc.Get("VrexGridUnavailable");
                         break;
                     }
-                    viewKind = (source == "pc" ? "Main PC screen" : "Ubuntu") + " · " + grid.Kind;
+                    viewKind = (source == "pc" ? Loc.Get("VrexMainPcScreen") : "Ubuntu") + " · " + grid.Kind;
                     detail.Text = viewKind;
                 }
-                else detail.Text = "Waiting for Vrex to inspect a screen.";
+                else detail.Text = Loc.Get("VrexGridWaiting");
                 break;
             case "grid-marker" when source == message.Text && image.Source != null:
                 point = message.Point;

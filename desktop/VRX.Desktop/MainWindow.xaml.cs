@@ -2669,6 +2669,12 @@ public partial class MainWindow : Window
             used.Add(theme.Key);
             if (!strings.ContainsKey(theme.Key) || PlaceholderCount(theme.Key) != 0) problems.Add($"Theme key {theme.Key} missing or has placeholders");
         }
+        foreach (var (id, _) in VRX.VrexBridge.VrexPcPermissions.Tools)
+        {
+            string key = "VrexTool_" + id;
+            used.Add(key);
+            if (!strings.ContainsKey(key) || PlaceholderCount(key) != 0) problems.Add($"Vrex tool key {key} missing or has placeholders");
+        }
         foreach (string key in strings.Keys)
             if (!used.Contains(key)) problems.Add($"Strings.resx: {key} is not used");
         if (problems.Count > 0) throw new Exception("Strings: " + string.Join("; ", problems.Take(25)) + (problems.Count > 25 ? $" (+{problems.Count - 25} more)" : ""));

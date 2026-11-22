@@ -130,7 +130,7 @@ internal sealed partial class FloatingBrowser : IFloatingPanel, IFloatingTextTar
         if (webcam) { root.RowDefinitions[1].Height = new GridLength(8); root.RowDefinitions[4].Height = new GridLength(0); }
         void Add(UIElement item, int row) { Grid.SetRow(item, row); root.Children.Add(item); }
         Add(new Border { Height = 56, CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromRgb(37, 50, 72)),
-            Child = FloatingPanelChrome.Title(new TextBlock { Text = webcam ? "Webcam" : Loc.Get("BrowserTitle"), Foreground = Brushes.White, FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }, Button(Loc.Get("SnapshotClose"), 80, () => Closed = true)) }, 0);
+            Child = FloatingPanelChrome.Title(new TextBlock { Text = webcam ? Loc.Get("FloatingWebcam") : Loc.Get("BrowserTitle"), Foreground = Brushes.White, FontSize = 25, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }, Button(Loc.Get("SnapshotClose"), 80, () => Closed = true)) }, 0);
         var nav = new DockPanel { Margin = new Thickness(0, 8, 0, 8) };
         nav.Children.Add(Button("←", 52, () => { if (browser is { IsBrowserInitialized: true }) browser.Back(); }));
         nav.Children.Add(Button("→", 52, () => { if (browser is { IsBrowserInitialized: true }) browser.Forward(); }));
@@ -145,8 +145,8 @@ internal sealed partial class FloatingBrowser : IFloatingPanel, IFloatingTextTar
         System.Windows.Automation.AutomationProperties.SetName(clearAddress, Loc.Get("BrowserClearAddress"));
         DockPanel.SetDock(clearAddress, Dock.Right); nav.Children.Add(clearAddress);
         bookmarksButton = Button("☆", 48, ToggleBookmarks);
-        bookmarksButton.ToolTip = "Bookmarks";
-        System.Windows.Automation.AutomationProperties.SetName(bookmarksButton, "Bookmarks");
+        bookmarksButton.ToolTip = Loc.Get("BrowserBookmarks");
+        System.Windows.Automation.AutomationProperties.SetName(bookmarksButton, Loc.Get("BrowserBookmarks"));
         DockPanel.SetDock(bookmarksButton, Dock.Right); nav.Children.Add(bookmarksButton);
         AddGameHelpControls(nav);
         var field = Button("", double.NaN, () => { addressFocus = addressSelected = true; addressCaret = address.Length; focus(this); openKeyboard(); Changed(); });
@@ -654,7 +654,9 @@ internal sealed partial class FloatingBrowser : IFloatingPanel, IFloatingTextTar
         if (!painted.AsSpan(firstPixelBelow).SequenceEqual(camera.output.AsSpan(firstPixelBelow)))
             throw new Exception("The webcam fast path painted outside the camera viewport.");
         await camera.browser.EvaluateScriptAsync("document.getElementById('stop').click()");
-        if (!await WaitUntil("document.getElementById('video').srcObject === null && document.getElementById('status').textContent === 'Camera off'"))
+        string cameraOff = System.Text.Json.JsonSerializer.Serialize(Loc.Get("WebcamCameraOff"));
+        if (!await WaitUntil("document.getElementById('video').srcObject === null && " +
+            "document.getElementById('status').textContent === " + cameraOff))
             throw new Exception("Stopping the webcam did not release its stream.");
     }
 }

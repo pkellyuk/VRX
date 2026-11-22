@@ -44,7 +44,7 @@ internal sealed class VrexClient : IVrexClient
     public int Height { get; private set; } = 800;
     public string Status { get; private set; } = "Vrex Ubuntu is stopped.";
     public VrexVmPhase VmPhase { get; private set; }
-    public string VmDetail { get; private set; } = "Start Ubuntu when you’re ready.";
+    public string VmDetail { get; private set; } = Loc.Get("UbuntuReadyToStart");
     private string state="off";
     private bool observerSpeaking;
     private AudioDirection? audioDirection;
@@ -81,13 +81,13 @@ internal sealed class VrexClient : IVrexClient
         if (LiveVoiceActive) { StopLiveVoice(); return; }
         if (!CanConverse)
         {
-            VoiceStatus = "Choose a model in Vrex chat Settings to use live voice.";
+            VoiceStatus = Loc.Get("VrexLiveVoiceChooseModel");
             Notify(new("voice-state"));
             return;
         }
         if (!Send(new("voice-start"))) return;
         LiveVoiceActive = true;
-        VoiceStatus = "Starting live voice…";
+        VoiceStatus = Loc.Get("VrexLiveVoiceStarting");
         Notify(new("voice-state"));
     }
 
@@ -96,7 +96,7 @@ internal sealed class VrexClient : IVrexClient
         if (!LiveVoiceActive || !Running) return;
         if (!Send(new("voice-stop"))) return;
         LiveVoiceActive = false;
-        VoiceStatus = "Stopping live voice…";
+        VoiceStatus = Loc.Get("VrexLiveVoiceStopping");
         Notify(new("voice-state"));
     }
     internal void StopChat()
@@ -105,7 +105,7 @@ internal sealed class VrexClient : IVrexClient
         pcPermissionRevision++;
         nextPcLook = 0;
         if (!Running || !Send(new("chat-stop"))) return;
-        VoiceStatus = "Stopping Vrex…";
+        VoiceStatus = Loc.Get("VrexStopping");
         Notify(new("voice-state"));
     }
     private bool speakReplies;
@@ -209,14 +209,14 @@ internal sealed class VrexClient : IVrexClient
         string prompt = VrexPcPrompt.Guide(draft);
         int revision = chatStopRevision;
         bool sent = AllowPcScreen && await CapturePcAsync(prompt);
-        if (revision != chatStopRevision || !CanConverse) return "Guide Me was stopped.";
+        if (revision != chatStopRevision || !CanConverse) return Loc.Get("VrexGuideStopped");
         if (!sent && AllowPanelScreen && capturePanel?.Invoke() is { } panel)
             sent = Send(new("chat", prompt, panel.Frame.PointerX, panel.Frame.PointerY,
                 PcImage: Convert.ToBase64String(panel.Frame.Png), ScreenSurface: panel.Surface));
-        if (sent) { RecordTypedMessage(draft.Length == 0 ? "Guide Me" : draft); return null; }
-        if (AllowPcScreen) return "Couldn’t send the main screen. Try Guide Me again.";
-        return AllowPanelScreen ? "Point at the browser or settings panel, then press Guide Me."
-            : "Turn on PC screen to get guidance for your game.";
+        if (sent) { RecordTypedMessage(draft.Length == 0 ? Loc.Get("VrexGuideMe") : draft); return null; }
+        if (AllowPcScreen) return Loc.Get("VrexGuideMainScreenFailed");
+        return AllowPanelScreen ? Loc.Get("VrexGuidePointAtPanel")
+            : Loc.Get("VrexGuideEnableScreen");
     }
 
     internal void ChooseReply(string choice)
@@ -577,13 +577,13 @@ internal sealed class VrexClient : IVrexClient
                     guestAudio.Stop();
                     LiveVoiceActive=false; VoiceStatus=""; observerSpeaking=false;
                     if (VmPhase == VrexVmPhase.Stopping)
-                    { State="off"; VmPhase=VrexVmPhase.Off; VmDetail="Ubuntu is powered off."; }
+                    { State="off"; VmPhase=VrexVmPhase.Off; VmDetail=Loc.Get("UbuntuPoweredOff"); }
                     else if (VmPhase != VrexVmPhase.Failed)
-                    { State="error"; VmPhase=VrexVmPhase.Failed; VmDetail="The Ubuntu helper exited. Try starting Ubuntu again."; }
+                    { State="error"; VmPhase=VrexVmPhase.Failed; VmDetail=Loc.Get("UbuntuHelperExited"); }
                     Status=VmDetail; break;
                 case "ubuntu-stopped":
                     Ready = false; CloseFrames(); guestAudio.Stop();
-                    VmPhase = VrexVmPhase.Off; VmDetail = Status = message.Text ?? "Ubuntu is powered off.";
+                    VmPhase = VrexVmPhase.Off; VmDetail = Status = message.Text ?? Loc.Get("UbuntuPoweredOff");
                     break;
                 case "status": case "activity": Status=message.Text??""; break;
             }
@@ -613,14 +613,14 @@ internal sealed class VrexClient : IVrexClient
             if (start)
             {
                 VmPhase=VrexVmPhase.Preparing;
-                VmDetail="Requesting Ubuntu startup…";
+                VmDetail=Loc.Get("UbuntuRequestingStart");
                 Status=VmDetail;
                 Notify(new("vm-status"));
             }
             if (storage)
             {
                 VmPhase=VrexVmPhase.Moving;
-                VmDetail="Checking the destination folder…";
+                VmDetail=Loc.Get("UbuntuCheckingDestination");
                 Status=VmDetail;
                 Notify(new("vm-status"));
             }
@@ -650,7 +650,7 @@ internal sealed class VrexClient : IVrexClient
         if (!Running || !Send(new("ubuntu-stop"))) return;
         VmPhase = VrexVmPhase.Stopping;
         guestAudio.SetDirection(null);
-        VmDetail = Status = "Powering off Ubuntu…";
+        VmDetail = Status = Loc.Get("UbuntuPoweringOff");
         Notify(new("vm-status"));
     }
     internal Task StopAsync()

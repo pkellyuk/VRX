@@ -39,8 +39,8 @@ internal sealed class VrexSetup : StackPanel, IDisposable
             field.Padding = new Thickness(8, 0, 8, 0);
         }
         var cpuPicker = new DockPanel();
-        fewerCpus = CpuButton("−", "Decrease virtual CPUs", Dock.Left, -1);
-        moreCpus = CpuButton("+", "Increase virtual CPUs", Dock.Right, 1);
+        fewerCpus = CpuButton("−", Loc.Get("UbuntuDecreaseCpus"), Dock.Left, -1);
+        moreCpus = CpuButton("+", Loc.Get("UbuntuIncreaseCpus"), Dock.Right, 1);
         var valueFace = new Border { Child = cpuValue, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6) };
         valueFace.SetResourceReference(Border.BackgroundProperty, "Field");
         valueFace.SetResourceReference(Border.BorderBrushProperty, "RaisedEdge");
@@ -48,7 +48,7 @@ internal sealed class VrexSetup : StackPanel, IDisposable
 
         var items = new (string Label, FrameworkElement Field)[]
         {
-            ("Virtual CPUs (1–8)", cpuPicker), ("RAM in MB (4096–16384)", memory)
+            (Loc.Get("UbuntuVirtualCpus"), cpuPicker), (Loc.Get("UbuntuMemory"), memory)
         };
         for (int i = 0; i < items.Length; i++)
         {
@@ -64,11 +64,11 @@ internal sealed class VrexSetup : StackPanel, IDisposable
         }
         if (floatingActions == null) Children.Add(vmIndicator);
         Children.Add(grid);
-        Children.Add(new TextBlock { Text = "Display resolution (next start)", Margin = new Thickness(0, 5, 0, 2) });
+        Children.Add(new TextBlock { Text = Loc.Get("UbuntuResolutionNextStart"), Margin = new Thickness(0, 5, 0, 2) });
         if (floatingActions == null)
         {
             resolutionCombo = new ComboBox { ItemsSource = VrexResolution.Options, SelectedItem = resolution, MinHeight = 34 };
-            AutomationProperties.SetName(resolutionCombo, "Ubuntu display resolution");
+            AutomationProperties.SetName(resolutionCombo, Loc.Get("UbuntuResolution"));
             resolutionCombo.SelectionChanged += (_, _) =>
             {
                 if (resolutionCombo.SelectedItem is VrexResolution choice) resolution = choice;
@@ -80,7 +80,7 @@ internal sealed class VrexSetup : StackPanel, IDisposable
             resolutionChoices = new StackPanel { Visibility = Visibility.Collapsed };
             resolutionButton = MakeButton("", () => resolutionChoices.Visibility =
                 resolutionChoices.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible);
-            AutomationProperties.SetName(resolutionButton, "Ubuntu display resolution");
+            AutomationProperties.SetName(resolutionButton, Loc.Get("UbuntuResolution"));
             Children.Add(resolutionButton);
             Children.Add(resolutionChoices);
             foreach (var choice in VrexResolution.Options)
@@ -88,16 +88,16 @@ internal sealed class VrexSetup : StackPanel, IDisposable
         }
         guestAudio = MakeButton("", () => { playGuestAudio = !playGuestAudio; UpdateLabels(); });
         Children.Add(guestAudio);
-        Children.Add(new TextBlock { Text = "VM storage folder", Margin = new Thickness(0, 5, 0, 2) });
+        Children.Add(new TextBlock { Text = Loc.Get("UbuntuVmFolder"), Margin = new Thickness(0, 5, 0, 2) });
         var location = new DockPanel();
-        applyPath = MakeButton("Set folder", ChangeStorage);
+        applyPath = MakeButton(Loc.Get("UbuntuSetFolder"), ChangeStorage);
         DockPanel.SetDock(applyPath, Dock.Right);
         location.Children.Add(applyPath);
         if (floatingActions == null)
         {
-            browsePath = MakeButton("Browse…", () =>
+            browsePath = MakeButton(Loc.Get("UbuntuBrowseFolder"), () =>
             {
-                var picker = new Microsoft.Win32.OpenFolderDialog { Title = "Choose an empty Ubuntu VM folder" };
+                var picker = new Microsoft.Win32.OpenFolderDialog { Title = Loc.Get("UbuntuChooseFolder") };
                 if (picker.ShowDialog(Window.GetWindow(this)) == true) vmPath.Text = picker.FolderName;
             });
             DockPanel.SetDock(browsePath, Dock.Right);
@@ -109,17 +109,17 @@ internal sealed class VrexSetup : StackPanel, IDisposable
         Children.Add(currentPath);
         Children.Add(new TextBlock
         {
-            Text = "Set or move the folder while Ubuntu is powered off. The downloaded system image cache stays in VRX’s data folder.",
+            Text = Loc.Get("UbuntuVmFolderHint"),
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0)
         });
         var buttons = new WrapPanel { Margin = new(0, 6, 0, 4) };
-        save = MakeButton("Save", () => Submit(false));
-        start = MakeButton("Start Ubuntu", () => Submit(true));
-        stop = MakeButton("Stop Ubuntu", () =>
+        save = MakeButton(Loc.Get("SnapshotSave"), () => Submit(false));
+        start = MakeButton(Loc.Get("UbuntuStart"), () => Submit(true));
+        stop = MakeButton(Loc.Get("UbuntuStop"), () =>
         {
             if (client.VmPhase == VrexVmPhase.Moving) { client.StopUbuntu(); return; }
             if (confirmStop != null) { confirmStop(); return; }
-            if (MessageBox.Show("Power off Ubuntu? Unsaved work in Ubuntu may be lost.", "Stop Ubuntu",
+            if (MessageBox.Show(Loc.Get("UbuntuPowerOffQuestion") + " " + Loc.Get("UbuntuUnsavedWork"), Loc.Get("UbuntuStop"),
                     MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes)
                 client.StopUbuntu();
         });
@@ -128,7 +128,7 @@ internal sealed class VrexSetup : StackPanel, IDisposable
         Children.Add(status);
         Children.Add(new TextBlock
         {
-            Text = "First start downloads QEMU, the Ubuntu image and desktop packages, then prepares the Ubuntu disk.",
+            Text = Loc.Get("UbuntuFirstStartHint"),
             TextWrapping = TextWrapping.Wrap, Margin = new(0, 4, 0, 0)
         });
         Fill(client.Configuration);
@@ -172,8 +172,8 @@ internal sealed class VrexSetup : StackPanel, IDisposable
         playGuestAudio = settings.PlayGuestAudio;
         SelectResolution(VrexResolution.Find(settings.Resolution) ?? VrexResolution.Default);
         vmPath.Text = settings.VmPath ?? "";
-        currentPath.Text = string.IsNullOrEmpty(settings.VmPath) ? "" : "Current folder: " + settings.VmPath;
-        applyPath.Content = settings.VmInstalled ? "Move VM" : "Set folder";
+        currentPath.Text = string.IsNullOrEmpty(settings.VmPath) ? "" : Loc.Format("UbuntuCurrentFolder", settings.VmPath);
+        applyPath.Content = settings.VmInstalled ? Loc.Get("UbuntuMoveVm") : Loc.Get("UbuntuSetFolder");
         UpdateLabels();
     }
 
@@ -195,7 +195,7 @@ internal sealed class VrexSetup : StackPanel, IDisposable
 
     private void UpdateLabels()
     {
-        guestAudio.Content = playGuestAudio ? "Ubuntu app audio: On (next start)" : "Ubuntu app audio: Off (next start)";
+        guestAudio.Content = Loc.Format("UbuntuAudioNextStart", Loc.Get(playGuestAudio ? "ControllersOn" : "ControllersOff"));
     }
 
     private void Changed(VrexEvent message)
@@ -210,7 +210,7 @@ internal sealed class VrexSetup : StackPanel, IDisposable
         start.IsEnabled = client.ConfigurationLoaded && !client.VmBusy && !client.Ready;
         save.IsEnabled = client.ConfigurationLoaded && !client.VmBusy;
         bool moving = client.VmPhase == VrexVmPhase.Moving;
-        stop.Content = moving ? "Cancel move" : "Stop Ubuntu";
+        stop.Content = moving ? Loc.Get("UbuntuCancelMove") : Loc.Get("UbuntuStop");
         stop.IsEnabled = client.Running && client.VmPhase != VrexVmPhase.Stopping &&
             (moving || client.Ready || client.VmPhase is VrexVmPhase.Preparing or VrexVmPhase.Booting);
         vmPath.IsEnabled = applyPath.IsEnabled = start.IsEnabled;
@@ -232,7 +232,7 @@ internal sealed class VrexSetup : StackPanel, IDisposable
     private void Submit(bool boot)
     {
         if (!int.TryParse(memory.Text, out int ram) || ram is < 4096 or > 16384)
-        { status.Text = "Choose 4096–16384 MB RAM."; return; }
+        { status.Text = Loc.Get("UbuntuMemoryRange"); return; }
         try
         {
             if (!client.Send(new(boot ? "configure-ubuntu-start" : "configure-ubuntu",

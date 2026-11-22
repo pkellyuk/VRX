@@ -1444,4 +1444,237 @@
   <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
   <data name="BrowserAudioTitle" xml:space="preserve"><value>浏览器</value></data>
   <data name="UbuntuAudioTitle" xml:space="preserve"><value>Ubuntu</value></data>
+  <data name="CaptureTitle" xml:space="preserve"><value>捕获</value></data>
+  <data name="CaptureRecording" xml:space="preserve"><value>捕获 · 正在录制</value></data>
+  <data name="CaptureRecordVideo" xml:space="preserve"><value>录制 VR 视频</value></data>
+  <data name="CaptureStopVideo" xml:space="preserve"><value>停止 VR 录制</value></data>
+  <data name="CaptureOpenVrView" xml:space="preserve"><value>打开 SteamVR 的 VR 视图，并保持窗口未最小化。</value></data>
+  <data name="CaptureSaved" xml:space="preserve"><value>已保存 {0}</value></data>
+  <data name="CaptureRecordingVideo" xml:space="preserve"><value>正在录制 VR 视频</value></data>
+  <data name="CaptureStarting" xml:space="preserve"><value>正在开始 VR 录制…</value></data>
+  <data name="CaptureScreenshotting" xml:space="preserve"><value>正在截取 VR 画面…</value></data>
+  <data name="CaptureSaving" xml:space="preserve"><value>正在保存 VR 视频…</value></data>
+  <data name="CaptureFinishingScreenshot" xml:space="preserve"><value>正在完成 VR 截图…</value></data>
+  <data name="FloatingWebcam" xml:space="preserve"><value>网络摄像头</value></data>
+  <data name="BrowserBookmarks" xml:space="preserve"><value>书签</value></data>
+  <data name="BrowserBookmarkSave" xml:space="preserve"><value>保存当前页面</value></data>
+  <data name="BrowserBookmarksEmpty" xml:space="preserve"><value>暂无书签。</value></data>
+  <data name="BrowserBookmarkRemove" xml:space="preserve"><value>删除书签</value></data>
+  <data name="BrowserBookmarkRemoveNamed" xml:space="preserve"><value>删除 {0}</value></data>
+  <data name="KeyboardCut" xml:space="preserve"><value>剪切</value></data>
+  <data name="KeyboardSelectAll" xml:space="preserve"><value>全选</value></data>
+  <data name="KeyboardUndo" xml:space="preserve"><value>撤销</value></data>
+  <data name="KeyboardRedo" xml:space="preserve"><value>重做</value></data>
+  <data name="UbuntuStart" xml:space="preserve"><value>启动 Ubuntu</value></data>
+  <data name="UbuntuStop" xml:space="preserve"><value>停止 Ubuntu</value></data>
+  <data name="UbuntuStopping" xml:space="preserve"><value>正在停止 Ubuntu…</value></data>
+  <data name="UbuntuPowerOff" xml:space="preserve"><value>关闭 Ubuntu</value></data>
+  <data name="UbuntuKeepRunning" xml:space="preserve"><value>让 Ubuntu 继续运行</value></data>
+  <data name="UbuntuPowerOffQuestion" xml:space="preserve"><value>关闭 Ubuntu？</value></data>
+  <data name="UbuntuUnsavedWork" xml:space="preserve"><value>Ubuntu 中未保存的工作可能会丢失。</value></data>
+  <data name="UbuntuSetup" xml:space="preserve"><value>Ubuntu 设置</value></data>
+  <data name="UbuntuDisplay" xml:space="preserve"><value>Ubuntu 画面</value></data>
+  <data name="UbuntuShareText" xml:space="preserve"><value>共享文本：{0}</value></data>
+  <data name="UbuntuClipboardPreparing" xml:space="preserve"><value>正在准备共享剪贴板文本…</value></data>
+  <data name="UbuntuClipboardOff" xml:space="preserve"><value>剪贴板文本共享已关闭。</value></data>
+  <data name="UbuntuCopyToUbuntu" xml:space="preserve"><value>将文件复制到 Ubuntu</value></data>
+  <data name="UbuntuCopyToWindows" xml:space="preserve"><value>将文件复制到 Windows</value></data>
+  <data name="UbuntuCopyFilesHint" xml:space="preserve"><value>请先在资源管理器或 Ubuntu 文件管理器中复制文件。</value></data>
+  <data name="UbuntuClipboardFiles" xml:space="preserve"><value>剪贴板和文件</value></data>
+  <data name="VrexOpenChat" xml:space="preserve"><value>打开 Vrex 聊天</value></data>
+  <data name="VrexChatTitle" xml:space="preserve"><value>Vrex 聊天</value></data>
+  <data name="VrexGuideMe" xml:space="preserve"><value>给我提示</value></data>
+  <data name="VrexNotNow" xml:space="preserve"><value>暂时不要</value></data>
+  <data name="VrexSend" xml:space="preserve"><value>发送</value></data>
+  <data name="VrexStop" xml:space="preserve"><value>停止</value></data>
+  <data name="VrexStopTaskHint" xml:space="preserve"><value>停止 Vrex 当前的任务和语音</value></data>
+  <data name="VrexClearDraft" xml:space="preserve"><value>清除草稿</value></data>
+  <data name="VrexClearDraftHint" xml:space="preserve"><value>清除未发送的消息</value></data>
+  <data name="VrexMicrophoneLevel" xml:space="preserve"><value>麦克风音量</value></data>
+  <data name="VrexLiveVoice" xml:space="preserve"><value>实时语音</value></data>
+  <data name="VrexGuideHint" xml:space="preserve"><value>根据共享的画面获取建议（Ctrl+Alt+G）</value></data>
+  <data name="VrexChats" xml:space="preserve"><value>聊天记录</value></data>
+  <data name="VrexGoals" xml:space="preserve"><value>目标</value></data>
+  <data name="VrexCalendar" xml:space="preserve"><value>日历</value></data>
+  <data name="VrexCalendarTitle" xml:space="preserve"><value>Vrex 日历</value></data>
+  <data name="VrexZoomGrid" xml:space="preserve"><value>缩放网格</value></data>
+  <data name="VrexZoomGridTitle" xml:space="preserve"><value>Vrex 缩放网格</value></data>
+  <data name="VrexZoomGridLimit" xml:space="preserve"><value>请关闭另一个浮动面板以打开缩放网格。</value></data>
+  <data name="VrexGridWaiting" xml:space="preserve"><value>正在等待 Vrex 检查画面。</value></data>
+  <data name="VrexGridUnavailable" xml:space="preserve"><value>无法显示此视图。</value></data>
+  <data name="VrexMainPcScreen" xml:space="preserve"><value>电脑主屏幕</value></data>
+  <data name="VrexClearAnnotations" xml:space="preserve"><value>清除标注</value></data>
+  <data name="VrexClearAnnotationsHint" xml:space="preserve"><value>清除电脑和 Ubuntu 画面上的标注</value></data>
+  <data name="VrexPcScreenHint" xml:space="preserve"><value>与已配置的模型共享电脑主屏幕。</value></data>
+  <data name="VrexPanelScreenHint" xml:space="preserve"><value>在协助模式下，与模型共享您指向的浏览器或设置面板。</value></data>
+  <data name="VrexThinkingHint" xml:space="preserve"><value>切换 Vrex 模型的推理强度</value></data>
+  <data name="VrexSettings" xml:space="preserve"><value>设置</value></data>
+  <data name="VrexAiSettingsTitle" xml:space="preserve"><value>Vrex AI 设置</value></data>
+  <data name="VrexVerbosityName" xml:space="preserve"><value>回复详略</value></data>
+  <data name="VrexTerse" xml:space="preserve"><value>简短</value></data>
+  <data name="VrexNormal" xml:space="preserve"><value>标准</value></data>
+  <data name="VrexVerbose" xml:space="preserve"><value>详细</value></data>
+  <data name="VrexLiveTranscript" xml:space="preserve"><value>实时语音转写</value></data>
+  <data name="VrexNewChat" xml:space="preserve"><value>＋ 新建聊天</value></data>
+  <data name="VrexClearChat" xml:space="preserve"><value>清空聊天</value></data>
+  <data name="VrexDeleteChat" xml:space="preserve"><value>删除聊天</value></data>
+  <data name="VrexBackToChat" xml:space="preserve"><value>返回聊天</value></data>
+  <data name="VrexAchieveGoal" xml:space="preserve"><value>执行目标</value></data>
+  <data name="VrexGoalStopping" xml:space="preserve"><value>正在停止执行目标…</value></data>
+  <data name="VrexGoalStarting" xml:space="preserve"><value>正在开始执行目标…</value></data>
+  <data name="VrexGoalWorkHint" xml:space="preserve"><value>持续执行当前目标</value></data>
+  <data name="VrexGoalsTitle" xml:space="preserve"><value>Vrex 目标</value></data>
+  <data name="VrexActiveGoals" xml:space="preserve"><value>当前目标</value></data>
+  <data name="VrexGoalReady" xml:space="preserve"><value>当前目标 · 可以继续</value></data>
+  <data name="VrexGoalsEmpty" xml:space="preserve"><value>暂无目标。请在聊天中让 Vrex 设置一个。</value></data>
+  <data name="VrexGoalWorking" xml:space="preserve"><value>执行中</value></data>
+  <data name="VrexGoalPaused" xml:space="preserve"><value>已暂停</value></data>
+  <data name="VrexGoalActive" xml:space="preserve"><value>进行中</value></data>
+  <data name="VrexGoalBlocked" xml:space="preserve"><value>受阻</value></data>
+  <data name="VrexGoalReview" xml:space="preserve"><value>等待审核</value></data>
+  <data name="VrexGoalComplete" xml:space="preserve"><value>已完成</value></data>
+  <data name="VrexGoalSteps" xml:space="preserve"><value>{0}/{1} 步</value></data>
+  <data name="VrexGoalAccept" xml:space="preserve"><value>接受已完成的工作</value></data>
+  <data name="VrexGoalPause" xml:space="preserve"><value>暂停目标</value></data>
+  <data name="VrexGoalResume" xml:space="preserve"><value>继续执行目标</value></data>
+  <data name="VrexGoalDeleteQuestion" xml:space="preserve"><value>永久删除“{0}”及其步骤？</value></data>
+  <data name="VrexConfirmDelete" xml:space="preserve"><value>确认删除</value></data>
+  <data name="VrexGoalKeep" xml:space="preserve"><value>保留目标</value></data>
+  <data name="VrexGoalDelete" xml:space="preserve"><value>删除目标</value></data>
+  <data name="VrexGoalStopHint" xml:space="preserve"><value>停止连续执行目标</value></data>
+  <data name="VrexGoalPreparing" xml:space="preserve"><value>正在准备下一步</value></data>
+  <data name="VrexGoalRequest" xml:space="preserve"><value>请求 {0} · {1} 秒</value></data>
+  <data name="VrexChatOnHold" xml:space="preserve"><value>已暂停 · {0}</value></data>
+  <data name="VrexConfirmClear" xml:space="preserve"><value>确认清空</value></data>
+  <data name="VrexChatClearQuestion" xml:space="preserve"><value>清空此聊天的消息和记忆？</value></data>
+  <data name="VrexChatDeleteQuestion" xml:space="preserve"><value>删除此聊天及其记忆？</value></data>
+  <data name="VrexUbuntuPermissions" xml:space="preserve"><value>Ubuntu 权限</value></data>
+  <data name="VrexUbuntuAnnotate" xml:space="preserve"><value>在 Ubuntu 中添加标注</value></data>
+  <data name="VrexTransferPermissions" xml:space="preserve"><value>剪贴板和文件权限</value></data>
+  <data name="VrexAllowClipboard" xml:space="preserve"><value>允许 Vrex 读取和写入剪贴板文本</value></data>
+  <data name="VrexAllowFileCopy" xml:space="preserve"><value>允许 Vrex 在 Windows 和 Ubuntu 之间复制选定的文件</value></data>
+  <data name="VrexTransferPermissionHint" xml:space="preserve"><value>Vrex 可以与已配置的模型共享剪贴板文本。复制操作使用在资源管理器或 Ubuntu 文件管理器中选定的文件。</value></data>
+  <data name="VrexPcToolPermissions" xml:space="preserve"><value>电脑工具权限</value></data>
+  <data name="VrexEnableAll" xml:space="preserve"><value>全部启用</value></data>
+  <data name="VrexDisableAll" xml:space="preserve"><value>全部禁用</value></data>
+  <data name="VrexLiveVoiceStop" xml:space="preserve"><value>停止实时语音</value></data>
+  <data name="VrexLiveVoiceStart" xml:space="preserve"><value>开启实时语音并允许打断 Vrex</value></data>
+  <data name="VrexModeHelpful" xml:space="preserve"><value>模式：协助</value></data>
+  <data name="VrexModeQuiet" xml:space="preserve"><value>模式：安静</value></data>
+  <data name="VrexVoiceToggle" xml:space="preserve"><value>语音：{0}</value></data>
+  <data name="VrexPcScreenToggle" xml:space="preserve"><value>电脑屏幕：{0}</value></data>
+  <data name="VrexPanelsToggle" xml:space="preserve"><value>面板：{0}</value></data>
+  <data name="VrexThinking" xml:space="preserve"><value>推理：{0}</value></data>
+  <data name="VrexThinkingDefault" xml:space="preserve"><value>默认</value></data>
+  <data name="VrexThinkingLow" xml:space="preserve"><value>低</value></data>
+  <data name="VrexThinkingHigh" xml:space="preserve"><value>高</value></data>
+  <data name="VrexThinkingMax" xml:space="preserve"><value>最高</value></data>
+  <data name="VrexVerbosity" xml:space="preserve"><value>回复详略：{0} ▾</value></data>
+  <data name="VrexChooseModel" xml:space="preserve"><value>请在 Vrex 聊天设置中选择模型。</value></data>
+  <data name="VrexConnecting" xml:space="preserve"><value>正在连接 Vrex…</value></data>
+  <data name="VrexPreparingReply" xml:space="preserve"><value>正在准备回复…</value></data>
+  <data name="VrexTasks" xml:space="preserve"><value>任务</value></data>
+  <data name="VrexYou" xml:space="preserve"><value>您</value></data>
+  <data name="VrexLookingAtScreen" xml:space="preserve"><value>正在查看共享的画面…</value></data>
+  <data name="VrexBusy" xml:space="preserve"><value>Vrex 正忙。请稍后重试。</value></data>
+  <data name="VrexCalendarPrevious" xml:space="preserve"><value>上一周</value></data>
+  <data name="VrexCalendarThisWeek" xml:space="preserve"><value>本周</value></data>
+  <data name="VrexCalendarNext" xml:space="preserve"><value>下一周</value></data>
+  <data name="VrexCalendarLoading" xml:space="preserve"><value>正在加载预订…</value></data>
+  <data name="VrexCalendarEmpty" xml:space="preserve"><value>本周没有预订。</value></data>
+  <data name="CaptureVrScreenshot" xml:space="preserve"><value>VR 截图</value></data>
+  <data name="CaptureFailed" xml:space="preserve"><value>VR 捕获失败。{0}</value></data>
+  <data name="CaptureStartFailed" xml:space="preserve"><value>无法开始 VR 捕获。{0}</value></data>
+  <data name="CaptureStopFailed" xml:space="preserve"><value>无法停止 VR 捕获。{0}</value></data>
+  <data name="VrexGoalPending" xml:space="preserve"><value>待处理</value></data>
+  <data name="KeyboardPcKeys" xml:space="preserve"><value>电脑按键</value></data>
+  <data name="VrexModelProvider" xml:space="preserve"><value>服务商</value></data>
+  <data name="VrexModelName" xml:space="preserve"><value>模型</value></data>
+  <data name="VrexModelEndpoint" xml:space="preserve"><value>端点</value></data>
+  <data name="VrexModelApiKey" xml:space="preserve"><value>API 密钥</value></data>
+  <data name="VrexModelCompatible" xml:space="preserve"><value>兼容 OpenAI</value></data>
+  <data name="VrexModelReplaceKeyHint" xml:space="preserve"><value>输入或粘贴新的 API 密钥以替换已保存的密钥。</value></data>
+  <data name="VrexModelKeySavedHint" xml:space="preserve"><value>已保存密钥。输入新密钥可将其替换。</value></data>
+  <data name="VrexModelEnterKeyHint" xml:space="preserve"><value>请输入模型服务商的 API 密钥。</value></data>
+  <data name="VrexModelUseDeepSeek" xml:space="preserve"><value>使用 DeepSeek Flash</value></data>
+  <data name="VrexModelGetDeepSeekKey" xml:space="preserve"><value>获取 DeepSeek 密钥</value></data>
+  <data name="VrexModelDeepSeekFailed" xml:space="preserve"><value>无法打开 DeepSeek 密钥页面。</value></data>
+  <data name="VrexModelSave" xml:space="preserve"><value>保存 AI 设置</value></data>
+  <data name="VrexModelSaved" xml:space="preserve"><value>已保存 AI 设置。</value></data>
+  <data name="VrexModelSaving" xml:space="preserve"><value>正在保存 AI 设置…</value></data>
+  <data name="UbuntuDecreaseCpus" xml:space="preserve"><value>减少虚拟 CPU 数量</value></data>
+  <data name="UbuntuIncreaseCpus" xml:space="preserve"><value>增加虚拟 CPU 数量</value></data>
+  <data name="UbuntuVirtualCpus" xml:space="preserve"><value>虚拟 CPU（1–8）</value></data>
+  <data name="UbuntuMemory" xml:space="preserve"><value>内存（MB，4096–16384）</value></data>
+  <data name="UbuntuResolutionNextStart" xml:space="preserve"><value>显示分辨率（下次启动生效）</value></data>
+  <data name="UbuntuResolution" xml:space="preserve"><value>Ubuntu 显示分辨率</value></data>
+  <data name="UbuntuVmFolder" xml:space="preserve"><value>虚拟机存储文件夹</value></data>
+  <data name="UbuntuSetFolder" xml:space="preserve"><value>设置文件夹</value></data>
+  <data name="UbuntuBrowseFolder" xml:space="preserve"><value>浏览…</value></data>
+  <data name="UbuntuChooseFolder" xml:space="preserve"><value>选择一个空文件夹来存放 Ubuntu 虚拟机</value></data>
+  <data name="UbuntuVmFolderHint" xml:space="preserve"><value>请在 Ubuntu 关机时设置或移动文件夹。下载的系统镜像缓存会保留在 VRX 的数据文件夹中。</value></data>
+  <data name="UbuntuFirstStartHint" xml:space="preserve"><value>首次启动时会下载 QEMU、Ubuntu 镜像和桌面软件包，然后准备 Ubuntu 磁盘。</value></data>
+  <data name="UbuntuCurrentFolder" xml:space="preserve"><value>当前文件夹：{0}</value></data>
+  <data name="UbuntuMoveVm" xml:space="preserve"><value>移动虚拟机</value></data>
+  <data name="UbuntuCancelMove" xml:space="preserve"><value>取消移动</value></data>
+  <data name="UbuntuAudioNextStart" xml:space="preserve"><value>Ubuntu 应用音频：{0}（下次启动生效）</value></data>
+  <data name="UbuntuMemoryRange" xml:space="preserve"><value>请选择 4096–16384 MB 内存。</value></data>
+  <data name="VrexPcToolGuide" xml:space="preserve"><value>标注需要共享电脑屏幕。其他屏幕工具还需要“接管控制”权限。文件工具使用 Vrex 工作区，并将文件内容共享给模型。权限会保存，并在聊天打开时生效。选择“全部禁用”或按 Ctrl+Alt+Shift+F12 可停止向 Windows 发送输入。</value></data>
+  <data name="VrexTool_pc_begin" xml:space="preserve"><value>接管控制</value></data>
+  <data name="VrexTool_pc_end" xml:space="preserve"><value>释放控制</value></data>
+  <data name="VrexTool_pc_screens" xml:space="preserve"><value>列出显示器</value></data>
+  <data name="VrexTool_pc_screenshot" xml:space="preserve"><value>截取屏幕</value></data>
+  <data name="VrexTool_pc_grid" xml:space="preserve"><value>使用编号网格检查</value></data>
+  <data name="VrexTool_pc_zoom_out" xml:space="preserve"><value>缩小网格</value></data>
+  <data name="VrexTool_pc_find_text" xml:space="preserve"><value>查找屏幕文字</value></data>
+  <data name="VrexTool_pc_peek" xml:space="preserve"><value>检查网格中的一点</value></data>
+  <data name="VrexTool_pc_focus_window" xml:space="preserve"><value>聚焦窗口</value></data>
+  <data name="VrexTool_pc_mark" xml:space="preserve"><value>在主屏幕添加标注</value></data>
+  <data name="VrexTool_pc_move" xml:space="preserve"><value>移动指针</value></data>
+  <data name="VrexTool_pc_click" xml:space="preserve"><value>点击</value></data>
+  <data name="VrexTool_pc_click_at" xml:space="preserve"><value>点击图像中的指定位置</value></data>
+  <data name="VrexTool_pc_drag" xml:space="preserve"><value>拖动</value></data>
+  <data name="VrexTool_pc_scroll" xml:space="preserve"><value>滚动</value></data>
+  <data name="VrexTool_pc_type" xml:space="preserve"><value>输入文本</value></data>
+  <data name="VrexTool_pc_key" xml:space="preserve"><value>按键</value></data>
+  <data name="VrexTool_pc_open_app" xml:space="preserve"><value>打开 Windows 应用</value></data>
+  <data name="VrexTool_pc_list_files" xml:space="preserve"><value>列出工作区文件</value></data>
+  <data name="VrexTool_pc_read_file" xml:space="preserve"><value>读取工作区文件</value></data>
+  <data name="VrexTool_pc_write_file" xml:space="preserve"><value>写入工作区文件</value></data>
+  <data name="WebcamDefaultCamera" xml:space="preserve"><value>默认摄像头</value></data>
+  <data name="WebcamStartCamera" xml:space="preserve"><value>启动摄像头</value></data>
+  <data name="WebcamCameraOff" xml:space="preserve"><value>摄像头已关闭</value></data>
+  <data name="WebcamCameraOn" xml:space="preserve"><value>摄像头已开启</value></data>
+  <data name="WebcamNumberedCamera" xml:space="preserve"><value>摄像头 {0}</value></data>
+  <data name="WebcamOpening" xml:space="preserve"><value>正在打开摄像头…</value></data>
+  <data name="WebcamDisconnected" xml:space="preserve"><value>摄像头已断开</value></data>
+  <data name="WebcamAllowAccess" xml:space="preserve"><value>请在 Windows 设置中允许访问摄像头</value></data>
+  <data name="WebcamNotFound" xml:space="preserve"><value>未找到摄像头</value></data>
+  <data name="WebcamUnavailable" xml:space="preserve"><value>摄像头不可用</value></data>
+  <data name="WebcamServiceUnavailable" xml:space="preserve"><value>摄像头服务不可用</value></data>
+  <data name="VrexGuideStopped" xml:space="preserve"><value>已停止提供提示。</value></data>
+  <data name="VrexGuideMainScreenFailed" xml:space="preserve"><value>无法发送主屏幕。请再次选择“给我提示”。</value></data>
+  <data name="VrexGuidePointAtPanel" xml:space="preserve"><value>指向浏览器或设置面板，然后按“给我提示”。</value></data>
+  <data name="VrexGuideEnableScreen" xml:space="preserve"><value>开启电脑屏幕共享以获取游戏提示。</value></data>
+  <data name="VrexLiveVoiceChooseModel" xml:space="preserve"><value>请在 Vrex 聊天设置中选择模型以使用实时语音。</value></data>
+  <data name="VrexLiveVoiceStarting" xml:space="preserve"><value>正在开启实时语音…</value></data>
+  <data name="VrexLiveVoiceStopping" xml:space="preserve"><value>正在停止实时语音…</value></data>
+  <data name="VrexStopping" xml:space="preserve"><value>正在停止 Vrex…</value></data>
+  <data name="UbuntuPoweredOff" xml:space="preserve"><value>Ubuntu 已关机。</value></data>
+  <data name="UbuntuPoweringOff" xml:space="preserve"><value>Ubuntu 正在关机…</value></data>
+  <data name="VrexGoalSkipped" xml:space="preserve"><value>已跳过</value></data>
+
+  <data name="UbuntuPhasePreparing" xml:space="preserve"><value>正在准备</value></data>
+  <data name="UbuntuPhaseBooting" xml:space="preserve"><value>正在启动</value></data>
+  <data name="UbuntuPhaseRunning" xml:space="preserve"><value>运行中</value></data>
+  <data name="UbuntuPhaseStopping" xml:space="preserve"><value>正在关机</value></data>
+  <data name="UbuntuPhaseMoving" xml:space="preserve"><value>正在移动存储</value></data>
+  <data name="UbuntuPhaseDisconnected" xml:space="preserve"><value>显示连接已断开</value></data>
+  <data name="UbuntuPhaseFailed" xml:space="preserve"><value>需要处理</value></data>
+  <data name="UbuntuPhaseOff" xml:space="preserve"><value>已关机</value></data>
+  <data name="UbuntuReadyToStart" xml:space="preserve"><value>准备就绪后即可启动 Ubuntu。</value></data>
+  <data name="UbuntuRequestingStart" xml:space="preserve"><value>正在请求启动 Ubuntu…</value></data>
+  <data name="UbuntuCheckingDestination" xml:space="preserve"><value>正在检查目标文件夹…</value></data>
+  <data name="UbuntuHelperExited" xml:space="preserve"><value>Ubuntu 辅助进程已退出。请尝试重新启动 Ubuntu。</value></data>
+
 </root>

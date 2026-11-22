@@ -31,8 +31,8 @@ internal sealed class VrexModelSettings : StackPanel, IDisposable
         Action<Button, Action>? registerButton = null, Action? back = null)
     {
         this.client = client;
-        if (back != null) Children.Add(MakeButton("Back to chat", back));
-        provider = MakeButton("OpenAI compatible", () =>
+        if (back != null) Children.Add(MakeButton(Loc.Get("VrexBackToChat"), back));
+        provider = MakeButton(Loc.Get("VrexModelCompatible"), () =>
         {
             providerId = providerId == "openai-compatible" ? "openai-responses" : "openai-compatible";
             UpdateProvider();
@@ -44,25 +44,25 @@ internal sealed class VrexModelSettings : StackPanel, IDisposable
             field.VerticalContentAlignment = VerticalAlignment.Center;
             field.Padding = new(8, 0, 8, 0);
         }
-        key.ToolTip = "Type or paste a new API key to replace the saved key.";
+        key.ToolTip = Loc.Get("VrexModelReplaceKeyHint");
         mask.SetResourceReference(TextBlock.ForegroundProperty, "Muted");
         key.PasswordChanged += (_, _) => UpdateKeyMask();
         var keyField = new Grid();
         keyField.Children.Add(key);
         keyField.Children.Add(mask);
-        AddField("Provider", provider, provider);
-        AddField("Model", model, model);
-        AddField("Endpoint", endpoint, endpoint);
-        AddField("API key", keyField, key);
+        AddField(Loc.Get("VrexModelProvider"), provider, provider);
+        AddField(Loc.Get("VrexModelName"), model, model);
+        AddField(Loc.Get("VrexModelEndpoint"), endpoint, endpoint);
+        AddField(Loc.Get("VrexModelApiKey"), keyField, key);
         var shortcuts = new WrapPanel();
-        shortcuts.Children.Add(MakeButton("Use DeepSeek Flash", () =>
+        shortcuts.Children.Add(MakeButton(Loc.Get("VrexModelUseDeepSeek"), () =>
         {
             providerId = "openai-compatible";
             endpoint.Text = "https://api.deepseek.com";
             model.Text = "deepseek-flash";
             UpdateProvider();
         }));
-        shortcuts.Children.Add(MakeButton("Get DeepSeek key", () =>
+        shortcuts.Children.Add(MakeButton(Loc.Get("VrexModelGetDeepSeekKey"), () =>
         {
             const string url = "https://platform.deepseek.com/api_keys";
             try
@@ -71,10 +71,10 @@ internal sealed class VrexModelSettings : StackPanel, IDisposable
                 else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-            { status.Text = "Couldn't open the DeepSeek key page."; }
+            { status.Text = Loc.Get("VrexModelDeepSeekFailed"); }
         }));
         Children.Add(shortcuts);
-        save = MakeButton("Save AI settings", Submit);
+        save = MakeButton(Loc.Get("VrexModelSave"), Submit);
         Children.Add(save);
         Children.Add(status);
         if (client.ConfigurationLoaded) Fill(client.Configuration);
@@ -112,7 +112,7 @@ internal sealed class VrexModelSettings : StackPanel, IDisposable
         {
             saving = false;
             key.Clear();
-            status.Text = "AI settings saved.";
+            status.Text = Loc.Get("VrexModelSaved");
         }
         if (saving && message.Type is ("model-settings-error" or "error"))
         {
@@ -134,7 +134,7 @@ internal sealed class VrexModelSettings : StackPanel, IDisposable
     }
 
     private void UpdateProvider() => provider.Content =
-        providerId == "openai-responses" ? "OpenAI Responses" : "OpenAI compatible";
+        providerId == "openai-responses" ? "OpenAI Responses" : Loc.Get("VrexModelCompatible");
 
     private string? ReplacementKey => key.Password.Length > 0 ? key.Password : null;
 
@@ -142,7 +142,7 @@ internal sealed class VrexModelSettings : StackPanel, IDisposable
     {
         bool hasKey = saved?.HasKey == true;
         mask.Visibility = hasKey && ReplacementKey == null ? Visibility.Visible : Visibility.Collapsed;
-        AutomationProperties.SetHelpText(key, hasKey ? "A key is saved. Type a new key to replace it." : "Enter an API key for your model provider.");
+        AutomationProperties.SetHelpText(key, hasKey ? Loc.Get("VrexModelKeySavedHint") : Loc.Get("VrexModelEnterKeyHint"));
     }
 
     private void Submit()
@@ -158,7 +158,7 @@ internal sealed class VrexModelSettings : StackPanel, IDisposable
         { status.Text = ex.Message; return; }
         saving = true;
         save.IsEnabled = false;
-        status.Text = "Saving AI settings…";
+        status.Text = Loc.Get("VrexModelSaving");
     }
 
     internal void ClearSelection() => activeField = null;

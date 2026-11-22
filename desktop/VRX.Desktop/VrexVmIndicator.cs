@@ -30,14 +30,14 @@ internal sealed class VrexVmIndicator : DockPanel
     {
         var (text, color) = vm.VmPhase switch
         {
-            VrexVmPhase.Preparing => ("Preparing", Colors.Goldenrod),
-            VrexVmPhase.Booting => ("Booting", Colors.Goldenrod),
-            VrexVmPhase.Running => ("Running", Colors.MediumSeaGreen),
-            VrexVmPhase.Stopping => ("Shutting down", Colors.Goldenrod),
-            VrexVmPhase.Moving => ("Moving storage", Colors.Goldenrod),
-            VrexVmPhase.DisplayUnavailable => ("Display disconnected", Colors.IndianRed),
-            VrexVmPhase.Failed => ("Needs attention", Colors.IndianRed),
-            _ => ("Powered off", Colors.SlateGray)
+            VrexVmPhase.Preparing => (Loc.Get("UbuntuPhasePreparing"), Colors.Goldenrod),
+            VrexVmPhase.Booting => (Loc.Get("UbuntuPhaseBooting"), Colors.Goldenrod),
+            VrexVmPhase.Running => (Loc.Get("UbuntuPhaseRunning"), Colors.MediumSeaGreen),
+            VrexVmPhase.Stopping => (Loc.Get("UbuntuPhaseStopping"), Colors.Goldenrod),
+            VrexVmPhase.Moving => (Loc.Get("UbuntuPhaseMoving"), Colors.Goldenrod),
+            VrexVmPhase.DisplayUnavailable => (Loc.Get("UbuntuPhaseDisconnected"), Colors.IndianRed),
+            VrexVmPhase.Failed => (Loc.Get("UbuntuPhaseFailed"), Colors.IndianRed),
+            _ => (Loc.Get("UbuntuPhaseOff"), Colors.SlateGray)
         };
         label.Text = text;
         var brush = new SolidColorBrush(color);

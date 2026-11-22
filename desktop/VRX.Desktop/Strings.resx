@@ -512,4 +512,237 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
   <data name="BrowserAudioTitle" xml:space="preserve"><value>Browser</value></data>
   <data name="UbuntuAudioTitle" xml:space="preserve"><value>Ubuntu</value></data>
+  <data name="CaptureTitle" xml:space="preserve"><value>Capture</value></data>
+  <data name="CaptureRecording" xml:space="preserve"><value>Capture · Recording</value></data>
+  <data name="CaptureRecordVideo" xml:space="preserve"><value>Record VR video</value></data>
+  <data name="CaptureStopVideo" xml:space="preserve"><value>Stop VR recording</value></data>
+  <data name="CaptureOpenVrView" xml:space="preserve"><value>Open SteamVR’s Display VR View and leave that window unminimized.</value></data>
+  <data name="CaptureSaved" xml:space="preserve"><value>Saved {0}</value></data>
+  <data name="CaptureRecordingVideo" xml:space="preserve"><value>Recording VR video</value></data>
+  <data name="CaptureStarting" xml:space="preserve"><value>Starting VR recording…</value></data>
+  <data name="CaptureScreenshotting" xml:space="preserve"><value>Taking VR screenshot…</value></data>
+  <data name="CaptureSaving" xml:space="preserve"><value>Saving VR video…</value></data>
+  <data name="CaptureFinishingScreenshot" xml:space="preserve"><value>Finishing VR screenshot…</value></data>
+  <data name="FloatingWebcam" xml:space="preserve"><value>Webcam</value></data>
+  <data name="BrowserBookmarks" xml:space="preserve"><value>Bookmarks</value></data>
+  <data name="BrowserBookmarkSave" xml:space="preserve"><value>Save current page</value></data>
+  <data name="BrowserBookmarksEmpty" xml:space="preserve"><value>No bookmarks yet.</value></data>
+  <data name="BrowserBookmarkRemove" xml:space="preserve"><value>Remove bookmark</value></data>
+  <data name="BrowserBookmarkRemoveNamed" xml:space="preserve"><value>Remove {0}</value></data>
+  <data name="KeyboardCut" xml:space="preserve"><value>Cut</value></data>
+  <data name="KeyboardSelectAll" xml:space="preserve"><value>Select all</value></data>
+  <data name="KeyboardUndo" xml:space="preserve"><value>Undo</value></data>
+  <data name="KeyboardRedo" xml:space="preserve"><value>Redo</value></data>
+  <data name="UbuntuStart" xml:space="preserve"><value>Start Ubuntu</value></data>
+  <data name="UbuntuStop" xml:space="preserve"><value>Stop Ubuntu</value></data>
+  <data name="UbuntuStopping" xml:space="preserve"><value>Stopping Ubuntu…</value></data>
+  <data name="UbuntuPowerOff" xml:space="preserve"><value>Power off Ubuntu</value></data>
+  <data name="UbuntuKeepRunning" xml:space="preserve"><value>Keep Ubuntu running</value></data>
+  <data name="UbuntuPowerOffQuestion" xml:space="preserve"><value>Power off Ubuntu?</value></data>
+  <data name="UbuntuUnsavedWork" xml:space="preserve"><value>Unsaved work in Ubuntu may be lost.</value></data>
+  <data name="UbuntuSetup" xml:space="preserve"><value>Ubuntu setup</value></data>
+  <data name="UbuntuDisplay" xml:space="preserve"><value>Ubuntu display</value></data>
+  <data name="UbuntuShareText" xml:space="preserve"><value>Share text: {0}</value></data>
+  <data name="UbuntuClipboardPreparing" xml:space="preserve"><value>Preparing text clipboard sharing…</value></data>
+  <data name="UbuntuClipboardOff" xml:space="preserve"><value>Text clipboard sharing is off.</value></data>
+  <data name="UbuntuCopyToUbuntu" xml:space="preserve"><value>Copy files to Ubuntu</value></data>
+  <data name="UbuntuCopyToWindows" xml:space="preserve"><value>Copy files to Windows</value></data>
+  <data name="UbuntuCopyFilesHint" xml:space="preserve"><value>Copy files in Explorer or Ubuntu’s file manager first.</value></data>
+  <data name="UbuntuClipboardFiles" xml:space="preserve"><value>Clipboard &amp; files</value></data>
+  <data name="VrexOpenChat" xml:space="preserve"><value>Open Vrex chat</value></data>
+  <data name="VrexChatTitle" xml:space="preserve"><value>Vrex chat</value></data>
+  <data name="VrexGuideMe" xml:space="preserve"><value>Guide Me</value></data>
+  <data name="VrexNotNow" xml:space="preserve"><value>Not now</value></data>
+  <data name="VrexSend" xml:space="preserve"><value>Send</value></data>
+  <data name="VrexStop" xml:space="preserve"><value>Stop</value></data>
+  <data name="VrexStopTaskHint" xml:space="preserve"><value>Stop Vrex’s current task and voice</value></data>
+  <data name="VrexClearDraft" xml:space="preserve"><value>Clear draft</value></data>
+  <data name="VrexClearDraftHint" xml:space="preserve"><value>Clear the unsent message</value></data>
+  <data name="VrexMicrophoneLevel" xml:space="preserve"><value>Microphone level</value></data>
+  <data name="VrexLiveVoice" xml:space="preserve"><value>Live voice</value></data>
+  <data name="VrexGuideHint" xml:space="preserve"><value>Get advice using the screen you’ve shared (Ctrl+Alt+G)</value></data>
+  <data name="VrexChats" xml:space="preserve"><value>Chats</value></data>
+  <data name="VrexGoals" xml:space="preserve"><value>Goals</value></data>
+  <data name="VrexCalendar" xml:space="preserve"><value>Calendar</value></data>
+  <data name="VrexCalendarTitle" xml:space="preserve"><value>Vrex calendar</value></data>
+  <data name="VrexZoomGrid" xml:space="preserve"><value>Zoom grid</value></data>
+  <data name="VrexZoomGridTitle" xml:space="preserve"><value>Vrex zoom grid</value></data>
+  <data name="VrexZoomGridLimit" xml:space="preserve"><value>Close another floating panel to open the zoom grid.</value></data>
+  <data name="VrexGridWaiting" xml:space="preserve"><value>Waiting for Vrex to inspect a screen.</value></data>
+  <data name="VrexGridUnavailable" xml:space="preserve"><value>This view could not be displayed.</value></data>
+  <data name="VrexMainPcScreen" xml:space="preserve"><value>Main PC screen</value></data>
+  <data name="VrexClearAnnotations" xml:space="preserve"><value>Clear annotations</value></data>
+  <data name="VrexClearAnnotationsHint" xml:space="preserve"><value>Clear marks on the PC and Ubuntu screens</value></data>
+  <data name="VrexPcScreenHint" xml:space="preserve"><value>Share the main PC display with your configured model.</value></data>
+  <data name="VrexPanelScreenHint" xml:space="preserve"><value>In Helpful mode, share the browser or settings panel you point at with your configured model.</value></data>
+  <data name="VrexThinkingHint" xml:space="preserve"><value>Cycle thinking effort for Vrex’s model</value></data>
+  <data name="VrexSettings" xml:space="preserve"><value>Settings</value></data>
+  <data name="VrexAiSettingsTitle" xml:space="preserve"><value>Vrex AI settings</value></data>
+  <data name="VrexVerbosityName" xml:space="preserve"><value>Reply verbosity</value></data>
+  <data name="VrexTerse" xml:space="preserve"><value>Terse</value></data>
+  <data name="VrexNormal" xml:space="preserve"><value>Normal</value></data>
+  <data name="VrexVerbose" xml:space="preserve"><value>Verbose</value></data>
+  <data name="VrexLiveTranscript" xml:space="preserve"><value>Live voice transcript</value></data>
+  <data name="VrexNewChat" xml:space="preserve"><value>＋ New chat</value></data>
+  <data name="VrexClearChat" xml:space="preserve"><value>Clear chat</value></data>
+  <data name="VrexDeleteChat" xml:space="preserve"><value>Delete chat</value></data>
+  <data name="VrexBackToChat" xml:space="preserve"><value>Back to chat</value></data>
+  <data name="VrexAchieveGoal" xml:space="preserve"><value>Achieve goal</value></data>
+  <data name="VrexGoalStopping" xml:space="preserve"><value>Stopping goal work…</value></data>
+  <data name="VrexGoalStarting" xml:space="preserve"><value>Starting goal work…</value></data>
+  <data name="VrexGoalWorkHint" xml:space="preserve"><value>Work continuously through active goals</value></data>
+  <data name="VrexGoalsTitle" xml:space="preserve"><value>Vrex goals</value></data>
+  <data name="VrexActiveGoals" xml:space="preserve"><value>Active goals</value></data>
+  <data name="VrexGoalReady" xml:space="preserve"><value>Active goal · ready to continue</value></data>
+  <data name="VrexGoalsEmpty" xml:space="preserve"><value>No goals yet. Ask Vrex in chat to set one.</value></data>
+  <data name="VrexGoalWorking" xml:space="preserve"><value>Working</value></data>
+  <data name="VrexGoalPaused" xml:space="preserve"><value>Paused</value></data>
+  <data name="VrexGoalActive" xml:space="preserve"><value>Active</value></data>
+  <data name="VrexGoalBlocked" xml:space="preserve"><value>Blocked</value></data>
+  <data name="VrexGoalReview" xml:space="preserve"><value>Awaiting review</value></data>
+  <data name="VrexGoalComplete" xml:space="preserve"><value>Completed</value></data>
+  <data name="VrexGoalSteps" xml:space="preserve"><value>{0}/{1} steps</value></data>
+  <data name="VrexGoalAccept" xml:space="preserve"><value>Accept completed work</value></data>
+  <data name="VrexGoalPause" xml:space="preserve"><value>Pause goal</value></data>
+  <data name="VrexGoalResume" xml:space="preserve"><value>Resume goal</value></data>
+  <data name="VrexGoalDeleteQuestion" xml:space="preserve"><value>Permanently delete “{0}” and its steps?</value></data>
+  <data name="VrexConfirmDelete" xml:space="preserve"><value>Confirm delete</value></data>
+  <data name="VrexGoalKeep" xml:space="preserve"><value>Keep goal</value></data>
+  <data name="VrexGoalDelete" xml:space="preserve"><value>Delete goal</value></data>
+  <data name="VrexGoalStopHint" xml:space="preserve"><value>Stop continuous goal work</value></data>
+  <data name="VrexGoalPreparing" xml:space="preserve"><value>Preparing the next step</value></data>
+  <data name="VrexGoalRequest" xml:space="preserve"><value>Request {0} · {1}s</value></data>
+  <data name="VrexChatOnHold" xml:space="preserve"><value>On hold · {0}</value></data>
+  <data name="VrexConfirmClear" xml:space="preserve"><value>Confirm clear</value></data>
+  <data name="VrexChatClearQuestion" xml:space="preserve"><value>Clear the messages and memory from this chat?</value></data>
+  <data name="VrexChatDeleteQuestion" xml:space="preserve"><value>Delete this chat and its memory?</value></data>
+  <data name="VrexUbuntuPermissions" xml:space="preserve"><value>Ubuntu permissions</value></data>
+  <data name="VrexUbuntuAnnotate" xml:space="preserve"><value>Annotate Ubuntu</value></data>
+  <data name="VrexTransferPermissions" xml:space="preserve"><value>Clipboard and file permissions</value></data>
+  <data name="VrexAllowClipboard" xml:space="preserve"><value>Let Vrex read and write clipboard text</value></data>
+  <data name="VrexAllowFileCopy" xml:space="preserve"><value>Let Vrex copy selected files between Windows and Ubuntu</value></data>
+  <data name="VrexTransferPermissionHint" xml:space="preserve"><value>Vrex can share clipboard text with your configured model. File copies use the files selected in Explorer or Ubuntu’s file manager.</value></data>
+  <data name="VrexPcToolPermissions" xml:space="preserve"><value>PC tool permissions</value></data>
+  <data name="VrexEnableAll" xml:space="preserve"><value>Enable all</value></data>
+  <data name="VrexDisableAll" xml:space="preserve"><value>Disable all</value></data>
+  <data name="VrexLiveVoiceStop" xml:space="preserve"><value>Stop live voice</value></data>
+  <data name="VrexLiveVoiceStart" xml:space="preserve"><value>Start live voice with barge-in</value></data>
+  <data name="VrexModeHelpful" xml:space="preserve"><value>Mode: Helpful</value></data>
+  <data name="VrexModeQuiet" xml:space="preserve"><value>Mode: Quiet</value></data>
+  <data name="VrexVoiceToggle" xml:space="preserve"><value>Voice: {0}</value></data>
+  <data name="VrexPcScreenToggle" xml:space="preserve"><value>PC screen: {0}</value></data>
+  <data name="VrexPanelsToggle" xml:space="preserve"><value>Panels: {0}</value></data>
+  <data name="VrexThinking" xml:space="preserve"><value>Thinking: {0}</value></data>
+  <data name="VrexThinkingDefault" xml:space="preserve"><value>Default</value></data>
+  <data name="VrexThinkingLow" xml:space="preserve"><value>Low</value></data>
+  <data name="VrexThinkingHigh" xml:space="preserve"><value>High</value></data>
+  <data name="VrexThinkingMax" xml:space="preserve"><value>Max</value></data>
+  <data name="VrexVerbosity" xml:space="preserve"><value>Verbosity: {0} ▾</value></data>
+  <data name="VrexChooseModel" xml:space="preserve"><value>Choose a model in Vrex chat Settings.</value></data>
+  <data name="VrexConnecting" xml:space="preserve"><value>Connecting to Vrex…</value></data>
+  <data name="VrexPreparingReply" xml:space="preserve"><value>Preparing a reply…</value></data>
+  <data name="VrexTasks" xml:space="preserve"><value>Tasks</value></data>
+  <data name="VrexYou" xml:space="preserve"><value>You</value></data>
+  <data name="VrexLookingAtScreen" xml:space="preserve"><value>Looking at the shared screen…</value></data>
+  <data name="VrexBusy" xml:space="preserve"><value>Vrex is busy. Try again in a moment.</value></data>
+  <data name="VrexCalendarPrevious" xml:space="preserve"><value>Previous week</value></data>
+  <data name="VrexCalendarThisWeek" xml:space="preserve"><value>This week</value></data>
+  <data name="VrexCalendarNext" xml:space="preserve"><value>Next week</value></data>
+  <data name="VrexCalendarLoading" xml:space="preserve"><value>Loading bookings…</value></data>
+  <data name="VrexCalendarEmpty" xml:space="preserve"><value>No bookings this week.</value></data>
+  <data name="CaptureVrScreenshot" xml:space="preserve"><value>VR screenshot</value></data>
+  <data name="CaptureFailed" xml:space="preserve"><value>VR capture failed. {0}</value></data>
+  <data name="CaptureStartFailed" xml:space="preserve"><value>VR capture couldn't start. {0}</value></data>
+  <data name="CaptureStopFailed" xml:space="preserve"><value>VR capture couldn't stop. {0}</value></data>
+  <data name="VrexGoalPending" xml:space="preserve"><value>Pending</value></data>
+  <data name="KeyboardPcKeys" xml:space="preserve"><value>PC keys</value></data>
+  <data name="VrexModelProvider" xml:space="preserve"><value>Provider</value></data>
+  <data name="VrexModelName" xml:space="preserve"><value>Model</value></data>
+  <data name="VrexModelEndpoint" xml:space="preserve"><value>Endpoint</value></data>
+  <data name="VrexModelApiKey" xml:space="preserve"><value>API key</value></data>
+  <data name="VrexModelCompatible" xml:space="preserve"><value>OpenAI compatible</value></data>
+  <data name="VrexModelReplaceKeyHint" xml:space="preserve"><value>Type or paste a new API key to replace the saved key.</value></data>
+  <data name="VrexModelKeySavedHint" xml:space="preserve"><value>A key is saved. Type a new key to replace it.</value></data>
+  <data name="VrexModelEnterKeyHint" xml:space="preserve"><value>Enter an API key for your model provider.</value></data>
+  <data name="VrexModelUseDeepSeek" xml:space="preserve"><value>Use DeepSeek Flash</value></data>
+  <data name="VrexModelGetDeepSeekKey" xml:space="preserve"><value>Get DeepSeek key</value></data>
+  <data name="VrexModelDeepSeekFailed" xml:space="preserve"><value>Couldn't open the DeepSeek key page.</value></data>
+  <data name="VrexModelSave" xml:space="preserve"><value>Save AI settings</value></data>
+  <data name="VrexModelSaved" xml:space="preserve"><value>AI settings saved.</value></data>
+  <data name="VrexModelSaving" xml:space="preserve"><value>Saving AI settings…</value></data>
+  <data name="UbuntuDecreaseCpus" xml:space="preserve"><value>Decrease virtual CPUs</value></data>
+  <data name="UbuntuIncreaseCpus" xml:space="preserve"><value>Increase virtual CPUs</value></data>
+  <data name="UbuntuVirtualCpus" xml:space="preserve"><value>Virtual CPUs (1–8)</value></data>
+  <data name="UbuntuMemory" xml:space="preserve"><value>RAM in MB (4096–16384)</value></data>
+  <data name="UbuntuResolutionNextStart" xml:space="preserve"><value>Display resolution (next start)</value></data>
+  <data name="UbuntuResolution" xml:space="preserve"><value>Ubuntu display resolution</value></data>
+  <data name="UbuntuVmFolder" xml:space="preserve"><value>VM storage folder</value></data>
+  <data name="UbuntuSetFolder" xml:space="preserve"><value>Set folder</value></data>
+  <data name="UbuntuBrowseFolder" xml:space="preserve"><value>Browse…</value></data>
+  <data name="UbuntuChooseFolder" xml:space="preserve"><value>Choose an empty Ubuntu VM folder</value></data>
+  <data name="UbuntuVmFolderHint" xml:space="preserve"><value>Set or move the folder while Ubuntu is powered off. The downloaded system image cache stays in VRX’s data folder.</value></data>
+  <data name="UbuntuFirstStartHint" xml:space="preserve"><value>First start downloads QEMU, the Ubuntu image and desktop packages, then prepares the Ubuntu disk.</value></data>
+  <data name="UbuntuCurrentFolder" xml:space="preserve"><value>Current folder: {0}</value></data>
+  <data name="UbuntuMoveVm" xml:space="preserve"><value>Move VM</value></data>
+  <data name="UbuntuCancelMove" xml:space="preserve"><value>Cancel move</value></data>
+  <data name="UbuntuAudioNextStart" xml:space="preserve"><value>Ubuntu app audio: {0} (next start)</value></data>
+  <data name="UbuntuMemoryRange" xml:space="preserve"><value>Choose 4096–16384 MB RAM.</value></data>
+  <data name="VrexPcToolGuide" xml:space="preserve"><value>Annotations need PC screen sharing. Other screen tools also need Take control. File tools use the Vrex workspace and share file contents with your model. Permissions are saved and active while chat is open. Disable all or Ctrl+Alt+Shift+F12 stops Windows input.</value></data>
+  <data name="VrexTool_pc_begin" xml:space="preserve"><value>Take control</value></data>
+  <data name="VrexTool_pc_end" xml:space="preserve"><value>Release control</value></data>
+  <data name="VrexTool_pc_screens" xml:space="preserve"><value>List displays</value></data>
+  <data name="VrexTool_pc_screenshot" xml:space="preserve"><value>Take screenshots</value></data>
+  <data name="VrexTool_pc_grid" xml:space="preserve"><value>Inspect with a numbered grid</value></data>
+  <data name="VrexTool_pc_zoom_out" xml:space="preserve"><value>Zoom out of the grid</value></data>
+  <data name="VrexTool_pc_find_text" xml:space="preserve"><value>Find on-screen text</value></data>
+  <data name="VrexTool_pc_peek" xml:space="preserve"><value>Inspect a grid point</value></data>
+  <data name="VrexTool_pc_focus_window" xml:space="preserve"><value>Focus a window</value></data>
+  <data name="VrexTool_pc_mark" xml:space="preserve"><value>Annotate main screen</value></data>
+  <data name="VrexTool_pc_move" xml:space="preserve"><value>Move the pointer</value></data>
+  <data name="VrexTool_pc_click" xml:space="preserve"><value>Click</value></data>
+  <data name="VrexTool_pc_click_at" xml:space="preserve"><value>Click an image position</value></data>
+  <data name="VrexTool_pc_drag" xml:space="preserve"><value>Drag</value></data>
+  <data name="VrexTool_pc_scroll" xml:space="preserve"><value>Scroll</value></data>
+  <data name="VrexTool_pc_type" xml:space="preserve"><value>Type text</value></data>
+  <data name="VrexTool_pc_key" xml:space="preserve"><value>Press keys</value></data>
+  <data name="VrexTool_pc_open_app" xml:space="preserve"><value>Open a Windows app</value></data>
+  <data name="VrexTool_pc_list_files" xml:space="preserve"><value>List workspace files</value></data>
+  <data name="VrexTool_pc_read_file" xml:space="preserve"><value>Read workspace files</value></data>
+  <data name="VrexTool_pc_write_file" xml:space="preserve"><value>Write workspace files</value></data>
+  <data name="WebcamDefaultCamera" xml:space="preserve"><value>Default camera</value></data>
+  <data name="WebcamStartCamera" xml:space="preserve"><value>Start camera</value></data>
+  <data name="WebcamCameraOff" xml:space="preserve"><value>Camera off</value></data>
+  <data name="WebcamCameraOn" xml:space="preserve"><value>Camera on</value></data>
+  <data name="WebcamNumberedCamera" xml:space="preserve"><value>Camera {0}</value></data>
+  <data name="WebcamOpening" xml:space="preserve"><value>Opening camera…</value></data>
+  <data name="WebcamDisconnected" xml:space="preserve"><value>Camera disconnected</value></data>
+  <data name="WebcamAllowAccess" xml:space="preserve"><value>Allow camera access in Windows settings</value></data>
+  <data name="WebcamNotFound" xml:space="preserve"><value>No camera found</value></data>
+  <data name="WebcamUnavailable" xml:space="preserve"><value>Camera unavailable</value></data>
+  <data name="WebcamServiceUnavailable" xml:space="preserve"><value>Camera service unavailable</value></data>
+  <data name="VrexGuideStopped" xml:space="preserve"><value>Guide Me was stopped.</value></data>
+  <data name="VrexGuideMainScreenFailed" xml:space="preserve"><value>Couldn’t send the main screen. Try Guide Me again.</value></data>
+  <data name="VrexGuidePointAtPanel" xml:space="preserve"><value>Point at the browser or settings panel, then press Guide Me.</value></data>
+  <data name="VrexGuideEnableScreen" xml:space="preserve"><value>Turn on PC screen to get guidance for your game.</value></data>
+  <data name="VrexLiveVoiceChooseModel" xml:space="preserve"><value>Choose a model in Vrex chat Settings to use live voice.</value></data>
+  <data name="VrexLiveVoiceStarting" xml:space="preserve"><value>Starting live voice…</value></data>
+  <data name="VrexLiveVoiceStopping" xml:space="preserve"><value>Stopping live voice…</value></data>
+  <data name="VrexStopping" xml:space="preserve"><value>Stopping Vrex…</value></data>
+  <data name="UbuntuPoweredOff" xml:space="preserve"><value>Ubuntu is powered off.</value></data>
+  <data name="UbuntuPoweringOff" xml:space="preserve"><value>Powering off Ubuntu…</value></data>
+  <data name="VrexGoalSkipped" xml:space="preserve"><value>Skipped</value></data>
+
+  <data name="UbuntuPhasePreparing" xml:space="preserve"><value>Preparing</value></data>
+  <data name="UbuntuPhaseBooting" xml:space="preserve"><value>Booting</value></data>
+  <data name="UbuntuPhaseRunning" xml:space="preserve"><value>Running</value></data>
+  <data name="UbuntuPhaseStopping" xml:space="preserve"><value>Shutting down</value></data>
+  <data name="UbuntuPhaseMoving" xml:space="preserve"><value>Moving storage</value></data>
+  <data name="UbuntuPhaseDisconnected" xml:space="preserve"><value>Display disconnected</value></data>
+  <data name="UbuntuPhaseFailed" xml:space="preserve"><value>Needs attention</value></data>
+  <data name="UbuntuPhaseOff" xml:space="preserve"><value>Powered off</value></data>
+  <data name="UbuntuReadyToStart" xml:space="preserve"><value>Start Ubuntu when you’re ready.</value></data>
+  <data name="UbuntuRequestingStart" xml:space="preserve"><value>Requesting Ubuntu startup…</value></data>
+  <data name="UbuntuCheckingDestination" xml:space="preserve"><value>Checking the destination folder…</value></data>
+  <data name="UbuntuHelperExited" xml:space="preserve"><value>The Ubuntu helper exited. Try starting Ubuntu again.</value></data>
+
 </root>

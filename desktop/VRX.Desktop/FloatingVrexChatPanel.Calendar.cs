@@ -15,10 +15,10 @@ internal sealed partial class FloatingVrexChatPanel
     private void BuildCalendarPage()
     {
         var controls = new WrapPanel();
-        controls.Children.Add(Button("Back to chat", () => ShowPage(chatContent, "Vrex chat")));
-        controls.Children.Add(Button("Previous week", () => MoveCalendar(-7)));
-        controls.Children.Add(Button("This week", () => { calendarWeek = WeekOf(DateTime.Today); LoadCalendar(); }));
-        controls.Children.Add(Button("Next week", () => MoveCalendar(7)));
+        controls.Children.Add(Button(Loc.Get("VrexBackToChat"), () => ShowPage(chatContent, Loc.Get("VrexChatTitle"))));
+        controls.Children.Add(Button(Loc.Get("VrexCalendarPrevious"), () => MoveCalendar(-7)));
+        controls.Children.Add(Button(Loc.Get("VrexCalendarThisWeek"), () => { calendarWeek = WeekOf(DateTime.Today); LoadCalendar(); }));
+        controls.Children.Add(Button(Loc.Get("VrexCalendarNext"), () => MoveCalendar(7)));
         calendarPage.Children.Add(controls);
         calendarPage.Children.Add(calendarWeekLabel);
         calendarPage.Children.Add(calendarRows);
@@ -36,7 +36,7 @@ internal sealed partial class FloatingVrexChatPanel
     {
         calendarWeekLabel.Text = $"{calendarWeek:d MMM} – {calendarWeek.AddDays(6):d MMM yyyy}";
         calendarRows.Children.Clear();
-        calendarRows.Children.Add(new TextBlock { Text = "Loading bookings…", FontSize = 20, Margin = new(4) });
+        calendarRows.Children.Add(new TextBlock { Text = Loc.Get("VrexCalendarLoading"), FontSize = 20, Margin = new(4) });
         client.Send(new("calendar", calendarWeek.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)));
         dirty = true;
     }
@@ -68,7 +68,7 @@ internal sealed partial class FloatingVrexChatPanel
                     }
                 }
                 if (calendarRows.Children.Count == 0)
-                    calendarRows.Children.Add(new TextBlock { Text = "No bookings this week.", FontSize = 20, Margin = new(4) });
+                    calendarRows.Children.Add(new TextBlock { Text = Loc.Get("VrexCalendarEmpty"), FontSize = 20, Margin = new(4) });
                 return true;
             case "calendar-changed":
                 if (ReferenceEquals(transcript.Content, calendarPage)) LoadCalendar();

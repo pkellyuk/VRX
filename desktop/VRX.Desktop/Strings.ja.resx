@@ -1444,4 +1444,237 @@
   <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
   <data name="BrowserAudioTitle" xml:space="preserve"><value>ブラウザー</value></data>
   <data name="UbuntuAudioTitle" xml:space="preserve"><value>Ubuntu</value></data>
+  <data name="CaptureTitle" xml:space="preserve"><value>キャプチャ</value></data>
+  <data name="CaptureRecording" xml:space="preserve"><value>キャプチャ · 録画中</value></data>
+  <data name="CaptureRecordVideo" xml:space="preserve"><value>VR 動画を録画</value></data>
+  <data name="CaptureStopVideo" xml:space="preserve"><value>VR 録画を停止</value></data>
+  <data name="CaptureOpenVrView" xml:space="preserve"><value>SteamVR の VR ビューを開き、ウィンドウを最小化しないでください。</value></data>
+  <data name="CaptureSaved" xml:space="preserve"><value>{0} を保存しました</value></data>
+  <data name="CaptureRecordingVideo" xml:space="preserve"><value>VR 動画を録画中</value></data>
+  <data name="CaptureStarting" xml:space="preserve"><value>VR 録画を開始中…</value></data>
+  <data name="CaptureScreenshotting" xml:space="preserve"><value>VR スクリーンショットを撮影中…</value></data>
+  <data name="CaptureSaving" xml:space="preserve"><value>VR 動画を保存中…</value></data>
+  <data name="CaptureFinishingScreenshot" xml:space="preserve"><value>VR スクリーンショットを処理中…</value></data>
+  <data name="FloatingWebcam" xml:space="preserve"><value>ウェブカメラ</value></data>
+  <data name="BrowserBookmarks" xml:space="preserve"><value>ブックマーク</value></data>
+  <data name="BrowserBookmarkSave" xml:space="preserve"><value>現在のページを保存</value></data>
+  <data name="BrowserBookmarksEmpty" xml:space="preserve"><value>ブックマークはまだありません。</value></data>
+  <data name="BrowserBookmarkRemove" xml:space="preserve"><value>ブックマークを削除</value></data>
+  <data name="BrowserBookmarkRemoveNamed" xml:space="preserve"><value>{0} を削除</value></data>
+  <data name="KeyboardCut" xml:space="preserve"><value>切り取り</value></data>
+  <data name="KeyboardSelectAll" xml:space="preserve"><value>すべて選択</value></data>
+  <data name="KeyboardUndo" xml:space="preserve"><value>元に戻す</value></data>
+  <data name="KeyboardRedo" xml:space="preserve"><value>やり直す</value></data>
+  <data name="UbuntuStart" xml:space="preserve"><value>Ubuntu を起動</value></data>
+  <data name="UbuntuStop" xml:space="preserve"><value>Ubuntu を停止</value></data>
+  <data name="UbuntuStopping" xml:space="preserve"><value>Ubuntu を停止中…</value></data>
+  <data name="UbuntuPowerOff" xml:space="preserve"><value>Ubuntu の電源を切る</value></data>
+  <data name="UbuntuKeepRunning" xml:space="preserve"><value>Ubuntu を起動したままにする</value></data>
+  <data name="UbuntuPowerOffQuestion" xml:space="preserve"><value>Ubuntu の電源を切りますか？</value></data>
+  <data name="UbuntuUnsavedWork" xml:space="preserve"><value>Ubuntu で保存していない作業内容が失われる場合があります。</value></data>
+  <data name="UbuntuSetup" xml:space="preserve"><value>Ubuntu の設定</value></data>
+  <data name="UbuntuDisplay" xml:space="preserve"><value>Ubuntu の画面</value></data>
+  <data name="UbuntuShareText" xml:space="preserve"><value>テキスト共有：{0}</value></data>
+  <data name="UbuntuClipboardPreparing" xml:space="preserve"><value>クリップボードのテキスト共有を準備中…</value></data>
+  <data name="UbuntuClipboardOff" xml:space="preserve"><value>クリップボードのテキスト共有はオフです。</value></data>
+  <data name="UbuntuCopyToUbuntu" xml:space="preserve"><value>Ubuntu にファイルをコピー</value></data>
+  <data name="UbuntuCopyToWindows" xml:space="preserve"><value>Windows にファイルをコピー</value></data>
+  <data name="UbuntuCopyFilesHint" xml:space="preserve"><value>先にエクスプローラーまたは Ubuntu のファイルマネージャーでファイルをコピーしてください。</value></data>
+  <data name="UbuntuClipboardFiles" xml:space="preserve"><value>クリップボードとファイル</value></data>
+  <data name="VrexOpenChat" xml:space="preserve"><value>Vrex チャットを開く</value></data>
+  <data name="VrexChatTitle" xml:space="preserve"><value>Vrex チャット</value></data>
+  <data name="VrexGuideMe" xml:space="preserve"><value>ヒントを求める</value></data>
+  <data name="VrexNotNow" xml:space="preserve"><value>今はしない</value></data>
+  <data name="VrexSend" xml:space="preserve"><value>送信</value></data>
+  <data name="VrexStop" xml:space="preserve"><value>停止</value></data>
+  <data name="VrexStopTaskHint" xml:space="preserve"><value>Vrex の現在のタスクと音声を停止</value></data>
+  <data name="VrexClearDraft" xml:space="preserve"><value>下書きを消去</value></data>
+  <data name="VrexClearDraftHint" xml:space="preserve"><value>未送信のメッセージを消去</value></data>
+  <data name="VrexMicrophoneLevel" xml:space="preserve"><value>マイクレベル</value></data>
+  <data name="VrexLiveVoice" xml:space="preserve"><value>ライブ音声</value></data>
+  <data name="VrexGuideHint" xml:space="preserve"><value>共有した画面についてヒントを得る（Ctrl+Alt+G）</value></data>
+  <data name="VrexChats" xml:space="preserve"><value>チャット一覧</value></data>
+  <data name="VrexGoals" xml:space="preserve"><value>目標</value></data>
+  <data name="VrexCalendar" xml:space="preserve"><value>カレンダー</value></data>
+  <data name="VrexCalendarTitle" xml:space="preserve"><value>Vrex カレンダー</value></data>
+  <data name="VrexZoomGrid" xml:space="preserve"><value>ズームグリッド</value></data>
+  <data name="VrexZoomGridTitle" xml:space="preserve"><value>Vrex ズームグリッド</value></data>
+  <data name="VrexZoomGridLimit" xml:space="preserve"><value>ズームグリッドを開くには、別のフローティングパネルを閉じてください。</value></data>
+  <data name="VrexGridWaiting" xml:space="preserve"><value>Vrex が画面を確認するのを待っています。</value></data>
+  <data name="VrexGridUnavailable" xml:space="preserve"><value>このビューを表示できませんでした。</value></data>
+  <data name="VrexMainPcScreen" xml:space="preserve"><value>PC のメイン画面</value></data>
+  <data name="VrexClearAnnotations" xml:space="preserve"><value>注釈を消去</value></data>
+  <data name="VrexClearAnnotationsHint" xml:space="preserve"><value>PC と Ubuntu の画面上のマークを消去</value></data>
+  <data name="VrexPcScreenHint" xml:space="preserve"><value>設定済みのモデルと PC のメイン画面を共有します。</value></data>
+  <data name="VrexPanelScreenHint" xml:space="preserve"><value>アシストモードで、指しているブラウザーまたは設定パネルをモデルと共有します。</value></data>
+  <data name="VrexThinkingHint" xml:space="preserve"><value>Vrex のモデルの思考レベルを切り替える</value></data>
+  <data name="VrexSettings" xml:space="preserve"><value>設定</value></data>
+  <data name="VrexAiSettingsTitle" xml:space="preserve"><value>Vrex AI 設定</value></data>
+  <data name="VrexVerbosityName" xml:space="preserve"><value>回答の詳しさ</value></data>
+  <data name="VrexTerse" xml:space="preserve"><value>簡潔</value></data>
+  <data name="VrexNormal" xml:space="preserve"><value>標準</value></data>
+  <data name="VrexVerbose" xml:space="preserve"><value>詳細</value></data>
+  <data name="VrexLiveTranscript" xml:space="preserve"><value>ライブ音声の文字起こし</value></data>
+  <data name="VrexNewChat" xml:space="preserve"><value>＋ 新しいチャット</value></data>
+  <data name="VrexClearChat" xml:space="preserve"><value>チャットを消去</value></data>
+  <data name="VrexDeleteChat" xml:space="preserve"><value>チャットを削除</value></data>
+  <data name="VrexBackToChat" xml:space="preserve"><value>チャットに戻る</value></data>
+  <data name="VrexAchieveGoal" xml:space="preserve"><value>目標を達成</value></data>
+  <data name="VrexGoalStopping" xml:space="preserve"><value>目標への作業を停止中…</value></data>
+  <data name="VrexGoalStarting" xml:space="preserve"><value>目標への作業を開始中…</value></data>
+  <data name="VrexGoalWorkHint" xml:space="preserve"><value>進行中の目標に継続して取り組む</value></data>
+  <data name="VrexGoalsTitle" xml:space="preserve"><value>Vrex の目標</value></data>
+  <data name="VrexActiveGoals" xml:space="preserve"><value>進行中の目標</value></data>
+  <data name="VrexGoalReady" xml:space="preserve"><value>進行中の目標 · 再開できます</value></data>
+  <data name="VrexGoalsEmpty" xml:space="preserve"><value>目標はまだありません。チャットで Vrex に設定を依頼してください。</value></data>
+  <data name="VrexGoalWorking" xml:space="preserve"><value>作業中</value></data>
+  <data name="VrexGoalPaused" xml:space="preserve"><value>一時停止中</value></data>
+  <data name="VrexGoalActive" xml:space="preserve"><value>進行中</value></data>
+  <data name="VrexGoalBlocked" xml:space="preserve"><value>ブロック中</value></data>
+  <data name="VrexGoalReview" xml:space="preserve"><value>確認待ち</value></data>
+  <data name="VrexGoalComplete" xml:space="preserve"><value>完了</value></data>
+  <data name="VrexGoalSteps" xml:space="preserve"><value>{0}/{1} ステップ</value></data>
+  <data name="VrexGoalAccept" xml:space="preserve"><value>完了した作業を承認</value></data>
+  <data name="VrexGoalPause" xml:space="preserve"><value>目標を一時停止</value></data>
+  <data name="VrexGoalResume" xml:space="preserve"><value>目標を再開</value></data>
+  <data name="VrexGoalDeleteQuestion" xml:space="preserve"><value>「{0}」とそのステップを完全に削除しますか？</value></data>
+  <data name="VrexConfirmDelete" xml:space="preserve"><value>削除を確定</value></data>
+  <data name="VrexGoalKeep" xml:space="preserve"><value>目標を残す</value></data>
+  <data name="VrexGoalDelete" xml:space="preserve"><value>目標を削除</value></data>
+  <data name="VrexGoalStopHint" xml:space="preserve"><value>目標への継続作業を停止</value></data>
+  <data name="VrexGoalPreparing" xml:space="preserve"><value>次のステップを準備中</value></data>
+  <data name="VrexGoalRequest" xml:space="preserve"><value>リクエスト {0} · {1} 秒</value></data>
+  <data name="VrexChatOnHold" xml:space="preserve"><value>保留中 · {0}</value></data>
+  <data name="VrexConfirmClear" xml:space="preserve"><value>消去を確定</value></data>
+  <data name="VrexChatClearQuestion" xml:space="preserve"><value>このチャットのメッセージとメモリを消去しますか？</value></data>
+  <data name="VrexChatDeleteQuestion" xml:space="preserve"><value>このチャットとメモリを削除しますか？</value></data>
+  <data name="VrexUbuntuPermissions" xml:space="preserve"><value>Ubuntu の権限</value></data>
+  <data name="VrexUbuntuAnnotate" xml:space="preserve"><value>Ubuntu に注釈を付ける</value></data>
+  <data name="VrexTransferPermissions" xml:space="preserve"><value>クリップボードとファイルの権限</value></data>
+  <data name="VrexAllowClipboard" xml:space="preserve"><value>Vrex にクリップボードのテキストの読み書きを許可</value></data>
+  <data name="VrexAllowFileCopy" xml:space="preserve"><value>Vrex に Windows と Ubuntu 間での選択ファイルのコピーを許可</value></data>
+  <data name="VrexTransferPermissionHint" xml:space="preserve"><value>Vrex はクリップボードのテキストを設定済みのモデルと共有できます。コピーの対象は、エクスプローラーまたは Ubuntu のファイルマネージャーで選択したファイルです。</value></data>
+  <data name="VrexPcToolPermissions" xml:space="preserve"><value>PC ツールの権限</value></data>
+  <data name="VrexEnableAll" xml:space="preserve"><value>すべて有効にする</value></data>
+  <data name="VrexDisableAll" xml:space="preserve"><value>すべて無効にする</value></data>
+  <data name="VrexLiveVoiceStop" xml:space="preserve"><value>ライブ音声を停止</value></data>
+  <data name="VrexLiveVoiceStart" xml:space="preserve"><value>割り込み可能なライブ音声を開始</value></data>
+  <data name="VrexModeHelpful" xml:space="preserve"><value>モード：アシスト</value></data>
+  <data name="VrexModeQuiet" xml:space="preserve"><value>モード：静か</value></data>
+  <data name="VrexVoiceToggle" xml:space="preserve"><value>音声：{0}</value></data>
+  <data name="VrexPcScreenToggle" xml:space="preserve"><value>PC 画面：{0}</value></data>
+  <data name="VrexPanelsToggle" xml:space="preserve"><value>パネル：{0}</value></data>
+  <data name="VrexThinking" xml:space="preserve"><value>思考：{0}</value></data>
+  <data name="VrexThinkingDefault" xml:space="preserve"><value>既定</value></data>
+  <data name="VrexThinkingLow" xml:space="preserve"><value>低</value></data>
+  <data name="VrexThinkingHigh" xml:space="preserve"><value>高</value></data>
+  <data name="VrexThinkingMax" xml:space="preserve"><value>最大</value></data>
+  <data name="VrexVerbosity" xml:space="preserve"><value>回答の詳しさ：{0} ▾</value></data>
+  <data name="VrexChooseModel" xml:space="preserve"><value>Vrex チャットの設定でモデルを選択してください。</value></data>
+  <data name="VrexConnecting" xml:space="preserve"><value>Vrex に接続中…</value></data>
+  <data name="VrexPreparingReply" xml:space="preserve"><value>回答を準備中…</value></data>
+  <data name="VrexTasks" xml:space="preserve"><value>タスク</value></data>
+  <data name="VrexYou" xml:space="preserve"><value>あなた</value></data>
+  <data name="VrexLookingAtScreen" xml:space="preserve"><value>共有画面を確認中…</value></data>
+  <data name="VrexBusy" xml:space="preserve"><value>Vrex は処理中です。少し待ってからやり直してください。</value></data>
+  <data name="VrexCalendarPrevious" xml:space="preserve"><value>前の週</value></data>
+  <data name="VrexCalendarThisWeek" xml:space="preserve"><value>今週</value></data>
+  <data name="VrexCalendarNext" xml:space="preserve"><value>次の週</value></data>
+  <data name="VrexCalendarLoading" xml:space="preserve"><value>予約を読み込み中…</value></data>
+  <data name="VrexCalendarEmpty" xml:space="preserve"><value>今週の予約はありません。</value></data>
+  <data name="CaptureVrScreenshot" xml:space="preserve"><value>VR スクリーンショット</value></data>
+  <data name="CaptureFailed" xml:space="preserve"><value>VR キャプチャに失敗しました。{0}</value></data>
+  <data name="CaptureStartFailed" xml:space="preserve"><value>VR キャプチャを開始できませんでした。{0}</value></data>
+  <data name="CaptureStopFailed" xml:space="preserve"><value>VR キャプチャを停止できませんでした。{0}</value></data>
+  <data name="VrexGoalPending" xml:space="preserve"><value>未着手</value></data>
+  <data name="KeyboardPcKeys" xml:space="preserve"><value>PC キー</value></data>
+  <data name="VrexModelProvider" xml:space="preserve"><value>プロバイダー</value></data>
+  <data name="VrexModelName" xml:space="preserve"><value>モデル</value></data>
+  <data name="VrexModelEndpoint" xml:space="preserve"><value>エンドポイント</value></data>
+  <data name="VrexModelApiKey" xml:space="preserve"><value>API キー</value></data>
+  <data name="VrexModelCompatible" xml:space="preserve"><value>OpenAI 互換</value></data>
+  <data name="VrexModelReplaceKeyHint" xml:space="preserve"><value>保存済みの API キーを置き換えるには、新しいキーを入力または貼り付けてください。</value></data>
+  <data name="VrexModelKeySavedHint" xml:space="preserve"><value>キーは保存済みです。置き換えるには新しいキーを入力してください。</value></data>
+  <data name="VrexModelEnterKeyHint" xml:space="preserve"><value>モデルのプロバイダーの API キーを入力してください。</value></data>
+  <data name="VrexModelUseDeepSeek" xml:space="preserve"><value>DeepSeek Flash を使う</value></data>
+  <data name="VrexModelGetDeepSeekKey" xml:space="preserve"><value>DeepSeek キーを取得</value></data>
+  <data name="VrexModelDeepSeekFailed" xml:space="preserve"><value>DeepSeek のキーのページを開けませんでした。</value></data>
+  <data name="VrexModelSave" xml:space="preserve"><value>AI 設定を保存</value></data>
+  <data name="VrexModelSaved" xml:space="preserve"><value>AI 設定を保存しました。</value></data>
+  <data name="VrexModelSaving" xml:space="preserve"><value>AI 設定を保存中…</value></data>
+  <data name="UbuntuDecreaseCpus" xml:space="preserve"><value>仮想 CPU を減らす</value></data>
+  <data name="UbuntuIncreaseCpus" xml:space="preserve"><value>仮想 CPU を増やす</value></data>
+  <data name="UbuntuVirtualCpus" xml:space="preserve"><value>仮想 CPU（1～8）</value></data>
+  <data name="UbuntuMemory" xml:space="preserve"><value>RAM（MB、4096～16384）</value></data>
+  <data name="UbuntuResolutionNextStart" xml:space="preserve"><value>画面解像度（次回起動時）</value></data>
+  <data name="UbuntuResolution" xml:space="preserve"><value>Ubuntu の画面解像度</value></data>
+  <data name="UbuntuVmFolder" xml:space="preserve"><value>仮想マシンの保存フォルダー</value></data>
+  <data name="UbuntuSetFolder" xml:space="preserve"><value>フォルダーを設定</value></data>
+  <data name="UbuntuBrowseFolder" xml:space="preserve"><value>参照…</value></data>
+  <data name="UbuntuChooseFolder" xml:space="preserve"><value>Ubuntu 仮想マシン用の空のフォルダーを選択</value></data>
+  <data name="UbuntuVmFolderHint" xml:space="preserve"><value>Ubuntu の電源が切れている間にフォルダーを設定または移動してください。ダウンロードしたシステムイメージのキャッシュは VRX のデータフォルダーに残ります。</value></data>
+  <data name="UbuntuFirstStartHint" xml:space="preserve"><value>初回起動時は QEMU、Ubuntu イメージ、デスクトップパッケージをダウンロードし、Ubuntu のディスクを準備します。</value></data>
+  <data name="UbuntuCurrentFolder" xml:space="preserve"><value>現在のフォルダー：{0}</value></data>
+  <data name="UbuntuMoveVm" xml:space="preserve"><value>仮想マシンを移動</value></data>
+  <data name="UbuntuCancelMove" xml:space="preserve"><value>移動を取り消す</value></data>
+  <data name="UbuntuAudioNextStart" xml:space="preserve"><value>Ubuntu アプリの音声：{0}（次回起動時）</value></data>
+  <data name="UbuntuMemoryRange" xml:space="preserve"><value>RAM は 4096～16384 MB の範囲で指定してください。</value></data>
+  <data name="VrexPcToolGuide" xml:space="preserve"><value>注釈を付けるには PC 画面の共有が必要です。他の画面ツールには「操作を開始」の権限も必要です。ファイルツールは Vrex の作業領域を使い、ファイルの内容をモデルと共有します。権限は保存され、チャットを開いている間は有効です。「すべて無効にする」または Ctrl+Alt+Shift+F12 で Windows への入力を停止できます。</value></data>
+  <data name="VrexTool_pc_begin" xml:space="preserve"><value>操作を開始</value></data>
+  <data name="VrexTool_pc_end" xml:space="preserve"><value>操作を終了</value></data>
+  <data name="VrexTool_pc_screens" xml:space="preserve"><value>画面を一覧表示</value></data>
+  <data name="VrexTool_pc_screenshot" xml:space="preserve"><value>スクリーンショットを撮る</value></data>
+  <data name="VrexTool_pc_grid" xml:space="preserve"><value>番号付きグリッドで確認</value></data>
+  <data name="VrexTool_pc_zoom_out" xml:space="preserve"><value>グリッドを縮小</value></data>
+  <data name="VrexTool_pc_find_text" xml:space="preserve"><value>画面上のテキストを検索</value></data>
+  <data name="VrexTool_pc_peek" xml:space="preserve"><value>グリッド上の点を確認</value></data>
+  <data name="VrexTool_pc_focus_window" xml:space="preserve"><value>ウィンドウをアクティブにする</value></data>
+  <data name="VrexTool_pc_mark" xml:space="preserve"><value>メイン画面に注釈を付ける</value></data>
+  <data name="VrexTool_pc_move" xml:space="preserve"><value>ポインターを移動</value></data>
+  <data name="VrexTool_pc_click" xml:space="preserve"><value>クリック</value></data>
+  <data name="VrexTool_pc_click_at" xml:space="preserve"><value>画像上の位置をクリック</value></data>
+  <data name="VrexTool_pc_drag" xml:space="preserve"><value>ドラッグ</value></data>
+  <data name="VrexTool_pc_scroll" xml:space="preserve"><value>スクロール</value></data>
+  <data name="VrexTool_pc_type" xml:space="preserve"><value>テキストを入力</value></data>
+  <data name="VrexTool_pc_key" xml:space="preserve"><value>キーを押す</value></data>
+  <data name="VrexTool_pc_open_app" xml:space="preserve"><value>Windows アプリを開く</value></data>
+  <data name="VrexTool_pc_list_files" xml:space="preserve"><value>作業領域のファイルを一覧表示</value></data>
+  <data name="VrexTool_pc_read_file" xml:space="preserve"><value>作業領域のファイルを読み込む</value></data>
+  <data name="VrexTool_pc_write_file" xml:space="preserve"><value>作業領域のファイルに書き込む</value></data>
+  <data name="WebcamDefaultCamera" xml:space="preserve"><value>既定のカメラ</value></data>
+  <data name="WebcamStartCamera" xml:space="preserve"><value>カメラを起動</value></data>
+  <data name="WebcamCameraOff" xml:space="preserve"><value>カメラはオフです</value></data>
+  <data name="WebcamCameraOn" xml:space="preserve"><value>カメラはオンです</value></data>
+  <data name="WebcamNumberedCamera" xml:space="preserve"><value>カメラ {0}</value></data>
+  <data name="WebcamOpening" xml:space="preserve"><value>カメラを起動中…</value></data>
+  <data name="WebcamDisconnected" xml:space="preserve"><value>カメラが切断されました</value></data>
+  <data name="WebcamAllowAccess" xml:space="preserve"><value>Windows の設定でカメラへのアクセスを許可してください</value></data>
+  <data name="WebcamNotFound" xml:space="preserve"><value>カメラが見つかりません</value></data>
+  <data name="WebcamUnavailable" xml:space="preserve"><value>カメラを利用できません</value></data>
+  <data name="WebcamServiceUnavailable" xml:space="preserve"><value>カメラサービスを利用できません</value></data>
+  <data name="VrexGuideStopped" xml:space="preserve"><value>ヒントの取得を停止しました。</value></data>
+  <data name="VrexGuideMainScreenFailed" xml:space="preserve"><value>メイン画面を送信できませんでした。もう一度ヒントを求めてください。</value></data>
+  <data name="VrexGuidePointAtPanel" xml:space="preserve"><value>ブラウザーまたは設定パネルを指し、「ヒントを求める」を押してください。</value></data>
+  <data name="VrexGuideEnableScreen" xml:space="preserve"><value>ゲームのヒントを得るには「PC 画面」をオンにしてください。</value></data>
+  <data name="VrexLiveVoiceChooseModel" xml:space="preserve"><value>ライブ音声を使うには、Vrex チャットの設定でモデルを選択してください。</value></data>
+  <data name="VrexLiveVoiceStarting" xml:space="preserve"><value>ライブ音声を開始中…</value></data>
+  <data name="VrexLiveVoiceStopping" xml:space="preserve"><value>ライブ音声を停止中…</value></data>
+  <data name="VrexStopping" xml:space="preserve"><value>Vrex を停止中…</value></data>
+  <data name="UbuntuPoweredOff" xml:space="preserve"><value>Ubuntu の電源はオフです。</value></data>
+  <data name="UbuntuPoweringOff" xml:space="preserve"><value>Ubuntu の電源をオフにしています…</value></data>
+  <data name="VrexGoalSkipped" xml:space="preserve"><value>スキップ済み</value></data>
+
+  <data name="UbuntuPhasePreparing" xml:space="preserve"><value>準備中</value></data>
+  <data name="UbuntuPhaseBooting" xml:space="preserve"><value>起動中</value></data>
+  <data name="UbuntuPhaseRunning" xml:space="preserve"><value>実行中</value></data>
+  <data name="UbuntuPhaseStopping" xml:space="preserve"><value>シャットダウン中</value></data>
+  <data name="UbuntuPhaseMoving" xml:space="preserve"><value>保存先を移動中</value></data>
+  <data name="UbuntuPhaseDisconnected" xml:space="preserve"><value>画面が切断されました</value></data>
+  <data name="UbuntuPhaseFailed" xml:space="preserve"><value>対応が必要です</value></data>
+  <data name="UbuntuPhaseOff" xml:space="preserve"><value>電源オフ</value></data>
+  <data name="UbuntuReadyToStart" xml:space="preserve"><value>準備ができたら Ubuntu を起動してください。</value></data>
+  <data name="UbuntuRequestingStart" xml:space="preserve"><value>Ubuntu の起動をリクエスト中…</value></data>
+  <data name="UbuntuCheckingDestination" xml:space="preserve"><value>移動先のフォルダーを確認中…</value></data>
+  <data name="UbuntuHelperExited" xml:space="preserve"><value>Ubuntu の補助プロセスが終了しました。Ubuntu を起動し直してください。</value></data>
+
 </root>

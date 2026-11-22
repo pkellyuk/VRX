@@ -86,7 +86,7 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         enter.Height = 52; DockPanel.SetDock(enter, Dock.Right); actionRow.Children.Add(enter);
         var leftActions = new StackPanel { Orientation = Orientation.Horizontal };
         leftActions.Children.Add(Button("Tab", 80, () => { if (Send(new KeyboardEdit("", 9))) ClearWord(); }));
-        leftActions.Children.Add(Button("PC keys", 110, () => { bool pc = special.Visibility != Visibility.Visible; special.Visibility = pc ? Visibility.Visible : Visibility.Collapsed; keys.Visibility = pc ? Visibility.Collapsed : Visibility.Visible; ClearWord(); }));
+        leftActions.Children.Add(Button(Loc.Get("KeyboardPcKeys"), 110, () => { bool pc = special.Visibility != Visibility.Visible; special.Visibility = pc ? Visibility.Visible : Visibility.Collapsed; keys.Visibility = pc ? Visibility.Collapsed : Visibility.Visible; ClearWord(); }));
         foreach (var (label, flag) in new[] { ("Ctrl", KeyboardModifiers.Control), ("Alt", KeyboardModifiers.Alt), ("Win", KeyboardModifiers.Windows) })
         {
             Button? toggle = null;
@@ -97,8 +97,8 @@ internal sealed class FloatingKeyboard : IFloatingPanel
             special.Children.Add(Button(label, 70, () => { Send(new KeyboardEdit("", key)); ClearWord(); }));
         for (int i = 0; i < 12; i++)
         { int code = 112+i; special.Children.Add(Button($"F{i+1}", 64, () => { Send(new KeyboardEdit("", code)); ClearWord(); })); }
-        foreach (var (label, key) in new[] { ("Copy",67), ("Paste",86), ("Cut",88), ("Select all",65), ("Undo",90), ("Redo",89) })
-            special.Children.Add(Button(label, 120, () => { Send(new KeyboardEdit("", key, Modifiers: KeyboardModifiers.Control)); ClearWord(); }));
+        foreach (var (label, key) in new[] { (Loc.Get("BrowserCopy"),67), (Loc.Get("BrowserPaste"),86), (Loc.Get("KeyboardCut"),88), (Loc.Get("KeyboardSelectAll"),65), (Loc.Get("KeyboardUndo"),90), (Loc.Get("KeyboardRedo"),89) })
+            special.Children.Add(Button(label, 155, () => { Send(new KeyboardEdit("", key, Modifiers: KeyboardModifiers.Control)); ClearWord(); }));
         top.Children.Add(special);
         actionRow.Children.Add(leftActions); top.Children.Add(actionRow);
         top.Children.Add(new TextBlock { Text = Loc.Get("KeyboardHint"), Foreground = Brushes.LightGray, FontSize = 16, Margin = new Thickness(0, 6, 0, 6), TextWrapping = TextWrapping.Wrap });
@@ -345,22 +345,22 @@ internal sealed class FloatingKeyboard : IFloatingPanel
         keyboard.Render();
         var enter = keyboard.actions.Keys.Single(b => b.Content?.ToString() == Loc.Get("KeyboardEnter"));
         var tab = keyboard.actions.Keys.Single(b => b.Content?.ToString() == "Tab");
-        var pc = keyboard.actions.Keys.Single(b => b.Content?.ToString() == "PC keys");
+        var pc = keyboard.actions.Keys.Single(b => b.Content?.ToString() == Loc.Get("KeyboardPcKeys"));
         if (enter.Width != 400 || tab.TranslatePoint(new Point(), keyboard.surface).X >= pc.TranslatePoint(new Point(), keyboard.surface).X || pc.TranslatePoint(new Point(), keyboard.surface).X >= enter.TranslatePoint(new Point(), keyboard.surface).X)
             throw new Exception("Keyboard must put Tab and PC keys on the left and a four-width Enter on the right");
         keyboard.OpenMicrophones(); keyboard.Render();
         if (keyboard.microphoneButtons.Count == 0) throw new Exception("Keyboard microphone picker is empty");
         keyboard.microphonePopup.Visibility = Visibility.Collapsed;
-        Click("PC keys"); Click("F12");
+        Click(Loc.Get("KeyboardPcKeys")); Click("F12");
         if (edits[^1].Key != 123) throw new Exception("Keyboard function keys failed");
-        Click("Copy");
+        Click(Loc.Get("BrowserCopy"));
         if (edits[^1].Key != 67 || edits[^1].Modifiers != KeyboardModifiers.Control) throw new Exception("Keyboard Copy shortcut failed");
-        Click("Ctrl"); Click("PC keys");
+        Click("Ctrl"); Click(Loc.Get("KeyboardPcKeys"));
         Point(1, SwipePredictor.KeyPoint('c')); Point(2, SwipePredictor.KeyPoint('c'));
         if (edits[^1].Key != 67 || edits[^1].Text != "" || edits[^1].Modifiers != KeyboardModifiers.Control) throw new Exception("Keyboard Ctrl letter chord failed");
         Point(1, SwipePredictor.KeyPoint('a')); Point(2, SwipePredictor.KeyPoint('a'));
         if (edits[^1].Text != "a" || edits[^1].Modifiers != KeyboardModifiers.None) throw new Exception("Keyboard modifier remained held after a chord");
-        Click("PC keys");
+        Click(Loc.Get("KeyboardPcKeys"));
         keyboard.Render(); var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(keyboard.bitmap));
         using var file = System.IO.File.Create(System.IO.Path.Combine(output, "floating-keyboard.png")); encoder.Save(file);
     }

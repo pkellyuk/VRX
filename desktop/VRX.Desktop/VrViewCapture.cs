@@ -28,7 +28,7 @@ internal sealed class VrViewCapture(Dispatcher dispatcher, Action changed) : IDi
                 window.IsValidWindow() && !window.IsMinmimized());
             if (mirror == null)
             {
-                Status = "Open SteamVR’s Display VR View and leave that window unminimized.";
+                Status = Loc.Get("CaptureOpenVrView");
                 changed();
                 return;
             }
@@ -50,23 +50,23 @@ internal sealed class VrViewCapture(Dispatcher dispatcher, Action changed) : IDi
             completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
             video = recordVideo;
             stopping = false;
-            recorder.OnRecordingComplete += (_, e) => dispatcher.InvokeAsync(() => Finish(recorder, "Saved " + Path.GetFileName(e.FilePath)));
-            recorder.OnRecordingFailed += (_, e) => dispatcher.InvokeAsync(() => Finish(recorder, "VR capture failed. " + e.Error));
+            recorder.OnRecordingComplete += (_, e) => dispatcher.InvokeAsync(() => Finish(recorder, Loc.Format("CaptureSaved", Path.GetFileName(e.FilePath))));
+            recorder.OnRecordingFailed += (_, e) => dispatcher.InvokeAsync(() => Finish(recorder, Loc.Format("CaptureFailed", e.Error)));
             recorder.OnStatusChanged += (_, e) =>
             {
                 if (recordVideo && e.Status == RecorderStatus.Recording)
                     dispatcher.InvokeAsync(() =>
                     {
-                        if (active == recorder && !stopping) { Status = "Recording VR video"; changed(); }
+                        if (active == recorder && !stopping) { Status = Loc.Get("CaptureRecordingVideo"); changed(); }
                     });
             };
-            Status = recordVideo ? "Starting VR recording…" : "Taking VR screenshot…";
+            Status = recordVideo ? Loc.Get("CaptureStarting") : Loc.Get("CaptureScreenshotting");
             recorder.Record(path);
         }
         catch (Exception ex) when (Recoverable(ex))
         {
-            if (active is { } failed) Finish(failed, "VR capture couldn't start. " + ex.Message);
-            else Status = "VR capture couldn't start. " + ex.Message;
+            if (active is { } failed) Finish(failed, Loc.Format("CaptureStartFailed", ex.Message));
+            else Status = Loc.Format("CaptureStartFailed", ex.Message);
         }
         changed();
     }
@@ -82,9 +82,9 @@ internal sealed class VrViewCapture(Dispatcher dispatcher, Action changed) : IDi
     {
         if (active == null || stopping) return;
         stopping = true;
-        Status = video ? "Saving VR video…" : "Finishing VR screenshot…";
+        Status = video ? Loc.Get("CaptureSaving") : Loc.Get("CaptureFinishingScreenshot");
         try { active.Stop(); }
-        catch (Exception ex) when (Recoverable(ex)) { Finish(active, "VR capture couldn't stop. " + ex.Message); }
+        catch (Exception ex) when (Recoverable(ex)) { Finish(active, Loc.Format("CaptureStopFailed", ex.Message)); }
         changed();
     }
 

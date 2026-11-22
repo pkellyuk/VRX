@@ -44,7 +44,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
     private int goalRequestNumber;
     private long goalActivitySince, nextGoalAnimation;
     private readonly Dictionary<CheckBox, string> pcChoices = [];
-    private readonly TextBlock heading = new() { Text = "Vrex chat", FontSize = 26, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock heading = new() { Text = Loc.Get("VrexChatTitle"), FontSize = 26, VerticalAlignment = VerticalAlignment.Center };
     private readonly Button stop;
     private readonly Border activityTrack = new() { Height = 5, Margin = new(0, 0, 0, 4),
         CornerRadius = new(2.5), ClipToBounds = true, IsHitTestVisible = false, Visibility = Visibility.Hidden };
@@ -56,8 +56,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
     private readonly StackPanel footer = new() { Margin = new(0, 8, 0, 0) };
     private readonly StackPanel taskSteps = new();
     private readonly Border taskCard = new() { Visibility = Visibility.Collapsed, Margin = new(12), Padding = new(10), CornerRadius = new(8) };
-    private static readonly (string Key, string Label)[] ThinkingLevels =
-        [("default", "Default"), ("none", "Off"), ("low", "Low"), ("high", "High"), ("max", "Max")];
+    private static readonly string[] ThinkingLevels = ["default", "none", "low", "high", "max"];
     private readonly List<VrexChatLine> fixtureHistory = [];
     private readonly StackPanel chatList = new();
     private readonly ScrollViewer chatListScroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden };
@@ -118,31 +117,34 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         root.Children.Add(activityTrack);
         footer.Children.Add(status);
         footer.Children.Add(micLevel);
-        System.Windows.Automation.AutomationProperties.SetName(micLevel, "Microphone level");
+        System.Windows.Automation.AutomationProperties.SetName(micLevel, Loc.Get("VrexMicrophoneLevel"));
         var row = new DockPanel();
         footer.Children.Add(row);
         DockPanel.SetDock(footer, Dock.Bottom);
         root.Children.Add(footer);
-        AddRight(Button("Send", () => _ = SendAsync(false)));
-        stop = Button("Stop", () =>
+        AddRight(Button(Loc.Get("VrexSend"), () => _ = SendAsync(false)));
+        stop = Button(Loc.Get("VrexStop"), () =>
         {
             stopRevision++;
             if (client is VrexClient live) live.StopChat();
             else client.Send(new("chat-stop"));
         });
-        stop.ToolTip = "Stop Vrex’s current task and voice";
+        stop.ToolTip = Loc.Get("VrexStopTaskHint");
         AddRight(stop);
-        var clear = Button("Clear draft", () => { input.Clear(); dirty = true; });
-        clear.ToolTip = "Clear the unsent message";
-        System.Windows.Automation.AutomationProperties.SetName(clear, "Clear chat draft");
+        var clear = Button(Loc.Get("VrexClearDraft"), () => { input.Clear(); dirty = true; });
+        clear.ToolTip = Loc.Get("VrexClearDraftHint");
+        System.Windows.Automation.AutomationProperties.SetName(clear, Loc.Get("VrexClearDraft"));
         AddRight(clear);
         if (client is VrexClient voice)
         {
             mic = Button("🎙", voice.ToggleLiveVoice);
-            System.Windows.Automation.AutomationProperties.SetName(mic, "Live voice");
+            System.Windows.Automation.AutomationProperties.SetName(mic, Loc.Get("VrexLiveVoice"));
             AddRight(mic);
-            var guide = Button("Guide Me", RequestGuide);
+            var guide = Button("", RequestGuide);
             guide.Width = guide.Height = 86;
+            guide.Content = new TextBlock { Text = Loc.Get("VrexGuideMe"), MaxWidth = 68,
+                TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center };
+            System.Windows.Automation.AutomationProperties.SetName(guide, Loc.Get("VrexGuideMe"));
             guide.Padding = new(0);
             guide.FontWeight = FontWeights.SemiBold;
             guide.SetResourceReference(Control.BackgroundProperty, "Accent");
@@ -155,53 +157,53 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
                   </Grid>
                 </ControlTemplate>
                 """);
-            guide.ToolTip = "Get advice using the screen you’ve shared (Ctrl+Alt+G)";
+            guide.ToolTip = Loc.Get("VrexGuideHint");
             AddRight(guide);
             modelSettings = new VrexModelSettings(voice, openBrowser, (button, action) => actions.Add(button, action),
-                () => ShowPage(chatContent, "Vrex chat")) { Margin = new(12) };
+                () => ShowPage(chatContent, Loc.Get("VrexChatTitle"))) { Margin = new(12) };
             toolbar = new StackPanel { Margin = new(0, 4, 0, 5) };
             var options = new WrapPanel();
-            options.Children.Add(Button("Chats", () =>
+            options.Children.Add(Button(Loc.Get("VrexChats"), () =>
             {
                 showChatList = !showChatList;
                 chatSidebar.Visibility = showChatList ? Visibility.Visible : Visibility.Collapsed;
             }));
-            options.Children.Add(Button("Goals", () => OpenGoals()));
-            options.Children.Add(Button("Calendar", () =>
+            options.Children.Add(Button(Loc.Get("VrexGoals"), () => OpenGoals()));
+            options.Children.Add(Button(Loc.Get("VrexCalendar"), () =>
             {
-                ShowPage(calendarPage, "Vrex calendar");
+                ShowPage(calendarPage, Loc.Get("VrexCalendarTitle"));
                 LoadCalendar();
             }));
             if (openGrid != null)
-                options.Children.Add(Button("Zoom grid", () =>
+                options.Children.Add(Button(Loc.Get("VrexZoomGrid"), () =>
                 {
-                    if (!openGrid()) status.Text = "Close another floating panel to open the zoom grid.";
+                    if (!openGrid()) status.Text = Loc.Get("VrexZoomGridLimit");
                 }));
-            var clearMarks = Button("Clear annotations", voice.ClearAnnotations);
-            clearMarks.ToolTip = "Clear marks on the PC and Ubuntu screens";
+            var clearMarks = Button(Loc.Get("VrexClearAnnotations"), voice.ClearAnnotations);
+            clearMarks.ToolTip = Loc.Get("VrexClearAnnotationsHint");
             options.Children.Add(clearMarks);
             mode = Button("", voice.ToggleHelpful);
             voiceOutput = Button("", () => { voice.SpeakReplies = !voice.SpeakReplies; UpdateVoice(); dirty = true; });
             pcScreen = Button("", voice.TogglePcScreen);
-            pcScreen.ToolTip = "Share the main PC display with your configured model.";
+            pcScreen.ToolTip = Loc.Get("VrexPcScreenHint");
             panelScreen = Button("", voice.TogglePanelScreen);
-            panelScreen.ToolTip = "In Helpful mode, share the browser or settings panel you point at with your configured model.";
+            panelScreen.ToolTip = Loc.Get("VrexPanelScreenHint");
             thinking = Button("", () =>
             {
-                int current = Array.FindIndex(ThinkingLevels, level => level.Key == voice.Configuration.Thinking);
-                voice.Send(new("thinking", ThinkingLevels[(current + 1) % ThinkingLevels.Length].Key));
+                int current = Array.IndexOf(ThinkingLevels, voice.Configuration.Thinking);
+                voice.Send(new("thinking", ThinkingLevels[(current + 1) % ThinkingLevels.Length]));
             });
-            thinking.ToolTip = "Cycle thinking effort for Vrex’s model";
+            thinking.ToolTip = Loc.Get("VrexThinkingHint");
             foreach (var option in new[] { mode, voiceOutput, pcScreen, panelScreen, thinking }) options.Children.Add(option);
-            options.Children.Add(Button("Settings", () => ShowPage(modelSettings, "Vrex AI settings")));
+            options.Children.Add(Button(Loc.Get("VrexSettings"), () => ShowPage(modelSettings, Loc.Get("VrexAiSettingsTitle"))));
             toolbar.Children.Add(options);
             // Keep the choice list in the rendered panel so VR pointer hit testing can see it.
             var verbosityChoices = new WrapPanel { Visibility = Visibility.Collapsed };
             verbosity = Button("", () => verbosityChoices.Visibility =
                 verbosityChoices.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible);
-            System.Windows.Automation.AutomationProperties.SetName(verbosity, "Reply verbosity");
+            System.Windows.Automation.AutomationProperties.SetName(verbosity, Loc.Get("VrexVerbosityName"));
             options.Children.Add(verbosity);
-            foreach (var (key, label) in new[] { ("terse", "Terse"), ("normal", "Normal"), ("verbose", "Verbose") })
+            foreach (var (key, label) in new[] { ("terse", Loc.Get("VrexTerse")), ("normal", Loc.Get("VrexNormal")), ("verbose", Loc.Get("VrexVerbose")) })
                 verbosityChoices.Children.Add(Button(label, () =>
                 {
                     voice.Send(new("verbosity", key));
@@ -227,7 +229,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         composer.Children.Add(input);
         composer.Children.Add(liveInput);
         row.Children.Add(composer);
-        System.Windows.Automation.AutomationProperties.SetName(liveInput, "Live voice transcript");
+        System.Windows.Automation.AutomationProperties.SetName(liveInput, Loc.Get("VrexLiveTranscript"));
         taskCard.Child = taskSteps;
         chatContent.Children.Add(messages);
         chatContent.Children.Add(taskCard);
@@ -262,15 +264,15 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
 
     private void BuildChatSidebar(VrexClient voice)
     {
-        newChat = Button("＋ New chat", () => voice.ChangeChat("chat-new"));
+        newChat = Button(Loc.Get("VrexNewChat"), () => voice.ChangeChat("chat-new"));
         DockPanel.SetDock(newChat, Dock.Top);
         chatSidebar.Children.Add(newChat);
         var controls = new StackPanel();
         DockPanel.SetDock(controls, Dock.Bottom);
         controls.Children.Add(chatConfirmation);
-        clearChat = Button("Clear chat", () => ConfirmChatAction("chat-clear"));
-        deleteChat = Button("Delete chat", () => ConfirmChatAction("chat-delete"));
-        cancelChatAction = Button("Cancel", () => { confirmedAction = null; UpdateChatList(); });
+        clearChat = Button(Loc.Get("VrexClearChat"), () => ConfirmChatAction("chat-clear"));
+        deleteChat = Button(Loc.Get("VrexDeleteChat"), () => ConfirmChatAction("chat-delete"));
+        cancelChatAction = Button(Loc.Get("ControllerMenuCancel"), () => { confirmedAction = null; UpdateChatList(); });
         controls.Children.Add(clearChat);
         controls.Children.Add(deleteChat);
         controls.Children.Add(cancelChatAction);
@@ -314,13 +316,13 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
     private void BuildGoalsPage()
     {
         var controls = new WrapPanel();
-        controls.Children.Add(Button("Back to chat", () => ShowPage(chatContent, "Vrex chat")));
-        achieveGoal = Button("Achieve goal", () =>
+        controls.Children.Add(Button(Loc.Get("VrexBackToChat"), () => ShowPage(chatContent, Loc.Get("VrexChatTitle"))));
+        achieveGoal = Button(Loc.Get("VrexAchieveGoal"), () =>
         {
             if (client.Send(new("goal-run", Key: achieving ? 0 : 1, SpeakSummary: SpeakGoalReplies)))
-                goalStatus.Text = achieving ? "Stopping goal work…" : "Starting goal work…";
+                goalStatus.Text = achieving ? Loc.Get("VrexGoalStopping") : Loc.Get("VrexGoalStarting");
         });
-        achieveGoal.ToolTip = "Work continuously through active goals";
+        achieveGoal.ToolTip = Loc.Get("VrexGoalWorkHint");
         controls.Children.Add(achieveGoal);
         goalsPage.Children.Add(controls);
         goalsPage.Children.Add(goalStatus);
@@ -329,11 +331,24 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         goalsPage.Children.Add(goalDetails);
     }
 
+    private static string GoalStatusLabel(string status) => status switch
+    {
+        "Active" => Loc.Get("VrexGoalActive"),
+        "Blocked" => Loc.Get("VrexGoalBlocked"),
+        "Backlog" => Loc.Get("VrexGoalPaused"),
+        "Awaiting review" => Loc.Get("VrexGoalReview"),
+        "Completed" or "Done" => Loc.Get("VrexGoalComplete"),
+        "Skipped" => Loc.Get("VrexGoalSkipped"),
+        "Todo" => Loc.Get("VrexGoalPending"),
+        "Doing" => Loc.Get("VrexGoalWorking"),
+        _ => status
+    };
+
     private VrexGoal? VisibleGoal => activeGoal ?? goals.FirstOrDefault(goal => goal.Status == "Active");
 
     private void OpenGoals(string? goalId = null)
     {
-        ShowPage(goalsPage, "Vrex goals");
+        ShowPage(goalsPage, Loc.Get("VrexGoalsTitle"));
         if (goalId != null) client.Send(new("goal-detail", goalId));
         client.Send(new("goals"));
     }
@@ -350,8 +365,8 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         var goal = VisibleGoal;
         goalBanner.Visibility = ShowingChat && (goal != null || achieving) ? Visibility.Visible : Visibility.Collapsed;
         if (goalBanner.Visibility != Visibility.Visible) return;
-        goalBannerTitle.Text = goal?.Title ?? "Active goals";
-        goalBannerActivity.Text = achieving ? "Working · " + GoalActivityText() : "Active goal · ready to continue";
+        goalBannerTitle.Text = goal?.Title ?? Loc.Get("VrexActiveGoals");
+        goalBannerActivity.Text = achieving ? Loc.Get("VrexGoalWorking") + " · " + GoalActivityText() : Loc.Get("VrexGoalReady");
     }
 
     private void DrawGoals()
@@ -364,15 +379,15 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         activeStepSpinner = null;
         if (goals.Count == 0)
         {
-            goalRows.Children.Add(new TextBlock { Text = "No goals yet. Ask Vrex in chat to set one.",
+            goalRows.Children.Add(new TextBlock { Text = Loc.Get("VrexGoalsEmpty"),
                 TextWrapping = TextWrapping.Wrap, FontSize = 20, Margin = new(4, 8, 4, 4) });
             return;
         }
         foreach (var goal in goals)
         {
             bool running = achieving && activeGoal?.Id == goal.Id;
-            string state = running ? "Working" : goal.Status == "Backlog" ? "Paused" : goal.Status;
-            var row = Button($"{goal.Title}  ·  {state}  ·  {goal.Done}/{goal.Total} steps", () =>
+            string state = running ? Loc.Get("VrexGoalWorking") : GoalStatusLabel(goal.Status);
+            var row = Button($"{goal.Title}  ·  {state}  ·  {Loc.Format("VrexGoalSteps", goal.Done, goal.Total)}", () =>
                 client.Send(new("goal-detail", goal.Id)));
             if (VisibleGoal?.Id == goal.Id) HighlightGoal(row);
             row.HorizontalContentAlignment = HorizontalAlignment.Left;
@@ -384,7 +399,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         goalDetails.Children.Add(new TextBlock { Text = selected.Description, FontSize = 20, Margin = new(4), TextWrapping = TextWrapping.Wrap });
         foreach (var step in selected.Steps ?? [])
         {
-            var line = new TextBlock { Text = $"{step.Status}  ·  {step.Label}", FontSize = 19, TextWrapping = TextWrapping.Wrap, Margin = new(4) };
+            var line = new TextBlock { Text = $"{GoalStatusLabel(step.Status)}  ·  {step.Label}", FontSize = 19, TextWrapping = TextWrapping.Wrap, Margin = new(4) };
             if (achieving && selected.Id == activeGoal?.Id && selected.ActiveStep is { } reference &&
                 step.Label.StartsWith(reference + "  ", StringComparison.Ordinal))
             {
@@ -405,7 +420,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         }
         if (selected.Status == "Awaiting review")
         {
-            var accept = Button("Accept completed work", () => client.Send(new("goal-accept", selected.Id)));
+            var accept = Button(Loc.Get("VrexGoalAccept"), () => client.Send(new("goal-accept", selected.Id)));
             goalButtons.Add(accept);
             goalDetails.Children.Add(accept);
         }
@@ -413,13 +428,13 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         {
             if (selected.Status == "Active")
             {
-                var pauseGoal = Button("Pause goal", () => client.Send(new("goal-pause", selected.Id)));
+                var pauseGoal = Button(Loc.Get("VrexGoalPause"), () => client.Send(new("goal-pause", selected.Id)));
                 goalButtons.Add(pauseGoal);
                 goalDetails.Children.Add(pauseGoal);
             }
             if (!achieving)
             {
-                var resumeGoal = Button("Resume goal", () => client.Send(new("goal-resume", selected.Id,
+                var resumeGoal = Button(Loc.Get("VrexGoalResume"), () => client.Send(new("goal-resume", selected.Id,
                     SpeakSummary: SpeakGoalReplies)));
                 goalButtons.Add(resumeGoal);
                 goalDetails.Children.Add(resumeGoal);
@@ -429,17 +444,17 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         {
             goalDetails.Children.Add(new TextBlock
             {
-                Text = $"Permanently delete “{selected.Title}” and its steps?",
+                Text = Loc.Format("VrexGoalDeleteQuestion", selected.Title),
                 FontSize = 19, TextWrapping = TextWrapping.Wrap, Margin = new(4, 12, 4, 4)
             });
             var controls = new WrapPanel();
-            var confirm = Button("Confirm delete", () =>
+            var confirm = Button(Loc.Get("VrexConfirmDelete"), () =>
             {
                 if (!client.Send(new("goal-delete", selected.Id, Key: 1))) return;
                 deletingGoalId = null;
                 DrawGoals();
             });
-            var cancel = Button("Keep goal", () => { deletingGoalId = null; DrawGoals(); });
+            var cancel = Button(Loc.Get("VrexGoalKeep"), () => { deletingGoalId = null; DrawGoals(); });
             goalButtons.Add(confirm);
             goalButtons.Add(cancel);
             controls.Children.Add(confirm);
@@ -448,7 +463,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         }
         else
         {
-            var delete = Button("Delete goal", () => { deletingGoalId = selected.Id; DrawGoals(); });
+            var delete = Button(Loc.Get("VrexGoalDelete"), () => { deletingGoalId = selected.Id; DrawGoals(); });
             goalButtons.Add(delete);
             goalDetails.Children.Add(delete);
         }
@@ -477,7 +492,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
             goalActivity.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
             DrawGoals();
         }
-        achieveGoal.ToolTip = active ? "Stop continuous goal work" : "Work continuously through active goals";
+        achieveGoal.ToolTip = active ? Loc.Get("VrexGoalStopHint") : Loc.Get("VrexGoalWorkHint");
         goalStatus.Text = message.Text;
         UpdateGoalBanner();
     }
@@ -490,16 +505,16 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         string[] frames = ["◐", "◓", "◑", "◒"];
         string frame = frames[(int)(now / 180 % frames.Length)];
         if (activeStepSpinner != null) activeStepSpinner.Text = frame;
-        string title = activeGoal?.Title ?? "Active goals";
+        string title = activeGoal?.Title ?? Loc.Get("VrexActiveGoals");
         goalActivity.Text = $"{(activeStepSpinner == null ? frame + "  " : "")}{title} — {GoalActivityText()}";
         UpdateGoalBanner();
     }
 
     private string GoalActivityText()
     {
-        string activity = currentGoalActivity.Length == 0 ? "Preparing the next step" : currentGoalActivity;
+        string activity = currentGoalActivity.Length == 0 ? Loc.Get("VrexGoalPreparing") : currentGoalActivity;
         if (goalRequestNumber > 0)
-            activity += $" · Request {goalRequestNumber} · {(Environment.TickCount64 - goalActivitySince) / 1000}s";
+            activity += " · " + Loc.Format("VrexGoalRequest", goalRequestNumber, (Environment.TickCount64 - goalActivitySince) / 1000);
         return activity;
     }
 
@@ -517,7 +532,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
                 confirmedAction = null;
                 voice.ChangeChat("chat-switch", chat.Id);
             });
-            string label = chat.OnHold ? "On hold · " + chat.Title : chat.Title;
+            string label = chat.OnHold ? Loc.Format("VrexChatOnHold", chat.Title) : chat.Title;
             row.Content = new TextBlock { Text = label, TextTrimming = TextTrimming.CharacterEllipsis };
             row.ToolTip = label;
             row.HorizontalContentAlignment = HorizontalAlignment.Left;
@@ -533,45 +548,45 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         bool hasChat = voice.ActiveChatId != null && !voice.ChatChanging;
         newChat.IsEnabled = !voice.ChatChanging;
         clearChat!.IsEnabled = deleteChat!.IsEnabled = hasChat;
-        clearChat.Content = confirmedAction == "chat-clear" ? "Confirm clear" : "Clear chat";
-        deleteChat.Content = confirmedAction == "chat-delete" ? "Confirm delete" : "Delete chat";
-        chatConfirmation.Text = confirmedAction == "chat-clear" ? "Clear the messages and memory from this chat?" :
-            confirmedAction == "chat-delete" ? "Delete this chat and its memory?" : "";
+        clearChat.Content = confirmedAction == "chat-clear" ? Loc.Get("VrexConfirmClear") : Loc.Get("VrexClearChat");
+        deleteChat.Content = confirmedAction == "chat-delete" ? Loc.Get("VrexConfirmDelete") : Loc.Get("VrexDeleteChat");
+        chatConfirmation.Text = confirmedAction == "chat-clear" ? Loc.Get("VrexChatClearQuestion") :
+            confirmedAction == "chat-delete" ? Loc.Get("VrexChatDeleteQuestion") : "";
         chatConfirmation.Visibility = cancelChatAction!.Visibility = confirmedAction == null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private StackPanel BuildPcPermissions(VrexClient voice)
     {
         var permissions = new StackPanel { Margin = new(0, 22, 0, 0) };
-        permissions.Children.Add(new TextBlock { Text = "Ubuntu permissions", FontSize = 22, FontWeight = FontWeights.SemiBold });
-        var annotate = new CheckBox { Content = "Annotate Ubuntu", FontSize = 19, MinHeight = 48, Margin = new(4) };
+        permissions.Children.Add(new TextBlock { Text = Loc.Get("VrexUbuntuPermissions"), FontSize = 22, FontWeight = FontWeights.SemiBold });
+        var annotate = new CheckBox { Content = Loc.Get("VrexUbuntuAnnotate"), FontSize = 19, MinHeight = 48, Margin = new(4) };
         ubuntuMarks = annotate;
         actions.Add(annotate, () => voice.SetUbuntuMarks(annotate.IsChecked != true));
         permissions.Children.Add(annotate);
-        permissions.Children.Add(new TextBlock { Text = "Clipboard and file permissions", FontSize = 22, FontWeight = FontWeights.SemiBold, Margin = new(0, 12, 0, 0) });
-        botClipboard = new CheckBox { Content = "Let Vrex read and write clipboard text", FontSize = 19, MinHeight = 48, Margin = new(4) };
-        botFileCopy = new CheckBox { Content = "Let Vrex copy selected files between Windows and Ubuntu", FontSize = 19, MinHeight = 48, Margin = new(4) };
+        permissions.Children.Add(new TextBlock { Text = Loc.Get("VrexTransferPermissions"), FontSize = 22, FontWeight = FontWeights.SemiBold, Margin = new(0, 12, 0, 0) });
+        botClipboard = new CheckBox { Content = Loc.Get("VrexAllowClipboard"), FontSize = 19, MinHeight = 48, Margin = new(4) };
+        botFileCopy = new CheckBox { Content = Loc.Get("VrexAllowFileCopy"), FontSize = 19, MinHeight = 48, Margin = new(4) };
         actions.Add(botClipboard, () => voice.SetBotTransferPermissions(botClipboard.IsChecked != true, voice.AllowBotFileCopy));
         actions.Add(botFileCopy, () => voice.SetBotTransferPermissions(voice.AllowBotClipboard, botFileCopy.IsChecked != true));
         permissions.Children.Add(botClipboard);
         permissions.Children.Add(botFileCopy);
-        permissions.Children.Add(new TextBlock { Text = "Vrex can share clipboard text with your configured model. File copies use the files selected in Explorer or Ubuntu’s file manager.",
+        permissions.Children.Add(new TextBlock { Text = Loc.Get("VrexTransferPermissionHint"),
             FontSize = 18, TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 8) });
-        permissions.Children.Add(new TextBlock { Text = "PC tool permissions", FontSize = 22, FontWeight = FontWeights.SemiBold });
+        permissions.Children.Add(new TextBlock { Text = Loc.Get("VrexPcToolPermissions"), FontSize = 22, FontWeight = FontWeights.SemiBold });
         permissions.Children.Add(new TextBlock
         {
-            Text = "Annotations need PC screen sharing. Other screen tools also need Take control. File tools use the Vrex workspace and share file contents with your model. " +
-                "Permissions are saved and active while chat is open. Disable all or Ctrl+Alt+Shift+F12 stops Windows input.", FontSize = 18, TextWrapping = TextWrapping.Wrap,
+            Text = Loc.Get("VrexPcToolGuide"), FontSize = 18, TextWrapping = TextWrapping.Wrap,
             Margin = new(0, 0, 0, 8)
         });
         var controls = new WrapPanel();
-        controls.Children.Add(Button("Enable all", () => voice.SetAllPcTools(true)));
-        controls.Children.Add(Button("Disable all", () => voice.SetAllPcTools(false)));
+        controls.Children.Add(Button(Loc.Get("VrexEnableAll"), () => voice.SetAllPcTools(true)));
+        controls.Children.Add(Button(Loc.Get("VrexDisableAll"), () => voice.SetAllPcTools(false)));
         permissions.Children.Add(controls);
         var list = new UniformGrid { Columns = 2 };
-        foreach (var (id, label) in VrexPcPermissions.Tools)
+        foreach (var (id, _) in VrexPcPermissions.Tools)
         {
-            var choice = new CheckBox { Content = label, FontSize = 19, MinHeight = 48, Margin = new(4), VerticalContentAlignment = VerticalAlignment.Center };
+            string key = "VrexTool_" + id;
+            var choice = new CheckBox { Content = Loc.Get(key), FontSize = 19, MinHeight = 48, Margin = new(4), VerticalContentAlignment = VerticalAlignment.Center };
             pcChoices.Add(choice, id);
             actions.Add(choice, () => voice.SetPcTool(id, choice.IsChecked != true));
             list.Children.Add(choice);
@@ -615,21 +630,33 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
                 mic.ClearValue(Control.ForegroundProperty);
             }
         }
-        mic.ToolTip = voice.LiveVoiceActive ? "Stop live voice" : "Start live voice with barge-in";
-        mode!.Content = voice.Helpful ? "Mode: Helpful" : "Mode: Quiet";
-        voiceOutput!.Content = voice.SpeakReplies ? "Voice: On" : "Voice: Off";
-        pcScreen!.Content = voice.AllowPcScreen ? "PC screen: On" : "PC screen: Off";
-        panelScreen!.Content = voice.AllowPanelScreen ? "Panels: On" : "Panels: Off";
-        thinking!.Content = "Thinking: " + (ThinkingLevels.FirstOrDefault(level => level.Key == voice.Configuration.Thinking).Label ?? "Low");
+        mic.ToolTip = voice.LiveVoiceActive ? Loc.Get("VrexLiveVoiceStop") : Loc.Get("VrexLiveVoiceStart");
+        mode!.Content = voice.Helpful ? Loc.Get("VrexModeHelpful") : Loc.Get("VrexModeQuiet");
+        voiceOutput!.Content = Loc.Format("VrexVoiceToggle", Loc.Get(voice.SpeakReplies ? "ControllersOn" : "ControllersOff"));
+        pcScreen!.Content = Loc.Format("VrexPcScreenToggle", Loc.Get(voice.AllowPcScreen ? "ControllersOn" : "ControllersOff"));
+        panelScreen!.Content = Loc.Format("VrexPanelsToggle", Loc.Get(voice.AllowPanelScreen ? "ControllersOn" : "ControllersOff"));
+        thinking!.Content = Loc.Format("VrexThinking", voice.Configuration.Thinking switch
+        {
+            "default" => Loc.Get("VrexThinkingDefault"),
+            "none" => Loc.Get("ControllersOff"),
+            "high" => Loc.Get("VrexThinkingHigh"),
+            "max" => Loc.Get("VrexThinkingMax"),
+            _ => Loc.Get("VrexThinkingLow")
+        });
         thinking.IsEnabled = voice.ConfigurationLoaded;
-        verbosity!.Content = $"Verbosity: {voice.Configuration.Verbosity switch { "normal" => "Normal", "verbose" => "Verbose", _ => "Terse" }} ▾";
+        verbosity!.Content = Loc.Format("VrexVerbosity", voice.Configuration.Verbosity switch
+        {
+            "normal" => Loc.Get("VrexNormal"),
+            "verbose" => Loc.Get("VrexVerbose"),
+            _ => Loc.Get("VrexTerse")
+        });
         verbosity.IsEnabled = voice.ConfigurationLoaded;
         foreach (var (choice, id) in pcChoices) choice.IsChecked = voice.PcTools.Contains(id);
         if (ubuntuMarks != null) ubuntuMarks.IsChecked = voice.AllowUbuntuMarks;
         if (botClipboard != null) botClipboard.IsChecked = voice.AllowBotClipboard;
         if (botFileCopy != null) botFileCopy.IsChecked = voice.AllowBotFileCopy;
         status.Text = voice.State == "error" ? voice.Status : !string.IsNullOrWhiteSpace(voice.VoiceStatus) ? voice.VoiceStatus :
-            voice.CanConverse ? "" : voice.ConfigurationLoaded ? "Choose a model in Vrex chat Settings." : "Connecting to Vrex…";
+            voice.CanConverse ? "" : voice.ConfigurationLoaded ? Loc.Get("VrexChooseModel") : Loc.Get("VrexConnecting");
         micLevel.Visibility = voice.LiveVoiceActive ? Visibility.Visible : Visibility.Collapsed;
         if (!voice.LiveVoiceActive) ShowLiveInput(null);
         micLevel.Value = 0;
@@ -745,7 +772,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         taskCard.Background = Appearance.Brush(palette.Card);
         taskCard.Visibility = voice.TaskSteps.Count > 0 || voice.State == "responding" ? Visibility.Visible : Visibility.Collapsed;
         if (taskCard.Visibility == Visibility.Collapsed) return;
-        taskSteps.Children.Add(new TextBlock { Text = voice.TaskSteps.Count == 0 ? "Preparing a reply…" : "Tasks",
+        taskSteps.Children.Add(new TextBlock { Text = voice.TaskSteps.Count == 0 ? Loc.Get("VrexPreparingReply") : Loc.Get("VrexTasks"),
             FontSize = 19, FontWeight = FontWeights.SemiBold, Foreground = Appearance.Brush(palette.Ink) });
         foreach (var step in voice.TaskSteps)
         {
@@ -764,7 +791,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         foreach (var line in client is VrexClient voice ? voice.ChatHistory : fixtureHistory)
         {
             var text = new StackPanel();
-            text.Children.Add(new TextBlock { Text = line.FromUser ? "You" : "Vrex", FontSize = 23,
+            text.Children.Add(new TextBlock { Text = line.FromUser ? Loc.Get("VrexYou") : "Vrex", FontSize = 23,
                 FontWeight = FontWeights.SemiBold, Foreground = Appearance.Brush(line.FromUser ? palette.Ink : palette.Accent) });
             text.Children.Add(new TextBlock { Text = line.Text, FontSize = 23, TextWrapping = TextWrapping.Wrap,
                 Foreground = Appearance.Brush(palette.Ink) });
@@ -781,14 +808,14 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
         string draft = input.Text.Trim();
         if (sending || (!guide && draft.Length == 0)) return;
         if (client is VrexClient { CanConverse: false })
-        { status.Text = "Choose a model in Vrex chat Settings before chatting."; dirty = true; return; }
+        { status.Text = Loc.Get("VrexChooseModel"); dirty = true; return; }
         sending = true;
         int revision = stopRevision;
         try
         {
             if (guide && client is VrexClient guideClient)
             {
-                status.Text = "Looking at the shared screen…";
+                status.Text = Loc.Get("VrexLookingAtScreen");
                 dirty = true;
                 string? issue = await guideClient.GuideAsync(draft, captureGuidePanel);
                 if (revision != stopRevision || Closed) return;
@@ -800,7 +827,7 @@ internal sealed partial class FloatingVrexChatPanel : IFloatingPanel, IFloatingT
                 ? await voice.SendChatAsync(draft)
                 : client.Send(new("chat", draft));
             if (revision != stopRevision) return;
-            if (!sent) { status.Text = "Vrex is busy. Try again in a moment."; return; }
+            if (!sent) { status.Text = Loc.Get("VrexBusy"); return; }
             if (client is not VrexClient) Changed(new("chat-written", draft));
             if (input.Text.Trim() == draft) input.Clear();
         }

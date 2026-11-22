@@ -60,19 +60,19 @@ internal sealed class FloatingUbuntuPanel : IFloatingPanel, IFloatingTextTarget
             new TextBlock {Text=Loc.Get("VrexUbuntu"),FontSize=26,VerticalAlignment=VerticalAlignment.Center,Margin=new(12,0,0,0)},Button(Loc.Get("SnapshotClose"),Close))};
         DockPanel.SetDock(title,Dock.Top);root.Children.Add(title);
         var controls=new WrapPanel {Margin=new(0,3,0,3)};
-        powerButton = Button("Start Ubuntu", () =>
+        powerButton = Button(Loc.Get("UbuntuStart"), () =>
         {
             if (CanStopUbuntu) ConfirmUbuntuStop();
             else this.client.Send(new("start"));
         });
         controls.Children.Add(powerButton);
-        confirmStop = Button("Power off Ubuntu", () =>
+        confirmStop = Button(Loc.Get("UbuntuPowerOff"), () =>
         {
             DismissUbuntuStop();
             if (this.client is VrexClient worker) worker.StopUbuntu();
             else this.client.Stop();
         });
-        cancelStop = Button("Keep Ubuntu running", DismissUbuntuStop);
+        cancelStop = Button(Loc.Get("UbuntuKeepRunning"), DismissUbuntuStop);
         var stopActions = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Center };
         stopActions.Children.Add(confirmStop);
         stopActions.Children.Add(cancelStop);
@@ -83,9 +83,9 @@ internal sealed class FloatingUbuntuPanel : IFloatingPanel, IFloatingTextTarget
             HorizontalAlignment = HorizontalAlignment.Center,
             Children =
             {
-                new TextBlock { Text = "Power off Ubuntu?", FontSize = 25, FontWeight = FontWeights.SemiBold,
+                new TextBlock { Text = Loc.Get("UbuntuPowerOffQuestion"), FontSize = 25, FontWeight = FontWeights.SemiBold,
                     Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center },
-                new TextBlock { Text = "Unsaved work in Ubuntu may be lost.", FontSize = 19, Foreground = Brushes.White,
+                new TextBlock { Text = Loc.Get("UbuntuUnsavedWork"), FontSize = 19, Foreground = Brushes.White,
                     HorizontalAlignment = HorizontalAlignment.Center, Margin = new(0, 6, 0, 12) },
                 stopActions
             }
@@ -95,26 +95,26 @@ internal sealed class FloatingUbuntuPanel : IFloatingPanel, IFloatingTextTarget
             setup = new VrexSetup(actions, ConfirmUbuntuStop) { Visibility = Visibility.Collapsed, Margin = new(12) };
             setup.SetValue(TextBlock.FontSizeProperty, 16.0);
             setupScroll = new ScrollViewer { Content = setup, Visibility = Visibility.Collapsed, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            setupToggle = Button("Ubuntu setup", () => ShowSetup(setup.Visibility != Visibility.Visible));
+            setupToggle = Button(Loc.Get("UbuntuSetup"), () => ShowSetup(setup.Visibility != Visibility.Visible));
             controls.Children.Add(setupToggle);
             transferControls = new StackPanel { Visibility = Visibility.Collapsed };
             var transfers = new WrapPanel();
-            textSync = Button("Share text: Off", () =>
+            textSync = Button(Loc.Format("UbuntuShareText", Loc.Get("ControllersOff")), () =>
             {
                 if (this.client.Send(new("clipboard-sync", Key: textSharing ? 0 : 1)))
                 {
                     textSharing = !textSharing;
-                    textSync!.Content = textSharing ? "Share text: On" : "Share text: Off";
-                    transferStatus.Text = textSharing ? "Preparing text clipboard sharing…" : "Text clipboard sharing is off.";
+                    textSync!.Content = Loc.Format("UbuntuShareText", Loc.Get(textSharing ? "ControllersOn" : "ControllersOff"));
+                    transferStatus.Text = textSharing ? Loc.Get("UbuntuClipboardPreparing") : Loc.Get("UbuntuClipboardOff");
                 }
             });
             transfers.Children.Add(textSync);
-            transfers.Children.Add(Button("Copy files to Ubuntu", () => this.client.Send(new("file-transfer", Key: 1))));
-            transfers.Children.Add(Button("Copy files to Windows", () => this.client.Send(new("file-transfer"))));
+            transfers.Children.Add(Button(Loc.Get("UbuntuCopyToUbuntu"), () => this.client.Send(new("file-transfer", Key: 1))));
+            transfers.Children.Add(Button(Loc.Get("UbuntuCopyToWindows"), () => this.client.Send(new("file-transfer"))));
             transferControls.Children.Add(transfers);
             transferControls.Children.Add(transferStatus);
-            transferStatus.Text = "Copy files in Explorer or Ubuntu’s file manager first.";
-            transferToggle = Button("Clipboard & files", () => transferControls.Visibility =
+            transferStatus.Text = Loc.Get("UbuntuCopyFilesHint");
+            transferToggle = Button(Loc.Get("UbuntuClipboardFiles"), () => transferControls.Visibility =
                 transferControls.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible);
             controls.Children.Add(transferToggle);
         }
@@ -142,7 +142,7 @@ internal sealed class FloatingUbuntuPanel : IFloatingPanel, IFloatingTextTarget
         setup.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         setupScroll!.Visibility = setup.Visibility;
         screen.Visibility = overlay.Visibility = annotations.Visibility = visible ? Visibility.Hidden : Visibility.Visible;
-        setupToggle!.Content = visible ? "Ubuntu display" : "Ubuntu setup";
+        setupToggle!.Content = visible ? Loc.Get("UbuntuDisplay") : Loc.Get("UbuntuSetup");
         if (down) { client.Send(new("input-cancel")); down = false; }
         if (visible) setup.Connect();
         else focus(this);
@@ -158,7 +158,7 @@ internal sealed class FloatingUbuntuPanel : IFloatingPanel, IFloatingTextTarget
         if (message.Type == "clipboard-sync" && textSync != null)
         {
             textSharing = message.X == 1;
-            textSync.Content = textSharing ? "Share text: On" : "Share text: Off";
+            textSync.Content = Loc.Format("UbuntuShareText", Loc.Get(textSharing ? "ControllersOn" : "ControllersOff"));
             transferStatus.Text = message.Text;
         }
         if (message.Type == "file-transfer") transferStatus.Text = message.Text;
@@ -180,7 +180,7 @@ internal sealed class FloatingUbuntuPanel : IFloatingPanel, IFloatingTextTarget
         vmIndicator.Update(client);
         vmIndicator.Visibility = client.Ready && client.VmPhase==VrexVmPhase.Running ? Visibility.Collapsed : Visibility.Visible;
         bool canStop = CanStopUbuntu;
-        powerButton.Content = canStop ? "Stop Ubuntu" : client.VmPhase == VrexVmPhase.Stopping ? "Stopping Ubuntu…" : "Start Ubuntu";
+        powerButton.Content = canStop ? Loc.Get("UbuntuStop") : client.VmPhase == VrexVmPhase.Stopping ? Loc.Get("UbuntuStopping") : Loc.Get("UbuntuStart");
         powerButton.IsEnabled = canStop || (!client.Ready && client.VmPhase is VrexVmPhase.Off or VrexVmPhase.Failed);
         if (!canStop) DismissUbuntuStop();
         status.Text = client.Status == client.VmDetail ? "" : client.Status;
@@ -201,7 +201,7 @@ internal sealed class FloatingUbuntuPanel : IFloatingPanel, IFloatingTextTarget
             {
                 transferControls!.Visibility = Visibility.Collapsed;
                 textSharing = false;
-                textSync!.Content = "Share text: Off";
+                textSync!.Content = Loc.Format("UbuntuShareText", Loc.Get("ControllersOff"));
             }
         }
     }

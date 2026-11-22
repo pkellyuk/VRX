@@ -170,20 +170,20 @@ public sealed partial class ControllerMenu : IDisposable
         });
         controlScreenButton.ToolTip = Loc.Get("ControllerMenuScreenHint");
         toolbar.Children.Add(controlScreenButton);
-        captureLauncher = ActionButton("Capture", ShowCapture);
+        captureLauncher = ActionButton(Loc.Get("CaptureTitle"), ShowCapture);
         captureLauncher.Tag = "▧";
         toolbar.Children.Add(captureLauncher);
         vrCapture = new(System.Windows.Threading.Dispatcher.CurrentDispatcher, UpdateCaptureButtons);
         toolbar.Children.Add(ActionButton(Loc.Get("BrowserOpen"), () => OpenBrowser("https://www.google.com")));
-        toolbar.Children.Add(ActionButton("Webcam", OpenWebcam));
+        toolbar.Children.Add(ActionButton(Loc.Get("FloatingWebcam"), OpenWebcam));
         toolbar.Children.Add(ActionButton(Loc.Get("KeyboardOpen"), OpenKeyboard));
         toolbar.Children.Add(ActionButton(Loc.Get("ArrangeWindows"), () => pendingArrange++));
         toolbar.Children.Add(ActionButton(Loc.Get("GameHelpStart"), BeginGameHelp));
         var vrexLauncher = ActionButton("", OpenVrexChat);
         vrexLauncher.Tag = null;
         vrexLauncher.HorizontalContentAlignment = HorizontalAlignment.Center;
-        vrexLauncher.ToolTip = "Open Vrex chat";
-        System.Windows.Automation.AutomationProperties.SetName(vrexLauncher, "Open Vrex chat");
+        vrexLauncher.ToolTip = Loc.Get("VrexOpenChat");
+        System.Windows.Automation.AutomationProperties.SetName(vrexLauncher, Loc.Get("VrexOpenChat"));
         vrexLauncher.Content = new Image { Width = 32, Height = 32,
             Source = new BitmapImage(new Uri("pack://application:,,,/Assets/vrex-badge.png")) };
         toolbar.Children.Add(vrexLauncher);
@@ -249,7 +249,7 @@ public sealed partial class ControllerMenu : IDisposable
             DismissVrexPreviews();
             var client = VrexClient.Current;
             string context = message.Text;
-            var options = (message.Choices is { Length: > 0 } ? message.Choices.Take(2) : ["Guide Me"])
+            var options = (message.Choices is { Length: > 0 } ? message.Choices.Take(2) : [Loc.Get("VrexGuideMe")])
                 .Select(choice => (choice, (Action)(() =>
                 {
                     if (message.ObservedSurface is "settings" or "browser")
@@ -257,7 +257,7 @@ public sealed partial class ControllerMenu : IDisposable
                     else
                         _ = client.CapturePcAsync($"Guide me with this request: {choice}\nThe suggestion I selected was: {context}");
                 }))).ToList();
-            options.Add(("Not now", () => { }));
+            options.Add((Loc.Get("VrexNotNow"), () => { }));
             var existing = snapshots.OfType<FloatingVrexReply>().FirstOrDefault(p => p.Interactive && !p.Closed);
             if (existing != null) existing.Show(context, options);
             else AddPanel(5, () => { var bubble = new FloatingVrexReply(); bubble.Show(context, options); return bubble; });
@@ -268,7 +268,7 @@ public sealed partial class ControllerMenu : IDisposable
         {
             DismissVrexPreviews();
             var options = labels.Select(label => (label, (Action)(() => VrexClient.Current.ChooseReply(label)))).ToList();
-            options.Add(("Not now", () => VrexClient.Current.Send(new("dismiss-choice"))));
+            options.Add((Loc.Get("VrexNotNow"), () => VrexClient.Current.Send(new("dismiss-choice"))));
             var dialogue = snapshots.OfType<FloatingVrexReply>().FirstOrDefault(panel => panel.Interactive && !panel.Closed);
             if (dialogue != null) dialogue.Show(message.Text, options, waitForChoice: true);
             else AddPanel(5, () => { var panel = new FloatingVrexReply(); panel.Show(message.Text, options, waitForChoice: true); return panel; });
@@ -485,11 +485,11 @@ public sealed partial class ControllerMenu : IDisposable
 
     private void OpenCapturePage(Action parent, string parentTrail)
     {
-        Page("Capture", parent, "capture", parentTrail + " › Capture");
+        Page(Loc.Get("CaptureTitle"), parent, "capture", parentTrail + " › " + Loc.Get("CaptureTitle"));
         currentPage = () => OpenCapturePage(parent, parentTrail);
         body.Children.Add(ActionButton(Loc.Get("SnapshotTake"), TakeGameSnapshot));
-        vrScreenshotButton = ActionButton("VR screenshot", () => vrCapture.Start(imagesFolder, false));
-        vrVideoButton = ActionButton("Record VR video", () =>
+        vrScreenshotButton = ActionButton(Loc.Get("CaptureVrScreenshot"), () => vrCapture.Start(imagesFolder, false));
+        vrVideoButton = ActionButton(Loc.Get("CaptureRecordVideo"), () =>
         {
             if (vrCapture.CanStop) vrCapture.Stop();
             else vrCapture.Start(imagesFolder, true);
@@ -503,11 +503,11 @@ public sealed partial class ControllerMenu : IDisposable
 
     private void UpdateCaptureButtons()
     {
-        captureLauncher.Content = vrCapture.CanStop ? "Capture · Recording" : "Capture";
+        captureLauncher.Content = vrCapture.CanStop ? Loc.Get("CaptureRecording") : Loc.Get("CaptureTitle");
         if (vrScreenshotButton != null) vrScreenshotButton.IsEnabled = !vrCapture.Busy;
         if (vrVideoButton != null)
         {
-            vrVideoButton.Content = vrCapture.CanStop ? "Stop VR recording" : "Record VR video";
+            vrVideoButton.Content = vrCapture.CanStop ? Loc.Get("CaptureStopVideo") : Loc.Get("CaptureRecordVideo");
             vrVideoButton.IsEnabled = !vrCapture.Busy || vrCapture.CanStop;
         }
         captureStatus.Text = vrCapture.Status;
@@ -1143,13 +1143,13 @@ public sealed partial class ControllerMenu : IDisposable
                 throw new Exception("Reloading Vrex chat preferences must restore each setting and recognized tool permission.");
         }
         finally { File.Delete(chatPreferences); }
-        var vrexLauncher = toolbar.Children.OfType<Button>().Single(button => button.ToolTip as string == "Open Vrex chat");
+        var vrexLauncher = toolbar.Children.OfType<Button>().Single(button => button.ToolTip as string == Loc.Get("VrexOpenChat"));
         if (vrexLauncher.Content is not Image { ActualWidth: > 0, Source: BitmapSource { PixelWidth: > 0 } } badge ||
             !IsUnder(badge, vrexLauncher))
             throw new Exception("The Vrex launcher must render the logo in its button.");
         if (toolbar.Children[toolbar.Children.IndexOf(vrexLauncher) + 1] is not Button { Content: "Ubuntu" })
             throw new Exception("The Ubuntu launcher must sit next to the Vrex launcher.");
-        ClickButton("Capture");
+        ClickButton(Loc.Get("CaptureTitle"));
         if (pageKey != "capture" || vrScreenshotButton == null || vrVideoButton == null ||
             !targets.Keys.OfType<Button>().Any(button => button.Content?.ToString() == Loc.Get("SnapshotTake")))
             throw new Exception("Capture must expose game screenshot, VR screenshot and VR video.");

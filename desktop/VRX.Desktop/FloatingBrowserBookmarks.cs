@@ -136,20 +136,20 @@ internal sealed partial class FloatingBrowser
             UpdateBookmarkStar();
             PopulateBookmarks();
         }
-        var add = EntryButton("Save current page", double.NaN, () =>
+        var add = EntryButton(Loc.Get("BrowserBookmarkSave"), double.NaN, () =>
         {
             if (LoadedAddress is string url) Save(() => store.Add(url, pageTitle));
         });
         add.IsEnabled = BrowserBookmarks.Normalise(LoadedAddress) != null && !store.Contains(LoadedAddress);
         bookmarkList.Children.Add(add);
         if (store.Entries.Count == 0)
-            bookmarkList.Children.Add(new TextBlock { Text = "No bookmarks yet.", Foreground = Brushes.White, Margin = new(8) });
+            bookmarkList.Children.Add(new TextBlock { Text = Loc.Get("BrowserBookmarksEmpty"), Foreground = Brushes.White, Margin = new(8) });
         foreach (var item in store.Entries)
         {
             var row = new DockPanel { Margin = new(0, 4, 0, 0) };
             var remove = EntryButton("×", 48, () => Save(() => store.Remove(item.Address)));
-            remove.ToolTip = "Remove bookmark";
-            System.Windows.Automation.AutomationProperties.SetName(remove, "Remove " + item.Title);
+            remove.ToolTip = Loc.Get("BrowserBookmarkRemove");
+            System.Windows.Automation.AutomationProperties.SetName(remove, Loc.Format("BrowserBookmarkRemoveNamed", item.Title));
             DockPanel.SetDock(remove, Dock.Right);
             row.Children.Add(remove);
             var open = EntryButton(item.Title, double.NaN, () =>
