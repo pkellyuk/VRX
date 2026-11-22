@@ -1435,4 +1435,10 @@ Dies kann nicht rückgängig gemacht werden. Noch nicht eingerichtete Spiele sta
   <data name="UbuntuSettings" xml:space="preserve"><value>Ubuntu-Desktop-Einstellungen…</value></data>
   <data name="VrexKeyboardTarget" xml:space="preserve"><value>Eingabe in Vrex Ubuntu / Chat</value></data>
   <data name="ResetFloatingAppearance" xml:space="preserve"><value>Design der schwebenden Panels zurücksetzen</value></data>
+  <data name="SectionAudio" xml:space="preserve"><value>Audio</value></data>
+  <data name="EnableSpatialAudio" xml:space="preserve"><value>Raumklang aktivieren</value></data>
+  <data name="AudioOutputLabel" xml:space="preserve"><value>Raumklangausgabe</value></data>
+  <data name="BrowserAudioReopenHint" xml:space="preserve"><value>Gilt für neue schwebende Browser. Schließe und öffne den Browser erneut, um eine Änderung zu testen.</value></data>
+  <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
+  <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
 </root>

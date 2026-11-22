@@ -1,4 +1,4 @@
-VRX 1.8.5 third-party components
+VRX 1.8.5.1 third-party components
 
 CefSharp.OffScreen.NETCore 156.0.150 (BSD-3-Clause)
 https://github.com/cefsharp/CefSharp
@@ -18,9 +18,10 @@ source is part of the Chromium source above. For at least three years after each
 VRX release that includes CEF, the maintainer will also supply that source on
 request: open an issue at https://github.com/pkellyuk/VRX/issues.
 
-NAudio.Core and NAudio.WinMM 2.3.0 (MIT), Mark Heath
+NAudio.Core, NAudio.WinMM and NAudio.Wasapi 2.3.0 (MIT), Mark Heath
 https://github.com/naudio/NAudio
-Microphone input for the floating keyboard's dictation. See licenses/NAudio-LICENSE.txt.
+Microphone input for floating keyboard dictation and playback for floating panels.
+See licenses/NAudio-LICENSE.txt.
 
 SCOWL 2020.12.07, Kevin Atkinson and contributors
 https://wordlist.aspell.net/

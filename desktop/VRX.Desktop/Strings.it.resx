@@ -1435,4 +1435,10 @@ L'operazione non può essere annullata. I giochi non ancora configurati partono 
   <data name="UbuntuSettings" xml:space="preserve"><value>Impostazioni del desktop Ubuntu…</value></data>
   <data name="VrexKeyboardTarget" xml:space="preserve"><value>Digitazione in Ubuntu Vrex / chat</value></data>
   <data name="ResetFloatingAppearance" xml:space="preserve"><value>Ripristina l’aspetto dei pannelli mobili</value></data>
+  <data name="SectionAudio" xml:space="preserve"><value>Audio</value></data>
+  <data name="EnableSpatialAudio" xml:space="preserve"><value>Attiva audio spaziale</value></data>
+  <data name="AudioOutputLabel" xml:space="preserve"><value>Uscita audio spaziale</value></data>
+  <data name="BrowserAudioReopenHint" xml:space="preserve"><value>Si applica ai nuovi browser fluttuanti. Chiudi e riapri il browser per provare una modifica.</value></data>
+  <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
+  <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
 </root>

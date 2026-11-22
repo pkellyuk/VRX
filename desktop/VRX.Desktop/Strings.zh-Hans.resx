@@ -1435,4 +1435,10 @@
   <data name="UbuntuSettings" xml:space="preserve"><value>Ubuntu 桌面设置…</value></data>
   <data name="VrexKeyboardTarget" xml:space="preserve"><value>正在输入 Vrex Ubuntu / 聊天</value></data>
   <data name="ResetFloatingAppearance" xml:space="preserve"><value>重置浮动面板外观</value></data>
+  <data name="SectionAudio" xml:space="preserve"><value>音频</value></data>
+  <data name="EnableSpatialAudio" xml:space="preserve"><value>启用空间音频</value></data>
+  <data name="AudioOutputLabel" xml:space="preserve"><value>空间音频输出</value></data>
+  <data name="BrowserAudioReopenHint" xml:space="preserve"><value>适用于新打开的悬浮浏览器。请关闭并重新打开浏览器以测试更改。</value></data>
+  <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
+  <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
 </root>

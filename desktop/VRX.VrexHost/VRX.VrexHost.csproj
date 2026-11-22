@@ -8,7 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
-    <Version>1.8.5</Version>
+    <Version>1.8.5.1</Version>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
     <Upstream>..\..\integrations\personabot\src</Upstream>
     <QemuRuntime>..\..\integrations\personabot\runtime</QemuRuntime>

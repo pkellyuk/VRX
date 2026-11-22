@@ -357,6 +357,19 @@
      </StackPanel>
     </Expander>
 
+    <Expander x:Name="AudioSection" Header="{l:Tr SectionAudio}" Expanded="SectionToggled" Collapsed="SectionToggled">
+     <StackPanel>
+      <CheckBox x:Name="SpatialAudioCheck" Content="{l:Tr EnableSpatialAudio}" Checked="BrowserAudioChanged" Unchecked="BrowserAudioChanged"/>
+      <TextBlock Text="{l:Tr AudioOutputLabel}" Style="{StaticResource Label}"/>
+      <ComboBox x:Name="AudioOutputList" SelectedValuePath="Tag" SelectionChanged="BrowserAudioChanged"
+                IsEnabled="{Binding ElementName=SpatialAudioCheck, Path=IsChecked}">
+       <ComboBoxItem Tag="WaveOut" Content="{l:Tr AudioWaveOut}"/>
+       <ComboBoxItem Tag="WASAPI" Content="{l:Tr AudioWasapi}"/>
+      </ComboBox>
+      <TextBlock Text="{l:Tr BrowserAudioReopenHint}" Style="{StaticResource Hint}"/>
+     </StackPanel>
+    </Expander>
+
     <!-- 7 SteamVR & shortcuts -->
     <Expander x:Name="SteamVrSection" Header="{l:Tr SectionSteamVr}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel x:Name="SteamVrContent">

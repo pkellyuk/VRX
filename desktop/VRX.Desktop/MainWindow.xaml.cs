@@ -842,6 +842,9 @@ public partial class MainWindow : Window
         LanguageList.SelectedValue = Loc.ValidLanguage(appSettings.UiLanguage);
         ControllersOn.IsChecked = appSettings.MotionControllers;
         ControllersOff.IsChecked = !appSettings.MotionControllers;
+        SpatialAudioCheck.IsChecked = appSettings.BrowserSpatialAudio;
+        AudioOutputList.SelectedValue = appSettings.BrowserAudioOutput;
+        FloatingBrowserRuntime.ConfigureAudio(appSettings.BrowserSpatialAudio, appSettings.BrowserAudioOutput);
         AutoAttachCheck.IsChecked = appSettings.AutoAttach;
         AutoAttachSlider.Value = AppSettings.ClampSeconds(appSettings.AutoAttachSeconds);
         AutoAttachValue.Text = Loc.Format("ValueSeconds", (int)AutoAttachSlider.Value);
@@ -869,6 +872,15 @@ public partial class MainWindow : Window
     {
         if (!ready || autoSettingsLoading || LanguageList.SelectedValue is not string code) return;
         appSettings.UiLanguage = Loc.ValidLanguage(code);
+        SaveAppSettings();
+    }
+
+    private void BrowserAudioChanged(object sender, RoutedEventArgs e)
+    {
+        if (!ready || autoSettingsLoading || AudioOutputList.SelectedValue is not string output) return;
+        appSettings.BrowserSpatialAudio = SpatialAudioCheck.IsChecked == true;
+        appSettings.BrowserAudioOutput = output;
+        FloatingBrowserRuntime.ConfigureAudio(appSettings.BrowserSpatialAudio, output);
         SaveAppSettings();
     }
 
@@ -940,7 +952,7 @@ public partial class MainWindow : Window
         try
         {
             if (appSettings.MotionControllers && controllerMenu == null)
-                controllerMenu = new ControllerMenu(engine.ControllerMenuName, SectionList().Select(s => s.Section).ToArray(),
+                controllerMenu = new ControllerMenu(engine.ControllerMenuName, ControllerSections(),
                     Status, RecenterButton, ApplyAllConfirmed, StereoCheck,
                     Path.Combine(VrxDataDirectory.Root, "floating-workspace.json"),
                     FloatingAntialiasingCheck);
@@ -1235,9 +1247,12 @@ public partial class MainWindow : Window
     [
         (AppSettings.SectionGame, GameSection), (AppSettings.SectionScreen, ScreenSection), (AppSettings.SectionAround, AroundSection),
         (AppSettings.SectionRoom, RoomSection), (AppSettings.SectionDepth, DepthSection), (AppSettings.SectionExperimental, ExperimentalSection),
-        (AppSettings.SectionThemes, ThemesSection), (AppSettings.SectionSteamVr, SteamVrSection),
+        (AppSettings.SectionThemes, ThemesSection), (AppSettings.SectionAudio, AudioSection), (AppSettings.SectionSteamVr, SteamVrSection),
         (AppSettings.SectionProfile, ProfileSection), (AppSettings.SectionSession, SessionDetails),
     ];
+
+    private Expander[] ControllerSections() =>
+        SectionList().Where(section => section.Name != AppSettings.SectionAudio).Select(section => section.Section).ToArray();
 
     private void PutSections()
     {
@@ -2039,7 +2054,7 @@ public partial class MainWindow : Window
             throw new Exception("A missing saved GPU must stay selected and be marked not found");
         DepthGpuList.SelectedValue = Gpus.Same;
         if (VersionText.Text != DisplayVersion() || TitleVersion.Text != VersionText.Text.TrimStart('v') ||
-            !Version.TryParse(TitleVersion.Text, out var shownVersion) || shownVersion.Revision < 0 || !Title.Contains(VersionText.Text))
+            !Version.TryParse(TitleVersion.Text, out var shownVersion) || shownVersion.Build < 0 || !Title.Contains(VersionText.Text))
             throw new Exception("Version is not shown in the header and window title");
         var real = Gpus.List();                                    // the engine's --list-gpus on this PC
         File.WriteAllLines(Path.Combine(output, "gpus.txt"), real.Select(g => $"{g.Id} | {g.Label}"));
@@ -2108,13 +2123,14 @@ public partial class MainWindow : Window
 
         SmokeTestAutoAttach(output, sample, one);
         using (var menu = new ControllerMenu(@"Local\VRX.Controllers.Test." + Guid.NewGuid().ToString("N"),
-            SectionList().Select(s => s.Section).ToArray(), Status, RecenterButton, ApplyAllConfirmed)) menu.SmokeTest(output);
+            ControllerSections(), Status, RecenterButton, ApplyAllConfirmed)) menu.SmokeTest(output);
         await FloatingBrowser.SmokeTest(output);
         FloatingUbuntuPanel.SmokeTest(output);
         VrexMainScreenMarks.VerifyFirstShow();
         FloatingVrexReply.SmokeChoices();
         SpatialSamples.SmokeTest();
-        await ControllerMenu.SmokeWorkspace(output, SectionList().Select(section => section.Section).ToArray());
+        BrowserAudioBuffer.SmokeTest();
+        await ControllerMenu.SmokeWorkspace(output, ControllerSections());
         SmokeTestModes(output, sample, one);
         await SmokeTestWindow(output);
         await SmokeTestChooser(output, sample, one);
@@ -2209,6 +2225,23 @@ public partial class MainWindow : Window
         if (corruptMode.LoadAppSettings().Mode != AppSettings.ExpertMode) throw new Exception("An unknown mode in existing settings must open in Expert");
         corruptMode.SaveAppSettings(new AppSettings { Mode = "Banana" });
         if (File.ReadAllText(corruptMode.AppSettingsFile).Contains("Banana")) throw new Exception("An unknown mode must not be saved");
+
+        var audioDefaults = corruptMode.LoadAppSettings();
+        if (!audioDefaults.BrowserSpatialAudio || audioDefaults.BrowserAudioOutput != "WASAPI")
+            throw new Exception("Settings from before Audio must default to spatial WASAPI");
+        var savedAudio = (SpatialAudioCheck.IsChecked, (string)AudioOutputList.SelectedValue);
+        AudioOutputList.SelectedValue = "WaveOut";
+        SpatialAudioCheck.IsChecked = false;
+        var audioBack = store.LoadAppSettings();
+        if (audioBack.BrowserSpatialAudio || audioBack.BrowserAudioOutput != "WaveOut" ||
+            !FloatingBrowserRuntime.NativeAudio || FloatingBrowserRuntime.AudioBackend != BrowserAudioBackend.WaveOut)
+            throw new Exception("The Audio controls did not save and apply the browser audio preferences");
+        appSettings = audioBack;
+        PutAppSettings();
+        if (SpatialAudioCheck.IsChecked != false || AudioOutputList.SelectedValue is not "WaveOut")
+            throw new Exception("Saved browser audio preferences were not restored to the desktop controls");
+        AudioOutputList.SelectedValue = savedAudio.Item2;
+        SpatialAudioCheck.IsChecked = savedAudio.Item1;
 
         // Sections: Screen, Around the screen and Room open by default; the rest closed;
         // saved states round-trip; unknown or missing names use the defaults.
@@ -2784,7 +2817,7 @@ public partial class MainWindow : Window
             for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Walk(VisualTreeHelper.GetChild(node, i));
         }
         Walk(this);
-        foreach (var list in new[] { WorldList, LightColourList, DepthGpuList, TimingList })
+        foreach (var list in new[] { WorldList, LightColourList, DepthGpuList, TimingList, AudioOutputList })
             foreach (var item in list.Items)
             {
                 string text = item is GpuChoice gpu ? gpu.Label : item is ComboBoxItem box ? box.Content as string ?? "" : item as string ?? "";

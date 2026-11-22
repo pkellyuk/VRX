@@ -14,6 +14,19 @@ namespace VRX.Desktop;
 
 internal static class FloatingBrowserRuntime
 {
+    private static readonly bool forceNativeAudio = Environment.GetCommandLineArgs().Contains("--browser-native-audio");
+    private static bool spatialAudioEnabled = true;
+    internal static bool NativeAudio => forceNativeAudio || !spatialAudioEnabled;
+    internal static BrowserAudioBackend AudioBackend { get; private set; } = BrowserAudioBackend.WASAPI;
+
+    internal static BrowserAudioBackend ParseAudioBackend(string? value) =>
+        value == nameof(BrowserAudioBackend.WaveOut) ? BrowserAudioBackend.WaveOut : BrowserAudioBackend.WASAPI;
+
+    internal static void ConfigureAudio(bool spatial, string? backend)
+    {
+        spatialAudioEnabled = spatial;
+        AudioBackend = ParseAudioBackend(backend);
+    }
     private static bool started;
     internal static BrowserPermissionStore Permissions { get; private set; } = null!;
     internal static BrowserBookmarks Bookmarks { get; private set; } = null!;
@@ -105,7 +118,7 @@ internal sealed partial class FloatingBrowser : IFloatingPanel, IFloatingTextTar
         IsWebcam = webcam;
         zoom = ClampZoom(initialZoom);
         initialAddress = initialUrl;
-        spatialAudio = new BrowserSpatialAudio(captureAudio);
+        spatialAudio = new BrowserSpatialAudio(FloatingBrowserRuntime.AudioBackend, captureAudio);
         FloatingBrowserRuntime.Ensure(); this.focus = focus; this.openKeyboard = openKeyboard; this.newWindow = newWindow;
         var root = new Grid { Margin = new Thickness(48) };
         foreach (double height in new[] { 56.0, 64.0, 472.0, 24.0, 56.0 }) root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(height) });
@@ -150,7 +163,9 @@ internal sealed partial class FloatingBrowser : IFloatingPanel, IFloatingTextTar
         browser = new ChromiumWebBrowser(initialUrl, automaticallyCreateBrowser: false, useLegacyRenderHandler: false)
         { Size = new System.Drawing.Size(ViewWidth, ViewHeight) };
         browser.RenderHandler = new RenderHandler(browser, this);
-        if (!webcam) browser.AudioHandler = spatialAudio;
+        // Native output lets Chromium use its normal Windows audio path for comparison.
+        if (!webcam && (!FloatingBrowserRuntime.NativeAudio || captureAudio != null))
+            browser.AudioHandler = spatialAudio;
         browser.MenuHandler = new MenuHandler(this); browser.LifeSpanHandler = new Popups(this);
         browser.PermissionHandler = webcam ? new WebcamPage.CameraPermissions() : new SitePermissionHandler(this);
         if (webcam) browser.RequestHandler = new WebcamPage.LocalNavigation();
@@ -463,6 +478,9 @@ internal sealed partial class FloatingBrowser : IFloatingPanel, IFloatingTextTar
         if (one.pixels == null || two.pixels == null) throw new Exception("Offscreen browser did not render");
         if (!await Cef.UIThreadTaskFactory.StartNew(() => !one.browser.GetBrowserHost().IsAudioMuted && one.browser.GetBrowserHost().WindowlessFrameRate == 60))
             throw new Exception("Floating browser audio/frame-rate configuration failed");
+        if (!await Cef.UIThreadTaskFactory.StartNew(() => !two.browser.GetBrowserHost().IsAudioMuted &&
+            (two.browser.AudioHandler == null) == FloatingBrowserRuntime.NativeAudio))
+            throw new Exception("Floating browser did not select the requested audio output.");
         JavascriptResponse response;
         do { response = await one.browser.EvaluateScriptAsync("!!document.getElementById('field')"); if (response.Result is true) break; await Task.Delay(50); } while (DateTime.UtcNow < deadline);
         one.Render();

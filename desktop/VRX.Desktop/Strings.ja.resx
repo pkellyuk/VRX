@@ -1435,4 +1435,10 @@
   <data name="UbuntuSettings" xml:space="preserve"><value>Ubuntu デスクトップの設定…</value></data>
   <data name="VrexKeyboardTarget" xml:space="preserve"><value>Vrex Ubuntu / チャットに入力</value></data>
   <data name="ResetFloatingAppearance" xml:space="preserve"><value>フローティングパネルの外観をリセット</value></data>
+  <data name="SectionAudio" xml:space="preserve"><value>オーディオ</value></data>
+  <data name="EnableSpatialAudio" xml:space="preserve"><value>空間オーディオを有効にする</value></data>
+  <data name="AudioOutputLabel" xml:space="preserve"><value>空間オーディオ出力</value></data>
+  <data name="BrowserAudioReopenHint" xml:space="preserve"><value>新しく開くフローティングブラウザーに適用されます。変更を試すにはブラウザーを閉じて開き直してください。</value></data>
+  <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
+  <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
 </root>

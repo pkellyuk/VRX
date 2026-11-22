@@ -3,6 +3,7 @@ using CefSharp;
 using CefSharp.Enums;
 using CefSharp.Handler;
 using CefSharp.Structs;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using VRX.Audio;
@@ -80,11 +81,87 @@ internal sealed class SpatialSamples(ISampleProvider source, Func<AudioDirection
     }
 }
 
-internal sealed class BrowserSpatialAudio(Action<ISampleProvider>? captureSamples = null) : AudioHandler, IDisposable
+// Chromium supplies packets on its own thread. Keep a small reserve so Windows'
+// playback callback can ride out packet jitter without alternating sound and silence.
+internal sealed class BrowserAudioBuffer : IWaveProvider
 {
     private readonly object gate = new();
-    private BufferedWaveProvider? packets;
-    private WaveOutEvent? output;
+    private readonly BufferedWaveProvider buffer;
+    private readonly byte[] discard;
+    private readonly int capacity;
+    private readonly int reserve;
+    private bool primed;
+
+    public WaveFormat WaveFormat => buffer.WaveFormat;
+
+    internal BrowserAudioBuffer(WaveFormat format)
+    {
+        capacity = format.SampleRate / 4 * format.BlockAlign;
+        reserve = format.SampleRate / 10 * format.BlockAlign;
+        discard = new byte[capacity];
+        buffer = new BufferedWaveProvider(format) { BufferLength = capacity, ReadFully = false };
+    }
+
+    internal void Add(byte[] packet, int count)
+    {
+        lock (gate)
+        {
+            int keep = Math.Min(count, capacity);
+            int overflow = buffer.BufferedBytes + keep - capacity;
+            if (overflow > 0) buffer.Read(discard, 0, overflow);
+            buffer.AddSamples(packet, count - keep, keep);
+        }
+    }
+
+    public int Read(byte[] destination, int offset, int count)
+    {
+        lock (gate)
+        {
+            if (!primed) primed = buffer.BufferedBytes >= reserve;
+            int copied = primed ? buffer.Read(destination, offset, count) : 0;
+            if (copied < count)
+            {
+                primed = false;
+                Array.Clear(destination, offset + copied, count - copied);
+            }
+            return count;
+        }
+    }
+
+    internal static void SmokeTest()
+    {
+        var audio = new BrowserAudioBuffer(WaveFormat.CreateIeeeFloatWaveFormat(1000, 2));
+        int frame = audio.WaveFormat.BlockAlign;
+        var read = new byte[20 * frame];
+        void Add(int frames, byte value) => audio.Add(Enumerable.Repeat(value, frames * frame).ToArray(), frames * frame);
+        void Check(byte value)
+        {
+            if (audio.Read(read, 0, read.Length) != read.Length || read.Any(sample => sample != value))
+                throw new InvalidOperationException("The browser audio buffer lost its timing reserve or discarded playable audio.");
+        }
+        Add(80, 1);
+        Check(0);
+        Add(20, 1);
+        for (int i = 0; i < 5; i++) Check(1);
+        Check(0);
+        Add(20, 2);
+        Check(0);
+        Add(80, 2);
+        Check(2);
+        // A burst discards only the excess oldest frames, leaving the next audio intact.
+        Add(150, 3);
+        Add(40, 4);
+        Check(2);
+    }
+}
+
+internal enum BrowserAudioBackend { WASAPI, WaveOut }
+
+internal sealed class BrowserSpatialAudio(BrowserAudioBackend backend, Action<ISampleProvider>? captureSamples = null) : AudioHandler, IDisposable
+{
+    private readonly object gate = new();
+    private BrowserAudioBuffer? packets;
+    private IWavePlayer? output;
     private bool disposed;
     private float[] left = [], right = [], interleaved = [];
     private byte[] payload = [];
@@ -94,7 +171,7 @@ internal sealed class BrowserSpatialAudio(Action<ISampleProvider>? captureSample
 
     protected override bool GetAudioParameters(IWebBrowser chromiumWebBrowser, IBrowser browser, ref AudioParameters parameters)
     {
-        if (captureSamples == null && waveOutGetNumDevs() == 0) return false;
+        if (captureSamples == null && backend == BrowserAudioBackend.WaveOut && waveOutGetNumDevs() == 0) return false;
         parameters.ChannelLayout = ChannelLayout.LayoutStereo;
         parameters.SampleRate = 48000;
         parameters.FramesPerBuffer = 480;
@@ -110,11 +187,7 @@ internal sealed class BrowserSpatialAudio(Action<ISampleProvider>? captureSample
         {
             Reset();
             if (disposed || channels != 2) return;
-            packets = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(parameters.SampleRate, channels))
-            {
-                BufferDuration = TimeSpan.FromMilliseconds(250),
-                DiscardOnBufferOverflow = true
-            };
+            packets = new BrowserAudioBuffer(WaveFormat.CreateIeeeFloatWaveFormat(parameters.SampleRate, channels));
             var samples = new SpatialSamples(packets.ToSampleProvider(), () => Volatile.Read(ref position));
             if (captureSamples != null)
             {
@@ -123,17 +196,37 @@ internal sealed class BrowserSpatialAudio(Action<ISampleProvider>? captureSample
             }
             try
             {
-                output = new WaveOutEvent { DesiredLatency = 60, NumberOfBuffers = 3 };
-                output.Init(new SampleToWaveProvider16(samples));
-                output.Play();
+                output = StartOutput(samples);
             }
-            catch (Exception ex) when (ex is NAudio.MmException or InvalidOperationException)
+            catch (Exception ex) when (IsOutputError(ex))
             {
                 Reset();
                 System.Diagnostics.Debug.WriteLine($"[Browser audio] {ex.Message}");
             }
         }
     }
+
+    private IWavePlayer StartOutput(ISampleProvider samples)
+    {
+        bool wasapi = backend == BrowserAudioBackend.WASAPI;
+        IWavePlayer player = wasapi
+            ? new WasapiOut(AudioClientShareMode.Shared, useEventSync: true, latency: 60)
+            : new WaveOutEvent { DesiredLatency = 60, NumberOfBuffers = 3 };
+        try
+        {
+            player.Init(wasapi ? new SampleToWaveProvider(samples) : new SampleToWaveProvider16(samples));
+            player.Play();
+            return player;
+        }
+        catch
+        {
+            player.Dispose();
+            throw;
+        }
+    }
+
+    private static bool IsOutputError(Exception ex) =>
+        ex is NAudio.MmException or InvalidOperationException or COMException or NotSupportedException or ArgumentException;
 
     protected override void OnAudioStreamPacket(IWebBrowser chromiumWebBrowser, IBrowser browser, IntPtr data, int frames, long pts)
     {
@@ -153,8 +246,7 @@ internal sealed class BrowserSpatialAudio(Action<ISampleProvider>? captureSample
                 interleaved[2 * i] = left[i]; interleaved[2 * i + 1] = right[i];
             }
             Buffer.BlockCopy(interleaved, 0, payload, 0, frames * 8);
-            if (packets.BufferedDuration > TimeSpan.FromMilliseconds(160)) packets.ClearBuffer();
-            packets.AddSamples(payload, 0, frames * 8);
+            packets.Add(payload, frames * 8);
         }
     }
 
