@@ -844,11 +844,13 @@ public partial class MainWindow : Window
         ControllersOff.IsChecked = !appSettings.MotionControllers;
         SpatialAudioCheck.IsChecked = appSettings.BrowserSpatialAudio;
         AudioOutputList.SelectedValue = appSettings.BrowserAudioOutput;
-        FloatingBrowserRuntime.ConfigureAudio(appSettings.BrowserSpatialAudio, appSettings.BrowserAudioOutput);
+        BrowserVolumeSlider.Value = appSettings.BrowserVolume;
+        FloatingBrowserRuntime.ConfigureAudio(appSettings.BrowserSpatialAudio, appSettings.BrowserAudioOutput, appSettings.BrowserVolume);
         UbuntuSpatialAudioCheck.IsChecked = appSettings.UbuntuSpatialAudio;
         UbuntuAudioOutputList.SelectedValue = appSettings.UbuntuAudioOutput;
+        UbuntuVolumeSlider.Value = appSettings.UbuntuVolume;
         VrexClient.Current.ConfigureGuestAudio(appSettings.UbuntuSpatialAudio,
-            FloatingBrowserRuntime.ParseAudioBackend(appSettings.UbuntuAudioOutput));
+            FloatingBrowserRuntime.ParseAudioBackend(appSettings.UbuntuAudioOutput), appSettings.UbuntuVolume);
         AutoAttachCheck.IsChecked = appSettings.AutoAttach;
         AutoAttachSlider.Value = AppSettings.ClampSeconds(appSettings.AutoAttachSeconds);
         AutoAttachValue.Text = Loc.Format("ValueSeconds", (int)AutoAttachSlider.Value);
@@ -884,7 +886,8 @@ public partial class MainWindow : Window
         if (!ready || autoSettingsLoading || AudioOutputList.SelectedValue is not string output) return;
         appSettings.BrowserSpatialAudio = SpatialAudioCheck.IsChecked == true;
         appSettings.BrowserAudioOutput = output;
-        FloatingBrowserRuntime.ConfigureAudio(appSettings.BrowserSpatialAudio, output);
+        appSettings.BrowserVolume = (int)Math.Round(BrowserVolumeSlider.Value);
+        FloatingBrowserRuntime.ConfigureAudio(appSettings.BrowserSpatialAudio, output, appSettings.BrowserVolume);
         SaveAppSettings();
     }
 
@@ -893,7 +896,8 @@ public partial class MainWindow : Window
         if (!ready || autoSettingsLoading || UbuntuAudioOutputList.SelectedValue is not string output) return;
         appSettings.UbuntuSpatialAudio = UbuntuSpatialAudioCheck.IsChecked == true;
         appSettings.UbuntuAudioOutput = output;
-        VrexClient.Current.ConfigureGuestAudio(appSettings.UbuntuSpatialAudio, FloatingBrowserRuntime.ParseAudioBackend(output));
+        appSettings.UbuntuVolume = (int)Math.Round(UbuntuVolumeSlider.Value);
+        VrexClient.Current.ConfigureGuestAudio(appSettings.UbuntuSpatialAudio, FloatingBrowserRuntime.ParseAudioBackend(output), appSettings.UbuntuVolume);
         SaveAppSettings();
     }
 
@@ -2263,6 +2267,18 @@ public partial class MainWindow : Window
             throw new Exception("Browser and Ubuntu must save independent audio settings");
         UbuntuAudioOutputList.SelectedValue = "WASAPI";
         UbuntuSpatialAudioCheck.IsChecked = true;
+        if (audioDefaults.BrowserVolume != 100 || audioDefaults.UbuntuVolume != 100)
+            throw new Exception("Audio volume must default to full level");
+        var savedVolumes = (BrowserVolumeSlider.Value, UbuntuVolumeSlider.Value);
+        BrowserVolumeSlider.Value = 40;
+        UbuntuVolumeSlider.Value = 0;
+        appSettings = store.LoadAppSettings();
+        PutAppSettings();
+        if (appSettings.BrowserVolume != 40 || appSettings.UbuntuVolume != 0 ||
+            BrowserVolumeSlider.Value != 40 || UbuntuVolumeSlider.Value != 0 || FloatingBrowserRuntime.AudioGain() != .4f)
+            throw new Exception("Browser and Ubuntu volume settings did not save and reload independently");
+        BrowserVolumeSlider.Value = savedVolumes.Item1;
+        UbuntuVolumeSlider.Value = savedVolumes.Item2;
 
         // Sections: Screen, Around the screen and Room open by default; the rest closed;
         // saved states round-trip; unknown or missing names use the defaults.

@@ -13,11 +13,13 @@ internal sealed class UbuntuSpatialAudio
     private IWavePlayer? output;
     private long nextDeviceAttempt;
     private bool spatial = true, wasapi = true;
+    private float gain = 1;
 
-    internal void Configure(bool enableSpatial, BrowserAudioBackend backend)
+    internal void Configure(bool enableSpatial, BrowserAudioBackend backend, int volume)
     {
         lock (gate)
         {
+            Volatile.Write(ref gain, volume / 100f);
             bool useWasapi = backend == BrowserAudioBackend.WASAPI;
             if (spatial == enableSpatial && wasapi == useWasapi) return;
             spatial = enableSpatial;
@@ -48,7 +50,8 @@ internal sealed class UbuntuSpatialAudio
             {
                 input = new SpatialPlaybackBuffer(new WaveFormat(VrexProtocol.GuestAudioRate, 16, 2));
                 input.Add(packet, bytes);
-                var samples = new SpatialSamples(input.ToSampleProvider(), () => Volatile.Read(ref direction), positionalOnly: true, spatial: spatial);
+                var samples = new SpatialSamples(input.ToSampleProvider(), () => Volatile.Read(ref direction),
+                    positionalOnly: true, spatial: spatial, readGain: () => Volatile.Read(ref gain));
                 output = SpatialPlayback.Start(samples, wasapi);
             }
             catch (Exception ex) when (SpatialPlayback.IsOutputError(ex))

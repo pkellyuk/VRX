@@ -15,6 +15,7 @@ namespace VRX.Desktop;
 internal static class FloatingBrowserRuntime
 {
     private static readonly bool forceNativeAudio = Environment.GetCommandLineArgs().Contains("--browser-native-audio");
+    private static float audioGain = 1;
     internal static bool SpatialAudioEnabled { get; private set; } = true;
     internal static bool NativeAudio => forceNativeAudio;
     internal static BrowserAudioBackend AudioBackend { get; private set; } = BrowserAudioBackend.WASAPI;
@@ -22,10 +23,13 @@ internal static class FloatingBrowserRuntime
     internal static BrowserAudioBackend ParseAudioBackend(string? value) =>
         value == nameof(BrowserAudioBackend.WaveOut) ? BrowserAudioBackend.WaveOut : BrowserAudioBackend.WASAPI;
 
-    internal static void ConfigureAudio(bool spatial, string? backend)
+    internal static float AudioGain() => Volatile.Read(ref audioGain);
+
+    internal static void ConfigureAudio(bool spatial, string? backend, int volume)
     {
         SpatialAudioEnabled = spatial;
         AudioBackend = ParseAudioBackend(backend);
+        Volatile.Write(ref audioGain, volume / 100f);
     }
     private static bool started;
     internal static BrowserPermissionStore Permissions { get; private set; } = null!;

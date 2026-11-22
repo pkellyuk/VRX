@@ -1437,6 +1437,7 @@ No se puede deshacer. Los juegos que aún no has configurado siguen partiendo de
   <data name="ResetFloatingAppearance" xml:space="preserve"><value>Restablecer el aspecto de los paneles flotantes</value></data>
   <data name="SectionAudio" xml:space="preserve"><value>Audio</value></data>
   <data name="EnableSpatialAudio" xml:space="preserve"><value>Activar audio espacial</value></data>
+  <data name="AudioVolumeLabel" xml:space="preserve"><value>Volumen</value></data>
   <data name="AudioOutputLabel" xml:space="preserve"><value>Salida de audio espacial</value></data>
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>Se aplica a nuevos navegadores flotantes. Cierra y vuelve a abrir el navegador para probar un cambio.</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>

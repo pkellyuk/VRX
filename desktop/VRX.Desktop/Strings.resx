@@ -505,6 +505,7 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="ResetFloatingAppearance" xml:space="preserve"><value>Reset floating appearance</value></data>
   <data name="SectionAudio" xml:space="preserve"><value>Audio</value></data>
   <data name="EnableSpatialAudio" xml:space="preserve"><value>Enable spatial audio</value></data>
+  <data name="AudioVolumeLabel" xml:space="preserve"><value>Volume</value></data>
   <data name="AudioOutputLabel" xml:space="preserve"><value>Spatial audio output</value></data>
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>Applies to new floating browsers. Close and reopen a browser to test a change.</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>

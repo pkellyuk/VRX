@@ -1437,6 +1437,7 @@ Isso não pode ser desfeito. Os jogos que você ainda não configurou continuam 
   <data name="ResetFloatingAppearance" xml:space="preserve"><value>Repor a aparência dos painéis flutuantes</value></data>
   <data name="SectionAudio" xml:space="preserve"><value>Áudio</value></data>
   <data name="EnableSpatialAudio" xml:space="preserve"><value>Ativar áudio espacial</value></data>
+  <data name="AudioVolumeLabel" xml:space="preserve"><value>Volume</value></data>
   <data name="AudioOutputLabel" xml:space="preserve"><value>Saída de áudio espacial</value></data>
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>Aplica-se a novos navegadores flutuantes. Feche e reabra o navegador para testar uma alteração.</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>

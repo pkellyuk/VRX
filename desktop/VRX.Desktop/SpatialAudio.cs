@@ -15,7 +15,8 @@ internal sealed record AudioDirection(float X, float Y, float Z);
 // Render a moving point source for headphones. A short interaural delay and
 // head shadow supplement equal-power panning. With no headset pose, play the
 // original stereo signal or centered speech.
-internal sealed class SpatialSamples(ISampleProvider source, Func<AudioDirection?> direction, bool positionalOnly = false, bool spatial = true) : ISampleProvider
+internal sealed class SpatialSamples(ISampleProvider source, Func<AudioDirection?> direction, bool positionalOnly = false,
+    bool spatial = true, Func<float>? readGain = null) : ISampleProvider
 {
     public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(source.WaveFormat.SampleRate, 2);
     private readonly PointSourceAudio pointSource = new();
@@ -39,14 +40,15 @@ internal sealed class SpatialSamples(ISampleProvider source, Func<AudioDirection
         float targetRear = distance > .01f ? MathF.Max(0, location!.Z / distance) : 0;
         float targetEnabled = location == null || !spatial ? 0 : 1;
         float smoothing = 1 - MathF.Exp(-1f / (.025f * WaveFormat.SampleRate));
+        float gain = readGain?.Invoke() ?? 1;
         pointSource.SetTarget(WaveFormat.SampleRate, targetPan, targetRear);
         for (int i = 0; i < frames; i++)
         {
             enabled += (targetEnabled - enabled) * smoothing;
             float left = input[i * channels], right = channels == 1 ? left : input[i * channels + 1];
             pointSource.Render((left + right) * .5f, out float l, out float r);
-            buffer[offset++] = left + (l - left) * enabled;
-            buffer[offset++] = right + (r - right) * enabled;
+            buffer[offset++] = (left + (l - left) * enabled) * gain;
+            buffer[offset++] = (right + (r - right) * enabled) * gain;
         }
         return frames * 2;
     }
@@ -78,6 +80,19 @@ internal sealed class SpatialSamples(ISampleProvider source, Func<AudioDirection
         int muted = guest.Read(buffer, 0, buffer.Length);
         if (muted != buffer.Length || buffer.Any(value => value != 0))
             throw new InvalidOperationException("Ubuntu audio continued after its floating panel lost its position.");
+        tone.Frequency = 1000;
+        float gain = 1;
+        var volume = new SpatialSamples(tone, () => null, spatial: false, readGain: () => gain);
+        volume.Read(buffer, 0, buffer.Length);
+        float peak = buffer.Max(MathF.Abs);
+        gain = .5f;
+        volume.Read(buffer, 0, buffer.Length);
+        if (peak <= 0 || MathF.Abs(buffer.Max(MathF.Abs) - peak * .5f) > .0001f)
+            throw new InvalidOperationException("Changing playback volume did not scale the running audio stream.");
+        gain = 0;
+        volume.Read(buffer, 0, buffer.Length);
+        if (buffer.Any(value => value != 0))
+            throw new InvalidOperationException("Zero playback volume did not mute the audio stream.");
     }
 }
 
@@ -218,7 +233,8 @@ internal sealed class BrowserSpatialAudio(BrowserAudioBackend backend, bool spat
             Reset();
             if (disposed || channels != 2) return;
             packets = new SpatialPlaybackBuffer(WaveFormat.CreateIeeeFloatWaveFormat(parameters.SampleRate, channels));
-            var samples = new SpatialSamples(packets.ToSampleProvider(), () => Volatile.Read(ref position), spatial: spatial);
+            var samples = new SpatialSamples(packets.ToSampleProvider(), () => Volatile.Read(ref position),
+                spatial: spatial, readGain: FloatingBrowserRuntime.AudioGain);
             if (captureSamples != null)
             {
                 captureSamples(samples);

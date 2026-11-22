@@ -1437,6 +1437,7 @@ Cette action est irréversible. Les jeux pas encore configurés partent toujours
   <data name="ResetFloatingAppearance" xml:space="preserve"><value>Réinitialiser l’apparence des panneaux flottants</value></data>
   <data name="SectionAudio" xml:space="preserve"><value>Audio</value></data>
   <data name="EnableSpatialAudio" xml:space="preserve"><value>Activer l’audio spatial</value></data>
+  <data name="AudioVolumeLabel" xml:space="preserve"><value>Volume</value></data>
   <data name="AudioOutputLabel" xml:space="preserve"><value>Sortie audio spatiale</value></data>
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>S’applique aux nouveaux navigateurs flottants. Fermez puis rouvrez le navigateur pour tester un changement.</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>

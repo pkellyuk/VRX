@@ -270,6 +270,8 @@ public sealed class ProfileStore(string root)
             loaded.UiLanguage = Loc.ValidLanguage(loaded.UiLanguage);
             loaded.BrowserAudioOutput = FloatingBrowserRuntime.ParseAudioBackend(loaded.BrowserAudioOutput).ToString();
             loaded.UbuntuAudioOutput = FloatingBrowserRuntime.ParseAudioBackend(loaded.UbuntuAudioOutput).ToString();
+            loaded.BrowserVolume = Math.Clamp(loaded.BrowserVolume, 0, 100);
+            loaded.UbuntuVolume = Math.Clamp(loaded.UbuntuVolume, 0, 100);
             loaded.FloatingTheme = Math.Clamp(loaded.FloatingTheme, 0, Appearance.Themes.Length - 1);
             loaded.DesktopTheme = Math.Clamp(loaded.DesktopTheme, 0, Appearance.Themes.Length - 1);
             loaded.FloatingOpacity = Math.Clamp(loaded.FloatingOpacity, 0, 100);
@@ -317,8 +319,10 @@ public sealed class ProfileStore(string root)
             MotionControllers = settings.MotionControllers,
             BrowserSpatialAudio = settings.BrowserSpatialAudio,
             BrowserAudioOutput = FloatingBrowserRuntime.ParseAudioBackend(settings.BrowserAudioOutput).ToString(),
+            BrowserVolume = Math.Clamp(settings.BrowserVolume, 0, 100),
             UbuntuSpatialAudio = settings.UbuntuSpatialAudio,
             UbuntuAudioOutput = FloatingBrowserRuntime.ParseAudioBackend(settings.UbuntuAudioOutput).ToString(),
+            UbuntuVolume = Math.Clamp(settings.UbuntuVolume, 0, 100),
             UiLanguage = Loc.ValidLanguage(settings.UiLanguage),
             FloatingTheme = Math.Clamp(settings.FloatingTheme, 0, Appearance.Themes.Length - 1),
             DesktopTheme = Math.Clamp(settings.DesktopTheme, 0, Appearance.Themes.Length - 1),

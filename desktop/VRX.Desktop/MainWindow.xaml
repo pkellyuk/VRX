@@ -367,6 +367,9 @@
        <ComboBoxItem Tag="WASAPI" Content="{l:Tr AudioWasapi}"/>
       </ComboBox>
       <TextBlock Text="{l:Tr BrowserAudioReopenHint}" Style="{StaticResource Hint}"/>
+      <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=BrowserVolumeSlider}"/><TextBlock x:Name="BrowserVolumeLabel" Text="{l:Tr AudioVolumeLabel}" Style="{StaticResource Label}"/></DockPanel>
+      <Slider x:Name="BrowserVolumeSlider" Minimum="0" Maximum="100" Value="100" TickFrequency="1" IsSnapToTickEnabled="True"
+              AutomationProperties.LabeledBy="{Binding ElementName=BrowserVolumeLabel}" ValueChanged="BrowserAudioChanged"/>
       <TextBlock Text="{l:Tr UbuntuAudioTitle}" Style="{StaticResource Label}" Margin="0,10,0,0"/>
       <CheckBox x:Name="UbuntuSpatialAudioCheck" Content="{l:Tr EnableSpatialAudio}" Checked="UbuntuAudioChanged" Unchecked="UbuntuAudioChanged"/>
       <TextBlock Text="{l:Tr AudioOutputLabel}" Style="{StaticResource Label}"/>
@@ -374,6 +377,9 @@
        <ComboBoxItem Tag="WaveOut" Content="{l:Tr AudioWaveOut}"/>
        <ComboBoxItem Tag="WASAPI" Content="{l:Tr AudioWasapi}"/>
       </ComboBox>
+      <DockPanel><TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{l:TrValue ValuePercent, Element=UbuntuVolumeSlider}"/><TextBlock x:Name="UbuntuVolumeLabel" Text="{l:Tr AudioVolumeLabel}" Style="{StaticResource Label}"/></DockPanel>
+      <Slider x:Name="UbuntuVolumeSlider" Minimum="0" Maximum="100" Value="100" TickFrequency="1" IsSnapToTickEnabled="True"
+              AutomationProperties.LabeledBy="{Binding ElementName=UbuntuVolumeLabel}" ValueChanged="UbuntuAudioChanged"/>
      </StackPanel>
     </Expander>
 
