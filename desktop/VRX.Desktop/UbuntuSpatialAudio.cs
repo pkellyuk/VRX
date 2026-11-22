@@ -1,5 +1,4 @@
 using NAudio.Wave;
-using NAudio.Wave.SampleProviders;
 using VRX.VrexBridge;
 
 namespace VRX.Desktop;
@@ -9,9 +8,24 @@ internal sealed class UbuntuSpatialAudio
 {
     private readonly object gate = new();
     private AudioDirection? direction;
-    private BufferedWaveProvider? input;
-    private WaveOutEvent? output;
+    private readonly byte[] packet = new byte[VrexProtocol.GuestAudioPacketBytes];
+    private SpatialPlaybackBuffer? input;
+    private IWavePlayer? output;
     private long nextDeviceAttempt;
+    private bool spatial = true, wasapi = true;
+
+    internal void Configure(bool enableSpatial, BrowserAudioBackend backend)
+    {
+        lock (gate)
+        {
+            bool useWasapi = backend == BrowserAudioBackend.WASAPI;
+            if (spatial == enableSpatial && wasapi == useWasapi) return;
+            spatial = enableSpatial;
+            wasapi = useWasapi;
+            StopCore();
+            nextDeviceAttempt = 0;
+        }
+    }
 
     internal void SetDirection(AudioDirection? value) => Volatile.Write(ref direction, value);
 
@@ -20,31 +34,24 @@ internal sealed class UbuntuSpatialAudio
         lock (gate)
         {
             if (Volatile.Read(ref direction) == null) { StopCore(); return; }
-            Span<byte> scratch = stackalloc byte[VrexProtocol.GuestAudioPacketBytes];
-            if (!Convert.TryFromBase64String(encoded, scratch, out int bytes) || bytes == 0 || bytes % 4 != 0) return;
-            if (input == null)
+            if (!Convert.TryFromBase64String(encoded, packet, out int bytes) || bytes == 0 || bytes % 4 != 0) return;
+            if (output?.PlaybackState == PlaybackState.Stopped) StopCore();
+            if (input != null)
             {
-                long now = Environment.TickCount64;
-                if (now < nextDeviceAttempt || !scratch[..bytes].ContainsAnyExcept((byte)0)) return;
-                nextDeviceAttempt = now + 3000;
-                try
-                {
-                    input = new BufferedWaveProvider(new WaveFormat(VrexProtocol.GuestAudioRate, 16, 2))
-                    { BufferDuration = TimeSpan.FromMilliseconds(500), DiscardOnBufferOverflow = true };
-                    output = new WaveOutEvent { DesiredLatency = 60, NumberOfBuffers = 3 };
-                    output.Init(new SampleToWaveProvider16(new SpatialSamples(input.ToSampleProvider(), () => Volatile.Read(ref direction), positionalOnly: true)));
-                }
-                catch (Exception ex) when (ex is NAudio.MmException or InvalidOperationException)
-                {
-                    StopCore();
-                    System.Diagnostics.Debug.WriteLine($"[Ubuntu playback] {ex.Message}");
-                    return;
-                }
+                input.Add(packet, bytes);
+                return;
             }
-            if (input.BufferedDuration > TimeSpan.FromMilliseconds(200)) input.ClearBuffer();
-            input.AddSamples(scratch[..bytes].ToArray(), 0, bytes);
-            try { if (output!.PlaybackState == PlaybackState.Stopped) output.Play(); }
-            catch (Exception ex) when (ex is NAudio.MmException or InvalidOperationException)
+            long now = Environment.TickCount64;
+            if (now < nextDeviceAttempt || !packet.AsSpan(0, bytes).ContainsAnyExcept((byte)0)) return;
+            nextDeviceAttempt = now + 3000;
+            try
+            {
+                input = new SpatialPlaybackBuffer(new WaveFormat(VrexProtocol.GuestAudioRate, 16, 2));
+                input.Add(packet, bytes);
+                var samples = new SpatialSamples(input.ToSampleProvider(), () => Volatile.Read(ref direction), positionalOnly: true, spatial: spatial);
+                output = SpatialPlayback.Start(samples, wasapi);
+            }
+            catch (Exception ex) when (SpatialPlayback.IsOutputError(ex))
             {
                 StopCore();
                 System.Diagnostics.Debug.WriteLine($"[Ubuntu playback] {ex.Message}");

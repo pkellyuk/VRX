@@ -1441,4 +1441,6 @@ L'operazione non può essere annullata. I giochi non ancora configurati partono 
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>Si applica ai nuovi browser fluttuanti. Chiudi e riapri il browser per provare una modifica.</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
   <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
+  <data name="BrowserAudioTitle" xml:space="preserve"><value>Browser</value></data>
+  <data name="UbuntuAudioTitle" xml:space="preserve"><value>Ubuntu</value></data>
 </root>

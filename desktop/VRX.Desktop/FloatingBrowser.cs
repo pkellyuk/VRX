@@ -15,8 +15,8 @@ namespace VRX.Desktop;
 internal static class FloatingBrowserRuntime
 {
     private static readonly bool forceNativeAudio = Environment.GetCommandLineArgs().Contains("--browser-native-audio");
-    private static bool spatialAudioEnabled = true;
-    internal static bool NativeAudio => forceNativeAudio || !spatialAudioEnabled;
+    internal static bool SpatialAudioEnabled { get; private set; } = true;
+    internal static bool NativeAudio => forceNativeAudio;
     internal static BrowserAudioBackend AudioBackend { get; private set; } = BrowserAudioBackend.WASAPI;
 
     internal static BrowserAudioBackend ParseAudioBackend(string? value) =>
@@ -24,7 +24,7 @@ internal static class FloatingBrowserRuntime
 
     internal static void ConfigureAudio(bool spatial, string? backend)
     {
-        spatialAudioEnabled = spatial;
+        SpatialAudioEnabled = spatial;
         AudioBackend = ParseAudioBackend(backend);
     }
     private static bool started;
@@ -118,7 +118,8 @@ internal sealed partial class FloatingBrowser : IFloatingPanel, IFloatingTextTar
         IsWebcam = webcam;
         zoom = ClampZoom(initialZoom);
         initialAddress = initialUrl;
-        spatialAudio = new BrowserSpatialAudio(FloatingBrowserRuntime.AudioBackend, captureAudio);
+        spatialAudio = new BrowserSpatialAudio(FloatingBrowserRuntime.AudioBackend,
+            FloatingBrowserRuntime.SpatialAudioEnabled, captureAudio);
         FloatingBrowserRuntime.Ensure(); this.focus = focus; this.openKeyboard = openKeyboard; this.newWindow = newWindow;
         var root = new Grid { Margin = new Thickness(48) };
         foreach (double height in new[] { 56.0, 64.0, 472.0, 24.0, 56.0 }) root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(height) });

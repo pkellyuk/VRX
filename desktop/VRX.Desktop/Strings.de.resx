@@ -1441,4 +1441,6 @@ Dies kann nicht rückgängig gemacht werden. Noch nicht eingerichtete Spiele sta
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>Gilt für neue schwebende Browser. Schließe und öffne den Browser erneut, um eine Änderung zu testen.</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
   <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
+  <data name="BrowserAudioTitle" xml:space="preserve"><value>Browser</value></data>
+  <data name="UbuntuAudioTitle" xml:space="preserve"><value>Ubuntu</value></data>
 </root>

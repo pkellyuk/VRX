@@ -509,4 +509,6 @@ This cannot be undone. Games you have not set up yet still start from the base s
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>Applies to new floating browsers. Close and reopen a browser to test a change.</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
   <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
+  <data name="BrowserAudioTitle" xml:space="preserve"><value>Browser</value></data>
+  <data name="UbuntuAudioTitle" xml:space="preserve"><value>Ubuntu</value></data>
 </root>

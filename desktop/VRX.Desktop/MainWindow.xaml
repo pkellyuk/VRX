@@ -359,14 +359,21 @@
 
     <Expander x:Name="AudioSection" Header="{l:Tr SectionAudio}" Expanded="SectionToggled" Collapsed="SectionToggled">
      <StackPanel>
+      <TextBlock Text="{l:Tr BrowserAudioTitle}" Style="{StaticResource Label}"/>
       <CheckBox x:Name="SpatialAudioCheck" Content="{l:Tr EnableSpatialAudio}" Checked="BrowserAudioChanged" Unchecked="BrowserAudioChanged"/>
       <TextBlock Text="{l:Tr AudioOutputLabel}" Style="{StaticResource Label}"/>
-      <ComboBox x:Name="AudioOutputList" SelectedValuePath="Tag" SelectionChanged="BrowserAudioChanged"
-                IsEnabled="{Binding ElementName=SpatialAudioCheck, Path=IsChecked}">
+      <ComboBox x:Name="AudioOutputList" SelectedValuePath="Tag" SelectionChanged="BrowserAudioChanged">
        <ComboBoxItem Tag="WaveOut" Content="{l:Tr AudioWaveOut}"/>
        <ComboBoxItem Tag="WASAPI" Content="{l:Tr AudioWasapi}"/>
       </ComboBox>
       <TextBlock Text="{l:Tr BrowserAudioReopenHint}" Style="{StaticResource Hint}"/>
+      <TextBlock Text="{l:Tr UbuntuAudioTitle}" Style="{StaticResource Label}" Margin="0,10,0,0"/>
+      <CheckBox x:Name="UbuntuSpatialAudioCheck" Content="{l:Tr EnableSpatialAudio}" Checked="UbuntuAudioChanged" Unchecked="UbuntuAudioChanged"/>
+      <TextBlock Text="{l:Tr AudioOutputLabel}" Style="{StaticResource Label}"/>
+      <ComboBox x:Name="UbuntuAudioOutputList" SelectedValuePath="Tag" SelectionChanged="UbuntuAudioChanged">
+       <ComboBoxItem Tag="WaveOut" Content="{l:Tr AudioWaveOut}"/>
+       <ComboBoxItem Tag="WASAPI" Content="{l:Tr AudioWasapi}"/>
+      </ComboBox>
      </StackPanel>
     </Expander>
 

@@ -1441,4 +1441,6 @@
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>새로 여는 플로팅 브라우저에 적용됩니다. 변경 사항을 시험하려면 브라우저를 닫았다가 다시 여세요.</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
   <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
+  <data name="BrowserAudioTitle" xml:space="preserve"><value>브라우저</value></data>
+  <data name="UbuntuAudioTitle" xml:space="preserve"><value>Ubuntu</value></data>
 </root>

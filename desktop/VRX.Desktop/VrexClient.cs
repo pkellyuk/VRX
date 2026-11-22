@@ -49,6 +49,7 @@ internal sealed class VrexClient : IVrexClient
     private bool observerSpeaking;
     private AudioDirection? audioDirection;
     private readonly UbuntuSpatialAudio guestAudio = new();
+    internal void ConfigureGuestAudio(bool spatial, BrowserAudioBackend backend) => guestAudio.Configure(spatial, backend);
     internal AudioDirection? GuestAudioDirection { set => guestAudio.SetDirection(value); }
     private float lastVoicePan = float.NaN;
     private float lastVoiceRear;

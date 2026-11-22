@@ -26,6 +26,8 @@ public sealed class AppSettings
     public bool MotionControllers { get; set; }
     public bool BrowserSpatialAudio { get; set; } = true;
     public string BrowserAudioOutput { get; set; } = nameof(BrowserAudioBackend.WASAPI);
+    public bool UbuntuSpatialAudio { get; set; } = true;
+    public string UbuntuAudioOutput { get; set; } = nameof(BrowserAudioBackend.WASAPI);
     // Empty follows the Windows display language; explicit choices apply on next startup.
     public string UiLanguage { get; set; } = "";
     public int FloatingTheme { get; set; } = DefaultFloatingTheme;

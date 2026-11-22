@@ -1441,4 +1441,6 @@
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>适用于新打开的悬浮浏览器。请关闭并重新打开浏览器以测试更改。</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
   <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
+  <data name="BrowserAudioTitle" xml:space="preserve"><value>浏览器</value></data>
+  <data name="UbuntuAudioTitle" xml:space="preserve"><value>Ubuntu</value></data>
 </root>

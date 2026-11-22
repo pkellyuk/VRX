@@ -1441,4 +1441,6 @@ Cette action est irréversible. Les jeux pas encore configurés partent toujours
   <data name="BrowserAudioReopenHint" xml:space="preserve"><value>S’applique aux nouveaux navigateurs flottants. Fermez puis rouvrez le navigateur pour tester un changement.</value></data>
   <data name="AudioWaveOut" xml:space="preserve"><value>WaveOut</value></data>
   <data name="AudioWasapi" xml:space="preserve"><value>WASAPI</value></data>
+  <data name="BrowserAudioTitle" xml:space="preserve"><value>Navigateur</value></data>
+  <data name="UbuntuAudioTitle" xml:space="preserve"><value>Ubuntu</value></data>
 </root>

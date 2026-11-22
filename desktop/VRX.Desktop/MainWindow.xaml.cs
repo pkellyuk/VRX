@@ -845,6 +845,10 @@ public partial class MainWindow : Window
         SpatialAudioCheck.IsChecked = appSettings.BrowserSpatialAudio;
         AudioOutputList.SelectedValue = appSettings.BrowserAudioOutput;
         FloatingBrowserRuntime.ConfigureAudio(appSettings.BrowserSpatialAudio, appSettings.BrowserAudioOutput);
+        UbuntuSpatialAudioCheck.IsChecked = appSettings.UbuntuSpatialAudio;
+        UbuntuAudioOutputList.SelectedValue = appSettings.UbuntuAudioOutput;
+        VrexClient.Current.ConfigureGuestAudio(appSettings.UbuntuSpatialAudio,
+            FloatingBrowserRuntime.ParseAudioBackend(appSettings.UbuntuAudioOutput));
         AutoAttachCheck.IsChecked = appSettings.AutoAttach;
         AutoAttachSlider.Value = AppSettings.ClampSeconds(appSettings.AutoAttachSeconds);
         AutoAttachValue.Text = Loc.Format("ValueSeconds", (int)AutoAttachSlider.Value);
@@ -881,6 +885,15 @@ public partial class MainWindow : Window
         appSettings.BrowserSpatialAudio = SpatialAudioCheck.IsChecked == true;
         appSettings.BrowserAudioOutput = output;
         FloatingBrowserRuntime.ConfigureAudio(appSettings.BrowserSpatialAudio, output);
+        SaveAppSettings();
+    }
+
+    private void UbuntuAudioChanged(object sender, RoutedEventArgs e)
+    {
+        if (!ready || autoSettingsLoading || UbuntuAudioOutputList.SelectedValue is not string output) return;
+        appSettings.UbuntuSpatialAudio = UbuntuSpatialAudioCheck.IsChecked == true;
+        appSettings.UbuntuAudioOutput = output;
+        VrexClient.Current.ConfigureGuestAudio(appSettings.UbuntuSpatialAudio, FloatingBrowserRuntime.ParseAudioBackend(output));
         SaveAppSettings();
     }
 
@@ -2129,7 +2142,7 @@ public partial class MainWindow : Window
         VrexMainScreenMarks.VerifyFirstShow();
         FloatingVrexReply.SmokeChoices();
         SpatialSamples.SmokeTest();
-        BrowserAudioBuffer.SmokeTest();
+        SpatialPlaybackBuffer.SmokeTest();
         await ControllerMenu.SmokeWorkspace(output, ControllerSections());
         SmokeTestModes(output, sample, one);
         await SmokeTestWindow(output);
@@ -2234,14 +2247,22 @@ public partial class MainWindow : Window
         SpatialAudioCheck.IsChecked = false;
         var audioBack = store.LoadAppSettings();
         if (audioBack.BrowserSpatialAudio || audioBack.BrowserAudioOutput != "WaveOut" ||
-            !FloatingBrowserRuntime.NativeAudio || FloatingBrowserRuntime.AudioBackend != BrowserAudioBackend.WaveOut)
+            FloatingBrowserRuntime.SpatialAudioEnabled || FloatingBrowserRuntime.AudioBackend != BrowserAudioBackend.WaveOut)
             throw new Exception("The Audio controls did not save and apply the browser audio preferences");
         appSettings = audioBack;
         PutAppSettings();
-        if (SpatialAudioCheck.IsChecked != false || AudioOutputList.SelectedValue is not "WaveOut")
+        if (SpatialAudioCheck.IsChecked != false || AudioOutputList.SelectedValue is not "WaveOut" || !AudioOutputList.IsEnabled)
             throw new Exception("Saved browser audio preferences were not restored to the desktop controls");
         AudioOutputList.SelectedValue = savedAudio.Item2;
         SpatialAudioCheck.IsChecked = savedAudio.Item1;
+        UbuntuAudioOutputList.SelectedValue = "WaveOut";
+        UbuntuSpatialAudioCheck.IsChecked = false;
+        var savedSources = store.LoadAppSettings();
+        if (savedSources.UbuntuAudioOutput != "WaveOut" || savedSources.UbuntuSpatialAudio ||
+            savedSources.BrowserAudioOutput != savedAudio.Item2)
+            throw new Exception("Browser and Ubuntu must save independent audio settings");
+        UbuntuAudioOutputList.SelectedValue = "WASAPI";
+        UbuntuSpatialAudioCheck.IsChecked = true;
 
         // Sections: Screen, Around the screen and Room open by default; the rest closed;
         // saved states round-trip; unknown or missing names use the defaults.
@@ -2817,7 +2838,7 @@ public partial class MainWindow : Window
             for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Walk(VisualTreeHelper.GetChild(node, i));
         }
         Walk(this);
-        foreach (var list in new[] { WorldList, LightColourList, DepthGpuList, TimingList, AudioOutputList })
+        foreach (var list in new[] { WorldList, LightColourList, DepthGpuList, TimingList, AudioOutputList, UbuntuAudioOutputList })
             foreach (var item in list.Items)
             {
                 string text = item is GpuChoice gpu ? gpu.Label : item is ComboBoxItem box ? box.Content as string ?? "" : item as string ?? "";
